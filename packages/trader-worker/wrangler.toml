@@ -116,11 +116,16 @@ class_name = "FlyStateDO"
 tag = "v1"
 new_sqlite_classes = ["FlyStateDO"]
 
-# ---------- Optional: D1 database for long-term archival of market/population snapshots ----------
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "murmur-db"
-# database_id = ""
+# ---------- D1 database: long-term archival of one row per cron tick ----------
+# FlyStateDO.archiveTick() writes (tick, temperature, regime, size, deals, settlements, volume, gini,
+# topStates) here every cron; GET /history reads it back for the frontend history curve + research
+# export. Best-effort: a D1 failure never blocks the tick. Create the schema with:
+#   npx wrangler d1 execute murmur-db --remote --file=./schema.sql
+# (the DO also runs CREATE TABLE IF NOT EXISTS lazily before its first insert, so this is belt-and-braces).
+[[d1_databases]]
+binding = "DB"
+database_name = "murmur-db"
+database_id = "a48ee596-6e94-433c-9d3e-b9e0e5c374ef"
 
 # ---------- Observability ----------
 [observability]

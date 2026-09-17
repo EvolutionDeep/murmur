@@ -41,7 +41,7 @@ import {
   type StoredStimulus,
 } from "./stimulus.js";
 import { Population, type PopulationSnapshot } from "./population.js";
-import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type Settlement } from "./economy.js";
+import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -71,6 +71,8 @@ export class FlyStateDO {
   private pendingStimuli: StimulusEvent[] = [];
   /** Reentrancy guard so overlapping crons never drive the population concurrently. */
   private cronRunning = false;
+  /** Set once the D1 archival table has been ensured this DO lifetime (avoids re-running DDL per cron). */
+  private d1SchemaReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -235,6 +237,77 @@ export class FlyStateDO {
     await this.state.storage.put(KEY_LAST_CRON, Date.now());
   }
 
+  // ---------- D1 long-term archival (one row per cron; best-effort, never blocks the tick) ----------
+
+  /**
+   * Lazily create the archival table + index on first write, so the DO archives correctly even before
+   * schema.sql has been applied remotely (belt-and-braces: the remote schema and this DDL are identical).
+   */
+  private async ensureD1Schema(db: D1Database): Promise<void> {
+    if (this.d1SchemaReady) return;
+    await db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS ticks (
+           tick INTEGER PRIMARY KEY, ts INTEGER NOT NULL, temperature REAL NOT NULL, regime TEXT NOT NULL,
+           size INTEGER, deals INTEGER, settlements INTEGER, volume_usdc REAL, gini REAL,
+           top_state TEXT, top_states TEXT )`,
+      )
+      .run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (ts)`).run();
+    this.d1SchemaReady = true;
+  }
+
+  /**
+   * Archive ONE row per cron to D1 — the long-term history the DO's in-memory snapshot and the frontend
+   * canvas cannot keep. This is what unlocks historical curves, "since launch" statistics, research
+   * export and competition-verifiable history. NEVER throws: a missing binding or any D1 error is logged
+   * and swallowed, so archival can't take down a live, real-money tick.
+   */
+  private async archiveTick(
+    tick: number,
+    temperature: number,
+    regime: Regime,
+    deals: number,
+    snapshot: PopulationSnapshot | null,
+    totals: EconomyTotals | null,
+  ): Promise<void> {
+    const db = this.env.DB;
+    if (!db) return;   // D1 not bound (local dev / older deploy) — archival is strictly optional
+    try {
+      await this.ensureD1Schema(db);
+      const states = snapshot?.collective.states ?? null;
+      let topState: string | null = null;
+      if (states) {
+        let best = -1;
+        for (const [k, v] of Object.entries(states)) {
+          if (v > best) { best = v; topState = k; }
+        }
+      }
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ticks
+             (tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          tick,
+          Date.now(),
+          temperature,
+          regime,
+          snapshot?.collective.size ?? null,
+          deals,
+          totals?.count ?? null,
+          totals?.volumeUsdc ?? null,
+          totals?.gini ?? null,
+          topState,
+          states ? JSON.stringify(states) : null,
+        )
+        .run();
+    } catch (e) {
+      console.warn("[DO] D1 archive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   // ---------- HTTP routing ----------
 
   async fetch(req: Request): Promise<Response> {
@@ -245,6 +318,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/population") return await this.getPopulation();
       if (req.method === "GET" && path === "/market") return await this.getMarket();
       if (req.method === "GET" && path === "/economy") return await this.getEconomy();
+      if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -359,6 +433,16 @@ export class FlyStateDO {
     // 5) Persist.
     await this.persist(market, snapshot);
 
+    // 6) Archive one row to D1 for the long-term history (best-effort; a D1 failure never blocks the tick).
+    await this.archiveTick(
+      population.getTickIndex(),
+      temperature,
+      regime,
+      deals,
+      snapshot,
+      this.lastEconomy?.totals ?? null,
+    );
+
     console.log(
       `[DO] cron tick#${population.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
         `size=${snapshot?.collective.size ?? 0} subTicks=${subTicks} deals=${deals}`,
@@ -434,6 +518,56 @@ export class FlyStateDO {
   private async getEconomy() {
     const economy = await this.ensureEconomy();
     return json(economy.snapshot());
+  }
+
+  /**
+   * Long-term history from D1: one archived row per cron tick (see archiveTick). Query params:
+   *   limit  — max rows (default 500, capped 5000)
+   *   before — exclusive upper bound on tick, for backwards pagination
+   *   order  — "asc" for oldest-first (default "desc", newest-first)
+   * Also returns a cheap aggregate `summary` (row count, first/last tick+ts, lifetime settlements/volume)
+   * so the frontend can show "since launch" stats without pulling the whole series. Graceful when D1 is
+   * unbound: { enabled:false }.
+   */
+  private async getHistory(url: URL): Promise<Response> {
+    const db = this.env.DB;
+    if (!db) return json({ enabled: false, rows: [], summary: null, note: "D1 not bound" });
+    const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get("limit") ?? "500") || 500));
+    const order = url.searchParams.get("order") === "asc" ? "ASC" : "DESC";
+    const beforeRaw = url.searchParams.get("before");
+    const COLS = `tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states`;
+    try {
+      await this.ensureD1Schema(db);
+      const hasBefore = beforeRaw != null && Number.isFinite(Number(beforeRaw));
+      const page = hasBefore
+        ? await db.prepare(`SELECT ${COLS} FROM ticks WHERE tick < ? ORDER BY tick ${order} LIMIT ?`).bind(Number(beforeRaw), limit).all()
+        : await db.prepare(`SELECT ${COLS} FROM ticks ORDER BY tick ${order} LIMIT ?`).bind(limit).all();
+      const agg = await db
+        .prepare(
+          `SELECT COUNT(*) AS n, MIN(tick) AS firstTick, MAX(tick) AS lastTick, MIN(ts) AS firstTs,
+                  MAX(ts) AS lastTs, MAX(settlements) AS settlements, MAX(volume_usdc) AS volumeUsdc FROM ticks`,
+        )
+        .all();
+      const rows = (page.results ?? []).map(parseHistoryRow);
+      const a: any = (agg.results ?? [])[0] ?? {};
+      return json({
+        enabled: true,
+        order,
+        count: rows.length,
+        summary: {
+          ticks: Number(a.n ?? 0),
+          firstTick: a.firstTick ?? null,
+          lastTick: a.lastTick ?? null,
+          firstTs: a.firstTs ?? null,
+          lastTs: a.lastTs ?? null,
+          settlements: a.settlements ?? null,   // lifetime cumulative (monotonic ⇒ MAX)
+          volumeUsdc: a.volumeUsdc ?? null,
+        },
+        rows,
+      });
+    } catch (e) {
+      return json({ enabled: true, error: (e as Error).message, rows: [], summary: null }, 500);
+    }
   }
 
   private async getMarket() {
@@ -572,6 +706,27 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_MARKET);
     return json({ ok: true });
   }
+}
+
+/** Shape a raw D1 `ticks` row into clean camelCase JSON, parsing the behavioural-state histogram. */
+function parseHistoryRow(r: any) {
+  let topStates: Record<string, number> | null = null;
+  if (r?.top_states) {
+    try { topStates = JSON.parse(r.top_states); } catch { topStates = null; }
+  }
+  return {
+    tick: r?.tick ?? null,
+    ts: r?.ts ?? null,
+    temperature: r?.temperature ?? null,
+    regime: r?.regime ?? null,
+    size: r?.size ?? null,
+    deals: r?.deals ?? null,
+    settlements: r?.settlements ?? null,
+    volumeUsdc: r?.volume_usdc ?? null,
+    gini: r?.gini ?? null,
+    topState: r?.top_state ?? null,
+    topStates,
+  };
 }
 
 function json(data: unknown, status = 200): Response {
