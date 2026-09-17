@@ -2,8 +2,10 @@
 
 Every fly in murmur is an **autonomous economic agent** with its own USDC micro-wallet. Its neural drives decide
 *what to buy*, *how strongly*, and *from whom*; buyer and seller then run an **x402** payment flow against each
-other. **No LLM is involved** — the spiking connectome is the only decision-maker, and the economy is a strict
-**one-directional read-out** of it (money never feeds back into the neurons).
+other. **This is live**: the production deployment settles **real USDC on Arc mainnet** via EIP-3009, and every
+settlement carries a real transaction hash you can verify on the Arc explorer. **No LLM is involved** — the spiking
+connectome is the only decision-maker, and the economy is a strict **one-directional read-out** of it (money never
+feeds back into the neurons — an invariant `economy.test.ts` enforces).
 
 Relevant code: [`economy.ts`](../packages/trader-worker/src/economy.ts) (the agent loop),
 [`x402.ts`](../packages/trader-worker/src/x402.ts) (the protocol + facilitators),
@@ -58,27 +60,29 @@ Amounts use 6-decimal **atomic USDC** string math (`usdcToAtomic` / `atomicToUsd
 
 ---
 
-## Default: simulated + keyless (zero funds at risk)
+## Production is LIVE on-chain; simulated is the local-dev fallback
 
-Out of the box `ECONOMY_FACILITATOR = "simulated"`. A **`SimulatedFacilitator`** keeps an internal ledger and mints
-a **deterministic pseudo tx-hash** instead of touching any chain; the settled asset is the zero address
-(`0x0000…0000`) to make it unmistakable that no real deployment is involved.
+The **committed production config runs `ECONOMY_FACILITATOR = "onchain"` with `ECONOMY_SHADOW = "false"`** — real
+USDC moves on Arc mainnet (see the next section). A fresh checkout with **no `ECONOMY_MNEMONIC` secret** instead
+falls back to the keyless **`SimulatedFacilitator`**, which is what you get during local development:
 
-- Starting balance `ECONOMY_INITIAL_BALANCE` = **10 USDC** per agent (simulated).
+- It keeps an internal ledger and mints a **deterministic pseudo tx-hash** instead of touching any chain; the
+  settled asset is the zero address (`0x0000…0000`) to make it unmistakable that no real deployment is involved.
+- Starting balance `ECONOMY_INITIAL_BALANCE` = **6 USDC** per agent (a display mirror).
 - Base good price `ECONOMY_BASE_PRICE` = **0.002 USDC** before neural/market scaling.
 - Money is **conserved** between agents, and a small protocol treasury tops an agent up to
   `ECONOMY_SOLVENCY_FLOOR` (0.5) when it runs nearly dry — so the piece runs forever with no wallet or faucet.
-- `ECONOMY_MAX_DEALS` caps settlements per tick (default = population size) to bound cron CPU.
+- `ECONOMY_MAX_DEALS` caps settlements per tick to bound cron CPU.
 
-In this mode the Worker holds **no private key and signs nothing**.
+In this fallback the Worker holds **no private key and signs nothing**. It exists so anyone can run and study the
+piece at zero risk — it is **not** what is deployed.
 
 ---
 
-## Opt-in: real on-chain settlement (EIP-3009 on Arc)
+## Production: real on-chain settlement (EIP-3009 on Arc) — LIVE
 
-Real settlement is **fully implemented** but **inert** until an operator enables it. When
-`ECONOMY_FACILITATOR = "onchain"` **and** the `ECONOMY_MNEMONIC` secret is present, an **`OnChainFacilitator`**
-drops in **without changing a single line of economy logic**:
+This is the deployed mode. With `ECONOMY_FACILITATOR = "onchain"` **and** the `ECONOMY_MNEMONIC` secret present, an
+**`OnChainFacilitator`** settles real value **without changing a single line of economy logic** versus the fallback:
 
 - **Asset**: Arc's USDC — a Circle **FiatTokenV2 precompile** at `0x3600000000000000000000000000000000000000`
   (verified on mainnet chainId 5042: `decimals()=6`, `name()="USDC"`, `version()="2"`, EIP-3009 present).
@@ -103,7 +107,7 @@ every account via BIP-44:
 > float must first be **distributed** to all 25 derived addresses (24 agents + facilitator). See
 > [`scripts/fund-agents.mjs`](../packages/trader-worker/scripts/fund-agents.mjs) below.
 
-### Safety rails (all inert in simulated mode)
+### Safety rails (LIVE in production; inert only in the keyless fallback)
 
 | Var | Default | Effect |
 |---|---|---|
@@ -128,6 +132,10 @@ value or slow the cadence to amortise gas.
 
 ## Go-live runbook (real money)
 
+> **Status: already live.** The production Worker has completed every step below — `ECONOMY_FACILITATOR="onchain"`,
+> `ECONOMY_SHADOW="false"`, wallets funded, real USDC settling on Arc mainnet. This runbook is kept so the deploy
+> is reproducible and so an operator can re-fund, re-prove in shadow mode, or stand up their own instance.
+
 1. **Generate a fresh mnemonic** (never reuse a funded personal seed) and store it:
    `npx wrangler secret put ECONOMY_MNEMONIC` (optionally `ECONOMY_FACILITATOR_PK`).
 2. **Dry-run the distribution** to see the 25 derived addresses and the plan (no transactions):
@@ -147,5 +155,7 @@ value or slow the cadence to amortise gas.
 5. **Go live**: set `ECONOMY_SHADOW="false"`, redeploy. Real USDC now moves **under the caps + kill switch**.
 6. **Stop instantly**: set `ECONOMY_REAL_SPEND="false"` (or `ECONOMY_FACILITATOR="simulated"`) and redeploy.
 
-> Keys, funding and the `--send` step are **operator-only** actions. The repository and the default deployment stay
-> keyless and simulated; nothing in the codebase can move real funds until an operator explicitly enables it.
+> Keys, funding and the `--send` step are **operator-only** actions and are never committed. The repository ships no
+> secret; the **deployed** Worker does hold one and moves real funds, bounded by the kill switch + caps above. To
+> run keyless, omit `ECONOMY_MNEMONIC` (or set `ECONOMY_FACILITATOR="simulated"`); to halt real spend instantly,
+> set `ECONOMY_REAL_SPEND="false"` and redeploy.

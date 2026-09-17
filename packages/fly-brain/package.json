@@ -9,8 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "node --test --experimental-strip-types src/*.test.ts"
+    "build": "tsc -p tsconfig.build.json",
+    "test": "npx --yes tsx --test src/*.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

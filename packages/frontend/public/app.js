@@ -97,10 +97,23 @@ const atomicToUsdc = (a) => Number(a) / 1e6;         // amounts arrive as atomic
 const GOOD_COL = { signal: [91, 124, 141], momentum: [192, 94, 60], attestation: [139, 154, 134] };
 const ECON_EDGE_MS = 2000;                            // a payment packet lives ~2s
 const MAX_EDGES = 60;                                 // cap: a busy tick can't pile up unbounded arcs
+// Official Arc block explorer (docs.arc.io → mainnet chain 5042). Every real settlement carries a
+// 64-hex txHash, so each ledger line links straight to it — a visitor can prove the money moved on-chain.
+const ARC_EXPLORER = "https://explorer.arc.io";
+const isRealTxHash = (h) => typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h);
+const isRealAddr = (a) => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
+const shortHash = (h) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 let econMode = "simulated";
 let econTotals = null;
 let econBalances = new Map();                         // flyId → balance in USDC (number)
 let payEdges = [];                                    // { fromId, toId, amount, good, valid, t0 }
+// The /population poll (every POLL_MS) is far faster than the on-chain tick (cron, ~60s), so the same
+// `lastTick` batch is re-delivered many times between ticks. Without dedup every settlement would be
+// drawn and logged ~15×. Keyed by real txHash (or tick+parties offline) so one transaction = one entry.
+const seenSettlements = new Set();
+const SEEN_CAP = 400;                                 // bounded: trim oldest half when exceeded
+let econAgents = [];                                  // full roster from /economy: {id, address, balance, paid, earned, deals, sales}
+let walletsOpen = false;                              // right-side "all agent wallets" drawer
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
 let synthVolume = 0, synthDeals = 0;
@@ -552,8 +565,17 @@ function spawnPaymentEdges(list) {
   const now = performance.now();
   for (const s of list) {
     if (!s || s.fromId == null || s.toId == null) continue;
+    // Stable identity for this settlement: the on-chain txHash when real, else tick+parties+amount.
+    const key = isRealTxHash(s.txHash) ? s.txHash : `${s.tick}:${s.fromId}:${s.toId}:${s.good}:${s.amount}`;
+    if (seenSettlements.has(key)) continue;           // already drawn/logged on an earlier poll of this tick
+    seenSettlements.add(key);
     payEdges.push({ fromId: s.fromId, toId: s.toId, amount: atomicToUsdc(s.amount), good: s.good || "signal", valid: !!s.valid, t0: now });
     if (s.valid) pushEconFeed(s);
+  }
+  // Keep the dedup set bounded (Set preserves insertion order → drop the oldest half).
+  if (seenSettlements.size > SEEN_CAP) {
+    const it = seenSettlements.values();
+    for (let i = 0; i < (SEEN_CAP >> 1); i++) { const v = it.next().value; if (v === undefined) break; seenSettlements.delete(v); }
   }
   if (payEdges.length > MAX_EDGES) payEdges.splice(0, payEdges.length - MAX_EDGES);
 }
@@ -566,16 +588,64 @@ function updateEconHud(t) {
   set("econ-agents", t.liveAgents != null ? t.liveAgents : "–");
   set("econ-mean", t.meanBalanceUsdc != null ? t.meanBalanceUsdc.toFixed(2) : "–");
   set("econ-gini", t.gini != null ? t.gini.toFixed(2) : "–");
-  const em = $("econ-mode"); if (em) em.textContent = econMode + " x402";
+  updateEconMode();
+  updateEconFoot();
 }
 
-/** Rolling ledger ticker: the last few settlements, newest on top. */
+/** The mode badge leads with the truth: in live onchain mode it's a pulsing "live · on-chain" pill
+ *  (real USDC is moving on Arc mainnet); otherwise it names the mode plainly. */
+function updateEconMode() {
+  const em = $("econ-mode");
+  if (!em) return;
+  if (econMode === "onchain") {
+    em.innerHTML = '<span class="live-dot"></span>live · on-chain';
+    em.classList.add("is-live");
+  } else {
+    em.textContent = econMode + " x402";
+    em.classList.remove("is-live");
+  }
+}
+
+/** The footer must never lie about whether real money moves. In live onchain mode it says so and
+ *  points at the explorer; in simulated mode it keeps the honest "no real funds move" line. */
+function updateEconFoot() {
+  const f = $("econ-foot");
+  if (!f) return;
+  if (econMode === "onchain") {
+    f.textContent = "live · settled on Arc mainnet · click any hash to verify on-chain";
+    f.classList.add("live");
+  } else {
+    f.textContent = "keyless · simulated — no real funds move";
+    f.classList.remove("live");
+  }
+}
+
+/** Rolling ledger ticker: the last few settlements, newest on top. Each real on-chain
+ *  settlement links to the official Arc explorer so the transfer can be verified. */
 function pushEconFeed(s) {
   const host = $("econ-feed");
   if (!host) return;
   const line = document.createElement("div");
   line.className = "econ-line";
-  line.textContent = `#${s.fromId} → #${s.toId} · ${atomicToUsdc(s.amount).toFixed(4)} · ${s.good}`;
+
+  const txt = document.createElement("span");
+  txt.className = "econ-line-txt";
+  txt.textContent = `#${s.fromId} → #${s.toId} · ${atomicToUsdc(s.amount).toFixed(4)} · ${s.good}`;
+  line.appendChild(txt);
+
+  // Only a genuinely-mined hash is linkable: real 64-hex + valid. Simulated / offline / shadow
+  // settlements (txHash "0x") stay plain text so we never link to something that won't resolve.
+  if (s.valid && isRealTxHash(s.txHash)) {
+    const a = document.createElement("a");
+    a.className = "tx-link";
+    a.href = `${ARC_EXPLORER}/tx/${s.txHash}`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = `Verify on the Arc explorer — ${s.txHash}`;
+    a.textContent = `↗ ${shortHash(s.txHash)}`;
+    line.appendChild(a);
+  }
+
   host.prepend(line);
   while (host.children.length > 8) host.lastChild.remove();
 }
@@ -585,11 +655,108 @@ function updateWallet(ag) {
   if (!ag) return;
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
   set("ins-bal", atomicToUsdc(ag.balance || "0").toFixed(4));
-  set("ins-addr", ag.address || "–");
+  // In live onchain mode the wallet address links to this agent's on-chain activity in the Arc
+  // explorer (works on mobile too, where the ledger feed is hidden). Otherwise it stays plain text.
+  const addrEl = $("ins-addr");
+  if (addrEl) {
+    if (econMode === "onchain" && isRealAddr(ag.address)) {
+      addrEl.textContent = "";
+      const a = document.createElement("a");
+      a.href = `${ARC_EXPLORER}/address/${ag.address}`;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = `View this agent's on-chain activity — ${ag.address}`;
+      a.textContent = ag.address;
+      addrEl.appendChild(a);
+    } else {
+      addrEl.textContent = ag.address || "–";
+    }
+  }
   set("ins-paid", atomicToUsdc(ag.paid || "0").toFixed(4));
   set("ins-earned", atomicToUsdc(ag.earned || "0").toFixed(4));
   set("ins-deals", `${ag.deals || 0} / ${ag.sales || 0}`);
 }
+
+// ================= all-agent wallets drawer (right side) =================
+// Every fly owns its own x402 wallet. This roster lists all of them at once; clicking a row opens
+// that fly's inspector (the existing per-fly view is preserved), and ↗ opens its address in the
+// official Arc explorer so any wallet's on-chain activity can be verified.
+function applyEconAgents(agents) {
+  econAgents = agents;
+  if (walletsOpen) renderWallets();
+}
+
+/** Live: the /economy roster. Offline/pre-deploy: mirror the local synth wallets so the drawer is
+ *  never empty. Both are normalised to {id, address, balance(atomic), paid, earned, deals, sales}. */
+function rosterSource() {
+  if (econAgents.length) return econAgents;
+  return [...synthAgents.entries()].map(([id, a]) => ({
+    id: Number(id), address: a.address, balance: a.balance, paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
+  }));
+}
+
+function renderWallets() {
+  const host = $("wallets-list");
+  if (!host) return;
+  const list = rosterSource().slice().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  const live = econMode === "onchain";
+  host.textContent = "";
+  for (const ag of list) {
+    const row = document.createElement("div");
+    row.className = "wallet-row" + (ag.id === selectedId ? " sel" : "");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `fly ${ag.id} wallet, ${atomicToUsdc(ag.balance || "0").toFixed(4)} USDC`);
+
+    const idEl = document.createElement("span"); idEl.className = "wr-id"; idEl.textContent = "#" + ag.id;
+    const balEl = document.createElement("span"); balEl.className = "wr-bal";
+    balEl.innerHTML = `${atomicToUsdc(ag.balance || "0").toFixed(4)} <em>usdc</em>`;
+    const addrEl = document.createElement("span"); addrEl.className = "wr-addr";
+    addrEl.textContent = isRealAddr(ag.address) ? shortHash(ag.address) : (ag.address || "–");
+    row.append(idEl, balEl, addrEl);
+
+    if (live && isRealAddr(ag.address)) {
+      const link = document.createElement("a");
+      link.className = "wr-link";
+      link.href = `${ARC_EXPLORER}/address/${ag.address}`;
+      link.target = "_blank"; link.rel = "noopener noreferrer";
+      link.title = `Verify this wallet on the Arc explorer — ${ag.address}`;
+      link.textContent = "↗";
+      link.addEventListener("click", (e) => e.stopPropagation());   // open explorer, don't select the fly
+      row.appendChild(link);
+    }
+
+    const open = () => { closeWallets(); select(ag.id); };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    host.appendChild(row);
+  }
+  const sub = $("wallets-sub");
+  if (sub) sub.textContent = live ? `${list.length} wallets · live on Arc mainnet` : `${list.length} wallets · ${econMode}`;
+}
+
+function openWallets() {
+  walletsOpen = true;
+  const w = $("wallets");
+  if (!w) return;
+  w.hidden = false;
+  document.body.classList.add("wallets-open");
+  requestAnimationFrame(() => w.classList.add("open"));
+  renderWallets();
+  // pull a fresh roster immediately so the drawer is never stale on first open
+  getJSON("/economy").then((e) => { if (e && Array.isArray(e.agents)) applyEconAgents(e.agents); }).catch(() => {});
+}
+
+function closeWallets() {
+  walletsOpen = false;
+  document.body.classList.remove("wallets-open");
+  const w = $("wallets");
+  if (!w) return;
+  w.classList.remove("open");
+  setTimeout(() => { if (!walletsOpen) w.hidden = true; }, 420);
+}
+
+function toggleWallets() { if (walletsOpen) closeWallets(); else openWallets(); }
 
 // ================= data layer =================
 // Every request is timeout + abort guarded. When the Worker is undeployed the
@@ -625,6 +792,9 @@ async function poll() {
     if (pop && pop.snapshot) applySnapshot(pop.snapshot);
     if (pop && pop.economy) applyEconomy(pop.economy);
     applyState(st);
+    // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
+    // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
+    getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
   } catch (e) {
     if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
@@ -669,7 +839,9 @@ function applyState(st) {
   if (cfg) $("chain").textContent = `arc ${cfg.isTestnet ? "testnet " : ""}${cfg.chainId}`;
   if (st.economy && st.economy.mode) {
     econMode = st.economy.mode;
-    const em = $("econ-mode"); if (em) em.textContent = econMode + " x402";
+    updateEconMode();
+    updateEconFoot();
+    if (walletsOpen) renderWallets();   // a mode change flips the roster's explorer links + subtitle
   }
 }
 
@@ -713,42 +885,42 @@ function renderDist(states, size) {
 const I18N = {
   en: {
     title: "murmur",
-    body: "A living population of fruit-fly nervous systems, adrift on the arc market. The page reads whole-chain activity, reduces it to a single temperature, and the swarm reacts — collectively and one fly at a time. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in USDC over x402. No LLM. No private key. Just neurons, paying each other.",
+    body: "A living population of fruit-fly nervous systems, adrift on the arc market. The page reads whole-chain activity, reduces it to a single temperature, and the swarm reacts — collectively and one fly at a time. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.",
     points: [
       "the whole scene cools and warms with the market",
-      "flies pay each other in USDC over x402 — decisions come from neurons, not an LLM",
-      "touch a fly to open its live neural bloom, spike raster + agent wallet",
-      "drag anywhere to stir the swarm",
+      "flies pay each other in real USDC on Arc mainnet over x402 — decisions come from neurons, not an LLM",
+      "every settlement is a real on-chain transaction — click any hash to verify it on the official Arc explorer",
+      "touch a fly for its live neural bloom, spike raster + wallet; open the full wallet roster from the economy panel",
     ],
   },
   zh: {
     title: "murmur · 低语",
-    body: "一群由果蝇神经系统构成的活体种群，漂浮在 arc 市场之上。页面读取全链活跃度，将其归结为一个温度，蝇群随之反应——既有群体的整体反应，也有每只果蝇各自的反应。每只果蝇同时是一个自治经济主体：它的 1,080 个神经元连接组决定买什么、向谁买，主体之间用 USDC 通过 x402 彼此结算。没有大模型，没有私钥，只有神经元在互相付款。",
+    body: "一群由果蝇神经系统构成的活体种群，漂浮在 arc 市场之上。页面读取全链活跃度，将其归结为一个温度，蝇群随之反应——既有群体的整体反应，也有每只果蝇各自的反应。每只果蝇同时是一个自治经济主体：它的 1,080 个神经元连接组决定买什么、向谁买，主体之间在 Arc 主网上用真实 USDC 通过 x402 彼此结算——每一笔都是可在链上核实的真实交易。没有大模型，只有神经元在为彼此真实付款。",
     points: [
       "整个画面随市场冷暖而变色",
-      "果蝇之间用 USDC 通过 x402 结算——决策来自神经元，而非大模型",
-      "点触一只果蝇，展开它实时的神经绽放、脉冲栅格与主体钱包",
-      "在任意位置拖拽，搅动整个蝇群",
+      "果蝇之间在 Arc 主网上用真实 USDC 通过 x402 结算——决策来自神经元，而非大模型",
+      "每笔结算都是真实链上交易——点击任意哈希即可在 Arc 官方浏览器核实",
+      "点触一只果蝇，展开它实时的神经绽放、脉冲栅格与钱包；从经济面板可打开全部钱包名册",
     ],
   },
   ja: {
     title: "murmur · ささやき",
-    body: "ショウジョウバエの神経系でできた生きた個体群が、arc の市場の上を漂っています。このページはチェーン全体の活動を読み取り、それをひとつの「温度」に集約し、群はそれに応じて反応します――群全体としても、一匹ずつでも。一匹ずつが同時に自律的な経済主体です：その 1,080 個のニューロンからなるコネクトームが、何を買うか・誰から買うかを決め、主体どうしは USDC で x402 により決済します。LLM はありません。秘密鍵もありません。ただニューロンが互いに支払っているだけです。",
+    body: "ショウジョウバエの神経系でできた生きた個体群が、arc の市場の上を漂っています。このページはチェーン全体の活動を読み取り、それをひとつの「温度」に集約し、群はそれに応じて反応します――群全体としても、一匹ずつでも。一匹ずつが同時に自律的な経済主体です：その 1,080 個のニューロンからなるコネクトームが、何を買うか・誰から買うかを決め、主体どうしは Arc メインネットで本物の USDC を x402 により決済します――すべてチェーン上で検証できる実際の取引です。LLM はありません。ただニューロンが、実際に互いへ支払っているだけです。",
     points: [
       "画面全体が市場の温度で冷たく・暖かく変わる",
-      "ハエどうしは USDC を x402 で支払う――判断は LLM ではなくニューロンから生まれる",
-      "一匹に触れると、リアルタイムの神経ブルーム・スパイクラスター・主体ウォレットが開く",
-      "どこでもドラッグして群をかき回す",
+      "ハエどうしは Arc メインネットで本物の USDC を x402 で支払う――判断は LLM ではなくニューロンから生まれる",
+      "すべての決済は実際のオンチェーン取引――任意のハッシュをクリックして Arc 公式エクスプローラーで検証できる",
+      "一匹に触れるとリアルタイムの神経ブルーム・スパイクラスター・ウォレットが開く；経済パネルから全ウォレット一覧を開ける",
     ],
   },
   ko: {
     title: "murmur · 속삭임",
-    body: "초파리 신경계로 이루어진 살아 있는 개체군이 arc 시장 위를 떠다닙니다. 이 페이지는 전체 체인 활동을 읽어 하나의 '온도'로 환산하고, 군집은 그에 반응합니다 — 군집 전체로서, 그리고 한 마리씩. 각 초파리는 동시에 자율 경제 주체입니다: 1,080개 뉴런 연결체가 무엇을, 누구에게서 살지 결정하고, 주체들은 USDC로 x402를 통해 서로 정산합니다. LLM도, 개인키도 없습니다. 그저 뉴런이 서로 지불할 뿐입니다.",
+    body: "초파리 신경계로 이루어진 살아 있는 개체군이 arc 시장 위를 떠다닙니다. 이 페이지는 전체 체인 활동을 읽어 하나의 '온도'로 환산하고, 군집은 그에 반응합니다 — 군집 전체로서, 그리고 한 마리씩. 각 초파리는 동시에 자율 경제 주체입니다: 1,080개 뉴런 연결체가 무엇을, 누구에게서 살지 결정하고, 주체들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 정산합니다 — 모든 결제는 체인에서 검증할 수 있는 실제 거래입니다. LLM은 없습니다. 그저 뉴런이 실제로 서로 지불할 뿐입니다.",
     points: [
       "화면 전체가 시장 온도에 따라 차갑고 따뜻하게 변합니다",
-      "초파리들은 USDC로 x402를 통해 서로 지불합니다 — 결정은 LLM이 아닌 뉴런에서 나옵니다",
-      "한 마리를 누르면 실시간 신경 블룸·스파이크 래스터·주체 지갑이 열립니다",
-      "아무 곳이나 끌어 군집을 휘저으세요",
+      "초파리들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 지불합니다 — 결정은 LLM이 아닌 뉴런에서 나옵니다",
+      "모든 정산은 실제 온체인 거래입니다 — 아무 해시나 클릭해 Arc 공식 익스플로러에서 검증하세요",
+      "한 마리를 누르면 실시간 신경 블룸·스파이크 래스터·지갑이 열립니다; 경제 패널에서 전체 지갑 목록을 열 수 있습니다",
     ],
   },
 };
@@ -783,6 +955,7 @@ function bindLang() {
 const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["cohesion", "cohesion", false], ["wingbeat", "wingbeat", false], ["rest", "rest", false]];
 
 function select(id) {
+  if (walletsOpen) closeWallets();   // selecting a fly (from canvas or roster) hands the right side to the inspector
   selectedId = id;
   const ins = $("inspector");
   ins.hidden = false;
@@ -1066,7 +1239,10 @@ function spawnRippleAt(x, y, color) {
 // ================= misc UI bindings =================
 function bindUI() {
   $("ins-close").addEventListener("click", deselect);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") deselect(); });
+  const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
+  const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
+  // Escape closes the topmost overlay first: the wallets drawer, then the fly inspector.
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (walletsOpen) closeWallets(); else deselect(); } });
 }
 
 // ================= offline synthetic pulse =================

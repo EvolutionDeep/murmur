@@ -21,11 +21,12 @@
 
 import {
   createPublicClient,
+  createTransport,
   createWalletClient,
   defineChain,
-  fallback,
   http,
   type Chain,
+  type EIP1193RequestFn,
   type LocalAccount,
   type PublicClient,
   type Transport,
@@ -62,40 +63,76 @@ const CHAIN_BY_ID: Record<number, Chain> = {
   [arcMainnet.id]: arcMainnet,
 };
 
-// Public Arc RPCs tried after cfg.rpcUrl. Only endpoints we have actually reached are listed;
-// append verified third-party providers (Alchemy / dRPC / QuickNode / Blockdaemon) here or via
-// the RPC_URL env var when available. Arc mainnet endpoints are permissioned during the chain's
-// private phase, so testnet is the default runtime for now.
 const RPC_FALLBACKS_TESTNET = ["https://rpc.testnet.arc.io"];
-const RPC_FALLBACKS_MAINNET = ["https://rpc.mainnet.arc.io"];
+const RPC_FALLBACKS_MAINNET = [
+  "https://rpc.drpc.mainnet.arc.io",
+  "https://rpc.quicknode.mainnet.arc.io",
+  "https://rpc.blockdaemon.mainnet.arc.io",
+  "https://rpc.mainnet.arc.io",
+];
+const MAX_PROVIDER_TIMEOUT_MS = 6_000;
+let nextRpcStart = 0;
 
 export function chainOf(cfg: RuntimeConfig): Chain {
   return CHAIN_BY_ID[cfg.chainId] ?? (cfg.isTestnet ? arcTestnet : arcMainnet);
 }
 
-/** Build a fallback transport: cfg.rpcUrl first (deduped), then the known public Arc RPCs. */
+function rotatingTransport(transports: Transport[]): Transport {
+  return ({ chain, pollingInterval, retryCount, timeout, ...rest }) => {
+    const clients = transports.map((transport) =>
+      transport({ chain, pollingInterval, retryCount: 0, timeout, ...rest }),
+    );
+    const request: EIP1193RequestFn = async (args) => {
+      const start = nextRpcStart++ % clients.length;
+      let lastError: unknown;
+
+      for (let offset = 0; offset < clients.length; offset++) {
+        const client = clients[(start + offset) % clients.length];
+        try {
+          return await (client.request as EIP1193RequestFn)(args);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError;
+    };
+
+    return createTransport({
+      key: "arc-rpc-rotation",
+      name: "Arc RPC rotation",
+      type: "arc-rpc-rotation",
+      retryCount: 0,
+      request,
+    });
+  };
+}
+
+/** Rotate each request through the configured pool, then fail over through every other endpoint. */
 function buildTransport(cfg: RuntimeConfig, timeout: number): Transport {
-  const pool = cfg.isTestnet ? RPC_FALLBACKS_TESTNET : RPC_FALLBACKS_MAINNET;
-  const urls = [cfg.rpcUrl, ...pool].filter((u, i, a) => !!u && a.indexOf(u) === i);
-  const transports = urls.map((u) =>
-    http(u, {
-      timeout,
-      retryCount: 2,
-      // Block data must never be served stale from Cloudflare's edge cache — the whole point is
-      // to observe the chain's LIVE activity.
+  const publicPool = cfg.isTestnet ? RPC_FALLBACKS_TESTNET : RPC_FALLBACKS_MAINNET;
+  const urls = [
+    ...(cfg.isTestnet || !cfg.alchemyArcRpcUrl ? [] : [cfg.alchemyArcRpcUrl]),
+    cfg.rpcUrl,
+    ...publicPool,
+  ].filter((url, index, all) => !!url && all.indexOf(url) === index);
+  const providerTimeout = Math.min(timeout, MAX_PROVIDER_TIMEOUT_MS);
+  const transports = urls.map((url) =>
+    http(url, {
+      timeout: providerTimeout,
+      retryCount: 0,
       fetchOptions: { cf: { cacheTtl: 0 } } as any,
     }),
   );
-  return transports.length === 1
-    ? transports[0]
-    : fallback(transports, { rank: false, retryDelay: 200 });
+
+  return transports.length === 1 ? transports[0] : rotatingTransport(transports);
 }
 
 let _publicCache: { key: string; client: PublicClient } | null = null;
 
 /** Cached read-only public client for the configured Arc network. */
 export function publicClient(cfg: RuntimeConfig): PublicClient {
-  const key = `${cfg.chainId}|${cfg.rpcUrl}`;
+  const key = `${cfg.chainId}|${cfg.rpcUrl}|${cfg.alchemyArcRpcUrl ? "private" : "public"}`;
   if (_publicCache && _publicCache.key === key) return _publicCache.client as PublicClient;
   const client = createPublicClient({
     chain: chainOf(cfg),

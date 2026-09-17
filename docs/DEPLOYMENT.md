@@ -5,7 +5,10 @@ murmur deploys to two Cloudflare targets from one monorepo:
 - **Worker** `murmur` — the API + cron + Durable Object, on the custom domain **`api.muros.live`**.
 - **Pages** project `murmur` — the static frontend, alias **`murmur-4sx.pages.dev`**.
 
-The default deployment is **simulated and keyless**: it needs **no secrets** and moves **no funds**.
+The **committed production config is LIVE**: it settles **real USDC on Arc mainnet** (`ECONOMY_FACILITATOR="onchain"`,
+`ECONOMY_SHADOW="false"`), so a real deployment **requires secrets** and **moves real funds**. A fresh checkout with
+**no `ECONOMY_MNEMONIC`** transparently falls back to the keyless simulated economy (no secrets, no funds) — that
+fallback is for local development, not production.
 
 ---
 
@@ -14,7 +17,8 @@ The default deployment is **simulated and keyless**: it needs **no secrets** and
 - **Node.js ≥ 20** and npm (the repo uses npm workspaces).
 - A **Cloudflare account** with the `muros.live` zone (for the Worker custom domain) — or change the route/project
   names in `wrangler.toml` / the frontend `deploy` script to your own.
-- Arc public RPC (`https://rpc.mainnet.arc.io`) reachable from the Worker — no API key required (read-only).
+- Arc RPC reachable from the Worker. Public `https://rpc.mainnet.arc.io` serves the **reads** (market temperature);
+  the production settlement relay also **writes**, so set the `ALCHEMY_ARC_RPC_URL` secret (see below).
 
 ```bash
 npm install
@@ -78,7 +82,7 @@ curl https://api.muros.live/health
 # {"ok":true,"name":"murmur","chain":"arc", ...}
 
 curl https://api.muros.live/economy
-# → facilitator mode "simulated", asset 0x0000…0000, liveAgents 24
+# → facilitator mode "onchain", asset 0x3600…0000 (Arc USDC), liveAgents 24, real settlement txHashes
 ```
 
 > **Dev-machine note:** some networks DNS-sinkhole `*.workers.dev`. Use the custom domain (`api.muros.live`) or
@@ -96,14 +100,16 @@ curl https://api.muros.live/economy
 
 ---
 
-## Secrets (real money only)
+## Secrets (required for the LIVE production deployment)
 
-The default simulated deployment uses **no secrets**. To opt into real EIP-3009 settlement, set them out-of-band
-(never commit them):
+The committed config settles **real USDC**, so the deployed Worker **needs** these secrets (set out-of-band, never
+committed). Omit them and the Worker falls back to the keyless simulated economy — fine for local dev, **not** for
+production:
 
 ```bash
 npx wrangler secret put ECONOMY_MNEMONIC          # one BIP-39 seed → all agent wallets + gas wallet
-npx wrangler secret put ECONOMY_FACILITATOR_PK    # optional dedicated gas wallet key
+npx wrangler secret put ECONOMY_FACILITATOR_PK    # optional dedicated gas-wallet key (else derived from the seed)
+npx wrangler secret put ALCHEMY_ARC_RPC_URL       # private Arc mainnet endpoint used to relay the real transfers
 ```
 
 For local dev, copy [`packages/trader-worker/.dev.vars.example`](../packages/trader-worker/.dev.vars.example) to
@@ -126,13 +132,14 @@ All non-sensitive config is in `wrangler.toml` `[vars]`, with authoritative defa
 
 ```bash
 npm run typecheck     # tsc --noEmit for fly-brain + trader-worker
+npm test              # 36 unit tests (connectome · LIF · motor decoder · economy)
 npm run smoke         # neural smoke test (no chain, no keys)
 npm run build         # workspace builds (where present)
 ```
 
 CI runs these on every push/PR — see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
-**Rollback / kill switch** (real-money mode only):
+**Rollback / kill switch** (the production deployment moves real money):
 
 - Halt all real settlement instantly: set `ECONOMY_REAL_SPEND="false"` → `npm run deploy:worker`.
 - Revert to the keyless simulated economy: set `ECONOMY_FACILITATOR="simulated"` → redeploy.

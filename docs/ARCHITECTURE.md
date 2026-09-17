@@ -2,7 +2,9 @@
 
 murmur is a monorepo (npm workspaces, Node ≥ 20) that turns whole-chain activity on **Arc** into a
 **market temperature**, drives a population of **LIF-neuron fruit flies** with it, and lets those flies
-settle with each other in **USDC** over **x402**. It runs entirely on the Cloudflare edge.
+settle with each other in **real USDC** over **x402**. It runs entirely on the Cloudflare edge, and the
+production deployment is **LIVE** — it broadcasts genuine EIP-3009 transfers on Arc mainnet, each with a
+transaction hash you can verify on the Arc explorer.
 
 ```
 packages/
@@ -25,12 +27,12 @@ Durable Object  FlyStateDO  (src/state.ts, singleton id "fly-main", SQLite stora
   ├── MarketMeter   (src/market.ts)     Arc blocks → temperature + regime
   ├── Population     (src/population.ts) 24 × FlyBrain (@fly/fly-brain)
   ├── AgentEconomy   (src/economy.ts)    drives → intent → x402 settlement
-  │     └── x402     (src/x402.ts)       SimulatedFacilitator (default) | OnChainFacilitator (opt-in)
+  │     └── x402     (src/x402.ts)       OnChainFacilitator (LIVE, production) | SimulatedFacilitator (keyless dev)
   │           └── keys (src/keys.ts)     HD wallet derivation — ONLY used onchain
   └── stimulus       (src/stimulus.ts)   visitor "poke the swarm", rate-limited
             │
             ▼  REST/JSON  (api.muros.live)
-Frontend · Cloudflare Pages (www.muros.live) — generative canvas + per-fly inspector
+Frontend · Cloudflare Pages (www.muros.live) — generative canvas + per-fly inspector + all-agent wallet roster
 ```
 
 **Why a Durable Object.** The whole population, the market baseline and the economy ledger must share one
@@ -68,9 +70,11 @@ races. Brains are persisted via `serialize()/deserialize()` so the swarm keeps i
 
 ---
 
-## Chain access is read-only by default
+## Chain access — read for temperature, write for settlement (LIVE)
 
-`chain.ts` builds a viem `publicClient` (with fallback transport) that only **reads** Arc. Arc specifics baked in:
+`chain.ts` builds a viem `publicClient` (with fallback transport) that **reads** Arc for the market temperature,
+and — in the production onchain economy — a `walletClient` that **writes** real EIP-3009 USDC transfers. Arc
+specifics baked in:
 
 - **Native gas token is USDC.** The *native* layer (`eth_getBalance`, `msg.value`) uses **18 decimals**, while the
   *ERC-20* USDC contract uses **6** (offset 12). Never add a native amount to an ERC-20 amount.
@@ -79,8 +83,10 @@ races. Brains are persisted via `serialize()/deserialize()` so the swarm keeps i
 - **Sub-second blocks with repeated timestamps** → always window by block **number**, never by timestamp.
 - **Deterministic finality** → no reorg handling.
 
-A `walletClient` exists at the bottom of `chain.ts` but is **only** built by the opt-in onchain x402 facilitator;
-the default simulated economy never constructs it. See [AGENT-ECONOMY.md](./AGENT-ECONOMY.md).
+The `walletClient` at the bottom of `chain.ts` is built by the **`OnChainFacilitator`**, which is what the
+production deployment runs (`ECONOMY_FACILITATOR="onchain"`, `ECONOMY_SHADOW="false"`): each buyer signs an
+EIP-3009 `transferWithAuthorization` and the facilitator relays it on-chain. The keyless `SimulatedFacilitator`
+(a fresh checkout with no `ECONOMY_MNEMONIC`) never constructs it. See [AGENT-ECONOMY.md](./AGENT-ECONOMY.md).
 
 ---
 
@@ -100,7 +106,7 @@ Served by the DO (the Worker adds CORS and the `/health` index). All responses a
 | `GET` | `/stimuli` | Recent visitor-stimulus history |
 | `POST` | `/stimulus` | Poke the swarm (`food/threat/light/dark`, walletless, `clientId` + cooldown) |
 | `POST` | `/tick` | Debug: run one cron tick now |
-| `POST` | `/reset` | Debug: fresh founding population + re-funded simulated wallets |
+| `POST` | `/reset` | Debug: fresh founding population + re-founded agent wallets |
 
 ---
 
@@ -109,6 +115,61 @@ Served by the DO (the Worker adds CORS and the `/health` index). All responses a
 A dependency-free static site (`packages/frontend/public`, deployed to Cloudflare Pages). A single Canvas 2D loop
 renders the swarm; the whole palette warms/cools with the market temperature. It polls `/population` (and
 `/economy`) and, when a fly is selected, reads `/snapshot` at a slow guarded cadence to draw that fly's **neural
-bloom** and **spike raster** and show its x402 wallet. The render loop is self-healing and adaptively sheds its
+bloom** and **spike raster** and show its own USDC wallet. An **all-agent wallet roster** (the right-side drawer)
+lists every fly's on-chain address and balance and opens any one of them, and the live settlement ledger links
+each real transaction hash straight to the Arc explorer. The render loop is self-healing and adaptively sheds its
 heaviest layers under frame-budget pressure, and pointer input is click-storm throttled, so rapid interaction can
 never stall the tab. If the Worker is unreachable, an offline circuit-breaker runs the piece purely locally.
+
+---
+
+## Testing
+
+Four CI gates run on every push/PR, all keyless and chain-free: `typecheck → test → build → smoke`.
+
+```bash
+npm test          # 36 unit tests across both packages (node:test, run via tsx)
+npm run smoke     # end-to-end neural smoke: grow brains, spike, decode, settle
+```
+
+| Suite | Package | What it pins down |
+|---|---|---|
+| `connectome.test.ts` | fly-brain | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the gustatory→proboscis reflex, and deterministic-per-seed / distinct-across-seeds wiring. |
+| `lif.test.ts` | fly-brain | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
+| `motor-decoder.test.ts` | fly-brain | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
+| `economy.test.ts` | trader-worker | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, money conservation, the solvency floor, full determinism, and the per-agent wallet roster. |
+
+Tests run under [`tsx`](https://github.com/privatenumber/tsx) because Node's native type-stripping does not resolve
+the packages' `.js`→`.ts` import specifiers. They are excluded from the published builds (`tsconfig.build.json` /
+the worker's `exclude`) so no test file ever ships to `dist`. There is **no live-chain or funded-wallet test** on
+purpose: CI must stay keyless and reproducible, so real settlement is proven out-of-band in `ECONOMY_SHADOW="true"`
+against live chain state (see the go-live runbook in [AGENT-ECONOMY.md](./AGENT-ECONOMY.md)).
+
+---
+
+## Design boundaries (honest scale & scope)
+
+murmur is a **deliberately small, single-instance, artwork-grade system**, not a horizontally-scalable agent
+runtime. The constraints below are choices, documented so nobody mistakes them for oversights:
+
+- **One Durable Object singleton (`fly-main`), one cron tick per minute.** The entire population, market baseline
+  and economy ledger share a single single-threaded state, so there are never races. That is the right shape for a
+  swarm of 24–256 flies that must stay globally consistent, but it is **exhibition scale by design**: it does not
+  shard and is not meant to run thousands of independent agents. Minute-granularity cron is Cloudflare's smallest,
+  so the piece breathes once a minute — that cadence *is* the artwork.
+- **The economy is a one-directional read-out of the neural layer — money never feeds back into the connectome.**
+  A fly's spikes decide what it buys; its balance never changes how it spikes. This keeps the biology honest (the
+  connectome is driven by sensory input and internal dynamics alone, not by a wallet) and the economics
+  auditable. `economy.test.ts` **enforces** this as an invariant (a frozen neural input must survive a settlement
+  round bit-for-bit). It is not a missing feedback loop.
+- **The frontend is a dependency-free vanilla-JS Canvas 2D page — intentionally.** No framework, no build step, no
+  virtual DOM: one self-healing render loop that polls the Worker and adaptively sheds its heaviest layers under
+  frame-budget pressure. It is a *viewer* of the live system (swarm, per-fly inspector, all-agent wallet roster,
+  explorer-linked tx hashes), not an interactive data app, and its offline mode is graceful degradation, never the
+  source of truth.
+- **The neural core is a hand-written TypeScript LIF network**, a ~130× downsample of FlyWire — enough to exhibit
+  real winner-take-all, adaptation and reflex dynamics on the edge, not a claim to reproduce a full fly brain. An
+  optional WASM backend (`wasm-flyai`) can be swapped in; the default `ts-lif` has no native dependency.
+
+Scaling any of these — sharding the DO, closing the economic→neural loop, a framework frontend, a full-resolution
+connectome — would change what the piece *is*. They are out of scope on purpose.

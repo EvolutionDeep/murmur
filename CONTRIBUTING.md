@@ -4,8 +4,8 @@ Thanks for your interest! murmur is an experimental art & research piece: a popu
 systems that feel the Arc market and settle with each other in USDC over x402. Contributions of any size are
 welcome.
 
-Please also read our [Code of Conduct](./CODE_OF_CONDUCT.md) and, because this project can move real funds when an
-operator enables it, [SECURITY.md](./SECURITY.md).
+Please also read our [Code of Conduct](./CODE_OF_CONDUCT.md) and — because the production deployment moves **real
+funds** on Arc — [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -13,12 +13,14 @@ operator enables it, [SECURITY.md](./SECURITY.md).
 
 ```bash
 npm install                 # Node >= 20, npm workspaces
+npm test                    # 36 unit tests — connectome · LIF · motor decoder · economy (no chain, no keys)
 npm run smoke               # neural smoke test — no chain, no keys
 npm run dev:worker          # local Worker → http://localhost:8787/health
 ```
 
-The default configuration is **simulated and keyless**: you do not need any secret, wallet or funded account to
-develop, run tests, or deploy the piece. See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
+**Local development is simulated and keyless**: you need no secret, wallet or funded account to run, test, or study
+the piece. (The committed *production* config is LIVE and moves real USDC — see [SECURITY.md](./SECURITY.md) and
+[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).)
 
 ---
 
@@ -43,6 +45,7 @@ develop, run tests, or deploy the piece. See [docs/DEPLOYMENT.md](./docs/DEPLOYM
 
    ```bash
    npm run typecheck     # tsc --noEmit for fly-brain + trader-worker (must be clean)
+   npm test              # 36 unit tests (must pass)
    npm run smoke         # neural smoke test (must pass)
    npm run build         # workspace builds where present
    ```
@@ -57,8 +60,9 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `f
 
 - **Never commit secrets.** No mnemonics, private keys, `.dev.vars`, or funded addresses. Secrets are set with
   `wrangler secret put` and stay out of the repo. `.gitignore` already blocks the obvious paths — do not weaken it.
-- **Never enable real spending in a PR.** `ECONOMY_FACILITATOR` stays `"simulated"` and `ECONOMY_REAL_SPEND` stays
-  its default in committed config. Real-money go-live is an operator action, not a code change (see
+- **Never weaken the real-money rails in a PR.** Production already settles real USDC, so the kill switch
+  (`ECONOMY_REAL_SPEND`), the shadow flag (`ECONOMY_SHADOW`) and the global / per-agent / per-deal caps stay at
+  their committed values. Raising a cap or changing secret handling needs explicit operator review (see
   [docs/AGENT-ECONOMY.md](./docs/AGENT-ECONOMY.md#go-live-runbook-real-money)).
 - **Don't break the safety rails.** The kill switch, shadow mode, and the global / per-agent / per-deal caps are
   load-bearing. Any change touching `x402.ts`, `keys.ts`, or the economy's onchain path needs an explicit note in

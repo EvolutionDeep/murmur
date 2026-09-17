@@ -13,7 +13,8 @@ export interface Env {
 
   // --- Arc chain ---
   CHAIN_ID: string;                 // "5042002" (Arc testnet, default) | "5042" (Arc mainnet)
-  RPC_URL: string;                  // default https://rpc.testnet.arc.io (mainnet endpoints are permissioned)
+  RPC_URL: string;                  // public primary RPC URL
+  ALCHEMY_ARC_RPC_URL?: string;     // SECRET: private Alchemy Arc mainnet RPC URL
 
   // --- Market-temperature sampling (Arc whole-chain activity) ---
   MARKET_SAMPLE_BLOCKS?: string;    // recent blocks sampled per cron for tx/gas throughput (default 16)
@@ -71,6 +72,7 @@ export interface RuntimeConfig {
   // Chain
   chainId: number;
   rpcUrl: string;
+  alchemyArcRpcUrl: string | null;
   isTestnet: boolean;
 
   // Market temperature
@@ -156,6 +158,7 @@ export function loadConfig(env: Env): RuntimeConfig {
     rpcUrl:
       env.RPC_URL ||
       (isTestnet ? "https://rpc.testnet.arc.io" : "https://rpc.mainnet.arc.io"),
+    alchemyArcRpcUrl: (env.ALCHEMY_ARC_RPC_URL ?? "").trim() || null,
     isTestnet,
 
     marketSampleBlocks: clampInt(Number(env.MARKET_SAMPLE_BLOCKS || "16"), 2, 128),

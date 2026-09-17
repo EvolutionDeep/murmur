@@ -1,9 +1,9 @@
 # Security Policy
 
-murmur runs **simulated and keyless by default** — it holds no private key, signs nothing, and moves no funds.
-Real on-chain settlement (EIP-3009 USDC transfers on Arc) is **fully implemented but inert** until an operator
-explicitly enables it with secrets and funded wallets. Because that opt-in path can move real money, we take
-security seriously.
+murmur's **production deployment is LIVE**: the deployed Worker holds an HD-wallet mnemonic and settles **real
+USDC on Arc mainnet** (EIP-3009 `transferWithAuthorization`), bounded by a kill switch and per-day / per-deal caps.
+The **repository itself ships no secret** — a fresh checkout with no `ECONOMY_MNEMONIC` runs the keyless
+`SimulatedFacilitator` and moves nothing. Because the deployed system moves real money, we take security seriously.
 
 ---
 
@@ -26,7 +26,7 @@ initial response within **7 days**, then work toward a fix and (if you want) cre
 
 The following are in scope and especially important:
 
-- Anything that could cause **real funds to move** without the operator's explicit opt-in, or that bypasses the
+- Anything that could cause **real funds to move** beyond the operator's configured rails, or that bypasses the
   safety rails (kill switch `ECONOMY_REAL_SPEND`, `ECONOMY_SHADOW`, global / per-agent / per-deal caps) in
   [`x402.ts`](./packages/trader-worker/src/x402.ts) / [`economy.ts`](./packages/trader-worker/src/economy.ts).
 - **Key/secret handling** in [`keys.ts`](./packages/trader-worker/src/keys.ts) (HD derivation, EIP-3009 signing,
@@ -46,7 +46,7 @@ already committed a secret to the repo (that is a deployment mistake, not a code
 
 | Concern | Safeguard |
 |---|---|
-| Accidental real spend | `ECONOMY_FACILITATOR="simulated"` by default; the onchain facilitator is only constructed when a mnemonic secret is present. |
+| Accidental real spend | The onchain facilitator is constructed **only** when a mnemonic secret is present; without it the Worker runs the keyless simulated ledger. Every real transfer is bounded by the caps + kill switch below. |
 | Runaway loss | Global daily cap (`ECONOMY_DAILY_CAP` 20), per-agent daily cap (2), per-deal cap (`ECONOMY_MAX_DEAL` 0.05). |
 | Need to stop fast | Kill switch `ECONOMY_REAL_SPEND="false"` → redeploy halts all real settlement. |
 | Prove before risking | `ECONOMY_SHADOW="true"` signs + `eth_call`-simulates every transfer but never broadcasts. |

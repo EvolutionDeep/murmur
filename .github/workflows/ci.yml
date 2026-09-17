@@ -1,8 +1,9 @@
 name: CI
 
-# Runs the three project gates — typecheck, build, and the neural smoke test —
-# on every push to main and every pull request. All three are keyless and
-# chain-free, so CI never needs a secret or a funded wallet.
+# Runs the four project gates — typecheck, unit tests, build, and the neural smoke
+# test — on every push to main and every pull request. All four are keyless and
+# chain-free (the unit tests exercise the connectome, LIF dynamics, motor decoding
+# and the simulated economy in-process), so CI never needs a secret or a funded wallet.
 on:
   push:
     branches: [main]
@@ -19,7 +20,7 @@ concurrency:
 
 jobs:
   verify:
-    name: typecheck · build · neural smoke
+    name: typecheck · test · build · neural smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,6 +37,9 @@ jobs:
 
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
+
+      - name: Unit tests (connectome · LIF · motor decoder · economy)
+        run: npm test
 
       - name: Build (@fly/fly-brain → dist)
         run: npm run build

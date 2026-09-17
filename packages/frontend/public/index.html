@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#f2eee6" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>murmur — a population of neural agents settling on arc</title>
-  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 1,080-neuron connectome decides what to buy and from whom, settling with its peers in USDC over x402 — no LLM, no private key, keyless & simulated." />
+  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 1,080-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=7" />
+  <link rel="stylesheet" href="./styles.css?v=10" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -30,6 +30,11 @@
       <span class="name">murmur</span>
     </div>
     <div class="topmeta">
+      <a class="x-link" href="https://x.com/murmur_arc" target="_blank" rel="noopener noreferrer" aria-label="murmur on X (@murmur_arc)">
+        <svg class="x-glyph" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        <span class="x-handle">murmur_arc</span>
+      </a>
+      <span class="sep">/</span>
       <span class="link-dot" id="link-dot"></span>
       <span id="chain">arc</span>
       <span class="sep">/</span>
@@ -41,7 +46,7 @@
   <section class="panel panel-econ">
     <div class="panel-title">
       <span>agent economy</span>
-      <span class="econ-mode" id="econ-mode">simulated x402</span>
+      <span class="econ-mode" id="econ-mode">x402</span>
     </div>
     <div class="econ-hero">
       <span class="econ-vol" id="econ-vol">0.000</span>
@@ -54,7 +59,8 @@
       <div><dt>gini</dt><dd id="econ-gini">–</dd></div>
     </dl>
     <div class="econ-feed" id="econ-feed" aria-live="off"></div>
-    <div class="econ-foot">keyless · simulated — no real funds move</div>
+    <button class="wallets-btn" id="wallets-btn" type="button">all agent wallets →</button>
+    <div class="econ-foot live" id="econ-foot">live · settled on Arc mainnet · click any hash to verify on-chain</div>
   </section>
 
   <!-- ============ market temperature (bottom-left) ============ -->
@@ -97,12 +103,12 @@
       </div>
     </div>
     <h2 class="about-title" id="about-title">murmur</h2>
-    <p class="about-body" id="about-body">A living population of fruit-fly nervous systems, adrift on the arc market. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in USDC over x402. No LLM. No private key. Just neurons, paying each other.</p>
+    <p class="about-body" id="about-body">A living population of fruit-fly nervous systems, adrift on the arc market. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.</p>
     <ul class="about-points" id="about-points">
       <li>the whole scene cools and warms with the market</li>
-      <li>flies pay each other in USDC over x402 — decisions come from neurons, not an LLM</li>
-      <li>touch a fly to open its live neural bloom, spike raster + agent wallet</li>
-      <li>drag anywhere to stir the swarm</li>
+      <li>flies pay each other in real USDC on Arc mainnet over x402 — decisions come from neurons, not an LLM</li>
+      <li>every settlement is a real on-chain transaction — click any hash to verify it on the official Arc explorer</li>
+      <li>touch a fly for its live neural bloom, spike raster + wallet; open the full wallet roster from the economy panel</li>
     </ul>
   </section>
 
@@ -139,8 +145,18 @@
     <div class="ins-foot"><span id="ins-ncount">–</span> neurons · t=<span id="ins-t">–</span>ms</div>
   </aside>
 
+  <!-- ============ all agent wallets (right drawer) — every fly owns its own x402 wallet ============ -->
+  <aside class="wallets" id="wallets" hidden aria-label="all fly agent wallets">
+    <div class="wallets-head">
+      <span class="wallets-title">agent wallets</span>
+      <span class="wallets-sub" id="wallets-sub">–</span>
+      <button class="wallets-close" id="wallets-close" aria-label="close">×</button>
+    </div>
+    <div class="wallets-list" id="wallets-list"></div>
+  </aside>
+
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=7" type="module"></script>
+  <script src="./app.js?v=10" type="module"></script>
 </body>
 </html>
