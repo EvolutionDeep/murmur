@@ -133,6 +133,21 @@ let walletsOpen = false;                              // right-side "all agent w
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
 let synthVolume = 0, synthDeals = 0;
 
+// ================= long-term history (D1-backed) =================
+// The Worker archives one row per cron to D1 (temperature, regime, deals, cumulative settlements/volume,
+// gini, behavioural histogram). We poll /history slowly (the archive only advances ~once a minute) and use
+// it to (a) back the temperature ribbon so it survives reloads and reaches back toward launch, and (b) drive
+// the "swarm history" drawer's multi-series charts + since-launch summary. All best-effort: no history ⇒ the
+// scene is unchanged.
+let histRows = [];            // ascending by tick: {tick, ts, temperature, regime, deals, settlements, volumeUsdc, gini, topState, topStates}
+let histSummary = null;       // {ticks, firstTick, lastTick, firstTs, lastTs, settlements, volumeUsdc}
+let histEnabled = false;      // false until /history reports a bound D1
+let historyOpen = false;      // right-side "swarm history" drawer
+const HIST_POLL_MS = 30000;   // the archive advances ~1×/min, so a 30s poll is plenty
+// Client-side netting surfacing (this session): how many per-trade placeholders we saw fold into nets, and
+// how many netted settlements actually reached the chain — a live read-out of the gas-amortisation upgrade.
+const netting = { folded: 0, settled: 0 };
+
 // flow field + ambient ink motes
 let flowTime = 0;
 let motes = [];
@@ -141,10 +156,12 @@ let motes = [];
 const pointer = { x: 0, y: 0, inside: false, down: false };
 let lastClickAt = 0;             // click-storm guard: cap interaction-driven work
 
-// temperature history ribbon
-const tempHistory = [];
-const HIST_SAMPLE_MS = 500;
-const HIST_WINDOW = 150000;      // 2.5 min
+// temperature history ribbon — now D1-backed. The live in-memory tail is merged with the archived per-cron
+// series on a shared wall-clock axis, so the ribbon survives a reload and reaches back ~20 min (toward launch)
+// instead of only showing the seconds since this tab opened. Without history it behaves as the old live view.
+const tempHistory = [];              // live tail: {t: Date.now() ms, T: temperature}
+const HIST_SAMPLE_MS = 1000;
+const RIBBON_WINDOW = 20 * 60 * 1000;  // 20 min visible horizon
 let lastHistSample = 0;
 
 // (neural-feed state lives with the feed itself, further down)
@@ -445,14 +462,31 @@ function drawFly(f, acc, alpha, now) {
 // ================= temperature history ribbon =================
 const thCanvas = $("temp-history");
 const thCtx = thCanvas ? thCanvas.getContext("2d") : null;
-function sampleHistory(now) {
-  if (now - lastHistSample < HIST_SAMPLE_MS) return;
-  lastHistSample = now;
-  tempHistory.push({ t: now, T: tempSmoothed });
-  while (tempHistory.length && now - tempHistory[0].t > HIST_WINDOW) tempHistory.shift();
+function sampleHistory() {
+  const wall = Date.now();
+  if (wall - lastHistSample < HIST_SAMPLE_MS) return;
+  lastHistSample = wall;
+  tempHistory.push({ t: wall, T: tempSmoothed });
+  while (tempHistory.length && wall - tempHistory[0].t > RIBBON_WINDOW) tempHistory.shift();
 }
-function drawTempHistory(now) {
+/** Merge the D1 archived per-cron temperatures with the live in-memory tail into ONE wall-clock series,
+ *  so the ribbon shows real history (reload-persistent) plus the freshest live head. Tolerates a little
+ *  client/server clock skew. Without history it is just the live tail (the original behaviour). */
+function ribbonSeries(wall) {
+  const out = [];
+  if (histEnabled) {
+    for (const r of histRows) {
+      if (r.ts == null || r.temperature == null) continue;
+      if (r.ts <= wall + 120000 && wall - r.ts <= RIBBON_WINDOW) out.push({ t: r.ts, T: r.temperature });
+    }
+  }
+  for (const p of tempHistory) if (wall - p.t <= RIBBON_WINDOW) out.push({ t: p.t, T: p.T });
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+function drawTempHistory() {
   if (!thCtx) return;
+  const wall = Date.now();
   const W = thCanvas.width, H = thCanvas.height;
   const pal = paletteAt(tempSmoothed);
   thCtx.clearRect(0, 0, W, H);
@@ -464,16 +498,18 @@ function drawTempHistory(now) {
     const y = H - th * H;
     thCtx.beginPath(); thCtx.moveTo(0, y); thCtx.lineTo(W, y); thCtx.stroke();
   }
-  if (tempHistory.length < 2) return;
 
-  const xOf = (t) => W - ((now - t) / HIST_WINDOW) * W;
+  const series = ribbonSeries(wall);
+  if (series.length < 2) return;
+
+  const xOf = (t) => W - ((wall - t) / RIBBON_WINDOW) * W;
   const yOf = (T) => H - clamp(T) * H;
 
   // area under the curve
   thCtx.beginPath();
-  thCtx.moveTo(xOf(tempHistory[0].t), H);
-  for (const p of tempHistory) thCtx.lineTo(xOf(p.t), yOf(p.T));
-  thCtx.lineTo(xOf(tempHistory[tempHistory.length - 1].t), H);
+  thCtx.moveTo(xOf(series[0].t), H);
+  for (const p of series) thCtx.lineTo(xOf(p.t), yOf(p.T));
+  thCtx.lineTo(xOf(series[series.length - 1].t), H);
   thCtx.closePath();
   const grad = thCtx.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, rgba(pal.accent, 0.30));
@@ -483,8 +519,8 @@ function drawTempHistory(now) {
 
   // the temperature line
   thCtx.beginPath();
-  for (let i = 0; i < tempHistory.length; i++) {
-    const p = tempHistory[i];
+  for (let i = 0; i < series.length; i++) {
+    const p = series[i];
     if (i === 0) thCtx.moveTo(xOf(p.t), yOf(p.T)); else thCtx.lineTo(xOf(p.t), yOf(p.T));
   }
   thCtx.strokeStyle = rgba(pal.accent, 0.85);
@@ -492,7 +528,7 @@ function drawTempHistory(now) {
   thCtx.stroke();
 
   // live head
-  const head = tempHistory[tempHistory.length - 1];
+  const head = series[series.length - 1];
   thCtx.fillStyle = rgba(pal.accent, 0.95);
   thCtx.beginPath(); thCtx.arc(xOf(head.t), yOf(head.T), 2, 0, TAU); thCtx.fill();
 }
@@ -520,11 +556,11 @@ function loop(now) {
     flowTime += dt * (0.35 + tempSmoothed * 1.1);   // the current races when the market is hot
     const pal = paletteAt(tempSmoothed);
     if (frame % 6 === 0) applyPaletteToDOM(pal);
-    sampleHistory(now);
+    sampleHistory();
     updateSim(dt, now);
     if (quality >= 1) updateMotes(dt);
     render(pal, now);
-    if (frame % 3 === 0) drawTempHistory(now);
+    if (frame % 3 === 0) drawTempHistory();
     if (selectedId != null) { renderBloom(now); renderRaster(now); }
   } catch (e) {
     if (!loopWarned) { loopWarned = true; console.warn("[murmur] loop error (self-healed):", e); }
@@ -682,6 +718,11 @@ function spawnPaymentEdges(list) {
     // Simulated / offline / declined trades stay subtle, so the dazzle is reserved for real USDC moving.
     const real = !!s.valid && !s.simulated && isRealTxHash(s.txHash);
     payEdges.push({ fromId: s.fromId, toId: s.toId, amount: atomicToUsdc(s.amount), good: s.good || "signal", valid: !!s.valid, real, t0: now });
+    // Netting surfacing (session counters, deduped by the seen-set above): a "net-pending" placeholder is a
+    // trade folded into a pair's running net; a real "net:" settlement is that net reaching the chain.
+    if (s.reason === "net-pending") netting.folded++;
+    else if (s.valid && typeof s.resource === "string" && s.resource.startsWith("net:")) netting.settled++;
+    updateNetNote();
     if (s.valid) pushEconFeed(s);
   }
   // Keep the dedup set bounded (Set preserves insertion order → drop the oldest half).
@@ -738,7 +779,18 @@ function pushEconFeed(s) {
   const host = $("econ-feed");
   if (!host) return;
   const line = document.createElement("div");
-  line.className = "econ-line";
+  // A netted settlement (resource "net:…") is many folded trades moving as ONE on-chain transfer — flag it
+  // so the gas-amortisation upgrade is visible in the ledger, not just implied by the edge styling.
+  const netted = typeof s.resource === "string" && s.resource.startsWith("net:");
+  line.className = "econ-line" + (netted ? " netted" : "");
+
+  if (netted) {
+    const chip = document.createElement("span");
+    chip.className = "net-chip";
+    chip.textContent = "net";
+    chip.title = "Netted settlement — several folded trades settled as one on-chain transfer";
+    line.appendChild(chip);
+  }
 
   const txt = document.createElement("span");
   txt.className = "econ-line-txt";
@@ -850,6 +902,7 @@ function renderWallets() {
 
 function openWallets() {
   walletsOpen = true;
+  if (historyOpen) closeHistory();   // the two right-side drawers are mutually exclusive
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -870,6 +923,155 @@ function closeWallets() {
 }
 
 function toggleWallets() { if (walletsOpen) closeWallets(); else openWallets(); }
+
+// ================= netting read-out (economy panel) =================
+/** Live one-liner under the ledger showing the netting upgrade at work this session. */
+function updateNetNote() {
+  const el = $("net-note");
+  if (!el) return;
+  if (netting.folded || netting.settled) {
+    el.textContent = `netting · ${netting.folded} trades folded → ${netting.settled} settled on-chain`;
+    el.classList.add("active");
+  }
+}
+
+// ================= swarm history drawer (D1-backed, right side) =================
+// The Worker archives one row per cron to D1; this drawer turns that permanent history into charts the
+// session-only ribbon can't: temperature, cumulative USDC settled, wealth gini and settlements-per-cron,
+// plus a since-launch summary. Everything degrades to "awaiting archive…" when D1 is unbound.
+async function pollHistory() {
+  try {
+    const h = await getJSON("/history?order=desc&limit=1200", 6000);
+    if (h && h.enabled) {
+      histEnabled = true;
+      histRows = Array.isArray(h.rows) ? h.rows.slice().reverse() : [];   // desc → ascending for charts
+      histSummary = h.summary || null;
+      if (historyOpen) renderHistory(); else updateSinceLaunch();
+    } else {
+      histEnabled = false;
+    }
+  } catch { /* best-effort: history is a nicety and must never block the scene */ }
+}
+
+function fmtSince(ts) {
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "–";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " +
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function updateSinceLaunch() {
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  const s = histSummary;
+  if (!histEnabled || !s) {
+    set("hs-ticks", "–"); set("hs-since", "–"); set("hs-sett", "–"); set("hs-vol", "–");
+    const sub0 = $("hist-sub"); if (sub0) sub0.textContent = "archive offline";
+    return;
+  }
+  set("hs-ticks", s.ticks != null ? Number(s.ticks).toLocaleString() : "–");
+  set("hs-since", s.firstTs != null ? fmtSince(s.firstTs) : "–");
+  set("hs-sett", s.settlements != null ? Number(s.settlements).toLocaleString() : "–");
+  set("hs-vol", s.volumeUsdc != null ? Number(s.volumeUsdc).toFixed(3) : "–");
+  const sub = $("hist-sub");
+  if (sub) sub.textContent = s.ticks ? `${Number(s.ticks).toLocaleString()} crons · tick ${s.firstTick}→${s.lastTick}` : "no rows yet";
+  const foot = $("hist-foot");
+  if (foot) foot.textContent = histRows.length
+    ? `showing last ${histRows.length} crons · oldest → newest · source: D1 archive`
+    : "one row per cron · archived to D1";
+}
+
+/** Generic mini time-series chart. vals = numbers oldest→newest; mode "line"|"area"|"bars". */
+function drawSpark(canvas, vals, opts = {}) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const pal = paletteAt(tempSmoothed);
+  ctx.clearRect(0, 0, W, H);
+  if (!vals || vals.length < 2) {
+    ctx.fillStyle = "rgba(26,26,24,0.32)";
+    ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillText("awaiting archive…", 8, H / 2);
+    return;
+  }
+  const mode = opts.mode || "line";
+  const lo = opts.min != null ? opts.min : Math.min(...vals);
+  let hi = opts.max != null ? opts.max : Math.max(...vals);
+  if (hi - lo < 1e-9) hi = lo + 1;
+  const pad = 5;
+  const col = opts.color || pal.accent;
+  const xOf = (i) => (i / (vals.length - 1)) * (W - pad * 2) + pad;
+  const yOf = (v) => H - pad - ((v - lo) / (hi - lo)) * (H - pad * 2);
+
+  if (mode === "bars") {
+    const bw = Math.max(1, (W - pad * 2) / vals.length - 1);
+    ctx.fillStyle = rgba(col, 0.5);
+    for (let i = 0; i < vals.length; i++) {
+      const h = Math.max(0.5, ((vals[i] - lo) / (hi - lo)) * (H - pad * 2));
+      ctx.fillRect(xOf(i) - bw / 2, H - pad - h, bw, h);
+    }
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(xOf(0), H - pad);
+  for (let i = 0; i < vals.length; i++) ctx.lineTo(xOf(i), yOf(vals[i]));
+  ctx.lineTo(xOf(vals.length - 1), H - pad);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, rgba(col, mode === "area" ? 0.30 : 0.16));
+  grad.addColorStop(1, rgba(col, 0.02));
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.beginPath();
+  for (let i = 0; i < vals.length; i++) { const x = xOf(i), y = yOf(vals[i]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+  ctx.strokeStyle = rgba(col, 0.9);
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  ctx.fillStyle = rgba(col, 0.95);
+  ctx.beginPath(); ctx.arc(xOf(vals.length - 1), yOf(vals[vals.length - 1]), 2, 0, TAU); ctx.fill();
+}
+
+function renderHistory() {
+  const temps = histRows.map((r) => r.temperature).filter((v) => v != null);
+  const vols = histRows.map((r) => r.volumeUsdc).filter((v) => v != null);
+  const ginis = histRows.map((r) => r.gini).filter((v) => v != null);
+  const deals = histRows.map((r) => (r.deals != null ? r.deals : 0));
+  drawSpark($("hc-temp"), temps, { mode: "line", min: 0, max: 1 });
+  drawSpark($("hc-vol"), vols, { mode: "area" });
+  drawSpark($("hc-gini"), ginis, { mode: "line", min: 0, max: 1 });
+  drawSpark($("hc-deals"), deals, { mode: "bars", min: 0 });
+  const setNow = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  setNow("hc-temp-now", temps.length ? temps[temps.length - 1].toFixed(3) : "");
+  setNow("hc-vol-now", vols.length ? vols[vols.length - 1].toFixed(3) + " usdc" : "");
+  setNow("hc-gini-now", ginis.length ? ginis[ginis.length - 1].toFixed(3) : "");
+  setNow("hc-deals-now", deals.length ? "last " + deals[deals.length - 1] : "");
+  updateSinceLaunch();
+}
+
+function openHistory() {
+  historyOpen = true;
+  if (walletsOpen) closeWallets();
+  const d = $("history");
+  if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("history-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderHistory();
+  pollHistory();   // refresh immediately on open so it's never stale
+}
+
+function closeHistory() {
+  historyOpen = false;
+  document.body.classList.remove("history-open");
+  const d = $("history");
+  if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!historyOpen) d.hidden = true; }, 420);
+}
+
+function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); }
 
 // ================= data layer =================
 // Every request is timeout + abort guarded. When the Worker is undeployed the
@@ -1069,6 +1271,7 @@ const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["co
 
 function select(id) {
   if (walletsOpen) closeWallets();   // selecting a fly (from canvas or roster) hands the right side to the inspector
+  if (historyOpen) closeHistory();
   selectedId = id;
   const ins = $("inspector");
   ins.hidden = false;
@@ -1354,8 +1557,13 @@ function bindUI() {
   $("ins-close").addEventListener("click", deselect);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
-  // Escape closes the topmost overlay first: the wallets drawer, then the fly inspector.
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (walletsOpen) closeWallets(); else deselect(); } });
+  const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);
+  const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
+  // Escape closes the topmost overlay first: history drawer, then wallets drawer, then the fly inspector.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+  });
 }
 
 // ================= offline synthetic pulse =================
@@ -1489,6 +1697,8 @@ function boot() {
   setStatus("connecting…", "");
   poll();
   setInterval(poll, POLL_MS);
+  pollHistory();                              // seed the ribbon + since-launch summary from D1 on load
+  setInterval(pollHistory, HIST_POLL_MS);     // the archive advances ~1×/min; a slow poll keeps it fresh
   requestAnimationFrame(loop);
 }
 boot();

@@ -449,7 +449,84 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 .wallet-stats dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .wallet-stats dd { font-size: 10px; color: var(--ink); opacity: 0.85; font-variant-numeric: tabular-nums; }
 
-/* ============ responsive ============ */
+/* --- netting read-out (economy panel) --- */
+.net-note {
+  margin-top: 9px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em;
+  color: var(--muted); opacity: 0.55; transition: opacity 0.4s, color 0.4s;
+}
+.net-note.active { color: var(--accent); opacity: 0.9; }
+.net-chip {
+  flex: none; font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--paper); background: var(--accent); border-radius: 2px; padding: 1px 4px; opacity: 0.9;
+}
+.econ-line.netted .econ-line-txt { color: var(--ink); opacity: 0.9; }
+
+/* --- "swarm history" toggle (in the temperature panel) --- */
+.hist-btn {
+  margin-top: 10px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.hist-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+
+/* --- generic right-side drawer (swarm history) — mirrors the wallets drawer --- */
+.drawer {
+  position: fixed; z-index: 12; right: 0; top: 0; bottom: 0;
+  width: clamp(300px, 34vw, 440px);
+  display: flex; flex-direction: column;
+  background: var(--paper); border-left: 1px solid var(--hair);
+  box-shadow: -10px 0 34px rgba(var(--ink-rgb), 0.07);
+  transform: translateX(100%); opacity: 0.999;
+  transition: transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+}
+.drawer.open { transform: translateX(0); pointer-events: auto; }
+body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; pointer-events: none; }
+.drawer-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: calc(var(--pad) * 0.85) var(--pad); border-bottom: 1px solid var(--hair);
+}
+.drawer-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.drawer-sub { flex: 1; font-size: 9.5px; letter-spacing: 0.02em; color: var(--accent); text-align: right; }
+.drawer-close {
+  background: none; border: none; cursor: pointer; flex: none;
+  font-size: 20px; line-height: 1; color: var(--muted); transition: color 0.2s, transform 0.2s;
+}
+.drawer-close:hover { color: var(--ink); transform: rotate(90deg); }
+.drawer-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 12px var(--pad) calc(var(--pad) + 8px); }
+
+.hist-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
+.hist-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.hist-summary dt { font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.hist-summary dd { font-family: var(--display); font-size: 17px; font-weight: 400; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.hist-charts { display: flex; flex-direction: column; gap: 14px; }
+.hist-chart { margin: 0; }
+.hist-chart figcaption {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 5px;
+}
+.hist-chart figcaption span { color: var(--accent); letter-spacing: 0.02em; text-transform: none; font-variant-numeric: tabular-nums; }
+.hist-chart canvas { display: block; width: 100%; height: 74px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.02); }
+.hist-foot { margin-top: 14px; font-size: 9px; letter-spacing: 0.06em; color: var(--muted); opacity: 0.6; text-align: center; }
+
+/* ============ responsive ============
+   The piece is four floating corner panels over a full-bleed field. That reads
+   beautifully on a desktop, but the corners collide once the viewport narrows
+   (left+right panels meet around ~520px). So we step down in tiers:
+     · ≤820px  tablet  — keep the corners, shrink them, drop the tallest content
+     · ≤680px  phone   — the corners can't sit side-by-side, so the panels leave
+                         the corners and become ONE scrollable column; the field
+                         stays a fixed full-bleed background behind the stack
+     · ≤560px tall     — landscape phones / short windows: hide the tallest bits
+   Panel fills stay var(--panel) so app.js can keep retinting them with the market
+   temperature at every breakpoint — never hardcode the panel background here.
+   ========================================================================== */
+
+/* --- tablet & small phones in the corner layout: tighten, drop the feed --- */
 @media (max-width: 820px) {
   .bloom-wrap { display: none; }
   .x-link .x-handle { display: none; }
@@ -460,6 +537,8 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
   .panel-econ { width: clamp(150px, 40vw, 200px); }
   .econ-feed { display: none; }
   .wallets { width: min(86vw, 372px); }
+  .drawer { width: min(90vw, 440px); }
+  .hist-btn { margin-top: 8px; }
   .inspector {
     right: var(--pad); left: var(--pad); width: auto; top: auto; bottom: var(--pad);
     transform: translateY(14px); max-height: 62vh; overflow-y: auto;
@@ -467,6 +546,39 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
   .inspector.open { transform: translateY(0); }
   .hint-select { display: none; }
 }
+
+/* --- phones: stack the four panels into one scrollable column over the fixed
+       field. The document itself scrolls now (it was overflow:hidden before). --- */
+@media (max-width: 680px) {
+  html { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  body { height: auto; min-height: 100%; overflow: visible; }
+
+  /* the field / grain / vignette / topbar stay fixed — they're the backdrop */
+  .panel-econ, .panel-temp, .panel-pop, .panel-about {
+    position: relative; left: auto; right: auto; top: auto; bottom: auto;
+    width: auto; max-width: min(92vw, 460px);
+    margin: 0 auto 12px;
+  }
+  /* first panel clears the pinned topbar and leaves a band of artwork above it */
+  .panel-econ { margin-top: clamp(74px, 24vh, 220px); }
+  /* last panel isn't flush against the bottom edge */
+  .panel-about { margin-bottom: calc(var(--pad) + 24px); }
+
+  /* vertical room is no longer scarce — bring back the live settlement feed */
+  .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
+
+  /* compact the pinned topbar so its meta never crowds the wordmark */
+  .topmeta { gap: 6px; font-size: 10px; letter-spacing: 0.1em; }
+  .wordmark { gap: 7px; }
+  .wordmark .name { font-size: 20px; }
+
+  /* right-side drawers widen toward full-width sheets on a narrow screen */
+  .wallets { width: min(94vw, 372px); }
+  .drawer { width: min(96vw, 440px); }
+  .inspector { max-height: 70vh; }
+}
+
+/* --- short viewports (landscape phones / small windows): drop the tallest bits --- */
 @media (max-height: 560px) {
   .micro { display: none; }
   .about-points { display: none; }

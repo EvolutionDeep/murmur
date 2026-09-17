@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 1,080-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=10" />
+  <link rel="stylesheet" href="./styles.css?v=12" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -59,6 +59,7 @@
       <div><dt>gini</dt><dd id="econ-gini">–</dd></div>
     </dl>
     <div class="econ-feed" id="econ-feed" aria-live="off"></div>
+    <div class="net-note" id="net-note" title="Trades are folded into a signed net per agent pair; only the net settles on-chain, so gas is amortised over many micropayments.">netting · folding trades into per-pair nets</div>
     <button class="wallets-btn" id="wallets-btn" type="button">all agent wallets →</button>
     <div class="econ-foot live" id="econ-foot">live · settled on Arc mainnet · click any hash to verify on-chain</div>
   </section>
@@ -82,6 +83,7 @@
       <div><dt>tx/blk</dt><dd id="tpb">–</dd></div>
       <div><dt>tick</dt><dd id="tick">–</dd></div>
     </dl>
+    <button class="hist-btn" id="hist-btn" type="button">swarm history →</button>
   </section>
 
   <!-- ============ population reaction (top-right) ============ -->
@@ -155,8 +157,44 @@
     <div class="wallets-list" id="wallets-list"></div>
   </aside>
 
+  <!-- ============ swarm history (right drawer) — the D1-backed long-term archive ============ -->
+  <aside class="drawer history" id="history" hidden aria-label="swarm history since launch">
+    <div class="drawer-head">
+      <span class="drawer-title">swarm history</span>
+      <span class="drawer-sub" id="hist-sub">–</span>
+      <button class="drawer-close" id="hist-close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body">
+      <dl class="hist-summary" id="hist-summary">
+        <div><dt>ticks archived</dt><dd id="hs-ticks">–</dd></div>
+        <div><dt>since</dt><dd id="hs-since">–</dd></div>
+        <div><dt>settlements</dt><dd id="hs-sett">–</dd></div>
+        <div><dt>usdc settled</dt><dd id="hs-vol">–</dd></div>
+      </dl>
+      <div class="hist-charts">
+        <figure class="hist-chart">
+          <figcaption>market temperature <span id="hc-temp-now"></span></figcaption>
+          <canvas id="hc-temp" width="600" height="120"></canvas>
+        </figure>
+        <figure class="hist-chart">
+          <figcaption>usdc settled (cumulative) <span id="hc-vol-now"></span></figcaption>
+          <canvas id="hc-vol" width="600" height="120"></canvas>
+        </figure>
+        <figure class="hist-chart">
+          <figcaption>wealth gini <span id="hc-gini-now"></span></figcaption>
+          <canvas id="hc-gini" width="600" height="120"></canvas>
+        </figure>
+        <figure class="hist-chart">
+          <figcaption>settlements per cron <span id="hc-deals-now"></span></figcaption>
+          <canvas id="hc-deals" width="600" height="120"></canvas>
+        </figure>
+      </div>
+      <div class="hist-foot" id="hist-foot">one row per cron · archived to D1 · oldest → newest</div>
+    </div>
+  </aside>
+
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=10" type="module"></script>
+  <script src="./app.js?v=12" type="module"></script>
 </body>
 </html>
