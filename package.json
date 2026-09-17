@@ -19,7 +19,7 @@
     "deploy": "npm run deploy:worker && npm run deploy:frontend"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
+    "typescript": "^7.0.2",
     "wrangler": "^4.133.0"
   },
   "engines": {
