@@ -131,6 +131,9 @@ export class FlyStateDO {
       realSpendEnabled: this.cfg.economy.realSpendEnabled,
       dailyCapUsdc: this.cfg.economy.dailyCapUsdc,
       perAgentDailyCapUsdc: this.cfg.economy.perAgentDailyCapUsdc,
+      maxDealUsdc: this.cfg.economy.maxDealUsdc,
+      netMinBroadcastUsdc: this.cfg.economy.netMinBroadcastUsdc,
+      netFlushTicks: this.cfg.economy.netFlushTicks,
     };
   }
 
@@ -342,6 +345,12 @@ export class FlyStateDO {
       }
     }
     if (economy) {
+      // NETTING flush (onchain only; no-op in simulated mode): broadcast the accumulated bilateral nets
+      // whose |net| cleared the min-broadcast threshold or aged past the forced-flush bound. Real txs
+      // happen HERE — once per cron at most — instead of one per micropay, amortising gas over many trades.
+      const flushed = await economy.flush(population.getTickIndex());
+      cronSettlements.push(...flushed);
+      deals += flushed.filter((s) => s.valid).length;
       // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
       economy.setLastTick(cronSettlements);
       this.lastEconomy = economy.snapshot();

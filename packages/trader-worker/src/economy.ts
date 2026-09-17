@@ -88,6 +88,22 @@ export interface Settlement {
   simulated: boolean;
 }
 
+/**
+ * An accumulated bilateral NET between one unordered pair of agents, pending on-chain broadcast.
+ * `net` is SIGNED: positive ⇒ the lower id pays the higher id; negative ⇒ the reverse. Reciprocal
+ * trades cancel inside the sum automatically, so a pair that traded both ways may need no tx at all.
+ * ONCHAIN netting only; simulated mode never creates these.
+ */
+export interface PendingNet {
+  lo: number;            // lower agent id of the pair
+  hi: number;            // higher agent id of the pair
+  net: bigint;           // signed accumulated net (atomic USDC); |net| = what must actually move
+  trades: number;        // gross trades folded into this net (for labelling / telemetry)
+  good: GoodKind;        // last good traded (label for the net settlement)
+  firstTick: number;     // sub-tick the net opened (drives the forced-flush age bound)
+  constituents: Settlement[]; // the per-trade records folded in (informational; linked to the net tx)
+}
+
 /** Per-agent read-out for the frontend. */
 export interface AgentReading {
   id: number;
@@ -140,6 +156,11 @@ export interface EconomyConfig {
   realSpendEnabled: boolean;       // kill switch: false ⇒ onchain settlements are refused, no funds move
   dailyCapUsdc: number;            // global real-spend ceiling per UTC day (0 ⇒ no global cap)
   perAgentDailyCapUsdc: number;    // per-agent real-spend ceiling per UTC day (0 ⇒ no per-agent cap)
+  maxDealUsdc: number;             // facilitator hard per-deal ceiling; net flushes split above this
+  // --- settlement NETTING (ONCHAIN ONLY): accumulate bilateral nets per pair and broadcast only the
+  //     net, far less often, so real gas is amortised over more value instead of one tx per micropay. ---
+  netMinBroadcastUsdc: number;     // min |net| per pair before it is broadcast (below ⇒ dust carries forward)
+  netFlushTicks: number;           // force-flush any nonzero pending net at least every N sub-ticks (0 = never)
 }
 
 /**
@@ -177,6 +198,15 @@ export class AgentEconomy {
   private spendGuard: { dayKey: string; globalAtomic: string; perAgent: Record<number, string> } = {
     dayKey: "", globalAtomic: "0", perAgent: {},
   };
+  /**
+   * Settlement-NETTING accumulator (ONCHAIN ONLY). Keyed by unordered pair "lo>hi"; each entry holds the
+   * signed net still owed between the two agents plus the per-trade records folded into it. Trades update
+   * this instead of broadcasting immediately; flush() later moves only the NET on-chain, far less often,
+   * so real gas is amortised over more value. Empty in simulated mode (never written).
+   */
+  private pendingNets = new Map<string, PendingNet>();
+  /** Monotonic counter mixed into net nonces so two flushes can never reuse an EIP-3009 nonce. */
+  private flushSeq = 0;
 
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
@@ -274,10 +304,18 @@ export class AgentEconomy {
       const sellerIdx = this.pickCounterparty(r, i, n, tickIndex);
       if (sellerIdx < 0 || sellerIdx === buyerIdx) continue;
 
-      // Awaited sequentially: onchain this also serialises relay submissions through the one gas wallet,
-      // which is exactly what we want (no concurrent-nonce races on the facilitator).
-      const settlement = await this.settle(buyerIdx, sellerIdx, good, r, T, tickIndex);
-      made.push(settlement);
+      // ONCHAIN: fold the trade into the pair's pending NET instead of broadcasting now — flush() moves
+      // only nets, far less often (gas amortisation). The returned record is a "net-pending" placeholder
+      // (valid=false) so the frontend still shows the activity live without counting un-mined value.
+      // SIMULATED: settle immediately as always (the internal ledger is the authority).
+      if (onchain) {
+        made.push(this.queueNet(buyerIdx, sellerIdx, good, r, T, tickIndex));
+      } else {
+        // Awaited sequentially: keeps relay submissions serialised through the one gas wallet
+        // (no concurrent-nonce races on the facilitator).
+        const settlement = await this.settle(buyerIdx, sellerIdx, good, r, T, tickIndex);
+        made.push(settlement);
+      }
     }
 
     // Keep every agent solvent so the piece never dies — SIMULATED ONLY. Onchain we must never mint: an
@@ -286,6 +324,9 @@ export class AgentEconomy {
 
     this.lastTick = made;
     for (const s of made) {
+      // net-pending placeholders are NOT ledger/recent material: they only become real (volume, count,
+      // recent, balances) when flush() actually moves the net on-chain. Simulated deals land as before.
+      if (s.reason === "net-pending") continue;
       this.recent.unshift(s);
       if (s.valid) {
         this.volumeAtomic = addAtomic(this.volumeAtomic, s.amount);
@@ -304,6 +345,133 @@ export class AgentEconomy {
    */
   setLastTick(settlements: Settlement[]): void {
     this.lastTick = settlements;
+  }
+
+  /**
+   * ONCHAIN netting: fold a trade into its pair's pending NET WITHOUT broadcasting and WITHOUT touching the
+   * internal ledger (balances move only when flush() mines the net, so a failed broadcast can never leave
+   * fictional money). Returns a "net-pending" placeholder so the frontend still shows the trade live.
+   */
+  private queueNet(buyerIdx: number, sellerIdx: number, good: GoodKind, r: FlyReading, T: number, tick: number): Settlement {
+    const buyer = this.agents[buyerIdx];
+    const seller = this.agents[sellerIdx];
+    const amount = this.dealAmount(r, T, good);
+    const lo = Math.min(buyer.id, seller.id);
+    const hi = Math.max(buyer.id, seller.id);
+    const key = `${lo}>${hi}`;
+    // Signed net: positive ⇒ lo pays hi. buyer===lo adds, buyer===hi subtracts, so reciprocal trades cancel.
+    const signed = BigInt(amount) * (buyer.id === lo ? 1n : -1n);
+    let pn = this.pendingNets.get(key);
+    if (!pn) {
+      pn = { lo, hi, net: 0n, trades: 0, good, firstTick: tick, constituents: [] };
+      this.pendingNets.set(key, pn);
+    }
+    pn.net += signed;
+    pn.trades++;
+    pn.good = good;
+    const rec: Settlement = {
+      tick, ts: Date.now(), good, resource: `${good}:${seller.id}`,
+      fromId: buyer.id, toId: seller.id, from: buyer.address, to: seller.address,
+      amount, txHash: "0x", valid: false, reason: "net-pending", simulated: false,
+    };
+    if (pn.constituents.length < 64) pn.constituents.push(rec);
+    return rec;
+  }
+
+  /**
+   * ONCHAIN netting flush — called once per cron after the sub-tick loop. Moves only accumulated NETS
+   * on-chain: a pair broadcasts when |net| ≥ netMinBroadcastUsdc, or once older than netFlushTicks (so dust
+   * can't sit forever); pairs that cancelled to zero broadcast nothing. Nets above the facilitator per-deal
+   * cap are split into ≤cap chunks. Internal balances / volume / count / daily caps move ONLY here on a
+   * mined receipt, so a failed broadcast never leaves fictional money. SIMULATED: no-op (returns []).
+   */
+  async flush(tickIndex: number): Promise<Settlement[]> {
+    const out: Settlement[] = [];
+    if (this.facilitator.mode !== "onchain") return out;
+    if (!this.cfg.realSpendEnabled) return out;   // kill switch: never broadcast
+    this.rollSpendDay(Date.now());
+    const minBroadcast = BigInt(usdcToAtomic(this.cfg.netMinBroadcastUsdc));
+    const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
+    const CONSTITUENT = new Set(["net-pending", "netted", "net-declined", "netted-to-zero"]);
+
+    for (const [key, pn] of Array.from(this.pendingNets.entries())) {
+      const abs = pn.net < 0n ? -pn.net : pn.net;
+      if (abs === 0n) {
+        // Perfectly reciprocal within the window: nothing ever needs to move on-chain. Close the pair.
+        // Constituents stay exactly as published (net-pending, txHash "0x"): the frontend dedups them on a
+        // stable tick+parties key, so mutating txHash here would change the key and double-draw the trade.
+        this.pendingNets.delete(key);
+        continue;
+      }
+      const aged = this.cfg.netFlushTicks > 0 && tickIndex - pn.firstTick >= this.cfg.netFlushTicks;
+      if (abs < minBroadcast && !aged) continue;   // dust carries forward to a later flush
+
+      const debtorId = pn.net > 0n ? pn.lo : pn.hi;
+      const creditorId = pn.net > 0n ? pn.hi : pn.lo;
+      const debtor = this.agents[this.indexOfId.get(debtorId)!];
+      const creditor = this.agents[this.indexOfId.get(creditorId)!];
+      const good = pn.good;
+      let remaining = abs;
+      let primaryHash = "0x";
+      let chunk = 0;
+      while (remaining > 0n) {
+        const value = maxDeal > 0n && remaining > maxDeal ? maxDeal : remaining;
+        remaining -= value;
+        const amountStr = String(value);
+        const base = {
+          tick: tickIndex, ts: Date.now(), good, resource: `net:${good}:${creditor.id}`,
+          fromId: debtor.id, toId: creditor.id, from: debtor.address, to: creditor.address,
+          amount: amountStr, simulated: false,
+        } as const;
+        const capReason = this.spendCapReason(debtor.id, amountStr);
+        if (capReason) { out.push({ ...base, txHash: "0x", valid: false, reason: capReason }); break; }
+        const nonce = "0x" +
+          (hash32(tickIndex, debtorId, creditorId + chunk * 7919) >>> 0).toString(16).padStart(8, "0") +
+          (hash32(this.flushSeq, chunk, debtorId) >>> 0).toString(16).padStart(8, "0");
+        const reqs: PaymentRequirements = {
+          scheme: SCHEME_EXACT, network: this.cfg.network, maxAmountRequired: amountStr,
+          resource: base.resource, description: GOOD_META[good].description, mimeType: GOOD_META[good].mimeType,
+          payTo: creditor.address, maxTimeoutSeconds: 60, asset: this.facilitator.asset,
+          extra: { netted: true, trades: pn.trades, sellerId: creditor.id, good },
+        };
+        const payload = buildPaymentPayload({
+          reqs, from: debtor.address, value: amountStr, nonce, nowSec: Math.floor(Date.now() / 1000),
+        });
+        const verified = await this.facilitator.verify(payload, reqs);
+        if (!verified.valid) { out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break; }
+        const receipt = await this.facilitator.settle(payload, reqs);
+        if (receipt.shadow) { out.push({ ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" }); break; }
+        if (!receipt.success) { out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break; }
+        // Mined: commit this chunk on the internal ledger, meter the daily caps, count real volume.
+        debtor.balance = subAtomic(debtor.balance, amountStr);
+        debtor.paid = addAtomic(debtor.paid, amountStr);
+        debtor.deals++;
+        debtor.lastTick = tickIndex;
+        creditor.balance = addAtomic(creditor.balance, amountStr);
+        creditor.earned = addAtomic(creditor.earned, amountStr);
+        creditor.sales++;
+        creditor.lastTick = tickIndex;
+        this.recordSpend(debtor.id, amountStr);
+        this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
+        this.count++;
+        if (primaryHash === "0x") primaryHash = receipt.txHash;
+        out.push({ ...base, txHash: receipt.txHash, valid: true });
+        chunk++;
+      }
+      // NOTE: constituents are deliberately left byte-identical to what their own cron already published
+      // (net-pending, txHash "0x"). The frontend dedups them on tick+parties+amount; mutating txHash to the
+      // real net hash would change the dedup key and re-draw every folded trade as a duplicate edge. The
+      // net settlement record itself carries the linkage (resource net:good:creditor + extra.trades).
+      this.pendingNets.delete(key);
+      this.flushSeq++;
+    }
+
+    for (const s of out) {
+      if (CONSTITUENT.has(s.reason ?? "")) continue;   // keep the ledger to real nets + declines
+      this.recent.unshift(s);
+    }
+    if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    return out;
   }
 
   /** buy probability 0..1 from state + arousal + wingbeat + rest. */
@@ -338,6 +506,14 @@ export class AgentEconomy {
     return sellerI;
   }
 
+  /** Price of one unit of `good` this tick, in atomic USDC (min 1): base × market heat × arousal × good mult. */
+  private dealAmount(r: FlyReading, T: number, good: GoodKind): string {
+    const meta = GOOD_META[good];
+    const priceUsdc =
+      this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
+    return String(Math.max(1, Math.round(priceUsdc * 1e6)));
+  }
+
   /** Run the full x402 flow between buyer and seller for one good; return the settlement record. */
   private async settle(
     buyerIdx: number,
@@ -352,10 +528,8 @@ export class AgentEconomy {
     const meta = GOOD_META[good];
     const onchain = this.facilitator.mode === "onchain";
 
-    // Price: base × market heat × buyer arousal × good multiplier, in atomic USDC (min 1).
-    const priceUsdc =
-      this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
-    const amount = String(Math.max(1, Math.round(priceUsdc * 1e6)));
+    // Price of this deal in atomic USDC (shared with the netting queue so queued and direct deals price alike).
+    const amount = this.dealAmount(r, T, good);
 
     const resource = `${good}:${seller.id}`;
     const reqs: PaymentRequirements = {
@@ -551,6 +725,13 @@ export class AgentEconomy {
       // Real-spend guard counters (empty in simulated mode). Persisted so a mid-day DO eviction can't
       // reset the daily budget and let more real USDC out than the cap allows.
       spendGuard: this.spendGuard,
+      // Netting accumulator (empty in simulated mode). Persisted so un-broadcast dust survives a DO
+      // eviction and is still owed/settled later rather than silently vanishing.
+      pendingNets: Array.from(this.pendingNets.entries()).map(([key, v]) => ({
+        key, lo: v.lo, hi: v.hi, net: v.net.toString(), trades: v.trades,
+        good: v.good, firstTick: v.firstTick, constituents: v.constituents,
+      })),
+      flushSeq: this.flushSeq,
     });
   }
 
@@ -575,6 +756,24 @@ export class AgentEconomy {
             perAgent: g.perAgent && typeof g.perAgent === "object" ? g.perAgent : {},
           }
         : { dayKey: "", globalAtomic: "0", perAgent: {} };
+    // Restore the netting accumulator (absent in older payloads / simulated mode ⇒ empty).
+    this.pendingNets = new Map();
+    if (Array.isArray(p.pendingNets)) {
+      for (const e of p.pendingNets) {
+        if (!e || typeof e !== "object") continue;
+        const key = String(e.key ?? `${e.lo}>${e.hi}`);
+        this.pendingNets.set(key, {
+          lo: Number(e.lo ?? 0),
+          hi: Number(e.hi ?? 0),
+          net: BigInt(e.net ?? "0"),
+          trades: Number(e.trades ?? 0),
+          good: (e.good ?? "signal") as GoodKind,
+          firstTick: Number(e.firstTick ?? 0),
+          constituents: Array.isArray(e.constituents) ? e.constituents : [],
+        });
+      }
+    }
+    this.flushSeq = Number(p.flushSeq ?? 0);
   }
 }
 

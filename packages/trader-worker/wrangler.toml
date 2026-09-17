@@ -80,6 +80,15 @@ ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per U
 # ECONOMY_USDC_EIP712_NAME = "USDC"           # EIP-712 domain name (probe: name()="USDC"); tune if signatures revert
 # ECONOMY_USDC_EIP712_VERSION = "2"           # EIP-712 domain version (probe: version()="2")
 
+# ===== Settlement NETTING (ONCHAIN ONLY — gas amortisation) =====
+# Trades no longer broadcast one tx per micropay: each pair's signed net accumulates in the DO and is
+# flushed at most once per cron, only when |net| ≥ MIN_BROADCAST or the net has aged ≥ FLUSH_TICKS
+# sub-ticks. Reciprocal trades cancel (net=0 ⇒ zero tx), dust carries forward, and nets above
+# ECONOMY_MAX_DEAL split into chunks. The internal ledger/volume/caps move ONLY on a mined receipt,
+# so a failed flush never invents money. Inert in simulated mode.
+ECONOMY_NET_MIN_BROADCAST = "0.004"          # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (~2× base price, so gas stays a minority of face value)
+ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
+
 
 # ===== Brain backend =====
 # "ts-lif"     → default, pure-TS ~1,080-neuron spiking connectome (what the behaviour was tuned on)
