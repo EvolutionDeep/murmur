@@ -33,7 +33,7 @@
 
 ---
 
-## ✨ Project status — LIVE, real money on Arc
+## Project status — LIVE, real money on Arc
 
 The deployed system settles in **real USDC on Arc mainnet**. The Worker reads Arc chain data to derive the market
 temperature, and the agent economy runs a genuine **`OnChainFacilitator`**: each purchase is an **EIP-3009
@@ -62,8 +62,10 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
 | **Two-layer behaviour** | The temperature sets the collective regime; each fly's own wiring decides how strongly it expresses that regime and whether it breaks rank. Decoded *relative to its peers* every tick. |
 | **Agent economy (x402)** | Each fly is an economic agent with its own USDC micro-wallet. Neural drives become an economic intent (which good, how strongly, which peer), and buyer/seller run a faithful x402 `exact` flow that settles in **real USDC**. |
 | **Live on-chain settlement** | Production runs the **`OnChainFacilitator`**: real **EIP-3009** `transferWithAuthorization` against Arc's USDC precompile, signed by each buyer's HD-derived key. Every settlement yields a real tx hash, verifiable on the Arc explorer. A keyless `SimulatedFacilitator` remains for local dev — same economy code, zero changes. |
+| **Settlement netting** | Real gas dwarfs a sub-cent micropayment, so on-chain trades are folded per agent-pair into one signed **net** and only the net is broadcast — at most once per cron, above a dust threshold. Reciprocal trades cancel; gas is amortised across many payments. |
 | **Visitor stimulus** | Anyone can "poke the swarm" (`food / threat / light / dark`), rate-limited per visitor, riding on top of the market pulse as a secondary sensory input. |
 | **Generative frontend** | A living canvas: the whole scene cools/warms with the market, flies murmur and scatter, touching one opens its drives + agent wallet, and an **all-agent wallet roster** lists every fly's on-chain address and balance. |
+| **Long-term memory (D1)** | Every cron archives one row — temperature, regime, deals, cumulative settlements/volume, wealth gini, behaviour histogram — to **Cloudflare D1**; `GET /history` serves it back for the frontend's swarm-history curves and research export. |
 | **Real-money safety rails** | Kill switch (`ECONOMY_REAL_SPEND`), shadow mode (sign + simulate, never broadcast), global & per-agent daily caps, and a facilitator per-deal cap — **live and bounding the production deployment**. |
 
 ---
@@ -129,10 +131,11 @@ connectome). Behavioural state picks *which good* to buy (`EXPLORE→signal`, `A
 
 ```
 packages/
-  fly-brain/       LIF neural core: connectome, network, motor decoder, stimuli, WASM backend adapter
+  fly-brain/       LIF neural core: connectome, LIF network, motor decoder, stimuli, shared types
     src/*.test.ts  unit tests: connectome structure, LIF dynamics + SFA, motor-decoder invariants
   trader-worker/   Cloudflare Worker + Durable Object: market temperature, population, x402 agent economy
     src/           chain · market · population · economy · x402 · keys · stimulus · state · config · index
+    schema.sql     D1 archival table (one row per cron) served back by GET /history
     src/*.test.ts  unit tests: the economy's one-directional read-out, conservation, determinism
     scripts/       fund-agents.mjs (one-off real-money wallet distribution — dry-run by default)
   frontend/        Static generative dashboard (HTML / CSS / vanilla JS) on Cloudflare Pages
@@ -201,6 +204,7 @@ The Worker root returns a health check and endpoint navigation. Main endpoints (
 | `GET` | `/population` | Collective mood + per-fly drives + economy summary (the frontend feed) |
 | `GET` | `/market` | Current Arc activity → temperature / regime |
 | `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals |
+| `GET` | `/history` | D1 long-term archive: one row per cron (temperature, deals, cumulative volume, gini, state histogram) + a since-launch summary |
 | `GET` | `/snapshot?flyId=N` | Full neural state of one fly (firing rates, spikes) + its agent wallet |
 | `GET` | `/flies/:id` | A single fly's drives, behaviour and vitals |
 | `GET` | `/stimuli` | Recent visitor-stimulus history |
@@ -237,15 +241,18 @@ secret transparently falls back to the keyless `simulated` facilitator (see the 
 | `ECONOMY_ENABLED` | `true` | Agent economy on/off |
 | `ECONOMY_INITIAL_BALANCE` | `6` | Display-mirror float per agent; onchain the spendable balance is what the operator actually funded |
 | `ECONOMY_BASE_PRICE` | `0.002` | Base price of one good (USDC) before neural/market scaling |
+| `ECONOMY_MAX_DEALS` | `10` | Per-cron settlement budget, spread across the 6 sub-ticks |
 | `ECONOMY_FACILITATOR` | `onchain` | **`onchain`** (real EIP-3009, production) \| `simulated` (keyless ledger, local dev) |
 | `ECONOMY_SHADOW` | `false` | **`false` = LIVE broadcast**; `true` = sign + simulate each transfer, never broadcast |
-| `BRAIN_BACKEND` | `ts-lif` | `ts-lif` \| `wasm-flyai` \| `wasm-mock` |
+| `ECONOMY_NET_MIN_BROADCAST` | `0.004` | Netting: minimum net USDC per agent-pair before it is broadcast; dust carries forward |
+| `ECONOMY_NET_FLUSH_TICKS` | `30` | Netting: force-flush any nonzero pending net at least every N sub-ticks |
 
 **Real-money rails — LIVE in production** (`ECONOMY_FACILITATOR="onchain"`, `ECONOMY_SHADOW="false"`); they are
 inert only in the keyless local-dev fallback, where there is no real money to bound:
-`ECONOMY_REAL_SPEND` (kill switch, default on), `ECONOMY_DAILY_CAP` (`20`), `ECONOMY_PER_AGENT_DAILY_CAP` (`2`),
+`ECONOMY_REAL_SPEND` (kill switch, default on), `ECONOMY_DAILY_CAP` (`100`), `ECONOMY_PER_AGENT_DAILY_CAP` (`10`),
 `ECONOMY_MAX_DEAL` (`0.05`), `ECONOMY_GAS_PRICE_GWEI`, `ECONOMY_USDC_EIP712_NAME` / `_VERSION`. Secrets:
-`ECONOMY_MNEMONIC`, `ECONOMY_FACILITATOR_PK`, `ALCHEMY_ARC_RPC_URL`. Full go-live runbook in
+`ECONOMY_MNEMONIC`, `ECONOMY_FACILITATOR_PK`, `ALCHEMY_ARC_RPC_URL`, and `ADMIN_TOKEN` (locks the `/tick` + `/reset`
+debug endpoints when set). Full go-live runbook in
 [**docs/AGENT-ECONOMY.md**](./docs/AGENT-ECONOMY.md).
 
 ---
@@ -269,7 +276,7 @@ See [**docs/DEPLOYMENT.md**](./docs/DEPLOYMENT.md) for secrets, custom domains a
 - **Edge**: Cloudflare Workers + Durable Objects (SQLite storage) + Pages · wrangler 4.x
 - **Chain**: Arc mainnet (Chain ID 5042) — reads whole-chain activity for temperature, **writes** real EIP-3009 USDC transfers · viem ^2.21
 - **Payments**: x402 `exact` scheme · **real USDC** (Arc precompile `0x3600…0000`, 6 decimals) · EIP-3009 `transferWithAuthorization`
-- **Neural core**: TypeScript LIF spiking network (~1,080 neurons; optional fly.ai WASM backend)
+- **Neural core**: TypeScript LIF spiking network (~1,080 neurons), deterministic and dependency-free
 - **Frontend**: vanilla JS + Canvas 2D (no framework, no build step)
 
 ---

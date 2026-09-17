@@ -28,7 +28,7 @@ const brains = Array.from({ length: POP }, (_, i) => new FlyBrain({ seed: (42 + 
 const decoders = brains.map(() => new MotorDecoder());
 const temperaments = brains.map((_, i) => (((i + 1) * 2654435761) >>> 0) / 4294967296);
 
-console.log("🪰 murmur — neural smoke test\n");
+console.log("murmur — neural smoke test\n");
 const c0 = brains[0].connectome;
 console.log(`Connectome: ${c0.neurons.length} neurons, ${c0.synapses.length} synapses`);
 console.log(
@@ -76,18 +76,18 @@ for (let tick = 0; tick < TICKS; tick++) {
   }
 }
 
-console.log("\n📊 Behaviour distribution across the sweep:", stateCount);
+console.log("\nBehaviour distribution across the sweep:", stateCount);
 const distinct = Object.values(stateCount).filter((n) => n > 0).length;
-console.log(`🧠 Distinct behavioural states expressed: ${distinct}/4`);
+console.log(`Distinct behavioural states expressed: ${distinct}/4`);
 
 // 3) serialize round-trip (the Durable Object persistence path)
 const blob = brains[0].serialize();
 const revived = FlyBrain.deserialize(blob, { seed: 42 });
 const ok = revived.t === brains[0].t;
-console.log(`💾 Serialized fly0: ${(blob.length / 1024).toFixed(1)} KB · revive t=${revived.t} ${ok ? "✅" : "❌"}`);
+console.log(`Serialized fly0: ${(blob.length / 1024).toFixed(1)} KB · revive t=${revived.t} ${ok ? "ok" : "MISMATCH"}`);
 
 if (distinct < 3 || !ok) {
-  console.error("\n❌ Smoke test FAILED: expected ≥3 distinct behavioural states and a clean serialize round-trip.");
+  console.error("\nSmoke test FAILED: expected ≥3 distinct behavioural states and a clean serialize round-trip.");
   process.exit(1);
 }
-console.log("\n✅ Smoke test passed.");
+console.log("\nSmoke test passed.");

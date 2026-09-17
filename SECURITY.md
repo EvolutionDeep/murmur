@@ -47,11 +47,12 @@ already committed a secret to the repo (that is a deployment mistake, not a code
 | Concern | Safeguard |
 |---|---|
 | Accidental real spend | The onchain facilitator is constructed **only** when a mnemonic secret is present; without it the Worker runs the keyless simulated ledger. Every real transfer is bounded by the caps + kill switch below. |
-| Runaway loss | Global daily cap (`ECONOMY_DAILY_CAP` 20), per-agent daily cap (2), per-deal cap (`ECONOMY_MAX_DEAL` 0.05). |
+| Runaway loss | Global daily cap (`ECONOMY_DAILY_CAP` 100), per-agent daily cap (10), per-deal cap (`ECONOMY_MAX_DEAL` 0.05). |
 | Need to stop fast | Kill switch `ECONOMY_REAL_SPEND="false"` → redeploy halts all real settlement. |
 | Prove before risking | `ECONOMY_SHADOW="true"` signs + `eth_call`-simulates every transfer but never broadcasts. |
 | Key surface | One mnemonic HD-derives all agents (`m/44'/60'/0'/0/{id}`) + facilitator (index 2,000,000); secrets live only in Cloudflare (encrypted at rest), never in the repo. |
 | Stale balance | Balances are re-read from chain immediately before signing. |
+| Debug-endpoint abuse | The mutating `POST /tick` and `/reset` routes can be locked with the optional `ADMIN_TOKEN` secret: when it is set, callers must present it (`x-admin-token` header or `?token=`), so a live deployment's debug endpoints can't be driven anonymously. Unset, they stay open for local development. |
 
 See [docs/AGENT-ECONOMY.md](./docs/AGENT-ECONOMY.md) for the full model.
 

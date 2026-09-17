@@ -22,6 +22,18 @@ All notable changes to **murmur** are documented in this file. The format is bas
   now browsable from the economy panel, alongside the existing per-fly inspector.
 - Each real settlement in the ledger links to its transaction on the official **Arc explorer**, so any visitor can
   verify the money moved on-chain.
+- **Settlement netting (onchain)**: trades are folded per agent-pair into one signed **net** and only the net is
+  broadcast — at most once per cron, above `ECONOMY_NET_MIN_BROADCAST`, with a forced flush every
+  `ECONOMY_NET_FLUSH_TICKS`. Reciprocal trades cancel and dust carries forward, so real gas is amortised across
+  many micropayments instead of one transaction per trade.
+- **Long-term memory (Cloudflare D1)**: `FlyStateDO.archiveTick()` writes one row per cron (temperature, regime,
+  deals, cumulative settlements/volume, gini, behaviour histogram) to the `murmur-db` D1 database, and a new
+  `GET /history` endpoint serves the series plus a since-launch summary — backing the frontend's **swarm-history**
+  drawer and research export.
+- **Responsive frontend layout**: the four floating panels collapse into a single scrollable column on phones and
+  narrow tablets, so the piece no longer crowds or overlaps on small screens.
+- **`ADMIN_TOKEN` guard (optional secret)**: when set, the mutating `POST /tick` and `/reset` debug endpoints
+  require it, so they can be locked down on a live deployment.
 
 ### Changed
 - **GONE LIVE WITH REAL MONEY.** The production Worker now runs `ECONOMY_FACILITATOR = "onchain"` with
@@ -38,6 +50,14 @@ All notable changes to **murmur** are documented in this file. The format is bas
   tick many times, so one transaction is now drawn and logged exactly once instead of ~15×.
 - Documentation rewritten to describe the actual system (`README.md`, `docs/ARCHITECTURE.md`,
   `docs/NEURAL-SIM.md`, `docs/AGENT-ECONOMY.md`, `docs/DEPLOYMENT.md`).
+- **Raised the real-money caps to match the faster trade rate**: `ECONOMY_DAILY_CAP` 20 → **100** and
+  `ECONOMY_PER_AGENT_DAILY_CAP` 2 → **10** (the kill switch and the per-deal cap are unchanged).
+- **Removed the dead `fly.ai` WASM backend** — `wasm-backend.ts`, the `BRAIN_BACKEND` / `WASM_*` config and the
+  `createFlyBrain` factory. It was never invoked at runtime (the population always builds the TypeScript LIF
+  connectome) and its `wasm-mock` fabricated a 166,700-neuron count from random noise. `ts-lif` is now the single
+  backend.
+- **Repository audit**: docs reconciled with the deployed code (netting, D1 `/history`, the corrected cap values),
+  a stale "read-only, no wallet" file-header comment corrected, and emoji stripped from the smoke test output.
 - Frontend inspector: neural bloom + spike raster are now offscreen-cached and rebuilt a few times per second
   (one `drawImage` blit per frame); the render loop is self-healing with adaptive quality, and pointer input is
   click-storm throttled, so rapid clicking can no longer stall the tab.

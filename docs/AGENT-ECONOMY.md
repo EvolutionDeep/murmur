@@ -72,7 +72,7 @@ falls back to the keyless **`SimulatedFacilitator`**, which is what you get duri
 - Base good price `ECONOMY_BASE_PRICE` = **0.002 USDC** before neural/market scaling.
 - Money is **conserved** between agents, and a small protocol treasury tops an agent up to
   `ECONOMY_SOLVENCY_FLOOR` (0.5) when it runs nearly dry — so the piece runs forever with no wallet or faucet.
-- `ECONOMY_MAX_DEALS` caps settlements per tick to bound cron CPU.
+- `ECONOMY_MAX_DEALS` caps settlements per cron (spread across the sub-ticks) to bound CPU + real spend.
 
 In this fallback the Worker holds **no private key and signs nothing**. It exists so anyone can run and study the
 piece at zero risk — it is **not** what is deployed.
@@ -113,20 +113,34 @@ every account via BIP-44:
 |---|---|---|
 | `ECONOMY_REAL_SPEND` | `true` | **Kill switch** — set `false` to halt all real settlement instantly |
 | `ECONOMY_SHADOW` | `false` | `true` = sign + `eth_call`-simulate each transfer but **never broadcast** |
-| `ECONOMY_DAILY_CAP` | `20` | Global real-spend ceiling per UTC day (USDC); `0` = no cap |
-| `ECONOMY_PER_AGENT_DAILY_CAP` | `2` | Per-agent real-spend ceiling per UTC day (USDC); `0` = no cap |
-| `ECONOMY_MAX_DEAL` | `0.05` | Facilitator hard per-deal ceiling (USDC) |
+| `ECONOMY_DAILY_CAP` | `100` | Global real-spend ceiling per UTC day (USDC); `0` = no cap |
+| `ECONOMY_PER_AGENT_DAILY_CAP` | `10` | Per-agent real-spend ceiling per UTC day (USDC); `0` = no cap |
+| `ECONOMY_MAX_DEAL` | `0.05` | Facilitator hard per-deal ceiling (USDC); a larger net splits into chunks |
+| `ECONOMY_NET_MIN_BROADCAST` | `0.004` | Netting: minimum net USDC per agent-pair before it is broadcast; dust carries forward |
+| `ECONOMY_NET_FLUSH_TICKS` | `30` | Netting: force-flush any nonzero pending net at least every N sub-ticks |
 | `ECONOMY_GAS_PRICE_GWEI` | (estimate) | Pin relay gas (Arc launched ~20 gwei); omit to let viem estimate |
 
 Balances are **re-read from chain immediately before signing**, and every rail is enforced facilitator-side.
 
-### ⚠️ Gas economics (read before funding)
+### Settlement netting (gas amortisation)
 
-On Arc the facilitator pays roughly **65k gas × 20 gwei ≈ 0.0013 USDC per transfer**, while the default deal face
-value is only **~0.0023 USDC** — gas is **57–65% of a micropayment**, and at the default cadence (~5 deals/min ≈
-7,000+/day) that is **~9–10 USDC/day** of net burn. Sub-cent on-chain micropayments are gas-dominated. **Always
-measure real gas in `ECONOMY_SHADOW="true"` against live chain state before funding**, and/or raise the deal face
-value or slow the cadence to amortise gas.
+Sub-cent micropayments are gas-dominated, so on-chain trades are **not** broadcast one-per-trade. Each unordered
+agent-pair accumulates a single **signed net** in the Durable Object (`PendingNet`): a trade adds to it and
+reciprocal trades cancel inside the sum, so a pair that traded both ways may owe nothing at all. At most once per
+cron, `flush()` broadcasts only the nets whose `|net|` cleared `ECONOMY_NET_MIN_BROADCAST` (dust below it carries
+forward) or that have aged past `ECONOMY_NET_FLUSH_TICKS` sub-ticks; a net above `ECONOMY_MAX_DEAL` splits into
+chunks, each with a unique EIP-3009 nonce. The internal ledger, volume and caps move **only on a mined receipt**,
+so a failed flush never invents money. Netting is on-chain only — the simulated fallback settles each trade
+directly — and the frontend flags a netted settlement (`resource: "net:…"`) so the amortisation is visible.
+
+### Gas economics (read before funding)
+
+On Arc the facilitator pays roughly **65k gas × 20 gwei ≈ 0.0013 USDC per broadcast transfer**. Settling one tx
+per sub-cent micropayment would let gas dominate face value — which is exactly what **netting** removes: folding
+each pair's trades into one net and broadcasting far less often amortises gas across many payments. The balance is
+set by `ECONOMY_NET_MIN_BROADCAST` (a higher floor batches more value per tx) and `ECONOMY_NET_FLUSH_TICKS` (how
+long a net may sit before it must flush). **Always measure real gas in `ECONOMY_SHADOW="true"` against live chain
+state before funding**, then tune those two knobs so gas stays a small fraction of settled value.
 
 ---
 

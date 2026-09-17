@@ -1,4 +1,4 @@
-# ⚠️ Copy this file to .dev.vars for local `wrangler dev`; .dev.vars is gitignored — NEVER commit it.
+# Copy this file to .dev.vars for local `wrangler dev`; .dev.vars is gitignored — NEVER commit it.
 #
 # LOCAL DEVELOPMENT is keyless: with no secrets the Worker runs the keyless simulated x402 economy and
 # only READS public Arc chain data. You need NOTHING below to develop or study the piece locally.
@@ -13,3 +13,7 @@
 # Optional: a dedicated gas-wallet private key (0x-prefixed). If omitted, the gas wallet is derived
 # from ECONOMY_MNEMONIC at accountIndex 2,000,000.
 # ECONOMY_FACILITATOR_PK="0xYOUR_FACILITATOR_PRIVATE_KEY"
+
+# Optional: lock the mutating debug endpoints (POST /tick, /reset). When set, callers must present it as an
+# x-admin-token header or a ?token= query. Left unset, those endpoints stay open (fine for local dev).
+# ADMIN_TOKEN="a-long-random-operator-token"

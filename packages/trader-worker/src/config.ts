@@ -1,8 +1,10 @@
-// Environment / Vars types + runtime config for the Arc fly-population Worker.
+// Environment / Vars types + runtime config for the murmur Worker.
 //
-// This project OBSERVES Arc whole-chain activity, derives a "market temperature" (HOT / CALM / COLD),
-// and drives a population of LIF-neuron flies whose collective + individual reactions are visualised.
-// There is NO trading, NO wallet and NO private key — the Worker only READS chain data.
+// murmur OBSERVES Arc whole-chain activity, derives a "market temperature" (HOT / CALM / COLD), and
+// drives a population of LIF-neuron flies whose collective + individual reactions are visualised. On
+// top of that reactive layer sits an agent economy: the Worker READS Arc for the temperature and, when
+// the onchain facilitator is armed with a mnemonic secret, WRITES real EIP-3009 USDC transfers between
+// the agents. With no mnemonic it runs a keyless simulated ledger and moves nothing (see state.ts).
 
 export interface Env {
   // Durable Object binding (population + market state)
@@ -32,10 +34,11 @@ export interface Env {
   // --- Visitor stimulus (optional "poke the swarm" secondary input) ---
   STIMULUS_COOLDOWN_SEC?: string;   // one injection per visitor per N seconds (default 30)
   FRONTEND_ORIGIN?: string;         // CORS origin for the frontend (default *)
+  ADMIN_TOKEN?: string;             // SECRET (optional): when set, POST /tick + /reset must present it (x-admin-token header or ?token=)
 
   // --- Agent economy (x402 micropayments between fly agents) ---
   ECONOMY_ENABLED?: string;           // "true"/"false" (default true) — the fly swarm as an agent economy
-  ECONOMY_INITIAL_BALANCE?: string;   // starting USDC per agent wallet (default 10)
+  ECONOMY_INITIAL_BALANCE?: string;   // starting USDC per agent wallet (default 6)
   ECONOMY_BASE_PRICE?: string;        // base price of one good in USDC before neural/market scaling (default 0.002)
   ECONOMY_SOLVENCY_FLOOR?: string;    // simulated treasury tops an agent up to this when it falls below (default 0.5)
   ECONOMY_MAX_DEALS?: string;         // max settlements per tick — CPU budget (default = POPULATION_SIZE)
@@ -56,12 +59,7 @@ export interface Env {
   ECONOMY_USDC_EIP712_NAME?: string;    // EIP-712 domain name override (default "USDC" = the Arc precompile's name())
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
 
-  // --- fly.ai brain backend ---
-  BRAIN_BACKEND: "ts-lif" | "wasm-flyai" | "wasm-mock";
-  WASM_MODULE_URL?: string;         // public R2/CDN URL; empty uses the bundled TS-LIF backend
-  WASM_NEURON_COUNT?: string;       // neuron count reported by the WASM module (UI display)
-
-  // --- TS-LIF connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
+  // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
   BRAIN_N_INTER_L2?: string;
@@ -118,10 +116,7 @@ export interface RuntimeConfig {
     usdcEip712Version: string;
   };
 
-  // Brain
-  brainBackend: "ts-lif" | "wasm-flyai" | "wasm-mock";
-  wasmModuleUrl: string | null;
-  wasmNeuronCount: number;
+  // Connectome sizing (ts-lif)
   brainOpts: {
     nSensory?: number;
     nInterL1?: number;
@@ -184,7 +179,7 @@ export function loadConfig(env: Env): RuntimeConfig {
       // On by default: the agent economy is the piece's headline capability. Set ECONOMY_ENABLED="false"
       // to fall back to the pure reactive population.
       enabled: (env.ECONOMY_ENABLED ?? "true").toLowerCase() !== "false",
-      initialBalanceUsdc: clamp(Number(env.ECONOMY_INITIAL_BALANCE || "10"), 0.01, 1_000_000),
+      initialBalanceUsdc: clamp(Number(env.ECONOMY_INITIAL_BALANCE || "6"), 0.01, 1_000_000),
       basePriceUsdc: clamp(Number(env.ECONOMY_BASE_PRICE || "0.002"), 0.000001, 100),
       solvencyFloorUsdc: clamp(Number(env.ECONOMY_SOLVENCY_FLOOR || "0.5"), 0, 10_000),
       // Default budget = one deal per fly per tick at most.
@@ -207,12 +202,6 @@ export function loadConfig(env: Env): RuntimeConfig {
       usdcEip712Version: env.ECONOMY_USDC_EIP712_VERSION || "2",
     },
 
-    brainBackend:
-      env.BRAIN_BACKEND === "wasm-flyai" || env.BRAIN_BACKEND === "wasm-mock"
-        ? env.BRAIN_BACKEND
-        : "ts-lif",
-    wasmModuleUrl: env.WASM_MODULE_URL || null,
-    wasmNeuronCount: Number(env.WASM_NEURON_COUNT || "0"),
     brainOpts: {
       nSensory: posCount(env.BRAIN_N_SENSORY),
       nInterL1: posCount(env.BRAIN_N_INTER_L1),

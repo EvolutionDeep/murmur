@@ -70,6 +70,7 @@ ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "on
 #   ECONOMY_MNEMONIC        one BIP-39 seed → HD-derives all agent wallets (m/44'/60'/0'/0/{id}) + gas wallet
 #   ECONOMY_FACILITATOR_PK  optional dedicated gas-wallet key (else the gas wallet is derived from the seed)
 #   ALCHEMY_ARC_RPC_URL     complete private Alchemy Arc mainnet HTTPS endpoint
+#   ADMIN_TOKEN             optional: when set, POST /tick + /reset require it (locks the debug endpoints)
 # Non-sensitive rails (safe to commit; uncomment to override the coded defaults in src/config.ts):
 # ECONOMY_REAL_SPEND = "true"                 # kill switch: set "false" to halt ALL real settlement instantly
 ECONOMY_SHADOW = "false"                    # LIVE: real EIP-3009 USDC transfers are broadcast on Arc mainnet, under the caps + kill switch below
@@ -90,15 +91,7 @@ ECONOMY_NET_MIN_BROADCAST = "0.004"          # min |net| (USDC) before a pair is
 ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
 
 
-# ===== Brain backend =====
-# "ts-lif"     → default, pure-TS ~1,080-neuron spiking connectome (what the behaviour was tuned on)
-# "wasm-flyai" → load a real fly.ai WASM module (requires WASM_MODULE_URL)
-# "wasm-mock"  → TS-simulated large sparse LIF
-BRAIN_BACKEND = "ts-lif"
-WASM_MODULE_URL = ""
-WASM_NEURON_COUNT = "0"
-
-# ===== TS-LIF connectome sizing (optional; omitted ⇒ ~1,080-neuron default) =====
+# ===== Connectome sizing (optional; omitted ⇒ the ~1,080-neuron ts-lif default) =====
 # Left at defaults to match the calibrated behaviour and keep the per-cron CPU budget small.
 # BRAIN_N_SENSORY = "180"
 # BRAIN_N_INTER_L1 = "400"

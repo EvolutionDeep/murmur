@@ -10,7 +10,6 @@ src/
   fly-brain.ts      FlyBrain: inject → advance → read motor; snapshot; serialize/deserialize
   motor-decoder.ts  motor firing rates → drives → behaviour (decoded relative to the population)
   stimuli.ts        market pulse + visitor stimulus → sensory-channel currents
-  wasm-backend.ts   backend selector: ts-lif (default) | wasm-flyai | wasm-mock
   types.ts          shared types (SensoryInput, MotorOutput, FlyBehavior, BehaviorState, …)
 ```
 
@@ -108,18 +107,6 @@ olfaction, richness → gustation, and the optional per-fly `arousal` → intero
 visitor poke to a short 3-second perturbation on its channel. `FlyBrain.inject()` spreads a channel's intensity as
 external current across that channel's neurons, on top of a constant spontaneous-noise current so the fly is never
 fully silent.
-
----
-
-## Backends (`wasm-backend.ts`)
-
-`createFlyBrain()` selects a backend via `BRAIN_BACKEND`:
-
-- **`ts-lif`** (default) — the pure-TypeScript ~1,080-neuron connectome described above; what the behaviour was
-  tuned on and what the deployment runs.
-- **`wasm-flyai`** — load a real [fly.ai](https://fly.ai) whole-brain WASM module from `WASM_MODULE_URL`
-  (a much larger sparse network; `WASM_NEURON_COUNT` is reported for the UI).
-- **`wasm-mock`** — a TS-simulated large sparse LIF, for exercising the WASM path without a module.
 
 ---
 

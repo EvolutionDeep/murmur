@@ -2,6 +2,8 @@
   "name": "@fly/fly-brain",
   "version": "0.1.0",
   "private": true,
+  "description": "Deterministic ~1,080-neuron LIF connectome, motor decoder and market stimuli for the murmur fly agents — pure TypeScript, with no native or WASM dependency.",
+  "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

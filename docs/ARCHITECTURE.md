@@ -26,9 +26,10 @@ Cloudflare Worker "murmur"  (src/index.ts)
 Durable Object  FlyStateDO  (src/state.ts, singleton id "fly-main", SQLite storage class)
   ├── MarketMeter   (src/market.ts)     Arc blocks → temperature + regime
   ├── Population     (src/population.ts) 24 × FlyBrain (@fly/fly-brain)
-  ├── AgentEconomy   (src/economy.ts)    drives → intent → x402 settlement
+  ├── AgentEconomy   (src/economy.ts)    drives → intent → x402 settlement → per-pair netting
   │     └── x402     (src/x402.ts)       OnChainFacilitator (LIVE, production) | SimulatedFacilitator (keyless dev)
   │           └── keys (src/keys.ts)     HD wallet derivation — ONLY used onchain
+  ├── D1 archive     (schema.sql)        one row per cron → GET /history (best-effort; never blocks a tick)
   └── stimulus       (src/stimulus.ts)   visitor "poke the swarm", rate-limited
             │
             ▼  REST/JSON  (api.muros.live)
@@ -65,14 +66,19 @@ races. Brains are persisted via `serialize()/deserialize()` so the swarm keeps i
    (`state` ∈ AGITATE / EXPLORE / AGGREGATE / REST + continuous drives + a neural fingerprint).
 6. **Settle** (`economy.ts`, when `ECONOMY_ENABLED`). Translate drives into an economic intent and run the x402
    flow between buyer and seller. This is a strict **read-out** of the neural layer — it never feeds back into
-   the connectome (see [NEURAL-SIM.md](./NEURAL-SIM.md) on the winner-take-all latch).
-7. **Persist + serve**. Store state; `/population`, `/market`, `/economy`, `/snapshot` expose it to the frontend.
+   the connectome (see [NEURAL-SIM.md](./NEURAL-SIM.md) on the winner-take-all latch). On-chain, each trade is
+   folded into its pair's running **net**; one `flush()` at the end of the cron broadcasts only the nets that
+   cleared `ECONOMY_NET_MIN_BROADCAST` (or aged past `ECONOMY_NET_FLUSH_TICKS`), so real gas is amortised over
+   many micropayments instead of one transaction per trade.
+7. **Persist, archive + serve**. Store state in the DO, archive one summary row to **D1** (`archiveTick`,
+   best-effort — a D1 failure never blocks the tick), and serve `/population`, `/market`, `/economy`, `/history`
+   and `/snapshot` to the frontend.
 
 ---
 
 ## Chain access — read for temperature, write for settlement (LIVE)
 
-`chain.ts` builds a viem `publicClient` (with fallback transport) that **reads** Arc for the market temperature,
+`chain.ts` builds a viem `publicClient` (a rotating multi-provider RPC pool, each request timeout-bounded) that **reads** Arc for the market temperature,
 and — in the production onchain economy — a `walletClient` that **writes** real EIP-3009 USDC transfers. Arc
 specifics baked in:
 
@@ -101,6 +107,7 @@ Served by the DO (the Worker adds CORS and the `/health` index). All responses a
 | `GET` | `/population` | Collective mood + per-fly drives + economy summary (the frontend feed) |
 | `GET` | `/market` | Latest Arc sample → temperature / regime / baselines |
 | `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals + facilitator mode |
+| `GET` | `/history` | D1 long-term archive: one row per cron + a since-launch summary (`limit` / `before` / `order`) |
 | `GET` | `/snapshot?flyId=N` | One fly's full neural state (firing rates, spikes, neuron kinds) + its wallet |
 | `GET` | `/flies/:id` | One fly's drives, behaviour and vitals |
 | `GET` | `/stimuli` | Recent visitor-stimulus history |
@@ -168,8 +175,8 @@ runtime. The constraints below are choices, documented so nobody mistakes them f
   explorer-linked tx hashes), not an interactive data app, and its offline mode is graceful degradation, never the
   source of truth.
 - **The neural core is a hand-written TypeScript LIF network**, a ~130× downsample of FlyWire — enough to exhibit
-  real winner-take-all, adaptation and reflex dynamics on the edge, not a claim to reproduce a full fly brain. An
-  optional WASM backend (`wasm-flyai`) can be swapped in; the default `ts-lif` has no native dependency.
+  real winner-take-all, adaptation and reflex dynamics on the edge, not a claim to reproduce a full fly brain. It
+  is pure TypeScript, with no native or WASM dependency.
 
 Scaling any of these — sharding the DO, closing the economic→neural loop, a framework frontend, a full-resolution
 connectome — would change what the piece *is*. They are out of scope on purpose.

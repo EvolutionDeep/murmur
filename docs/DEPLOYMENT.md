@@ -71,7 +71,25 @@ npm run deploy              # both
 
 The Worker config lives in [`packages/trader-worker/wrangler.toml`](../packages/trader-worker/wrangler.toml):
 `compatibility_date`, `nodejs_compat`, the `api.muros.live` custom-domain route, the `* * * * *` cron, the
-`FlyStateDO` Durable Object binding with a `v1` **SQLite** storage migration, `[vars]`, and observability.
+`FlyStateDO` Durable Object binding with a `v1` **SQLite** storage migration, the `murmur-db` **D1** binding,
+`[vars]`, and observability.
+
+---
+
+## D1 database (long-term history)
+
+The Worker archives one row per cron to a **D1** database (`murmur-db`, bound as `DB`) that backs `GET /history`
+and the frontend's swarm-history curves. Archival is best-effort — a missing binding or any D1 error is logged and
+swallowed, so it can never block a tick. To provision it for a fresh deployment:
+
+```bash
+npx wrangler d1 create murmur-db          # put the returned database_id into wrangler.toml [[d1_databases]]
+npx wrangler d1 execute murmur-db --remote --file=./schema.sql
+```
+
+`FlyStateDO` also runs `CREATE TABLE IF NOT EXISTS` lazily before its first insert, so the schema is applied even
+if the `execute` step is skipped; creating the database and setting `database_id` is still required for the archive
+to persist. Omit the D1 binding entirely (local dev) and `/history` simply reports `{ "enabled": false }`.
 
 ---
 
@@ -83,6 +101,9 @@ curl https://api.muros.live/health
 
 curl https://api.muros.live/economy
 # → facilitator mode "onchain", asset 0x3600…0000 (Arc USDC), liveAgents 24, real settlement txHashes
+
+curl "https://api.muros.live/history?limit=5"
+# → { enabled:true, rows:[…], summary:{ ticks, settlements, volumeUsdc, … } }   (D1 long-term archive)
 ```
 
 > **Dev-machine note:** some networks DNS-sinkhole `*.workers.dev`. Use the custom domain (`api.muros.live`) or
@@ -110,6 +131,7 @@ production:
 npx wrangler secret put ECONOMY_MNEMONIC          # one BIP-39 seed → all agent wallets + gas wallet
 npx wrangler secret put ECONOMY_FACILITATOR_PK    # optional dedicated gas-wallet key (else derived from the seed)
 npx wrangler secret put ALCHEMY_ARC_RPC_URL       # private Arc mainnet endpoint used to relay the real transfers
+npx wrangler secret put ADMIN_TOKEN               # optional: require it for POST /tick + /reset (locks the debug endpoints)
 ```
 
 For local dev, copy [`packages/trader-worker/.dev.vars.example`](../packages/trader-worker/.dev.vars.example) to

@@ -24,11 +24,3 @@ export {
   type MarketPulse,
   type StimulusEvent,
 } from "./stimuli.js";
-export {
-  createFlyBrain,
-  TsLifBackend,
-  WasmFlyAiBackend,
-  type IBuiltinFlyBrain,
-  type BackendConfig,
-  type BackendKind,
-} from "./wasm-backend.js";

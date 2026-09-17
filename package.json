@@ -4,6 +4,26 @@
   "private": true,
   "description": "murmur — a population of fruit-fly nervous systems adrift on the Arc market, each an autonomous agent whose ~1,080-neuron LIF connectome decides what to buy and from whom, settling in real USDC on Arc mainnet over x402. Every payment is a verifiable on-chain transaction; no LLM decides anything.",
   "license": "MIT",
+  "keywords": [
+    "arc",
+    "x402",
+    "usdc",
+    "eip-3009",
+    "agent-economy",
+    "connectome",
+    "spiking-neural-network",
+    "cloudflare-workers",
+    "durable-objects",
+    "d1"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EvolutionDeep/murmur.git"
+  },
+  "homepage": "https://www.muros.live",
+  "bugs": {
+    "url": "https://github.com/EvolutionDeep/murmur/issues"
+  },
   "workspaces": [
     "packages/fly-brain",
     "packages/trader-worker",

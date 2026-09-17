@@ -2,6 +2,8 @@
   "name": "@fly/frontend",
   "version": "0.2.0",
   "private": true,
+  "description": "Static visualisation frontend for murmur: renders the live fly swarm and its on-chain agent economy from the Worker API.",
+  "license": "MIT",
   "scripts": {
     "dev": "npx serve public -l 8788",
     "deploy": "wrangler pages deploy public --project-name=murmur --branch=main"

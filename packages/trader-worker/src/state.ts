@@ -323,8 +323,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
       if (req.method === "POST" && path === "/stimulus") return await this.postStimulus(req);
-      if (req.method === "POST" && path === "/tick") return await this.postTick();
-      if (req.method === "POST" && path === "/reset") return await this.postReset();
+      if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
+      if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
       return json({ error: "not found" }, 404);
     } catch (e) {
       console.error("[DO] fetch error:", e);
@@ -496,7 +496,6 @@ export class FlyStateDO {
         regimeCold: this.cfg.regimeCold,
         marketGain: this.cfg.marketGain,
         stimulusCooldownSec: this.cfg.stimulusCooldownSec,
-        brainBackend: this.cfg.brainBackend,
         economyEnabled: this.cfg.economy.enabled,
         economyFacilitator: this.cfg.economy.facilitatorMode,
         economyBasePriceUsdc: this.cfg.economy.basePriceUsdc,
@@ -609,7 +608,6 @@ export class FlyStateDO {
       neuronKinds: fly.brain.connectome?.neurons?.map((n) => n.kind) ?? [],
       neuronChannels: fly.brain.connectome?.neurons?.map((n) => n.channel) ?? [],
       neuronCount: fly.brain.connectome?.neurons?.length ?? 0,
-      backend: this.cfg.brainBackend,
       agent,
     });
   }
@@ -671,6 +669,20 @@ export class FlyStateDO {
     await this.state.storage.put(KEY_STIMULI, list);
 
     return json(result);
+  }
+
+  /**
+   * Guard the mutating debug endpoints (POST /tick, /reset). When the optional ADMIN_TOKEN secret is
+   * set, a caller must present it (x-admin-token header or ?token=); with no token configured these
+   * stay open so local dev and the documented onchain-arming flow (which POSTs /reset) keep working.
+   * An operator can lock them on the live deployment with `wrangler secret put ADMIN_TOKEN`.
+   */
+  private adminGate(req: Request): Response | null {
+    const token = (this.env.ADMIN_TOKEN ?? "").trim();
+    if (!token) return null;
+    const url = new URL(req.url);
+    const provided = req.headers.get("x-admin-token") ?? url.searchParams.get("token") ?? "";
+    return provided === token ? null : json({ error: "forbidden" }, 403);
   }
 
   /** Debug: run one cron tick on demand. */

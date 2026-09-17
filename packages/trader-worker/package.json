@@ -2,6 +2,8 @@
   "name": "@fly/trader-worker",
   "version": "0.1.0",
   "private": true,
+  "description": "Cloudflare Worker + Durable Object runtime for murmur: reads Arc market temperature, drives the fly population, archives ticks to D1, and settles the agent economy in real USDC over x402.",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
