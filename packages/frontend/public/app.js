@@ -76,6 +76,21 @@ const STATE_COLOR = { AGITATE: "#c05e3c", EXPLORE: "#c99a3f", AGGREGATE: "#5b7c8
 const KIND_COL = { sensory: [91, 124, 141], inter: [122, 114, 98], modulatory: [192, 94, 60], motor: [26, 26, 24] };
 const STIR_COL = [120, 116, 104];   // neutral ink for the pointer "stir" ripple
 
+// Wealth → colour ramp: the poorest flies read cool slate, the richest glow warm gold, so body HUE and
+// body SIZE (both balance-driven) tell the same story at a glance — big + gold = a wealthy wallet.
+const WEALTH_RAMP = [
+  [92, 118, 140],   // poorest  — cool slate blue
+  [126, 140, 122],  // lean     — muted sage
+  [198, 154, 74],   // well-off — amber
+  [240, 196, 92],   // richest  — bright gold
+];
+function wealthColorAt(t) {
+  t = clamp(t, 0, 1);
+  const n = WEALTH_RAMP.length - 1;
+  const i = Math.min(n - 1, Math.floor(t * n));
+  return mix(WEALTH_RAMP[i], WEALTH_RAMP[i + 1], t * n - i);
+}
+
 // ================= client state =================
 const sim = new Map();          // flyId → simulated fly (position + smoothed drives)
 let collective = null;          // latest CollectiveState
@@ -233,6 +248,7 @@ function spawnFly(id) {
     wander: 0, phase: Math.random() * TAU,
     // smoothed drives (used by the sim) …
     aro: 0.3, coh: 0.5, turn: 0, wing: 0.3, rest: 0.3,
+    balN: 0.5, tBalN: 0.5,   // normalised wallet balance (0 = poorest … 1 = richest) → drives body size
     // … and the latest authoritative server reading (used by the inspector)
     tAro: 0.3, tCoh: 0.5, tTurn: 0, tWing: 0.3, tRest: 0.3,
     state: "EXPLORE", temperament: 0.5, fingerprint: "",
@@ -265,6 +281,7 @@ function updateSim(dt, now) {
     f.turn = lerp(f.turn, f.tTurn, 0.05 * dt);
     f.wing = lerp(f.wing, f.tWing, 0.05 * dt);
     f.rest = lerp(f.rest, f.tRest, 0.05 * dt);
+    f.balN = lerp(f.balN ?? 0.5, f.tBalN ?? 0.5, 0.04 * dt);   // wealth → size eases smoothly, never jumps
 
     const speed = (0.22 + f.aro * 2.3) * (1 - 0.55 * f.rest);
 
@@ -378,8 +395,12 @@ function render(pal, now) {
 
 function drawFly(f, acc, alpha, now) {
   const flap = Math.sin(f.phase) * 0.5 + 0.5;               // 0..1 wingbeat phase
-  const body = mix([26, 26, 24], acc, f.temperament * 0.55); // individual tint
-  const size = 2.3 + f.aro * 3.4;   // larger bodies so the swarm reads clearly on big screens
+  const balN = f.balN != null ? f.balN : 0.5;
+  // Colour AND size both encode wealth: the richer the wallet, the warmer (slate → gold) and bigger the
+  // fly. Balance is normalised 0..1 across the swarm (the real spread is tight, so min-max scaling makes
+  // the ranking legible); arousal stays a secondary modulation so an agitated rich fly pulses larger.
+  const body = mix([26, 26, 24], wealthColorAt(balN), 0.55 + f.temperament * 0.25);
+  const size = (2.4 + balN * 3.4) * (0.9 + f.aro * 0.45);
   const haloR = size * 3.2 + f.wing * flap * size * 2.6;
 
   // ink trail: a short stroke from the previous position (stronger when aroused)
@@ -520,30 +541,100 @@ function renderPayments(pal, now) {
   if (!payEdges.length) return;
   for (let i = payEdges.length - 1; i >= 0; i--) {
     const e = payEdges[i];
-    const age = (now - e.t0) / ECON_EDGE_MS;
+    const dur = e.real ? 2800 : ECON_EDGE_MS;   // a real on-chain trade flashes longer so it's unmissable
+    const age = (now - e.t0) / dur;
     if (age >= 1) { payEdges.splice(i, 1); continue; }
     const a = sim.get(e.fromId), b = sim.get(e.toId);
     if (!a || !b || a.dying || b.dying) { payEdges.splice(i, 1); continue; }
-    const col = GOOD_COL[e.good] || pal.accent;
-    const fade = (1 - age) * (e.valid ? 1 : 0.4);
-
-    // guide thread
-    ctx.strokeStyle = rgba(col, 0.05 + 0.1 * fade);
-    ctx.lineWidth = 0.7;
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-
-    // the packet + a short tail behind it
-    const t = age;
-    const px = lerp(a.x, b.x, t), py = lerp(a.y, b.y, t);
-    const bt = Math.max(0, t - 0.09);
-    const tx = lerp(a.x, b.x, bt), ty = lerp(a.y, b.y, bt);
-    const r = 1.5 + Math.min(2.6, e.amount * 380);
-    ctx.strokeStyle = rgba(col, 0.42 * fade);
-    ctx.lineWidth = r * 0.9;
-    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(px, py); ctx.stroke();
-    ctx.fillStyle = rgba(col, (e.valid ? 0.92 : 0.4) * fade);
-    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.fill();
+    if (e.real) renderRealTrade(a, b, e, clamp(age), now);
+    else renderSimTrade(a, b, e, age, pal);
   }
+}
+
+// A real on-chain settlement gets an unmissable rainbow "money beam": a glowing gradient link, a
+// bright comet packet with a colourful tail + sparks, and expanding flash rings at both wallets — so
+// anyone watching instantly sees that two flies just paid each other in real USDC.
+function renderRealTrade(a, b, e, age, now) {
+  const fade = clamp(age < 0.12 ? age / 0.12 : (1 - age) / 0.88);   // quick in, slow out
+  const hueBase = (now * 0.11 + e.fromId * 41 + e.toId * 67) % 360; // slowly cycling, unique per pair
+  const amt = Math.min(1, e.amount * 520);                          // bigger trade → fatter, brighter
+
+  // rainbow beam + glow
+  const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+  for (let s = 0; s <= 5; s++) {
+    const h = (hueBase + s * 46) % 360;
+    g.addColorStop(s / 5, `hsla(${h},100%,62%,${0.12 + 0.5 * fade})`);
+  }
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.shadowColor = `hsla(${hueBase},100%,60%,${0.85 * fade})`;
+  ctx.shadowBlur = 16 * fade;
+  ctx.strokeStyle = g;
+  ctx.lineWidth = (1.2 + amt * 3.2) * (0.5 + fade * 0.9);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.restore();
+
+  // comet: colourful tail + white-hot head
+  const t = age;
+  const px = lerp(a.x, b.x, t), py = lerp(a.y, b.y, t);
+  const bt = Math.max(0, t - 0.16);
+  const tx = lerp(a.x, b.x, bt), ty = lerp(a.y, b.y, bt);
+  const tg = ctx.createLinearGradient(tx, ty, px, py);
+  tg.addColorStop(0, `hsla(${(hueBase + 120) % 360},100%,60%,0)`);
+  tg.addColorStop(1, `hsla(${(hueBase + 210) % 360},100%,74%,${0.85 * fade})`);
+  ctx.strokeStyle = tg; ctx.lineWidth = 2.4 + amt * 3; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(px, py); ctx.stroke();
+  const hr = (2.4 + amt * 3.4) * 3;
+  const hg = ctx.createRadialGradient(px, py, 0, px, py, hr);
+  hg.addColorStop(0, `hsla(0,0%,100%,${0.95 * fade})`);
+  hg.addColorStop(0.35, `hsla(${hueBase},100%,72%,${0.75 * fade})`);
+  hg.addColorStop(1, `hsla(${hueBase},100%,60%,0)`);
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(px, py, hr, 0, TAU); ctx.fill();
+
+  // sparks trailing the comet (shed first when the frame budget is blown)
+  if (quality >= 1) {
+    for (let s = 0; s < 5; s++) {
+      const st = Math.max(0, t - 0.03 - s * 0.035);
+      const sx = lerp(a.x, b.x, st), sy = lerp(a.y, b.y, st);
+      const ang = now * 0.02 + s * 2.1 + e.fromId;
+      const rr = 2 + s * 1.6;
+      ctx.fillStyle = `hsla(${(hueBase + s * 40) % 360},100%,66%,${Math.max(0, 0.6 - s * 0.11) * fade})`;
+      ctx.beginPath(); ctx.arc(sx + Math.cos(ang) * rr * 0.5, sy + Math.sin(ang) * rr * 0.5, Math.max(0.4, 1.5 - s * 0.22), 0, TAU); ctx.fill();
+    }
+  }
+
+  // expanding flash rings at both wallets — the "a trade just happened" signal
+  if (age < 0.62) {
+    const rp = age / 0.62, rr = 6 + rp * 32, ra = (1 - rp) * 0.7 * fade;
+    ctx.lineWidth = 2 * (1 - rp) + 0.4;
+    for (const p of [a, b]) {
+      ctx.strokeStyle = `hsla(${hueBase},100%,68%,${ra})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
+    }
+  }
+}
+
+// The understated style for non-on-chain settlements (offline / simulated): a faint thread + packet.
+function renderSimTrade(a, b, e, age, pal) {
+  const col = GOOD_COL[e.good] || pal.accent;
+  const fade = (1 - age) * (e.valid ? 1 : 0.4);
+
+  // guide thread
+  ctx.strokeStyle = rgba(col, 0.05 + 0.1 * fade);
+  ctx.lineWidth = 0.7;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
+  // the packet + a short tail behind it
+  const t = age;
+  const px = lerp(a.x, b.x, t), py = lerp(a.y, b.y, t);
+  const bt = Math.max(0, t - 0.09);
+  const tx = lerp(a.x, b.x, bt), ty = lerp(a.y, b.y, bt);
+  const r = 1.5 + Math.min(2.6, e.amount * 380);
+  ctx.strokeStyle = rgba(col, 0.42 * fade);
+  ctx.lineWidth = r * 0.9;
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(px, py); ctx.stroke();
+  ctx.fillStyle = rgba(col, (e.valid ? 0.92 : 0.4) * fade);
+  ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.fill();
 }
 
 /** Consume the economy summary the /population feed carries (live) or the local mirror (offline). */
@@ -553,11 +644,29 @@ function applyEconomy(econ) {
     econBalances = new Map();
     for (const [id, atomic] of Object.entries(econ.balances)) econBalances.set(Number(id), atomicToUsdc(atomic));
   }
+  refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
     if (bal != null) { const el = $("ins-bal"); if (el) el.textContent = bal.toFixed(4); }
+  }
+}
+
+/** Recompute the swarm's wallet-balance range and each fly's normalised balance (0 = poorest … 1 =
+ *  richest), which drives body size ("richer = bigger"). Sources: the /population economy balances
+ *  and the /economy agent roster — merged so the scale is correct whichever feed has arrived. */
+function refreshBalanceScale() {
+  const map = new Map(econBalances);
+  for (const ag of econAgents) { if (ag && ag.id != null) map.set(Number(ag.id), atomicToUsdc(ag.balance || "0")); }
+  if (!map.size) return;
+  let mn = Infinity, mx = -Infinity;
+  for (const v of map.values()) { if (v < mn) mn = v; if (v > mx) mx = v; }
+  if (!isFinite(mn) || !isFinite(mx)) return;
+  const span = mx - mn;
+  for (const [id, f] of sim) {
+    const v = map.get(id);
+    f.tBalN = (span > 1e-9 && v != null) ? clamp((v - mn) / span) : 0.5;
   }
 }
 
@@ -569,7 +678,10 @@ function spawnPaymentEdges(list) {
     const key = isRealTxHash(s.txHash) ? s.txHash : `${s.tick}:${s.fromId}:${s.toId}:${s.good}:${s.amount}`;
     if (seenSettlements.has(key)) continue;           // already drawn/logged on an earlier poll of this tick
     seenSettlements.add(key);
-    payEdges.push({ fromId: s.fromId, toId: s.toId, amount: atomicToUsdc(s.amount), good: s.good || "signal", valid: !!s.valid, t0: now });
+    // `real` = a genuinely-mined on-chain settlement (valid, NOT simulated, real 64-hex txHash) → flashy.
+    // Simulated / offline / declined trades stay subtle, so the dazzle is reserved for real USDC moving.
+    const real = !!s.valid && !s.simulated && isRealTxHash(s.txHash);
+    payEdges.push({ fromId: s.fromId, toId: s.toId, amount: atomicToUsdc(s.amount), good: s.good || "signal", valid: !!s.valid, real, t0: now });
     if (s.valid) pushEconFeed(s);
   }
   // Keep the dedup set bounded (Set preserves insertion order → drop the oldest half).
@@ -683,6 +795,7 @@ function updateWallet(ag) {
 // official Arc explorer so any wallet's on-chain activity can be verified.
 function applyEconAgents(agents) {
   econAgents = agents;
+  refreshBalanceScale();          // fresh roster → refresh the wealth scale that drives fly size
   if (walletsOpen) renderWallets();
 }
 

@@ -41,7 +41,7 @@ import {
   type StoredStimulus,
 } from "./stimulus.js";
 import { Population, type PopulationSnapshot } from "./population.js";
-import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps } from "./economy.js";
+import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type Settlement } from "./economy.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -313,21 +313,37 @@ export class FlyStateDO {
     // 3) Collect the visitor stimuli queued since the last tick (injected on the first sub-tick only).
     const stimuli = this.pendingStimuli.splice(0, this.pendingStimuli.length);
 
-    // 4) Run the decision sub-ticks; keep the final snapshot for the frontend.
+    // 4) Run the decision sub-ticks. The agent economy now settles on EVERY sub-tick (not just once per
+    //    cron), sharing ONE per-cron deal budget — so trades are ~5× more frequent while the total real
+    //    settlements per cron stays bounded. Each sub-tick has a unique tickIndex, so every EIP-3009
+    //    nonce stays unique (no replay) even though the economy steps several times per cron.
     const subTicks = this.cfg.ticksPerCron;
     const subSteps = Math.max(1, Math.floor(this.cfg.simStepsPerTick / subTicks));
     let snapshot: PopulationSnapshot | null = null;
+    const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    // Per-CRON settlement budget (previously spent in a single step; now spread across the sub-ticks).
+    let econBudget = this.cfg.economy.maxDealsPerTick;
+    const cronSettlements: Settlement[] = [];
+    let deals = 0;
     for (let st = 0; st < subTicks; st++) {
       snapshot = population.step(pulse, regime, st === 0 ? stimuli : [], subSteps);
+      // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
+      //     of the neural layer — it never feeds back into the connectome.
+      if (economy && snapshot && econBudget > 0) {
+        const made = await economy.step(
+          snapshot.flies,
+          snapshot.collective,
+          population.getTickIndex(),
+          econBudget,
+        );
+        cronSettlements.push(...made);
+        deals += made.filter((s) => s.valid).length;
+        econBudget -= made.length;   // every attempt counts against the cron budget (bounds real spend)
+      }
     }
-
-    // 4b) Agent economy: the flies settle x402 micropayments driven by the drives they just produced.
-    //     One-directional read-out of the neural layer — it never feeds back into the connectome.
-    let deals = 0;
-    if (this.cfg.economy.enabled && snapshot) {
-      const economy = await this.ensureEconomy();
-      const made = await economy.step(snapshot.flies, snapshot.collective, population.getTickIndex());
-      deals = made.filter((s) => s.valid).length;
+    if (economy) {
+      // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
+      economy.setLastTick(cronSettlements);
       this.lastEconomy = economy.snapshot();
     }
 

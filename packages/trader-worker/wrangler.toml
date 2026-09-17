@@ -58,7 +58,7 @@ ECONOMY_ENABLED = "true"                      # agent economy on/off (off ⇒ pu
 ECONOMY_INITIAL_BALANCE = "6"                # starting USDC per agent wallet
 ECONOMY_BASE_PRICE = "0.002"                  # base price of one good (USDC) before neural/market scaling
 ECONOMY_SOLVENCY_FLOOR = "0.5"                # simulated treasury tops an agent up to this when it runs dry
-ECONOMY_MAX_DEALS = "2"                    # max settlements per tick (default = POPULATION_SIZE)
+ECONOMY_MAX_DEALS = "10"                   # per-CRON settlement budget, spread across the 6 sub-ticks — 5× the old 2/cron rate
 ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "onchain" (real EIP-3009; needs the block below)
 
 # ===== Real-money (ONCHAIN) settlement — LIVE: ECONOMY_SHADOW = "false" broadcasts real USDC transfers
@@ -73,8 +73,8 @@ ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "on
 # Non-sensitive rails (safe to commit; uncomment to override the coded defaults in src/config.ts):
 # ECONOMY_REAL_SPEND = "true"                 # kill switch: set "false" to halt ALL real settlement instantly
 ECONOMY_SHADOW = "false"                    # LIVE: real EIP-3009 USDC transfers are broadcast on Arc mainnet, under the caps + kill switch below
-# ECONOMY_DAILY_CAP = "20"                    # global real-spend ceiling per UTC day (USDC); 0 = no cap
-# ECONOMY_PER_AGENT_DAILY_CAP = "2"           # per-agent real-spend ceiling per UTC day (USDC); 0 = no cap
+ECONOMY_DAILY_CAP = "100"                   # global real-spend ceiling per UTC day (USDC); raised 5× with the trade rate so 10/min isn't throttled; 0 = no cap
+ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per UTC day (USDC); raised 5× with the trade rate; 0 = no cap
 # ECONOMY_MAX_DEAL = "0.05"                   # facilitator hard per-deal ceiling (USDC)
 # ECONOMY_GAS_PRICE_GWEI = "20"               # pin relay gas (Arc launched ~20 gwei); omit = let viem estimate
 # ECONOMY_USDC_EIP712_NAME = "USDC"           # EIP-712 domain name (probe: name()="USDC"); tune if signatures revert

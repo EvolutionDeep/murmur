@@ -240,7 +240,7 @@ export class AgentEconomy {
    * onchain settlement does real RPC; the simulated facilitator resolves immediately with identical
    * results, so awaiting changes nothing about the default economy's output.
    */
-  async step(readings: FlyReading[], collective: CollectiveState, tickIndex: number): Promise<Settlement[]> {
+  async step(readings: FlyReading[], collective: CollectiveState, tickIndex: number, budgetOverride?: number): Promise<Settlement[]> {
     this.tickIndex = tickIndex;
     if (!this.cfg.enabled || readings.length < 2) { this.lastTick = []; return this.lastTick; }
 
@@ -254,7 +254,7 @@ export class AgentEconomy {
     const n = readings.length;
     const T = clamp01(collective.temperature);
     const made: Settlement[] = [];
-    const budget = Math.max(0, this.cfg.maxDealsPerTick);
+    const budget = Math.max(0, budgetOverride ?? this.cfg.maxDealsPerTick);
 
     // Market-wide demand: a HOT chain means more agents want to buy, at higher prices.
     const demand = 0.3 + 0.7 * T;
@@ -294,6 +294,16 @@ export class AgentEconomy {
     }
     if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
     return made;
+  }
+
+  /**
+   * Override the "last tick" settlement batch the frontend draws as payment edges. The DO now drives
+   * several economy sub-steps per cron (one per neural sub-tick) to raise trade frequency; this lets it
+   * publish the WHOLE cron's settlements as one batch instead of only the final sub-tick's, so every
+   * trade the cron made is visible on the canvas.
+   */
+  setLastTick(settlements: Settlement[]): void {
+    this.lastTick = settlements;
   }
 
   /** buy probability 0..1 from state + arousal + wingbeat + rest. */
