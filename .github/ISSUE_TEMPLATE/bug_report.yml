@@ -1,0 +1,58 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly in murmur
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        > **Security issue involving real funds or private keys?** Please do **not** open a public issue.
+        > Follow the private disclosure process described in `SECURITY.md` at the root of this repository.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+      placeholder: Tell us what you saw and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The minimal steps or snippet that reproduces the problem.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of murmur is affected?
+      multiple: true
+      options:
+        - fly-brain (neural sim)
+        - trader-worker (market / economy / x402)
+        - frontend (canvas / inspector)
+        - docs
+        - CI / tooling
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      description: Paste any error output, browser console logs, or Worker logs. This is formatted as code.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, browser (for frontend issues), and whether this is the deployed site or a local run.
+      placeholder: e.g. Node 20, Windows 11, Chrome 128, local `npm run dev:worker`

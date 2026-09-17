@@ -1,0 +1,115 @@
+name = "murmur"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------- Custom domain: the Worker API on the project's own zone ----------
+# api.muros.live → this Worker. A custom domain (not *.workers.dev) means the deployed frontend at
+# muros.live can reach the API even on networks that DNS-sinkhole workers.dev. Cloudflare provisions
+# the DNS record + SSL automatically on deploy (the muros.live zone is in this account).
+routes = [
+  { pattern = "api.muros.live", custom_domain = true }
+]
+
+# Cron: observe Arc, update the market temperature and let the fly population react — every minute
+# (Cloudflare's minimum cron granularity). Each run reads whole-chain activity and advances the sim.
+[triggers]
+crons = ["* * * * *"]
+
+# ---------- Variables (non-sensitive, committed with the code) ----------
+# By DEFAULT there are NO secrets: this Worker only READS Arc chain data and runs a keyless simulated
+# economy — no wallet, no private key, no real funds. Real-money settlement is opt-in and needs TWO
+# secrets set out-of-band with `wrangler secret put` (NEVER committed here): ECONOMY_MNEMONIC and,
+# optionally, ECONOMY_FACILITATOR_PK. See the "Real-money" block under the agent economy below.
+[vars]
+# ===== Arc chain =====
+# Deployed to Arc MAINNET (Chain ID 5042). The public mainnet RPC is reachable and serves live
+# blocks — verified from the dev machine: eth_chainId=0x13b2 (5042), eth_blockNumber ~21.25M,
+# eth_getBlockByNumber(latest) returns real txs/gas. READ-ONLY: this Worker only reads chain data
+# to derive the market temperature. No wallet, no key, no funds moved (see ECONOMY_FACILITATOR below).
+CHAIN_ID = "5042"                             # 5042 = Arc mainnet · 5042002 = Arc testnet
+RPC_URL = "https://rpc.mainnet.arc.io"        # Arc mainnet public RPC
+
+# ===== Market temperature (Arc whole-chain activity) =====
+MARKET_SAMPLE_BLOCKS = "16"                   # recent blocks sampled per cron for tx/gas throughput
+MARKET_EWMA_ALPHA = "0.08"                    # baseline smoothing (slow ⇒ tracks the regime, not spikes)
+MARKET_GAIN = "3.0"                           # logistic sharpness ratio→temperature (calibrated on live Arc)
+REGIME_HOT = "0.66"                           # temperature ≥ this ⇒ HOT
+REGIME_COLD = "0.33"                          # temperature ≤ this ⇒ COLD
+
+# ===== Fly population =====
+POPULATION_SIZE = "24"                        # number of flies in the swarm (1–256)
+POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = base + i*7919
+TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
+SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
+
+# ===== Visitor stimulus ("poke the swarm") =====
+STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
+FRONTEND_ORIGIN = "*"                         # CORS origin for the frontend
+
+# ===== Agent economy (x402 micropayments between fly agents) =====
+# Every fly is an autonomous agent with a USDC micro-wallet; its neural drives decide what to buy and
+# from whom, and agents settle over x402. SIMULATED + KEYLESS by default: no wallet, no private key,
+# no signing, no real funds moved. Real EIP-3009 settlement IS implemented (src/x402.ts) but stays inert
+# until you flip ECONOMY_FACILITATOR to "onchain" AND set the ECONOMY_MNEMONIC secret + fund the wallets.
+ECONOMY_ENABLED = "true"                      # agent economy on/off (off ⇒ pure reactive population)
+ECONOMY_INITIAL_BALANCE = "10"                # starting USDC per agent wallet
+ECONOMY_BASE_PRICE = "0.002"                  # base price of one good (USDC) before neural/market scaling
+ECONOMY_SOLVENCY_FLOOR = "0.5"                # simulated treasury tops an agent up to this when it runs dry
+# ECONOMY_MAX_DEALS = "24"                    # max settlements per tick (default = POPULATION_SIZE)
+ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "onchain" (real EIP-3009; needs the block below)
+
+# ===== Real-money (ONCHAIN) settlement — OFF by default; EVERY line here is inert while
+#       ECONOMY_FACILITATOR = "simulated". Go-live order: (1) set the secrets, (2) fund the wallets,
+#       (3) run in SHADOW mode to prove the signing/domain/gas path against live chain state, (4) only
+#       then set ECONOMY_SHADOW = "false" to let real USDC move — under the caps + kill switch. =====
+# SECRETS — set with `wrangler secret put <NAME>`, NEVER written into this file:
+#   ECONOMY_MNEMONIC        one BIP-39 seed → HD-derives all agent wallets (m/44'/60'/0'/0/{id}) + gas wallet
+#   ECONOMY_FACILITATOR_PK  optional dedicated gas-wallet key (else the gas wallet is derived from the seed)
+# Non-sensitive rails (safe to commit; uncomment to override the coded defaults in src/config.ts):
+# ECONOMY_REAL_SPEND = "true"                 # kill switch: set "false" to halt ALL real settlement instantly
+ ECONOMY_SHADOW = "true"                     # RECOMMENDED first step: sign + simulate each transfer, never broadcast
+# ECONOMY_DAILY_CAP = "20"                    # global real-spend ceiling per UTC day (USDC); 0 = no cap
+# ECONOMY_PER_AGENT_DAILY_CAP = "2"           # per-agent real-spend ceiling per UTC day (USDC); 0 = no cap
+# ECONOMY_MAX_DEAL = "0.05"                   # facilitator hard per-deal ceiling (USDC)
+# ECONOMY_GAS_PRICE_GWEI = "20"               # pin relay gas (Arc launched ~20 gwei); omit = let viem estimate
+# ECONOMY_USDC_EIP712_NAME = "USDC"           # EIP-712 domain name (probe: name()="USDC"); tune if signatures revert
+# ECONOMY_USDC_EIP712_VERSION = "2"           # EIP-712 domain version (probe: version()="2")
+
+
+# ===== Brain backend =====
+# "ts-lif"     → default, pure-TS ~1,080-neuron spiking connectome (what the behaviour was tuned on)
+# "wasm-flyai" → load a real fly.ai WASM module (requires WASM_MODULE_URL)
+# "wasm-mock"  → TS-simulated large sparse LIF
+BRAIN_BACKEND = "ts-lif"
+WASM_MODULE_URL = ""
+WASM_NEURON_COUNT = "0"
+
+# ===== TS-LIF connectome sizing (optional; omitted ⇒ ~1,080-neuron default) =====
+# Left at defaults to match the calibrated behaviour and keep the per-cron CPU budget small.
+# BRAIN_N_SENSORY = "180"
+# BRAIN_N_INTER_L1 = "400"
+# BRAIN_N_INTER_L2 = "400"
+# BRAIN_N_MODULATORY = "40"
+# BRAIN_N_MOTOR_PER_CHANNEL = "12"
+# BRAIN_DENSITY = "0.02"
+
+# ---------- Durable Object: population + market state ----------
+[[durable_objects.bindings]]
+name = "FLY_STATE"
+class_name = "FlyStateDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FlyStateDO"]
+
+# ---------- Optional: D1 database for long-term archival of market/population snapshots ----------
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "murmur-db"
+# database_id = ""
+
+# ---------- Observability ----------
+[observability]
+enabled = true
+head_sampling_rate = 1

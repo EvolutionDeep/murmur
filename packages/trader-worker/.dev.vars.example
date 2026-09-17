@@ -1,0 +1,15 @@
+# ⚠️ Copy this file to .dev.vars for local `wrangler dev`; .dev.vars is gitignored — NEVER commit it.
+#
+# murmur is KEYLESS by default: the Worker only READS Arc chain data and runs a simulated x402
+# economy. You need NOTHING below for local development or for the default (simulated) deployment.
+#
+# These two secrets are ONLY required to opt into real-money (onchain EIP-3009) settlement, which
+# additionally needs ECONOMY_FACILITATOR="onchain" in wrangler.toml. In production set them with
+# `wrangler secret put <NAME>` (encrypted at rest), never in this file.
+
+# One BIP-39 seed phrase → HD-derives every agent wallet (m/44'/60'/0'/0/{id}) + the gas wallet.
+# ECONOMY_MNEMONIC="your twelve or twenty four word seed phrase here"
+
+# Optional: a dedicated gas-wallet private key (0x-prefixed). If omitted, the gas wallet is derived
+# from ECONOMY_MNEMONIC at accountIndex 2,000,000.
+# ECONOMY_FACILITATOR_PK="0xYOUR_FACILITATOR_PRIVATE_KEY"

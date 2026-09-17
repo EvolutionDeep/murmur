@@ -1,0 +1,28 @@
+{
+  "name": "murmur",
+  "version": "0.2.0",
+  "private": true,
+  "description": "murmur — a population of fruit-fly nervous systems adrift on the Arc market, each an autonomous agent whose ~1,080-neuron LIF connectome decides what to buy and from whom, settling in USDC over x402. Keyless & simulated by default; no LLM.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/fly-brain",
+    "packages/trader-worker",
+    "packages/frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p packages/fly-brain/tsconfig.json && tsc --noEmit -p packages/trader-worker/tsconfig.json",
+    "smoke": "npx --yes tsx packages/fly-brain/smoke.ts",
+    "dev:worker": "npm run dev -w @fly/trader-worker",
+    "deploy:worker": "npm run deploy -w @fly/trader-worker",
+    "deploy:frontend": "npm run deploy -w @fly/frontend",
+    "deploy": "npm run deploy:worker && npm run deploy:frontend"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "wrangler": "^4.133.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

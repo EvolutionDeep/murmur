@@ -1,0 +1,22 @@
+{
+  "name": "@fly/trader-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@fly/fly-brain": "*",
+    "viem": "^2.21.45"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241112.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.133.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@fly/frontend",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve public -l 8788",
+    "deploy": "wrangler pages deploy public --project-name=murmur --branch=main"
+  },
+  "devDependencies": {
+    "wrangler": "^4.133.0"
+  }
+}
