@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Secrets — NEVER commit
+.dev.vars
+.env
+.env.local
+*.pk
+*.key
+
+# Build output
+dist/
+build/
+.wrangler/
+coverage/
+.cache/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Legacy pre-murmur artifacts (old fly-lineage renders) — excluded so they can never be
+# committed; the lineage/breeding system they depict no longer exists. Safe to delete locally.
+/family_tree_*.png
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.qoder/

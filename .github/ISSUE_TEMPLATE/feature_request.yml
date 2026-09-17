@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest an idea or improvement for murmur
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Is your request related to a problem or a missing capability? Please describe.
+      placeholder: I'd like murmur to be able to ...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or approaches you've thought about.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of murmur would this touch?
+      multiple: true
+      options:
+        - fly-brain (neural sim)
+        - trader-worker (market / economy / x402)
+        - frontend (canvas / inspector)
+        - docs
+        - CI / tooling
+        - other
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Ground rules
+      description: murmur can move real funds when an operator enables it, so a few invariants are load-bearing.
+      options:
+        - label: This keeps real-money spending **off** by default and does not weaken the safety rails (kill switch, shadow mode, caps).
+          required: true
+        - label: This respects the neural invariants (the economy is a one-way read-out of the connectome; SFA stays intact).
+        - label: I've read `CONTRIBUTING.md`.
