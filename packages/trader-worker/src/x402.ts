@@ -73,6 +73,18 @@ export function arcNetworkTag(isTestnet: boolean): string {
   return isTestnet ? "arc-testnet" : "arc";
 }
 
+/**
+ * Bounded receipt waits. viem's waitForTransactionReceipt polls forever by default: when the Arc RPC
+ * degrades (or a tx stalls), a single unbounded wait can hold the DO's serial input queue and freeze
+ * EVERY later cron — the whole site stops ticking. Every wait here is therefore time-boxed:
+ *  · money path (settle / external settle): the tx is already broadcast, so timing out only reports
+ *    failure — the netting ledger never moves without a mined receipt, and the next cron re-reads the
+ *    authoritative on-chain balance before signing, so no double-spend is possible.
+ *  · registry commits (best-effort mirrors): a shorter bound; they must never eat the cron budget.
+ */
+export const RECEIPT_TIMEOUT_MS = 45_000;
+export const REGISTRY_RECEIPT_TIMEOUT_MS = 30_000;
+
 // ============================== EIP-3009 (real settlement) ==============================
 //
 // The Arc USDC precompile is a Circle FiatTokenV2, so gasless transfers use EIP-3009
@@ -619,6 +631,7 @@ export class OnChainFacilitator implements Facilitator {
       const receipt = await this.o.publicClient.waitForTransactionReceipt({
         hash,
         confirmations: this.o.confirmations ?? 1,
+        timeout: RECEIPT_TIMEOUT_MS,
       });
       return { success: receipt.status === "success", network: net, txHash: hash, simulated: false };
     } catch (err) {
@@ -699,7 +712,7 @@ export class OnChainFacilitator implements Facilitator {
         ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
       });
       const receipt = await this.o.publicClient.waitForTransactionReceipt({
-        hash, confirmations: this.o.confirmations ?? 1,
+        hash, confirmations: this.o.confirmations ?? 1, timeout: RECEIPT_TIMEOUT_MS,
       });
       return { success: receipt.status === "success", network: net, txHash: hash, simulated: false };
     } catch (err) {
@@ -780,6 +793,7 @@ export class OnChainFacilitator implements Facilitator {
       const receipt = await this.o.publicClient.waitForTransactionReceipt({
         hash,
         confirmations: this.o.confirmations ?? 1,
+        timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
       });
       return receipt.status === "success" ? hash : null;
     } catch {
@@ -807,7 +821,9 @@ export class OnChainFacilitator implements Facilitator {
         address: addr, abi: neuralReceiptRegistryAbi, functionName: "seedGenesis", args: [anchor],
         ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
       });
-      await this.o.publicClient.waitForTransactionReceipt({ hash: h, confirmations: this.o.confirmations ?? 1 });
+      await this.o.publicClient.waitForTransactionReceipt({
+        hash: h, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
     } catch {
       /* best-effort */
     }
