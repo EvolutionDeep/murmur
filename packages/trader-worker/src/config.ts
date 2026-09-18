@@ -7,8 +7,14 @@
 // the agents. With no mnemonic it runs a keyless simulated ledger and moves nothing (see state.ts).
 
 export interface Env {
-  // Durable Object binding (population + market state)
+  // Durable Object binding (population + market state) — the coordinator singleton.
   FLY_STATE: DurableObjectNamespace;
+
+  // Optional Durable Object binding for the sharded swarm. When SHARD_COUNT > 1 AND this binding is
+  // present, FlyStateDO becomes a coordinator that fans the heavy per-fly LIF advance out to N
+  // independent FlyShardDO isolates (one slice of the population each) instead of running all brains
+  // in a single isolate. Absent (or SHARD_COUNT = 1) ⇒ today's exact single-DO behaviour.
+  FLY_SHARD?: DurableObjectNamespace;
 
   // Optional D1 (long-term archival of market / population snapshots)
   DB?: D1Database;
@@ -30,6 +36,7 @@ export interface Env {
   POPULATION_SEED_BASE?: string;    // base seed; fly i uses base + i*7919 (default 42)
   TICKS_PER_CRON?: string;          // simulation sub-ticks per cron (default 6)
   SIM_STEPS_PER_TICK?: string;      // LIF integration steps per sub-tick (default 500)
+  SHARD_COUNT?: string;             // swarm shards across N Durable Objects (default 1 = single DO; needs the FLY_SHARD binding)
 
   // --- Visitor stimulus (optional "poke the swarm" secondary input) ---
   STIMULUS_COOLDOWN_SEC?: string;   // one injection per visitor per N seconds (default 30)
@@ -88,6 +95,8 @@ export interface RuntimeConfig {
   populationSeeds: number[];        // pre-computed per-fly seeds (base + i*7919)
   ticksPerCron: number;
   simStepsPerTick: number;
+  /** Durable Objects the swarm is sharded across (1 = the single FlyStateDO, today's behaviour). */
+  shardCount: number;
 
   // Stimulus
   stimulusCooldownSec: number;
@@ -171,6 +180,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     populationSeeds,
     ticksPerCron: clampInt(Number(env.TICKS_PER_CRON || "6"), 1, 60),
     simStepsPerTick: Math.max(1, Number(env.SIM_STEPS_PER_TICK || "500")),
+    // Shards are capped at the population size (one shard per fly is the finest useful split) and at
+    // 64 (a sane ceiling on fan-out round-trips per cron). 1 ⇒ the single FlyStateDO, unchanged.
+    shardCount: clampInt(Number(env.SHARD_COUNT || "1"), 1, Math.min(64, populationSize)),
 
     stimulusCooldownSec: Number(env.STIMULUS_COOLDOWN_SEC || "30"),
     frontendOrigin: env.FRONTEND_ORIGIN || "*",
@@ -220,4 +232,36 @@ export function clamp(x: number, lo: number, hi: number): number {
 export function clampInt(x: number, lo: number, hi: number): number {
   if (!Number.isFinite(x)) return lo;
   return Math.max(lo, Math.min(hi, Math.floor(x)));
+}
+
+/**
+ * Deterministic shard layout — a contiguous, ascending slice of fly ids. Both the coordinator (to fan
+ * out + route per-fly reads) and each FlyShardDO (to know which flies it owns) derive the SAME slice
+ * from (populationSize, shardCount), so no shard map ever needs to be stored or shipped.
+ * Flies per shard = ceil(size / shardCount); the last shard may hold fewer (or none if evenly divided).
+ */
+export function fliesPerShard(populationSize: number, shardCount: number): number {
+  return Math.max(1, Math.ceil(populationSize / Math.max(1, shardCount)));
+}
+
+/** Half-open [start, end) range of fly ids owned by shard `k`. */
+export function shardSlice(
+  populationSize: number,
+  shardCount: number,
+  k: number,
+): { start: number; end: number } {
+  const per = fliesPerShard(populationSize, shardCount);
+  const start = Math.min(populationSize, k * per);
+  const end = Math.min(populationSize, start + per);
+  return { start, end };
+}
+
+/** Index of the shard that owns `flyId` (clamped so an out-of-range id never yields a bad shard). */
+export function shardOf(
+  populationSize: number,
+  shardCount: number,
+  flyId: number,
+): number {
+  const per = fliesPerShard(populationSize, shardCount);
+  return Math.max(0, Math.min(Math.max(1, shardCount) - 1, Math.floor(flyId / per)));
 }

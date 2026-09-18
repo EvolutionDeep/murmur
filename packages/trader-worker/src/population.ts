@@ -86,6 +86,52 @@ export interface PopulationSnapshot {
   flies: FlyReading[];
 }
 
+/** The minimal per-fly structure the HEAVY advance needs: a brain to drive plus the identity that
+ *  seeds its internal arousal. No decoder — behaviour decoding is a GLOBAL reduce that runs in the
+ *  coordinator (it needs every fly's read-out to compute the population bands). FlyInstance satisfies
+ *  this structurally, so Population.advanceRead() hands its own flies straight in. */
+export interface AdvanceableFly {
+  id: number;
+  brain: FlyBrain;
+  vitals: FlyVitals;
+}
+
+/** One fly's compact post-advance read-out: everything the coordinator needs to compute the global
+ *  bands and decode this fly, WITHOUT holding its heavy neural state. Deliberately independent of the
+ *  neuron count (a fixed handful of per-channel floats), so it is cheap to ship across a Durable Object
+ *  RPC boundary — which is the whole point of sharding the swarm across isolates. */
+export interface FlyReadOut {
+  id: number;
+  motor: MotorOutput[];
+  sensory: SensoryInput[];
+  /** The brain's simulation clock (ms) at read time — feeds the neural fingerprint. */
+  t: number;
+}
+
+/** The per-fly coordinator-side state the reduce needs alongside each read-out: identity, the stable
+ *  temperament (frontend colour/reading) and the decoder carrying this fly's behavioural hysteresis. */
+export interface ReduceRosterEntry {
+  id: number;
+  temperament: number;
+  decoder: MotorDecoder;
+}
+
+export interface ReduceContext {
+  pulse: MarketPulse;
+  regime: Regime;
+  /** Incoming slow-EWMA "vitality" carrier (raw, unclamped) — eased toward this tick's temperature. */
+  vitality: number;
+}
+
+export interface ReduceOutput {
+  readings: FlyReading[];
+  collective: CollectiveState;
+  /** Aligned with `roster` — each fly's decoded behaviour, so the caller can stash it as lastBehavior. */
+  behaviors: FlyBehavior[];
+  /** Updated RAW vitality carrier (clamped only when published/read). */
+  vitality: number;
+}
+
 const EMPTY_STATES = (): Record<BehaviorState, number> => ({
   AGITATE: 0,
   EXPLORE: 0,
@@ -133,7 +179,7 @@ export class Population {
 
   /** A stable temperament in 0.2..0.8 drawn from the seed (so it survives restarts). */
   private temperamentOf(seed: number): number {
-    return (((seed >>> 5) % 1000) / 1000) * 0.6 + 0.2;
+    return flyTemperament(seed);
   }
 
   private spawnFly(seed: number, id: number): FlyInstance {
@@ -147,6 +193,11 @@ export class Population {
   /**
    * Advance one tick: drive every fly with the shared market pulse (+ any visitor stimuli), then
    * decode each fly RELATIVE to the population so the reaction is collective + individual.
+   *
+   * Split into the two halves that sharding separates across isolates: advanceRead() is the HEAVY,
+   * per-fly, cross-fly-independent LIF integration; reduceReadOuts() is the LIGHT global reduce that
+   * must see every fly at once. In the single-DO configuration both run here, in-process, exactly as
+   * before — the split is what lets a sharded coordinator run the reduce while the shards run advance.
    */
   step(
     pulse: MarketPulse,
@@ -155,82 +206,31 @@ export class Population {
     simSteps: number,
   ): PopulationSnapshot {
     this.tickIndex++;
-    const flies = this.flies;
 
-    // 1) Drive every fly and collect its raw motor output.
-    const motors: MotorOutput[][] = [];
-    const sensories: SensoryInput[][] = [];
-    const raws: RawDrives[] = [];
-    for (const fly of flies) {
-      // Per-fly internal arousal gives each individual its own tempo on top of the shared pulse.
-      const sensory = encodeMarketPulse({ ...pulse, arousal: fly.vitals.temperament });
-      const chunkSize = 50;
-      const chunks = Math.max(1, Math.ceil(simSteps / chunkSize));
-      for (let c = 0; c < chunks; c++) {
-        for (const s of sensory) fly.brain.inject(s);
-        // Visitor stimuli land as a short perturbation at the start of the tick.
-        if (c < 3) for (const st of stimuli) fly.brain.inject(encodeStimulus(st));
-        fly.brain.advance(Math.min(chunkSize, simSteps - c * chunkSize));
-      }
-      const motor = fly.brain.readAllMotor();
-      motors.push(motor);
-      sensories.push(sensory);
-      raws.push(readRawDrives(motor));
-    }
+    // 1) HEAVY: drive + advance every fly's spiking net, collecting the compact read-outs.
+    const readOuts = this.advanceRead(pulse, stimuli, simSteps);
 
-    // 2) Population bands → each fly's relative standing this tick.
-    const bands = computeBands(raws);
-
-    // 3) Decode every fly against the bands; aggregate the collective mood.
-    const readings: FlyReading[] = [];
-    const states = EMPTY_STATES();
-    let sumAro = 0, sumCoh = 0, sumRest = 0, sumWing = 0;
-    for (let i = 0; i < flies.length; i++) {
-      const fly = flies[i];
-      const b = fly.decoder.decode(
-        motors[i],
-        sensories[i],
-        fly.brain.t,
-        pulse.temperature,
-        bands,
-      );
-      fly.lastBehavior = b;
-      states[b.state]++;
-      sumAro += b.arousal;
-      sumCoh += b.cohesion;
-      sumRest += b.rest;
-      sumWing += b.wingbeat;
-      readings.push({
-        id: fly.id,
-        state: b.state,
-        arousal: b.arousal,
-        turnBias: b.turnBias,
-        cohesion: b.cohesion,
-        wingbeat: b.wingbeat,
-        rest: b.rest,
-        temperament: fly.vitals.temperament,
-        fingerprint: b.neuralFingerprint,
-      });
-    }
-
-    const n = Math.max(1, flies.length);
-    // Vitality tracks the market slowly: a hot streak leaves the population buzzing for a while.
-    this.vitality += 0.02 * (pulse.temperature - this.vitality);
-
-    const collective: CollectiveState = {
-      temperature: pulse.temperature,
+    // 2) LIGHT: the global reduce — population bands → per-fly decode → collective mood.
+    const roster: ReduceRosterEntry[] = this.flies.map((f) => ({
+      id: f.id,
+      temperament: f.vitals.temperament,
+      decoder: f.decoder,
+    }));
+    const { readings, collective, behaviors, vitality } = reduceReadOuts(readOuts, roster, {
+      pulse,
       regime,
-      vitality: clamp01(this.vitality),
-      size: flies.length,
-      arousal: sumAro / n,
-      cohesion: sumCoh / n,
-      rest: sumRest / n,
-      wingbeat: sumWing / n,
-      states,
-    };
+      vitality: this.vitality,
+    });
+    for (let i = 0; i < this.flies.length; i++) this.flies[i].lastBehavior = behaviors[i];
+    this.vitality = vitality;
 
     this.lastSnapshot = { tickIndex: this.tickIndex, collective, flies: readings };
     return this.lastSnapshot;
+  }
+
+  /** HEAVY half of a tick for this (single-isolate) population: drive + advance every fly's net. */
+  advanceRead(pulse: MarketPulse, stimuli: StimulusEvent[], simSteps: number): FlyReadOut[] {
+    return advanceFlies(this.flies, pulse, stimuli, simSteps);
   }
 
   getTickIndex(): number { return this.tickIndex; }
@@ -265,6 +265,116 @@ export class Population {
     }
     throw new Error("unsupported population serialization version");
   }
+}
+
+/** A stable per-fly temperament in 0.2..0.8 drawn from the seed (survives restarts). Exported so the
+ *  sharded coordinator and each shard derive the SAME temperament the single-DO Population does. */
+export function flyTemperament(seed: number): number {
+  return (((seed >>> 5) % 1000) / 1000) * 0.6 + 0.2;
+}
+
+/**
+ * HEAVY half of a tick: drive every fly with the shared market pulse (+ its own stable internal
+ * arousal, + any visitor stimuli landed as a short perturbation on the first chunks) and advance its
+ * spiking net for `simSteps` ms, returning the compact motor/sensory read-out per fly. Touches NO
+ * cross-fly state, so it behaves identically whether the flies live in one isolate (Population) or are
+ * fanned out across shard Durable Objects — which is exactly why the tick splits cleanly along it.
+ */
+export function advanceFlies(
+  flies: AdvanceableFly[],
+  pulse: MarketPulse,
+  stimuli: StimulusEvent[],
+  simSteps: number,
+): FlyReadOut[] {
+  const out: FlyReadOut[] = [];
+  for (const fly of flies) {
+    // Per-fly internal arousal gives each individual its own tempo on top of the shared pulse.
+    const sensory = encodeMarketPulse({ ...pulse, arousal: fly.vitals.temperament });
+    const chunkSize = 50;
+    const chunks = Math.max(1, Math.ceil(simSteps / chunkSize));
+    for (let c = 0; c < chunks; c++) {
+      for (const s of sensory) fly.brain.inject(s);
+      // Visitor stimuli land as a short perturbation at the start of the tick.
+      if (c < 3) for (const st of stimuli) fly.brain.inject(encodeStimulus(st));
+      fly.brain.advance(Math.min(chunkSize, simSteps - c * chunkSize));
+    }
+    out.push({ id: fly.id, motor: fly.brain.readAllMotor(), sensory, t: fly.brain.t });
+  }
+  return out;
+}
+
+/**
+ * LIGHT half of a tick: given every fly's read-out, compute the population bands, decode each fly
+ * RELATIVE to its peers, and aggregate the collective mood + per-fly readings. This is the global
+ * reduce that MUST see the whole swarm at once, so it always runs in the coordinator — a shard only
+ * ever produces read-outs. Read-outs are aligned to the roster BY ID (shards return contiguous
+ * ascending slices; the map is cheap insurance that a reorder can never mis-assign a decoder).
+ */
+export function reduceReadOuts(
+  readOuts: FlyReadOut[],
+  roster: ReduceRosterEntry[],
+  ctx: ReduceContext,
+): ReduceOutput {
+  const byId = new Map<number, FlyReadOut>();
+  for (const r of readOuts) byId.set(r.id, r);
+
+  // 1) Population bands from every fly's raw drives (robust 10–90 percentiles + max |turn|).
+  const raws: RawDrives[] = roster.map((entry) => {
+    const r = byId.get(entry.id);
+    return r ? readRawDrives(r.motor) : { arousal: 0, turn: 0, cohesion: 0, rest: 0 };
+  });
+  const bands = computeBands(raws);
+
+  // 2) Decode every fly against the bands; aggregate the collective mood.
+  const readings: FlyReading[] = [];
+  const behaviors: FlyBehavior[] = [];
+  const states = EMPTY_STATES();
+  let sumAro = 0, sumCoh = 0, sumRest = 0, sumWing = 0;
+  for (const entry of roster) {
+    const r = byId.get(entry.id);
+    const b = entry.decoder.decode(
+      r?.motor ?? [],
+      r?.sensory ?? [],
+      r?.t ?? 0,
+      ctx.pulse.temperature,
+      bands,
+    );
+    behaviors.push(b);
+    states[b.state]++;
+    sumAro += b.arousal;
+    sumCoh += b.cohesion;
+    sumRest += b.rest;
+    sumWing += b.wingbeat;
+    readings.push({
+      id: entry.id,
+      state: b.state,
+      arousal: b.arousal,
+      turnBias: b.turnBias,
+      cohesion: b.cohesion,
+      wingbeat: b.wingbeat,
+      rest: b.rest,
+      temperament: entry.temperament,
+      fingerprint: b.neuralFingerprint,
+    });
+  }
+
+  const n = Math.max(1, roster.length);
+  // Vitality tracks the market slowly: a hot streak leaves the population buzzing for a while.
+  const vitality = ctx.vitality + 0.02 * (ctx.pulse.temperature - ctx.vitality);
+
+  const collective: CollectiveState = {
+    temperature: ctx.pulse.temperature,
+    regime: ctx.regime,
+    vitality: clamp01(vitality),
+    size: roster.length,
+    arousal: sumAro / n,
+    cohesion: sumCoh / n,
+    rest: sumRest / n,
+    wingbeat: sumWing / n,
+    states,
+  };
+
+  return { readings, collective, behaviors, vitality };
 }
 
 function clamp01(x: number): number {

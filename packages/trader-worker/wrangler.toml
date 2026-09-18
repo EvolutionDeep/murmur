@@ -43,6 +43,12 @@ POPULATION_SIZE = "24"                        # number of flies in the swarm (1�
 POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = base + i*7919
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
+# Swarm sharding (see swarm.ts / shard.ts). "1" = the single-DO swarm this piece has always run — every
+# brain lives in FlyStateDO and the FLY_SHARD binding below stays inert (ZERO shards instantiated). Raise
+# it (e.g. "6") to fan the HEAVY per-fly LIF advance out to N FlyShardDO isolates, each with its own
+# 128 MB + CPU budget and its own SQLite, so each brain can grow past the single-isolate memory ceiling.
+# Only the compact motor/sensory read-out crosses the boundary, so the coordinator stays small at any size.
+SHARD_COUNT = "1"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
@@ -105,9 +111,24 @@ ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending n
 name = "FLY_STATE"
 class_name = "FlyStateDO"
 
+# Sharded-swarm backend: the coordinator (FlyStateDO) fans the heavy per-fly advance out to N of these,
+# one contiguous slice of flies each, ONLY when SHARD_COUNT > 1 (see swarm.ts). With the default
+# SHARD_COUNT = "1" this binding is inert — no shard is ever created and the swarm runs in FlyStateDO.
+# Shards are internal by construction: the public Worker fetch never routes here (only FLY_STATE).
+[[durable_objects.bindings]]
+name = "FLY_SHARD"
+class_name = "FlyShardDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["FlyStateDO"]
+
+# v2 registers the FlyShardDO SQLite class. Because SHARD_COUNT defaults to "1", deploying this creates
+# the class but instantiates ZERO shards, so it is a no-op for the live single-DO swarm — the coordinator
+# only touches FLY_SHARD once an operator raises SHARD_COUNT (at which point shards spring up on demand).
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["FlyShardDO"]
 
 # ---------- D1 database: long-term archival of one row per cron tick ----------
 # FlyStateDO.archiveTick() writes (tick, temperature, regime, size, deals, settlements, volume, gini,

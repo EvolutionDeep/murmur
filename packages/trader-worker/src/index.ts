@@ -3,7 +3,12 @@
 import type { Env } from "./config.js";
 import { FlyStateDO } from "./state.js";
 
+// FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
+// swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
+// (see swarm.ts / shard.ts). Both must be exported so wrangler registers the DO classes; with the
+// default SHARD_COUNT = "1" no shard is ever instantiated and the piece runs exactly as before.
 export { FlyStateDO };
+export { FlyShardDO } from "./shard.js";
 
 const DO_NAME = "fly-main";   // Singleton DO: the whole swarm shares one state store
 

@@ -14,8 +14,11 @@
 // economy's kill switch, daily spend caps, per-deal cap and shadow-only mode. Requested-but-unwireable
 // (onchain without a seed) it degrades LOUDLY back to the keyless simulator — it can never half-enable.
 //
-// Storage layout:
-//   population:v3      JSON of Population.serialize() (every fly's brain)
+// Storage layout (this coordinator DO):
+//   population:v3      single-DO swarm: JSON of Population.serialize() (every fly's brain).
+//   coordinator:v1     sharded swarm (SHARD_COUNT>1): just the {tickIndex, vitality} counter here, while
+//                      each FlyShardDO persists its own slice of brains under shardPopulation:v1 in its
+//                      own isolate — see swarm.ts (the backend seam) and shard.ts (the shard DO).
 //   marketMeter:v1     MarketMeter.toJSON() (the learned activity baseline, survives restarts)
 //   market:v1          the last MarketState (temperature / regime / sample) for fast reads
 //   lastSnapshot:v1    the last PopulationSnapshot (collective + per-fly drives) the frontend polls
@@ -40,14 +43,14 @@ import {
   type StimulusVoteResult,
   type StoredStimulus,
 } from "./stimulus.js";
-import { Population, type PopulationSnapshot } from "./population.js";
+import type { PopulationSnapshot } from "./population.js";
+import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
 
-const KEY_POPULATION = "population:v3";
 const KEY_METER = "marketMeter:v1";
 const KEY_MARKET = "market:v1";
 const KEY_LAST_SNAPSHOT = "lastSnapshot:v1";
@@ -61,7 +64,7 @@ export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
   private cfg: RuntimeConfig;
-  private population: Population | null = null;
+  private swarm: SwarmBackend | null = null;
   private meter: MarketMeter | null = null;
   private economy: AgentEconomy | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
@@ -82,18 +85,21 @@ export class FlyStateDO {
 
   // ---------- Lifecycle ----------
 
-  private async ensurePopulation(): Promise<Population> {
-    if (this.population) return this.population;
-    const stored = await this.state.storage.get<string>(KEY_POPULATION);
-    if (stored) {
-      try {
-        this.population = Population.deserialize(stored, this.cfg);
-      } catch (e) {
-        console.warn("[DO] population deserialize failed:", (e as Error).message);
-      }
-    }
-    if (!this.population) this.population = new Population(this.cfg);
-    return this.population;
+  /**
+   * The swarm is either the single-DO LocalSwarm (SHARD_COUNT = 1 — every brain in this isolate, the
+   * behaviour this piece has always run) or a ShardedSwarm coordinator that fans the heavy per-fly LIF
+   * advance out to N FlyShardDO isolates. Chosen once from config; both present the same SwarmBackend.
+   */
+  private get sharding(): boolean {
+    return this.cfg.shardCount > 1 && this.env.FLY_SHARD != null;
+  }
+
+  private async ensureSwarm(): Promise<SwarmBackend> {
+    if (this.swarm) return this.swarm;
+    this.swarm = this.sharding
+      ? await ShardedSwarm.load(this.cfg, this.env, this.state.storage)
+      : await LocalSwarm.load(this.cfg, this.state.storage);
+    return this.swarm;
   }
 
   private async ensureMeter(): Promise<MarketMeter> {
@@ -223,9 +229,9 @@ export class FlyStateDO {
   }
 
   private async persist(market: MarketState | null, snapshot: PopulationSnapshot | null): Promise<void> {
-    if (this.population) {
-      await this.state.storage.put(KEY_POPULATION, this.population.serialize());
-    }
+    // Swarm-owned state: LocalSwarm writes the whole population:v3 blob; ShardedSwarm writes just the
+    // coordinator counter (its shards persisted their own brains on the cron's commit sub-tick).
+    if (this.swarm) await this.swarm.persist(this.state.storage);
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
@@ -351,7 +357,7 @@ export class FlyStateDO {
   }
 
   private async cronInner(): Promise<void> {
-    const population = await this.ensurePopulation();
+    const swarm = await this.ensureSwarm();
     const meter = await this.ensureMeter();
     const prevTemp = await this.ensurePrevTemperature();
 
@@ -403,14 +409,16 @@ export class FlyStateDO {
     const cronSettlements: Settlement[] = [];
     let deals = 0;
     for (let st = 0; st < subTicks; st++) {
-      snapshot = population.step(pulse, regime, st === 0 ? stimuli : [], subSteps);
+      // commit on the final sub-tick so a sharded swarm persists its shards' brains once per cron
+      // (LocalSwarm ignores the flag — FlyStateDO.persist() writes its single population blob below).
+      snapshot = await swarm.step(pulse, regime, st === 0 ? stimuli : [], subSteps, st === subTicks - 1);
       // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
       //     of the neural layer — it never feeds back into the connectome.
       if (economy && snapshot && econBudget > 0) {
         const made = await economy.step(
           snapshot.flies,
           snapshot.collective,
-          population.getTickIndex(),
+          swarm.getTickIndex(),
           econBudget,
         );
         cronSettlements.push(...made);
@@ -422,7 +430,7 @@ export class FlyStateDO {
       // NETTING flush (onchain only; no-op in simulated mode): broadcast the accumulated bilateral nets
       // whose |net| cleared the min-broadcast threshold or aged past the forced-flush bound. Real txs
       // happen HERE — once per cron at most — instead of one per micropay, amortising gas over many trades.
-      const flushed = await economy.flush(population.getTickIndex());
+      const flushed = await economy.flush(swarm.getTickIndex());
       cronSettlements.push(...flushed);
       deals += flushed.filter((s) => s.valid).length;
       // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
@@ -435,7 +443,7 @@ export class FlyStateDO {
 
     // 6) Archive one row to D1 for the long-term history (best-effort; a D1 failure never blocks the tick).
     await this.archiveTick(
-      population.getTickIndex(),
+      swarm.getTickIndex(),
       temperature,
       regime,
       deals,
@@ -444,7 +452,7 @@ export class FlyStateDO {
     );
 
     console.log(
-      `[DO] cron tick#${population.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
+      `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
         `size=${snapshot?.collective.size ?? 0} subTicks=${subTicks} deals=${deals}`,
     );
   }
@@ -452,16 +460,16 @@ export class FlyStateDO {
   // ---------- Endpoint implementations ----------
 
   private async getState() {
-    const population = await this.ensurePopulation();
+    const swarm = await this.ensureSwarm();
     const snap = await this.loadSnapshot();
     const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
     const econTotals = this.cfg.economy.enabled ? (await this.ensureEconomy()).snapshot().totals : null;
     return json({
       name: "murmur",
-      tickIndex: population.getTickIndex(),
-      aliveCount: population.flies.length,
-      totalCount: population.flies.length,
-      vitality: population.getVitality(),
+      tickIndex: swarm.getTickIndex(),
+      aliveCount: swarm.size(),
+      totalCount: swarm.size(),
+      vitality: swarm.getVitality(),
       collective: snap?.collective ?? null,
       economy: econTotals
         ? {
@@ -507,7 +515,7 @@ export class FlyStateDO {
   /** The frontend's main feed: the last population snapshot + a compact economy summary (payment
    *  edges from the last tick + wallet balances + totals) so one poll drives the whole scene. */
   private async getPopulation() {
-    await this.ensurePopulation();
+    await this.ensureSwarm();
     const snap = await this.loadSnapshot();
     const economy = this.cfg.economy.enabled ? (await this.ensureEconomy()).summary() : null;
     return json({ snapshot: snap, economy });
@@ -583,48 +591,33 @@ export class FlyStateDO {
 
   /** Full neural snapshot of one fly (membrane / firing rates / spikes) for the generative view. */
   private async getSnapshot(url: URL) {
-    const population = await this.ensurePopulation();
+    const swarm = await this.ensureSwarm();
     const flyIdParam = url.searchParams.get("flyId");
-    const flyId = flyIdParam ? Number(flyIdParam) : population.flies[0]?.id ?? 0;
-    const fly = population.flies.find((f) => f.id === flyId);
-    if (!fly) return json({ error: `fly ${flyId} not found` }, 404);
-    const snap = fly.brain.snapshot();
+    const flyId = flyIdParam ? Number(flyIdParam) : 0;
+    const neural = await swarm.snapshotFly(flyId);
+    if (!neural) return json({ error: `fly ${flyId} not found` }, 404);
     // Attach this fly's agent wallet (when the economy is on) so the inspector can show its economy.
     let agent: any = null;
     if (this.cfg.economy.enabled) {
       const a = (await this.ensureEconomy()).getAgent(flyId);
       if (a) agent = { address: a.address, balance: a.balance, paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales };
     }
-    return json({
-      flyId: fly.id,
-      seed: fly.vitals.seed,
-      temperament: fly.vitals.temperament,
-      t: snap.t,
-      step: snap.step,
-      firingRates: Array.from(snap.firingRates),
-      membrane: Array.from(snap.membrane),
-      spikesLastStep: Array.from(snap.spikesLastStep),
-      motor: snap.motor,
-      neuronKinds: fly.brain.connectome?.neurons?.map((n) => n.kind) ?? [],
-      neuronChannels: fly.brain.connectome?.neurons?.map((n) => n.channel) ?? [],
-      neuronCount: fly.brain.connectome?.neurons?.length ?? 0,
-      agent,
-    });
+    return json({ ...neural, agent });
   }
 
   private async getFly(flyIdStr: string) {
-    const population = await this.ensurePopulation();
+    const swarm = await this.ensureSwarm();
     const flyId = Number(flyIdStr);
-    const fly = population.flies.find((f) => f.id === flyId);
-    if (!fly) return json({ error: "not found" }, 404);
-    const b = fly.lastBehavior;
+    const detail = await swarm.flyDetail(flyId);
+    if (!detail) return json({ error: "not found" }, 404);
+    const b = detail.behavior;
     let agent: any = null;
     if (this.cfg.economy.enabled) {
       const a = (await this.ensureEconomy()).getAgent(flyId);
       if (a) agent = { address: a.address, balance: a.balance, paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales };
     }
     return json({
-      vitals: fly.vitals,
+      vitals: detail.vitals,
       behavior: b
         ? {
             state: b.state,
@@ -636,10 +629,10 @@ export class FlyStateDO {
             fingerprint: b.neuralFingerprint,
           }
         : null,
-      motor: fly.brain.readAllMotor(),
+      motor: detail.motor,
       agent,
-      t: fly.brain.t,
-      step: fly.brain.step,
+      t: detail.t,
+      step: detail.step,
     });
   }
 
@@ -699,7 +692,10 @@ export class FlyStateDO {
    * pseudo-addresses with no signer, so reset re-creates every agent with its real HD address.
    */
   private async postReset() {
-    this.population = new Population(this.cfg);
+    // Fresh founding swarm: LocalSwarm rebuilds a new Population; ShardedSwarm resets every shard plus
+    // the coordinator counter. Each persists its own state here, so the wipe survives an eviction.
+    const swarm = await this.ensureSwarm();
+    await swarm.reset(this.state.storage);
     this.meter = new MarketMeter(
       this.cfg.marketEwmaAlpha,
       this.cfg.regimeHot,
@@ -710,7 +706,6 @@ export class FlyStateDO {
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
-    await this.state.storage.put(KEY_POPULATION, this.population.serialize());
     await this.state.storage.put(KEY_METER, this.meter.toJSON());
     await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     await this.state.storage.put(KEY_PREV_TEMP, 0.5);
