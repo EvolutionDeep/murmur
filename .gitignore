@@ -8,6 +8,10 @@ node_modules/
 *.pk
 *.key
 
+# Local one-off ops scripts (deploy preflight/verify/wipe) + generated registry address
+packages/trader-worker/scripts/_*.mjs
+packages/trader-worker/contracts/REGISTRY_ADDRESS.txt
+
 # Build output
 dist/
 build/

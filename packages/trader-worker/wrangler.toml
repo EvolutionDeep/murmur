@@ -106,7 +106,7 @@ ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending n
 # When set, each mined net is committed on-chain right after its EIP-3009 transfer, so the receipt
 # HASH-CHAIN HEAD lives on Arc and any verifier can rebuild the ordered chain from RPC events alone —
 # no murmur server in the loop. Absent ⇒ the commit step is skipped entirely (zero behaviour change).
-# ECONOMY_REGISTRY_ADDRESS = "0x…"            # deployed NeuralReceiptRegistry address
+ECONOMY_REGISTRY_ADDRESS = "0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815"   # deployed on Arc mainnet (5042); committer = the Worker's facilitator wallet
 
 
 # ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====

@@ -49,16 +49,24 @@ if (proxy) {
 // ---- resolve the deployer / committer account (same derivation as the Worker) ----
 const FACILITATOR_ACCOUNT_INDEX = 2_000_000; // must match src/keys.ts
 const normPk = (s) => (s.startsWith("0x") ? s : `0x${s}`);
+const isHexKey = (s) => /^(0x)?[0-9a-fA-F]{64}$/.test(s.trim());
 let account;
 if (env.REGISTRY_DEPLOYER_PK) {
-  account = privateKeyToAccount(normPk(env.REGISTRY_DEPLOYER_PK));
+  account = privateKeyToAccount(normPk(env.REGISTRY_DEPLOYER_PK.trim()));
   console.log("key src  : REGISTRY_DEPLOYER_PK");
 } else if (env.ECONOMY_FACILITATOR_PK) {
-  account = privateKeyToAccount(normPk(env.ECONOMY_FACILITATOR_PK));
+  account = privateKeyToAccount(normPk(env.ECONOMY_FACILITATOR_PK.trim()));
   console.log("key src  : ECONOMY_FACILITATOR_PK");
 } else if (env.ECONOMY_MNEMONIC) {
-  account = mnemonicToAccount(env.ECONOMY_MNEMONIC, { accountIndex: FACILITATOR_ACCOUNT_INDEX });
-  console.log("key src  : ECONOMY_MNEMONIC (derived facilitator, accountIndex " + FACILITATOR_ACCOUNT_INDEX + ")");
+  const m = env.ECONOMY_MNEMONIC.trim();
+  if (isHexKey(m)) {
+    // The user pasted a raw private key into the mnemonic field — handle it gracefully.
+    account = privateKeyToAccount(normPk(m));
+    console.log("key src  : ECONOMY_MNEMONIC field held a raw hex private key (used as PK)");
+  } else {
+    account = mnemonicToAccount(m, { accountIndex: FACILITATOR_ACCOUNT_INDEX });
+    console.log("key src  : ECONOMY_MNEMONIC (derived facilitator, accountIndex " + FACILITATOR_ACCOUNT_INDEX + ")");
+  }
 } else {
   console.error("\n✗ 没有密钥。请在 packages/trader-worker/.env.local 里填写 ECONOMY_MNEMONIC 或一把私钥，然后重跑。");
   process.exit(1);
@@ -78,20 +86,46 @@ const wallet = createWalletClient({ chain, transport: http(rpcUrl), account });
 
 const artifact = JSON.parse(fs.readFileSync(path.join(root, "contracts", "build", "NeuralReceiptRegistry.json"), "utf8"));
 
-console.log("committer:", account.address);
 console.log("chain    :", chainId, rpcUrl);
 
-// ---- gas sanity: the facilitator pays gas in native USDC (18-dec on Arc) ----
+// ---- resolve the COMMITTER address ----
+// The committer is whoever signs the Worker's commit() calls, i.e. the Worker's facilitator/gas wallet
+// — which is NOT necessarily the key deploying this contract. Read it live from the most recent murmur
+// settlement's on-chain `from`, so the deployed committer always matches the Worker even when a
+// different key pays the deploy gas. Override with REGISTRY_COMMITTER if you know it explicitly.
+async function liveFacilitatorAddress() {
+  try {
+    const res = await fetch(env.API_URL || "https://api.muros.live/proofs", { cache: "no-store" });
+    const j = await res.json();
+    const txHash = (j.proofs || []).map((p) => p.txHash).find((h) => /^0x[0-9a-fA-F]{64}$/.test(h || ""));
+    if (!txHash) return null;
+    const tx = await publicClient.getTransaction({ hash: txHash });
+    return tx?.from ?? null;
+  } catch { return null; }
+}
+let committer = (env.REGISTRY_COMMITTER || "").trim();
+if (!committer) {
+  const live = await liveFacilitatorAddress();
+  if (live) committer = live;
+}
+if (!committer) committer = account.address;   // fall back to the deployer
+console.log("deployer :", account.address, "(pays gas)");
+console.log("committer:", committer, committer.toLowerCase() === account.address.toLowerCase() ? "(= deployer)" : "(Worker's wallet — read live)");
+if (committer.toLowerCase() !== account.address.toLowerCase()) {
+  console.log("note     : deployer != committer. The Worker (committer) must hold gas to commit; the deployer only funds this deployment.");
+}
+
+// ---- gas sanity: the deployer pays for THIS deployment in native USDC (18-dec on Arc) ----
 const bal = await publicClient.getBalance({ address: account.address });
-console.log("gas bal  :", (Number(bal) / 1e18).toFixed(6), "USDC(native)");
+console.log("deployer gas bal:", (Number(bal) / 1e18).toFixed(6), "USDC(native)");
 if (bal === 0n) {
-  console.error("\n✗ committer 余额为 0，无法支付部署 gas。请先给该地址充值原生 USDC。");
+  console.error("\n✗ deployer 余额为 0，无法支付部署 gas。请先给该地址充值原生 USDC。");
   process.exit(1);
 }
 
 // ---- deploy ----
 console.log("\ndeploying NeuralReceiptRegistry …");
-const hash = await wallet.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode, args: [account.address] });
+const hash = await wallet.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode, args: [committer] });
 console.log("deploy tx:", hash);
 const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
 if (receipt.status !== "success") { console.error("✗ 部署交易 revert 了"); process.exit(1); }
@@ -99,9 +133,9 @@ const address = receipt.contractAddress;
 console.log("registry :", address);
 
 // ---- self-verify the deployed state ----
-const committer = await publicClient.readContract({ address, abi: artifact.abi, functionName: "committer" });
+const onchainCommitter = await publicClient.readContract({ address, abi: artifact.abi, functionName: "committer" });
 const head = await publicClient.readContract({ address, abi: artifact.abi, functionName: "chainHead" });
-console.log("verify   : committer =", committer, committer.toLowerCase() === account.address.toLowerCase() ? "✓" : "✗ MISMATCH");
+console.log("verify   : committer =", onchainCommitter, onchainCommitter.toLowerCase() === committer.toLowerCase() ? "✓" : "✗ MISMATCH");
 console.log("verify   : chainHead =", head, head === `0x${"00".repeat(32)}` ? "(empty — Worker will lazily seed) ✓" : "(already seeded)");
 
 // ---- persist the address for the Worker wiring step ----
