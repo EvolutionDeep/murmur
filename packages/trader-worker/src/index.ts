@@ -71,8 +71,13 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const stub = getDO(env);
-    // Trigger the cron via the internal /tick path (DOs have no direct scheduled hook)
+    // Trigger the cron via the internal /tick path (DOs have no direct scheduled hook). Present
+    // ADMIN_TOKEN when configured so this trusted internal tick clears the same guard that blocks
+    // anonymous callers from the public POST /tick + /reset endpoints — otherwise arming the token
+    // would 403 the cron and freeze the live swarm.
+    const token = (env.ADMIN_TOKEN ?? "").trim();
+    const headers: Record<string, string> = token ? { "x-admin-token": token } : {};
     const url = `https://do.internal/tick`;
-    await stub.fetch(new Request(url, { method: "POST" }));
+    await stub.fetch(new Request(url, { method: "POST", headers }));
   },
 } satisfies ExportedHandler<Env>;

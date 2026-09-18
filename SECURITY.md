@@ -52,7 +52,7 @@ already committed a secret to the repo (that is a deployment mistake, not a code
 | Prove before risking | `ECONOMY_SHADOW="true"` signs + `eth_call`-simulates every transfer but never broadcasts. |
 | Key surface | One mnemonic HD-derives all agents (`m/44'/60'/0'/0/{id}`) + facilitator (index 2,000,000); secrets live only in Cloudflare (encrypted at rest), never in the repo. |
 | Stale balance | Balances are re-read from chain immediately before signing. |
-| Debug-endpoint abuse | The mutating `POST /tick` and `/reset` routes can be locked with the optional `ADMIN_TOKEN` secret: when it is set, callers must present it (`x-admin-token` header or `?token=`), so a live deployment's debug endpoints can't be driven anonymously. Unset, they stay open for local development. |
+| Debug-endpoint abuse | The mutating `POST /tick` and `/reset` routes can be locked with the optional `ADMIN_TOKEN` secret: when it is set, callers must present it (`x-admin-token` header or `?token=`), so a live deployment's debug endpoints can't be driven anonymously. Unset, they stay open for local development. The scheduled cron presents the token internally, so locking these endpoints never interrupts the per-minute tick. |
 
 See [docs/AGENT-ECONOMY.md](./docs/AGENT-ECONOMY.md) for the full model.
 

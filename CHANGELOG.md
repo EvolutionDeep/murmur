@@ -33,7 +33,8 @@ All notable changes to **murmur** are documented in this file. The format is bas
 - **Responsive frontend layout**: the four floating panels collapse into a single scrollable column on phones and
   narrow tablets, so the piece no longer crowds or overlaps on small screens.
 - **`ADMIN_TOKEN` guard (optional secret)**: when set, the mutating `POST /tick` and `/reset` debug endpoints
-  require it, so they can be locked down on a live deployment.
+  require it, so they can be locked down on a live deployment. The per-minute cron presents the token
+  internally, so arming it never interrupts the scheduled tick.
 
 ### Changed
 - **GONE LIVE WITH REAL MONEY.** The production Worker now runs `ECONOMY_FACILITATOR = "onchain"` with
