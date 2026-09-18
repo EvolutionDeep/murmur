@@ -270,7 +270,30 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
 .bloom-wrap { position: relative; margin-bottom: 8px; }
 #bloom { width: 100%; height: auto; max-width: 240px; margin: 0 auto; display: block; opacity: 0.9; }
 
-/* the fly's live spike raster: 1,080 neurons firing over time (newest on the right) */
+/* brain-size compare: makes the 1,080 → 10,800 (10×) upgrade something you can SEE, not just read */
+.bloom-scale {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 4px 0 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.bloom-scale .bs-cap { opacity: 0.6; }
+.bloom-scale .bs-btn {
+  font: inherit; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--hair); background: transparent; color: var(--muted);
+  cursor: pointer; transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+.bloom-scale .bs-btn:hover { color: var(--ink); }
+.bloom-scale .bs-btn.is-on {
+  color: var(--ink); border-color: rgba(var(--accent-rgb), 0.7); background: rgba(var(--accent-rgb), 0.14);
+}
+.bloom-scale .bs-x { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; }
+.n-badge {
+  display: inline-block; margin-right: 5px; padding: 0 5px; border-radius: 999px;
+  border: 1px solid rgba(var(--accent-rgb), 0.6); color: var(--accent);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.04em; vertical-align: 1px;
+}
+
+/* the fly's live spike raster: 10,800 neurons firing over time (newest on the right) */
 .raster-wrap { margin-bottom: 14px; }
 .raster-label {
   font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;

@@ -1200,7 +1200,7 @@ function renderDist(states, size) {
 const I18N = {
   en: {
     title: "murmur",
-    body: "A living population of fruit-fly nervous systems, adrift on the arc market. The page reads whole-chain activity, reduces it to a single temperature, and the swarm reacts — collectively and one fly at a time. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.",
+    body: "A living population of fruit-fly nervous systems, adrift on the arc market. The page reads whole-chain activity, reduces it to a single temperature, and the swarm reacts — collectively and one fly at a time. Each fly is also an autonomous economic agent: its 10,800-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.",
     points: [
       "the whole scene cools and warms with the market",
       "flies pay each other in real USDC on Arc mainnet over x402 — decisions come from neurons, not an LLM",
@@ -1210,7 +1210,7 @@ const I18N = {
   },
   zh: {
     title: "murmur · 低语",
-    body: "一群由果蝇神经系统构成的活体种群，漂浮在 arc 市场之上。页面读取全链活跃度，将其归结为一个温度，蝇群随之反应——既有群体的整体反应，也有每只果蝇各自的反应。每只果蝇同时是一个自治经济主体：它的 1,080 个神经元连接组决定买什么、向谁买，主体之间在 Arc 主网上用真实 USDC 通过 x402 彼此结算——每一笔都是可在链上核实的真实交易。没有大模型，只有神经元在为彼此真实付款。",
+    body: "一群由果蝇神经系统构成的活体种群，漂浮在 arc 市场之上。页面读取全链活跃度，将其归结为一个温度，蝇群随之反应——既有群体的整体反应，也有每只果蝇各自的反应。每只果蝇同时是一个自治经济主体：它的 10,800 个神经元连接组决定买什么、向谁买，主体之间在 Arc 主网上用真实 USDC 通过 x402 彼此结算——每一笔都是可在链上核实的真实交易。没有大模型，只有神经元在为彼此真实付款。",
     points: [
       "整个画面随市场冷暖而变色",
       "果蝇之间在 Arc 主网上用真实 USDC 通过 x402 结算——决策来自神经元，而非大模型",
@@ -1220,7 +1220,7 @@ const I18N = {
   },
   ja: {
     title: "murmur · ささやき",
-    body: "ショウジョウバエの神経系でできた生きた個体群が、arc の市場の上を漂っています。このページはチェーン全体の活動を読み取り、それをひとつの「温度」に集約し、群はそれに応じて反応します――群全体としても、一匹ずつでも。一匹ずつが同時に自律的な経済主体です：その 1,080 個のニューロンからなるコネクトームが、何を買うか・誰から買うかを決め、主体どうしは Arc メインネットで本物の USDC を x402 により決済します――すべてチェーン上で検証できる実際の取引です。LLM はありません。ただニューロンが、実際に互いへ支払っているだけです。",
+    body: "ショウジョウバエの神経系でできた生きた個体群が、arc の市場の上を漂っています。このページはチェーン全体の活動を読み取り、それをひとつの「温度」に集約し、群はそれに応じて反応します――群全体としても、一匹ずつでも。一匹ずつが同時に自律的な経済主体です：その 10,800 個のニューロンからなるコネクトームが、何を買うか・誰から買うかを決め、主体どうしは Arc メインネットで本物の USDC を x402 により決済します――すべてチェーン上で検証できる実際の取引です。LLM はありません。ただニューロンが、実際に互いへ支払っているだけです。",
     points: [
       "画面全体が市場の温度で冷たく・暖かく変わる",
       "ハエどうしは Arc メインネットで本物の USDC を x402 で支払う――判断は LLM ではなくニューロンから生まれる",
@@ -1230,7 +1230,7 @@ const I18N = {
   },
   ko: {
     title: "murmur · 속삭임",
-    body: "초파리 신경계로 이루어진 살아 있는 개체군이 arc 시장 위를 떠다닙니다. 이 페이지는 전체 체인 활동을 읽어 하나의 '온도'로 환산하고, 군집은 그에 반응합니다 — 군집 전체로서, 그리고 한 마리씩. 각 초파리는 동시에 자율 경제 주체입니다: 1,080개 뉴런 연결체가 무엇을, 누구에게서 살지 결정하고, 주체들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 정산합니다 — 모든 결제는 체인에서 검증할 수 있는 실제 거래입니다. LLM은 없습니다. 그저 뉴런이 실제로 서로 지불할 뿐입니다.",
+    body: "초파리 신경계로 이루어진 살아 있는 개체군이 arc 시장 위를 떠다닙니다. 이 페이지는 전체 체인 활동을 읽어 하나의 '온도'로 환산하고, 군집은 그에 반응합니다 — 군집 전체로서, 그리고 한 마리씩. 각 초파리는 동시에 자율 경제 주체입니다: 10,800개 뉴런 연결체가 무엇을, 누구에게서 살지 결정하고, 주체들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 정산합니다 — 모든 결제는 체인에서 검증할 수 있는 실제 거래입니다. LLM은 없습니다. 그저 뉴런이 실제로 서로 지불할 뿐입니다.",
     points: [
       "화면 전체가 시장 온도에 따라 차갑고 따뜻하게 변합니다",
       "초파리들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 지불합니다 — 결정은 LLM이 아닌 뉴런에서 나옵니다",
@@ -1346,6 +1346,7 @@ const NEURAL_DEBOUNCE_MS = 150;    // collapse a click-burst into a single initi
 let rasterCols = [];               // { t, spikes:[idx], N }
 let neuralTimer = null, neuralDebounce = null, neuralFeedId = null, neuralCtrl = null, neuralInFlight = false;
 let bloomData = null;
+let bloomShowBefore = false;   // brain-size compare toggle: render the bloom at the 1,080 launch density instead of the live count
 let bloomOff = null, bloomOffCtx = null, bloomLast = 0, bloomAngle = 0;
 let rasterOff = null, rasterOffCtx = null, rasterLast = 0;
 
@@ -1386,10 +1387,11 @@ async function fetchNeural(id) {
     if (neuralFeedId !== id) return;
     bloomData = { rates: s.firingRates || [], kinds: s.neuronKinds || [] };
     const N = s.neuronCount || bloomData.rates.length || 0;
-    $("ins-ncount").textContent = N.toLocaleString();
+    bloomData.N = N;
+    setNeuronCount(N);
     $("ins-t").textContent = (s.t || 0).toFixed(0);
     if (s.agent) updateWallet(s.agent);
-    pushSpikes(s.spikesLastStep, N || 1080);
+    pushSpikes(s.spikesLastStep, N || 10800);
   } catch (e) {
     if (neuralFeedId !== id) return;
     synthNeural(id);
@@ -1401,18 +1403,18 @@ async function fetchNeural(id) {
 function pushSpikes(spikes, N) {
   let arr = Array.isArray(spikes) ? spikes : [];
   if (arr.length > 180) arr = arr.filter((_, i) => i % Math.ceil(arr.length / 180) === 0);  // subsample
-  rasterCols.push({ t: performance.now(), spikes: arr, N: N || 1080 });
+  rasterCols.push({ t: performance.now(), spikes: arr, N: N || 10800 });
   const now = performance.now();
   while (rasterCols.length && now - rasterCols[0].t > RASTER_WINDOW_MS) rasterCols.shift();
   const hz = $("raster-hz");
-  if (hz) hz.textContent = `${arr.length} / ${N || 1080} firing`;
+  if (hz) hz.textContent = `${arr.length} / ${N || 10800} firing`;
 }
 
 // offline / pre-deploy: synthesise a believable spike column + bloom for this fly
 function synthNeural(id) {
   const f = sim.get(id);
   const aro = f ? f.tAro : 0.4;
-  const N = 1080, rates = new Array(N), kinds = new Array(N), spikes = [];
+  const N = 10800, rates = new Array(N), kinds = new Array(N), spikes = [];
   for (let i = 0; i < N; i++) {
     const u = i / N;
     const kind = u < 0.167 ? "sensory" : u < 0.907 ? "inter" : u < 0.944 ? "modulatory" : "motor";
@@ -1422,14 +1424,47 @@ function synthNeural(id) {
     rates[i] = rate * 70;
     if (Math.random() < rate * 0.5) spikes.push(i);
   }
-  bloomData = { rates, kinds };
-  $("ins-ncount").textContent = "~" + N;
+  bloomData = { rates, kinds, N };
+  setNeuronCount(N, "~");
   $("ins-t").textContent = "—";
   updateWallet(synthAgentFor(id));   // offline: show this fly's local mirror wallet
   pushSpikes(spikes, N);
 }
 
-// rebuild the offscreen bloom from bloomData at a low rate (~300 strokes, NOT per frame)
+// Roll the neuron counter up from the 1,080 launch size to the live count on the first read, so the 10×
+// scale-up is felt as a change rather than read as a static number. Later reads set it directly.
+let ncountShown = 0, ncountRaf = 0;
+function setNeuronCount(N, prefix = "") {
+  const el = $("ins-ncount");
+  if (!el) return;
+  if (ncountRaf) cancelAnimationFrame(ncountRaf);
+  const from = ncountShown || 1080;
+  if (from === N) { el.textContent = prefix + N.toLocaleString(); return; }
+  const start = performance.now(), dur = 850;
+  const step = (now) => {
+    const p = Math.min(1, (now - start) / dur);
+    const e = 1 - Math.pow(1 - p, 3);                        // easeOutCubic
+    el.textContent = prefix + Math.round(from + (N - from) * e).toLocaleString();
+    if (p < 1) { ncountRaf = requestAnimationFrame(step); } else { ncountShown = N; ncountRaf = 0; }
+  };
+  ncountRaf = requestAnimationFrame(step);
+}
+
+// brain-size compare toggle: re-render the SAME live bloom at the sparse 1,080 launch density vs the live
+// count, so a visitor can see the 10× difference directly instead of taking our word for it.
+function bindBloomScale() {
+  const host = $("bloom-scale");
+  if (!host) return;
+  host.addEventListener("click", (e) => {
+    const btn = e.target.closest(".bs-btn");
+    if (!btn) return;
+    bloomShowBefore = btn.dataset.before === "1";
+    for (const b of host.querySelectorAll(".bs-btn")) b.classList.toggle("is-on", b === btn);
+    bloomLast = 0;                                           // force an immediate offscreen rebuild next frame
+  });
+}
+
+// rebuild the offscreen bloom from bloomData at a low rate (≤ ~1,200 strokes, NOT per frame)
 function rebuildBloom() {
   const c = $("bloom");
   if (!c || !bloomData) return;
@@ -1443,7 +1478,13 @@ function rebuildBloom() {
   const { rates, kinds } = bloomData;
   const N = rates.length;
   if (!N) return;
-  const stride = Math.max(1, Math.floor(N / 300));
+  // Perceived density scales with the REAL neuron count (bloomData.N): a 10,800-neuron brain blooms ~10×
+  // denser than the 1,080 launch size, so the upgrade is something you SEE, not just a number you read.
+  // bloomShowBefore (the compare toggle) forces the sparse 1,080-equivalent density for a side-by-side feel.
+  const SAMPLE_STRIDE = 9;                                   // ≈1,200 strokes at 10,800n — offscreen + rebuilt 4×/s, so cheap
+  const realN = bloomData.N || N;
+  const target = Math.max(1, bloomShowBefore ? Math.floor(1080 / SAMPLE_STRIDE) : Math.floor(realN / SAMPLE_STRIDE));
+  const stride = Math.max(1, Math.floor(N / target));
   const R0 = Math.min(W, H) * 0.15, R1 = Math.min(W, H) * 0.47;
   for (let i = 0; i < N; i += stride) {
     const a = (i / N) * TAU;
@@ -1494,7 +1535,7 @@ function rebuildRaster(now) {
     const age = (now - col.t) / RASTER_WINDOW_MS;
     if (age < 0 || age > 1) continue;
     const cx = W - age * W;                 // newest at the right, scrolling left
-    const N = col.N || 1080;
+    const N = col.N || 10800;
     x.fillStyle = rgba(dot, 0.55 * (1 - age * 0.7));
     for (const idx of col.spikes) x.fillRect(cx, (idx / N) * H, 1.5, 1.5);
   }
@@ -1555,6 +1596,7 @@ function spawnRippleAt(x, y, color) {
 // ================= misc UI bindings =================
 function bindUI() {
   $("ins-close").addEventListener("click", deselect);
+  bindBloomScale();
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);

@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#f2eee6" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>murmur — a population of neural agents settling on arc</title>
-  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 1,080-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
+  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=12" />
+  <link rel="stylesheet" href="./styles.css?v=13" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -105,7 +105,7 @@
       </div>
     </div>
     <h2 class="about-title" id="about-title">murmur</h2>
-    <p class="about-body" id="about-body">A living population of fruit-fly nervous systems, adrift on the arc market. Each fly is also an autonomous economic agent: its 1,080-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.</p>
+    <p class="about-body" id="about-body">A living population of fruit-fly nervous systems, adrift on the arc market. Each fly is also an autonomous economic agent: its 10,800-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.</p>
     <ul class="about-points" id="about-points">
       <li>the whole scene cools and warms with the market</li>
       <li>flies pay each other in real USDC on Arc mainnet over x402 — decisions come from neurons, not an LLM</li>
@@ -122,6 +122,12 @@
       <span class="ins-state" id="ins-state">–</span>
     </div>
     <div class="bloom-wrap"><canvas id="bloom" width="260" height="260"></canvas></div>
+    <div class="bloom-scale" id="bloom-scale" role="group" aria-label="compare brain size">
+      <span class="bs-cap">brain</span>
+      <button type="button" class="bs-btn" data-before="1" title="render at the launch density — 1,080 neurons">1,080</button>
+      <button type="button" class="bs-btn is-on" data-before="0" title="render live — 10,800 neurons">10,800</button>
+      <span class="bs-x" title="10× the launch connectome">10×</span>
+    </div>
     <div class="raster-wrap">
       <div class="raster-label">live spikes <span id="raster-hz"></span></div>
       <canvas id="raster" width="540" height="96" aria-label="live neural spike raster"></canvas>
@@ -144,7 +150,7 @@
       <div><dt>temperament</dt><dd id="ins-temp">–</dd></div>
       <div><dt>fingerprint</dt><dd id="ins-fp" class="fp">–</dd></div>
     </dl>
-    <div class="ins-foot"><span id="ins-ncount">–</span> neurons · t=<span id="ins-t">–</span>ms</div>
+    <div class="ins-foot"><span class="n-badge" title="10× the launch connectome (1,080 → 10,800 neurons)">10×</span><span id="ins-ncount">–</span> neurons · t=<span id="ins-t">–</span>ms</div>
   </aside>
 
   <!-- ============ all agent wallets (right drawer) — every fly owns its own x402 wallet ============ -->
@@ -195,6 +201,6 @@
 
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=12" type="module"></script>
+  <script src="./app.js?v=13" type="module"></script>
 </body>
 </html>
