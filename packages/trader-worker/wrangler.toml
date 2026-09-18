@@ -17,11 +17,14 @@ routes = [
 crons = ["* * * * *"]
 
 # ---------- Variables (non-sensitive, committed with the code) ----------
-# PRODUCTION IS LIVE WITH REAL MONEY: ECONOMY_FACILITATOR = "onchain" and ECONOMY_SHADOW = "false" below,
-# so this Worker READS Arc chain data for the market temperature AND WRITES real EIP-3009 USDC transfers
-# between the fly agents. That requires secrets set out-of-band with `wrangler secret put` (NEVER committed
-# here): ECONOMY_MNEMONIC, optionally ECONOMY_FACILITATOR_PK, and ALCHEMY_ARC_RPC_URL. A fresh checkout with
-# NO mnemonic transparently falls back to the keyless simulated economy. See the real-money block below.
+# PRODUCTION PHASE — 10x LIVE. The swarm runs 10,800-neuron brains sharded across 12 FlyShardDO isolates
+# (SHARD_COUNT = "12" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
+# a REAL EIP-3009 USDC broadcast on Arc mainnet, bounded by the daily/per-agent caps + kill switch below. The
+# 10x behaviour decoder is recalibrated (band collapse fixed: inject() normalises against a fixed reference
+# channel size and proboscis uses a fixed fan-in, so all 5 motor channels stay live and unsaturated at 10x).
+# ECONOMY_FACILITATOR stays "onchain" and the mnemonic/keys stay fully wired; set ECONOMY_SHADOW = "true" to
+# fall back to sign + eth_call simulation with no broadcast. Secrets (NEVER committed): ECONOMY_MNEMONIC,
+# optionally ECONOMY_FACILITATOR_PK, ALCHEMY_ARC_RPC_URL. A fresh checkout with NO mnemonic falls back to sim.
 [vars]
 # ===== Arc chain =====
 # Deployed to Arc MAINNET (Chain ID 5042). The public mainnet RPC is reachable and serves live
@@ -43,12 +46,14 @@ POPULATION_SIZE = "24"                        # number of flies in the swarm (1�
 POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = base + i*7919
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
-# Swarm sharding (see swarm.ts / shard.ts). "1" = the single-DO swarm this piece has always run — every
-# brain lives in FlyStateDO and the FLY_SHARD binding below stays inert (ZERO shards instantiated). Raise
-# it (e.g. "6") to fan the HEAVY per-fly LIF advance out to N FlyShardDO isolates, each with its own
-# 128 MB + CPU budget and its own SQLite, so each brain can grow past the single-isolate memory ceiling.
-# Only the compact motor/sensory read-out crosses the boundary, so the coordinator stays small at any size.
-SHARD_COUNT = "1"
+# Swarm sharding (see swarm.ts / shard.ts). "1" = the original single-DO swarm — every brain in FlyStateDO,
+# the FLY_SHARD binding inert (ZERO shards). "12" fans the HEAVY per-fly LIF advance out to 12 FlyShardDO
+# isolates (2 flies each at POPULATION_SIZE=24), each with its own 128 MB + CPU budget and its own SQLite,
+# so each brain can grow past the single-isolate memory ceiling. Only the compact motor/sensory read-out
+# crosses the boundary, so the coordinator stays small at any size. 12 is the MEASURED floor for the
+# 10,800-neuron brains below: 2 flies/shard serialise to ~1.4 MB (under the 2 MB single-value cap) and fan
+# out safely (Cloudflare QUEUES subrequests past the 6th, never rejects). Rollback = set this back to "1".
+SHARD_COUNT = "12"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
@@ -67,11 +72,11 @@ ECONOMY_SOLVENCY_FLOOR = "0.5"                # simulated treasury tops an agent
 ECONOMY_MAX_DEALS = "10"                   # per-CRON settlement budget, spread across the 6 sub-ticks — 5× the old 2/cron rate
 ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "onchain" (real EIP-3009; needs the block below)
 
-# ===== Real-money (ONCHAIN) settlement — LIVE: ECONOMY_SHADOW = "false" broadcasts real USDC transfers
-#       on Arc mainnet, bounded by the caps + kill switch below. The path was proven first in SHADOW mode
-#       (sign + eth_call against live chain state, never broadcast) before a single wei went out. To halt
-#       everything instantly set ECONOMY_REAL_SPEND = "false"; to go back to dry-run set ECONOMY_SHADOW =
-#       "true". These lines do nothing while ECONOMY_FACILITATOR = "simulated" (the keyless local-dev mode). =====
+# ===== Real-money (ONCHAIN) settlement — LIVE: ECONOMY_SHADOW = "false" broadcasts every netted transfer as a
+#       real EIP-3009 USDC tx on Arc mainnet (bounded by the caps + kill switch below). The onchain path + HD
+#       keys are fully wired; set ECONOMY_SHADOW = "true" to sign + eth_call-simulate without broadcasting. To
+#       halt everything instantly set ECONOMY_REAL_SPEND = "false". These lines do nothing while
+#       ECONOMY_FACILITATOR = "simulated" (the keyless local-dev mode). =====
 # SECRETS — set with `wrangler secret put <NAME>`, NEVER written into this file:
 #   ECONOMY_MNEMONIC        one BIP-39 seed → HD-derives all agent wallets (m/44'/60'/0'/0/{id}) + gas wallet
 #   ECONOMY_FACILITATOR_PK  optional dedicated gas-wallet key (else the gas wallet is derived from the seed)
@@ -79,7 +84,7 @@ ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "on
 #   ADMIN_TOKEN             optional: when set, POST /tick + /reset require it (locks the debug endpoints)
 # Non-sensitive rails (safe to commit; uncomment to override the coded defaults in src/config.ts):
 # ECONOMY_REAL_SPEND = "true"                 # kill switch: set "false" to halt ALL real settlement instantly
-ECONOMY_SHADOW = "false"                    # LIVE: real EIP-3009 USDC transfers are broadcast on Arc mainnet, under the caps + kill switch below
+ECONOMY_SHADOW = "false"                    # LIVE: real EIP-3009 USDC transfers are broadcast on Arc mainnet (bounded by the caps + kill switch above); set "true" to sign + eth_call each transfer but broadcast nothing
 ECONOMY_DAILY_CAP = "100"                   # global real-spend ceiling per UTC day (USDC); raised 5× with the trade rate so 10/min isn't throttled; 0 = no cap
 ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per UTC day (USDC); raised 5× with the trade rate; 0 = no cap
 # ECONOMY_MAX_DEAL = "0.05"                   # facilitator hard per-deal ceiling (USDC)
@@ -97,14 +102,19 @@ ECONOMY_NET_MIN_BROADCAST = "0.004"          # min |net| (USDC) before a pair is
 ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
 
 
-# ===== Connectome sizing (optional; omitted ⇒ the ~1,080-neuron ts-lif default) =====
-# Left at defaults to match the calibrated behaviour and keep the per-cron CPU budget small.
-# BRAIN_N_SENSORY = "180"
-# BRAIN_N_INTER_L1 = "400"
-# BRAIN_N_INTER_L2 = "400"
-# BRAIN_N_MODULATORY = "40"
-# BRAIN_N_MOTOR_PER_CHANNEL = "12"
-# BRAIN_DENSITY = "0.02"
+# ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
+# 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:
+# connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically
+# with layer size — keeping 0.02 at 10x would give ~837k synapses/fly (~66 MB heap). 0.002 holds it to
+# ~116k/fly (~11 MB), which fits 2 flies/shard under 128 MB and ~1.4 MB serialised under the 2 MB value cap
+# (hence SHARD_COUNT = 12 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
+# the 10x drive distribution needs recalibration — which is exactly why ECONOMY_SHADOW stays on until then.
+BRAIN_N_SENSORY = "1800"
+BRAIN_N_INTER_L1 = "4000"
+BRAIN_N_INTER_L2 = "4000"
+BRAIN_N_MODULATORY = "400"
+BRAIN_N_MOTOR_PER_CHANNEL = "120"
+BRAIN_DENSITY = "0.002"
 
 # ---------- Durable Object: population + market state ----------
 [[durable_objects.bindings]]
@@ -123,9 +133,9 @@ class_name = "FlyShardDO"
 tag = "v1"
 new_sqlite_classes = ["FlyStateDO"]
 
-# v2 registers the FlyShardDO SQLite class. Because SHARD_COUNT defaults to "1", deploying this creates
-# the class but instantiates ZERO shards, so it is a no-op for the live single-DO swarm — the coordinator
-# only touches FLY_SHARD once an operator raises SHARD_COUNT (at which point shards spring up on demand).
+# v2 registers the FlyShardDO SQLite class. With SHARD_COUNT = "12" the coordinator fans out to 12 shards
+# ("fly-shard-0".."fly-shard-11"), which spring up on demand on the first cron after deploy. At SHARD_COUNT
+# = "1" this class stays uninstantiated, so the migration is inert for a single-DO configuration.
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["FlyShardDO"]

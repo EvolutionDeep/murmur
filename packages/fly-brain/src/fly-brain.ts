@@ -14,6 +14,14 @@ import type {
 } from "./types.js";
 
 /**
+ * Reference sensory-channel size the injection gain was calibrated at (default nSensory 180 / 10
+ * channels = 18). inject() normalises per-neuron drive against THIS constant rather than the live
+ * channel size, so scaling the connectome up (e.g. 10× → 180-neuron channels) leaves each sensory
+ * neuron's drive — and the whole calibrated downstream dynamic — unchanged. See inject().
+ */
+const SENSORY_DRIVE_REF = 18;
+
+/**
  * FlyBrain — top-level wrapper around the whole fruit-fly brain simulation.
  *
  * Lifecycle:
@@ -65,7 +73,10 @@ export class FlyBrain implements IFlyBrain {
   inject(input: SensoryInput): void {
     const ids = this.channelNeurons.get(input.channel);
     if (!ids || ids.length === 0) return;
-    const amplitude = (input.intensity * this.injectGain) / ids.length;
+    // Normalise against the fixed reference channel size, NOT ids.length — dividing by ids.length
+    // would dilute each neuron's drive 10× when the connectome is scaled 10× (180-neuron channels),
+    // starving sensory→L1→L2→motor so the leg/wing/abdomen channels fall silent. See SENSORY_DRIVE_REF.
+    const amplitude = (input.intensity * this.injectGain) / SENSORY_DRIVE_REF;
     for (const id of ids) {
       this.net.injectCurrent(id, amplitude);
     }

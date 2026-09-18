@@ -234,12 +234,19 @@ export function buildConnectome(opts: ConnectomeOptions = {}): Connectome {
     }
   }
 
-  // gustatory_richness sensory → proboscis motor (appetitive richness → extend proboscis = approach)
+  // gustatory_richness sensory → proboscis motor (appetitive richness → extend proboscis = approach).
+  // FIXED fan-in (like the leg/wing channels above), NOT all-to-all: a probabilistic all-to-all wiring
+  // makes each proboscis neuron's input count scale with the gustatory population, so at 10× sizing it
+  // over-fans (~63 inputs vs ~6 at default) and saturates the channel (normalized pinned at 1, killing
+  // the cohesion drive's population spread). A constant fan-in keeps the reflex drive scale-invariant;
+  // 6 ≈ the default expected count (0.35 × 18 gustatory neurons).
   const gusIds = channelMap.get("gustatory_richness") ?? [];
   const probIds = channelMap.get("proboscis")!;
+  const probFan = Math.max(1, Math.min(gusIds.length, 6));
   for (const post of probIds) {
-    for (const pre of gusIds) {
-      if (rand() < 0.35) synapses.push({ pre, post, w: gaussian(rand, 0.15, 0.04) });
+    for (let k = 0; k < probFan; k++) {
+      const pre = gusIds[Math.floor(rand() * gusIds.length)];
+      synapses.push({ pre, post, w: gaussian(rand, 0.15, 0.04) });
     }
   }
 
