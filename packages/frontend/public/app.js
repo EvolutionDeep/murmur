@@ -75,6 +75,9 @@ function applyPaletteToDOM(pal) {
 const STATE_COLOR = { AGITATE: "#c05e3c", EXPLORE: "#c99a3f", AGGREGATE: "#5b7c8d", REST: "#8b9a86" };
 const KIND_COL = { sensory: [91, 124, 141], inter: [122, 114, 98], modulatory: [192, 94, 60], motor: [26, 26, 24] };
 const STIR_COL = [120, 116, 104];   // neutral ink for the pointer "stir" ripple
+const hexRgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+// state colours as RGB triples (STATE_COLOR holds CSS hex) — for the canvas dots in the shard-topology ring
+const STATE_RGB = { AGITATE: hexRgb(STATE_COLOR.AGITATE), EXPLORE: hexRgb(STATE_COLOR.EXPLORE), AGGREGATE: hexRgb(STATE_COLOR.AGGREGATE), REST: hexRgb(STATE_COLOR.REST) };
 
 // Wealth → colour ramp: the poorest flies read cool slate, the richest glow warm gold, so body HUE and
 // body SIZE (both balance-driven) tell the same story at a glance — big + gold = a wealthy wallet.
@@ -166,6 +169,18 @@ let lastHistSample = 0;
 
 // (neural-feed state lives with the feed itself, further down)
 
+// ============ swarm-mind aura + shard topology (the 10x infra, made visible) ============
+// Two BACKGROUND layers on the main field, driven only by what the /population poll already delivers —
+// the collective mood (for the aura) and the read-only `topology` (for the isolates). No extra polling
+// and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
+// ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
+// each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
+let showMind = true, showShards = true;
+let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
+let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
+let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
+const MIND_REBUILD_MS = 320;                          // offscreen + low-frequency rebuild (per-frame is one drawImage)
+
 // ================= canvas field =================
 const canvas = $("field");
 const ctx = canvas.getContext("2d");
@@ -199,6 +214,7 @@ function resize() {
   ctx.fillStyle = rgb(paletteAt(tempSmoothed).paper);
   ctx.fillRect(0, 0, VW, VH);
   cachedRect = null;             // canvas box changed — drop the cached rect
+  mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
   initMotes();
 }
 window.addEventListener("resize", resize);
@@ -359,11 +375,110 @@ function updateSim(dt, now) {
   }
 }
 
+// ---- swarm-mind ambient aura: a soft breathing bloom of the collective neural mood (deepest layer) ----
+function rebuildMind(pal) {
+  const D = mindSize;
+  if (!mindOff) { mindOff = document.createElement("canvas"); mindOffCtx = mindOff.getContext("2d"); }
+  if (mindOff.width !== D) { mindOff.width = mindOff.height = D; }
+  const x = mindOffCtx, c = D / 2, C = collective, acc = pal.accent;
+  x.clearRect(0, 0, D, D);
+  const aro = C ? clamp(C.arousal) : 0.4;
+  const vit = C ? clamp(C.vitality) : 0.5;
+  const st = (C && C.states) || {}, tot = Math.max(1, (C && C.size) || 24);
+  const agitate = (st.AGITATE || 0) / tot, aggregate = (st.AGGREGATE || 0) / tot, rest = (st.REST || 0) / tot;
+  // core glow — brightness tracks vitality
+  const g = x.createRadialGradient(c, c, 0, c, c, c * 0.95);
+  g.addColorStop(0, rgba(acc, 0.05 + vit * 0.09));
+  g.addColorStop(0.5, rgba(acc, 0.02 + vit * 0.035));
+  g.addColorStop(1, rgba(acc, 0));
+  x.fillStyle = g; x.beginPath(); x.arc(c, c, c * 0.95, 0, TAU); x.fill();
+  // filaments — reach shimmers with mean arousal; agitation adds jitter, aggregation/rest pull them in
+  const FIL = 96, R0 = c * 0.10, R1 = c * (0.50 + aro * 0.34);
+  x.lineWidth = 1;
+  for (let i = 0; i < FIL; i++) {
+    const a = (i / FIL) * TAU;
+    const shimmer = 0.72 + 0.28 * Math.sin(flowTime * 0.6 + i * 0.7);
+    const jitter = 1 + agitate * 0.5 * (Math.sin(i * 12.9898 + flowTime) * 0.5 + 0.5) - aggregate * 0.22 - rest * 0.18;
+    const r1 = R0 + (R1 - R0) * clamp(shimmer * jitter, 0.15, 1.3);
+    x.strokeStyle = rgba(acc, 0.015 + aro * 0.045);
+    x.beginPath();
+    x.moveTo(c + Math.cos(a) * R0, c + Math.sin(a) * R0);
+    x.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1);
+    x.stroke();
+  }
+}
+function renderMind(pal, now) {
+  if (!showMind || !collective) return;
+  if (!mindSize) mindSize = Math.round(clamp(Math.min(VW, VH) * 0.85, 320, 900));
+  if (!mindOff || mindOff.width !== mindSize) mindOff = null;
+  if (!mindOff || now - mindLast >= MIND_REBUILD_MS) { mindLast = now; rebuildMind(pal); }
+  if (!mindOff) return;
+  const cxr = centroidX || VW / 2, cyr = centroidY || VH / 2;
+  const draw = (Math.min(VW, VH) * 1.05) / mindSize;   // let the aura reach most of the field
+  mindAngle += 0.0009;
+  ctx.save();
+  ctx.globalAlpha = 0.42;
+  ctx.translate(cxr, cyr);
+  ctx.rotate(mindAngle);
+  ctx.drawImage(mindOff, (-mindSize / 2) * draw, (-mindSize / 2) * draw, mindSize * draw, mindSize * draw);
+  ctx.restore();
+}
+
+// ---- shard topology: the FlyShardDO isolates as a ring of compute nodes, pulsing in fan-out waves ----
+function applyTopology(t) {
+  if (!t || !Array.isArray(t.shards) || !t.shards.length) return;
+  topology = t;
+  const sb = document.querySelector('#layer-toggles [data-layer="shards"]');
+  if (sb && t.shardCount) sb.textContent = `${t.shardCount} isolates`;   // never hardcode the count
+}
+function renderShards(pal, now) {
+  if (!showShards || !topology || !topology.shards || topology.shards.length < 2) return;
+  const acc = pal.accent, ink = [26, 26, 24];
+  const shards = topology.shards, S = shards.length;
+  const cxr = centroidX || VW / 2, cyr = centroidY || VH / 2;
+  const ring = Math.min(VW, VH) * 0.315, nodeR = 13;
+  const pulseAge = (now - shardPulseT) / 1500;
+  ctx.save();
+  ctx.lineWidth = 0.9;
+  ctx.strokeStyle = rgba(mix(ink, acc, 0.2), 0.06);       // faint ring guide
+  ctx.beginPath(); ctx.arc(cxr, cyr, ring, 0, TAU); ctx.stroke();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "8px ui-monospace, SFMono-Regular, Menlo, monospace";
+  for (let i = 0; i < S; i++) {
+    const s = shards[i];
+    const a = (i / S) * TAU - Math.PI / 2;
+    const nx = cxr + Math.cos(a) * ring, ny = cyr + Math.sin(a) * ring;
+    let glow = 0;                                         // fan-out pulse: the runtime runs shards in ~ceil(N/6) waves of 6
+    if (pulseAge >= 0 && pulseAge < 1) {
+      const delay = (s.index % 6) / 6 * 0.4;
+      const p = clamp((pulseAge - delay) / Math.max(0.001, 1 - delay));
+      if (p > 0 && p < 1) glow = Math.sin(p * Math.PI);
+    }
+    ctx.fillStyle = rgba(acc, 0.03 + glow * 0.16);
+    ctx.strokeStyle = rgba(mix(ink, acc, 0.35), 0.16 + glow * 0.5);
+    ctx.beginPath(); ctx.arc(nx, ny, nodeR + glow * 4, 0, TAU); ctx.fill(); ctx.stroke();
+    let k = 0; const span = s.end - s.start;
+    for (let id = s.start; id < s.end; id++) {
+      const f = sim.get(id);
+      const col = (f && STATE_RGB[f.state]) || mix(ink, acc, 0.3);
+      const dx = (k - (span - 1) / 2) * 6;
+      ctx.fillStyle = rgba(col, f && !f.dying ? 0.8 : 0.25);
+      ctx.beginPath(); ctx.arc(nx + dx, ny, 2.1, 0, TAU); ctx.fill();
+      k++;
+    }
+    if (quality >= 2) { ctx.fillStyle = rgba(ink, 0.28 + glow * 0.4); ctx.fillText(String(s.index), nx, ny + nodeR + 8); }
+  }
+  ctx.restore();
+}
+
 function render(pal, now) {
   // trail wash: cohesive swarms leave long lingering trails, scattered ones fade fast
   const fade = 0.055 + (1 - cohSmoothed) * 0.24;
   ctx.fillStyle = rgba(pal.paper, fade);
   ctx.fillRect(0, 0, VW, VH);
+
+  // the swarm's ambient neural aura — deepest background layer, breathing with the collective mood
+  renderMind(pal, now);
 
   // ambient flow ink (under everything)
   if (quality >= 1) renderMotes(pal);
@@ -387,6 +502,9 @@ function render(pal, now) {
       }
     }
   }
+
+  // the FlyShardDO isolates: a ring of compute nodes around the swarm, pulsing in fan-out waves each tick
+  if (quality >= 1) renderShards(pal, now);
 
   // pointer / stimulus ripples
   for (let i = ripples.length - 1; i >= 0; i--) {
@@ -1106,6 +1224,7 @@ async function poll() {
     setStatus("live", "live");
     if (pop && pop.snapshot) applySnapshot(pop.snapshot);
     if (pop && pop.economy) applyEconomy(pop.economy);
+    if (pop && pop.topology) applyTopology(pop.topology);
     applyState(st);
     // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
@@ -1141,6 +1260,10 @@ function applySnapshot(snap) {
   updateHud(snap);
   renderDist(snap.collective.states, snap.collective.size);
   if (selectedId != null && seen.has(selectedId)) fillInspectorFromSim(selectedId);
+
+  // a new on-chain tick → fire one shard fan-out pulse (the isolates compute in parallel each cron)
+  const ti = snap.tickIndex;
+  if (ti != null && (lastTickIndex == null || ti > lastTickIndex)) { lastTickIndex = ti; shardPulseT = performance.now(); }
 }
 
 function applyState(st) {
@@ -1597,6 +1720,14 @@ function spawnRippleAt(x, y, color) {
 function bindUI() {
   $("ins-close").addEventListener("click", deselect);
   bindBloomScale();
+  const lt = $("layer-toggles");
+  if (lt) lt.addEventListener("click", (e) => {
+    const b = e.target.closest(".layer-btn"); if (!b) return;
+    const on = !b.classList.contains("is-on");
+    b.classList.toggle("is-on", on);
+    if (b.dataset.layer === "mind") showMind = on;
+    else if (b.dataset.layer === "shards") showShards = on;
+  });
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);

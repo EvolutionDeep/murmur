@@ -293,6 +293,24 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em; vertical-align: 1px;
 }
 
+/* layer toggles (top-centre): switch the two ambient 10x layers — the swarm-mind aura + the isolate ring */
+.layer-toggles {
+  position: fixed; z-index: 9; left: 50%; top: calc(var(--pad) + 3px); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.layer-toggles .layer-btn {
+  font: inherit; letter-spacing: 0.1em; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--hair); background: rgba(var(--paper-rgb, 242, 238, 230), 0.4); color: var(--muted);
+  cursor: pointer; backdrop-filter: blur(3px);
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+}
+.layer-toggles .layer-btn:hover { color: var(--ink); }
+.layer-toggles .layer-btn.is-on {
+  color: var(--ink); border-color: rgba(var(--accent-rgb), 0.7); background: rgba(var(--accent-rgb), 0.14);
+}
+.layer-toggles .layer-btn:not(.is-on) { opacity: 0.5; }
+
 /* the fly's live spike raster: 10,800 neurons firing over time (newest on the right) */
 .raster-wrap { margin-bottom: 14px; }
 .raster-label {
@@ -568,6 +586,7 @@ body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; poi
   }
   .inspector.open { transform: translateY(0); }
   .hint-select { display: none; }
+  .layer-toggles { top: auto; bottom: calc(var(--pad) + 4px); }
 }
 
 /* --- phones: stack the four panels into one scrollable column over the fixed

@@ -29,7 +29,7 @@
 
 import type { StimulusEvent } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -518,7 +518,31 @@ export class FlyStateDO {
     await this.ensureSwarm();
     const snap = await this.loadSnapshot();
     const economy = this.cfg.economy.enabled ? (await this.ensureEconomy()).summary() : null;
-    return json({ snapshot: snap, economy });
+    return json({ snapshot: snap, economy, topology: this.topology() });
+  }
+
+  /**
+   * Read-only description of how the swarm is distributed across Durable Object isolates, so the
+   * frontend can draw the compute topology (which flies live in which FlyShardDO). Purely derived
+   * from config via the SAME shardSlice()/fliesPerShard() the coordinator and shards use to route —
+   * no stored map, and it never touches the economy. When SHARD_COUNT = 1 (or sharding is off) this
+   * reports a single shard, exactly matching the single-DO LocalSwarm reality.
+   */
+  private topology(): {
+    sharded: boolean;
+    shardCount: number;
+    populationSize: number;
+    fliesPerShard: number;
+    shards: { index: number; start: number; end: number }[];
+  } {
+    const size = this.cfg.populationSize;
+    const shardCount = this.sharding ? this.cfg.shardCount : 1;
+    const shards: { index: number; start: number; end: number }[] = [];
+    for (let k = 0; k < shardCount; k++) {
+      const { start, end } = shardSlice(size, shardCount, k);
+      if (end > start) shards.push({ index: k, start, end });
+    }
+    return { sharded: this.sharding, shardCount, populationSize: size, fliesPerShard: fliesPerShard(size, shardCount), shards };
   }
 
   /** Full agent-economy snapshot: every wallet, the recent settlement ledger and aggregate totals. */
