@@ -1070,6 +1070,7 @@ function openWallets() {
   walletsOpen = true;
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
   if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1221,6 +1222,7 @@ function openHistory() {
   historyOpen = true;
   if (walletsOpen) closeWallets();
   if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1256,6 +1258,19 @@ let proofsOpen = false;
 let lastProofsPoll = 0;
 const PROOFS_POLL_MS = 30000;
 
+// ================= arc pulse · x402 data product (right side) =================
+// The whole Arc-chain activity index, sold as an HTTP-402 pay-per-call data product. A free gauge
+// (temperature / regime / human-readable read) is always visible; the machine-readable signal bundle is
+// locked behind a real on-chain USDC payment the visitor signs themselves in MetaMask (EIP-3009), with the
+// Worker's gas wallet relaying the transfer — a genuine x402 facilitator flow, all in the browser.
+// The leaderboard ranks every agent by realised USDC flow (earned − paid); each row's address is a real
+// on-chain wallet, re-verifiable through the deployed NeuralReceiptRegistry.
+let pulseOpen = false;
+let pulseReqs = null;       // latest /signal/requirements payload
+let pulseLB = null;         // latest /leaderboard payload
+let pulseBuying = false;    // guard: one x402 buy in flight at a time
+let pulsePaid = null;       // last successfully-purchased {signal, settlement}
+
 // canonical JSON + sha256, byte-identical to the worker's provenance.ts (sorted keys, arrays ordered)
 function canonicalJSON(v) {
   const walk = (x) => {
@@ -1288,6 +1303,7 @@ function openProofs() {
   proofsOpen = true;
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (pulseOpen) closePulse();
   const d = $("proofs"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("proofs-open");
@@ -1432,6 +1448,245 @@ async function verifyProof(tx, card) {
     out.append(badge, dl);
   } catch {
     out.textContent = "verify request failed (network)";
+  }
+}
+
+// ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
+function openPulse() {
+  pulseOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  const d = $("pulse"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("pulse-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderPulse();
+}
+function closePulse() {
+  pulseOpen = false;
+  document.body.classList.remove("pulse-open");
+  const d = $("pulse"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!pulseOpen) d.hidden = true; }, 420);
+}
+function togglePulse() { if (pulseOpen) closePulse(); else openPulse(); }
+
+async function renderPulse() {
+  const body = $("pulse-body"); if (!body) return;
+  body.innerHTML = `<p class="pulse-loading">loading arc pulse…</p>`;
+  const [reqRes, lbRes] = await Promise.all([
+    getJSON("/signal/requirements", 8000).catch(() => null),
+    getJSON("/leaderboard", 8000).catch(() => null),
+  ]);
+  if (!pulseOpen) return;                 // closed while fetching
+  pulseReqs = reqRes || null;
+  pulseLB = lbRes || null;
+  paintPulse();
+}
+
+/** (Re)build the drawer body from cached state — used on open and after a purchase. */
+function paintPulse() {
+  const body = $("pulse-body"); if (!body) return;
+  const sub = $("pulse-sub");
+  if (sub) sub.textContent = pulseReqs && pulseReqs.enabled
+    ? `x402 · ${pulseReqs.priceUsdc} USDC/read · ${pulseReqs.mode}`
+    : "x402 data product";
+  body.innerHTML = "";
+  body.appendChild(pulseSignalCard());
+  if (pulsePaid) body.appendChild(pulsePaidCard(pulsePaid));
+  body.appendChild(pulseLeaderCard());
+}
+
+/** Free live gauge + the locked machine-readable bundle + price/buy row. */
+function pulseSignalCard() {
+  const card = document.createElement("div"); card.className = "pulse-card signal";
+  const T = collective ? clamp(collective.temperature) : tempSmoothed;
+  const regime = (collective && collective.regime) ? String(collective.regime)
+    : (T >= 0.66 ? "HOT" : T <= 0.33 ? "COLD" : "CALM");
+  const r = pulseReqs;
+  const enabled = !!(r && r.enabled);
+  card.innerHTML =
+    `<div class="pulse-title">arc pulse <span class="pulse-regime ${regime.toLowerCase()}">${regime.toLowerCase()}</span></div>` +
+    `<p class="pulse-blurb">The whole-chain Arc activity index, reduced to a market temperature. The gauge below is free and live; the machine-readable signal bundle is an <b>x402 paid data product</b> — you sign a gasless EIP-3009 USDC authorization in your own wallet, the murmur relay settles it on-chain, then serves exactly one read.</p>` +
+    `<div class="pulse-gauge"><div class="pulse-gauge-fill" style="width:${(clamp(T) * 100).toFixed(1)}%"></div></div>` +
+    `<div class="pulse-gauge-meta"><span>T ${T.toFixed(2)}</span><span>free · live</span></div>` +
+    `<div class="pulse-lock">\u{1F512} locked bundle · temperature, momentum, turbulence, tx/gas ratios, swarm positioning, trader read</div>` +
+    (enabled
+      ? `<div class="pulse-buyrow"><button type="button" class="pulse-buy">buy 1 read · ${r.priceUsdc} USDC</button>` +
+        `<span class="pulse-mode">${r.mode === "onchain" ? "settles on Arc mainnet" : "simulated · no real funds"}</span></div>`
+      : `<div class="pulse-buyrow"><span class="pulse-mode">signal product unavailable</span></div>`) +
+    `<div class="pulse-status"></div>`;
+  return card;
+}
+
+/** The purchased read: trader-facing sentence + machine-readable JSON + settlement proof link. */
+function pulsePaidCard(j) {
+  const card = document.createElement("div"); card.className = "pulse-card paid";
+  const s = (j && j.signal) || {};
+  const st = (j && j.settlement) || {};
+  const txOk = st.txHash && isRealTxHash(st.txHash);
+  card.innerHTML =
+    `<div class="pulse-title">unlocked · arc pulse read</div>` +
+    `<div class="pulse-read">${s.read || ""}</div>` +
+    `<dl class="pulse-meta">` +
+      `<div><dt>regime</dt><dd>${s.regime || "\u2013"}</dd></div>` +
+      `<div><dt>temperature</dt><dd>${typeof s.temperature === "number" ? s.temperature.toFixed(3) : "\u2013"}</dd></div>` +
+      `<div><dt>block</dt><dd>${s.chain && s.chain.blockNumber != null ? "#" + s.chain.blockNumber : "\u2013"}</dd></div>` +
+      `<div><dt>tick</dt><dd>#${s.tickIndex != null ? s.tickIndex : "\u2013"}</dd></div>` +
+    `</dl>` +
+    `<pre class="pulse-json">${JSON.stringify(s, null, 2)}</pre>` +
+    (txOk
+      ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${st.txHash}" target="_blank" rel="noopener noreferrer">\u2197 verify payment on Arc ${shortHash(st.txHash)}</a>`
+      : `<div class="pulse-simnote">${st.shadow ? "shadow · signed + simulated against live chain, not broadcast" : "simulated settlement · no real funds moved"}</div>`);
+  return card;
+}
+
+/** Trustless PnL leaderboard + paid-signal revenue counter. */
+function pulseLeaderCard() {
+  const card = document.createElement("div"); card.className = "pulse-card leader";
+  const lb = pulseLB;
+  const rows = (lb && Array.isArray(lb.rows)) ? lb.rows : [];
+  const p = (lb && lb.pulse) || null;
+  let html =
+    `<div class="pulse-title">trustless PnL leaderboard</div>` +
+    `<p class="pulse-blurb">Every agent ranked by realised USDC flow (earned \u2212 paid). Each address is a real on-chain wallet; the underlying settlements are re-verifiable through the deployed NeuralReceiptRegistry.</p>`;
+  if (p && p.enabled) {
+    const txOk = p.lastTx && isRealTxHash(p.lastTx);
+    html += `<div class="lb-pulse">` +
+      `<span><b>${p.sales || 0}</b> pulse reads sold</span>` +
+      `<span><b>${Number(p.grossUsdc || 0).toFixed(4)}</b> usdc gross</span>` +
+      (txOk ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${p.lastTx}" target="_blank" rel="noopener noreferrer">\u2197 last ${shortHash(p.lastTx)}</a>` : "") +
+      `</div>`;
+  }
+  if (!rows.length) {
+    html += `<p class="pulse-empty">no ranked agents yet — the economy has not settled a tick.</p>`;
+  } else {
+    const live = lb && lb.mode === "onchain";
+    html += `<div class="lb-head"><span>#</span><span>agent</span><span>net</span><span>bal</span><span>d/s</span></div>`;
+    html += rows.slice(0, 25).map((r, i) => {
+      const addr = isRealAddr(r.address)
+        ? (live
+          ? `<a class="lb-addr" href="${ARC_EXPLORER}/address/${r.address}" target="_blank" rel="noopener noreferrer" title="${r.address}">${shortHash(r.address)}</a>`
+          : `<span class="lb-addr" title="${r.address}">${shortHash(r.address)}</span>`)
+        : `<span class="lb-addr">\u2013</span>`;
+      const net = Number(r.netUsdc || 0);
+      return `<div class="lb-row"><span class="lb-rank">${i + 1}</span>` +
+        `<span class="lb-agent">#${r.id} ${addr}</span>` +
+        `<span class="lb-net ${net > 0 ? "pos" : net < 0 ? "neg" : ""}">${net >= 0 ? "+" : ""}${net.toFixed(4)}</span>` +
+        `<span class="lb-bal">${Number(r.balanceUsdc || 0).toFixed(4)}</span>` +
+        `<span class="lb-deals">${r.deals || 0}/${r.sales || 0}</span></div>`;
+    }).join("");
+  }
+  const regAddr = lb && isRealAddr(lb.registryAddress) ? lb.registryAddress : null;
+  if (regAddr) html += `<div class="lb-reg">registry <span class="fp">${shortHash(regAddr)}</span></div>`;
+  card.innerHTML = html;
+  return card;
+}
+
+/**
+ * The browser-side x402 purchase. The VISITOR is the payer: they sign an EIP-3009
+ * `transferWithAuthorization` with their OWN key in MetaMask (gasless), and the murmur Worker relays it
+ * on-chain, paying gas — the canonical facilitator role. We never touch their private key.
+ */
+async function buySignal(btn) {
+  if (pulseBuying) return;
+  const card = btn ? btn.closest(".pulse-card") : null;
+  const status = card ? card.querySelector(".pulse-status") : null;
+  const setMsg = (m, cls) => { if (status) { status.textContent = m; status.className = "pulse-status" + (cls ? " " + cls : ""); } };
+  const r = pulseReqs;
+  if (!r || !r.enabled) { setMsg("signal product unavailable", "bad"); return; }
+  if (!window.ethereum) { setMsg("no wallet found \u2014 install MetaMask to buy", "bad"); return; }
+  pulseBuying = true;
+  if (btn) btn.disabled = true;
+  try {
+    setMsg("connecting wallet\u2026");
+    const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    const from = Array.isArray(accts) && accts[0];
+    if (!from) { setMsg("no account selected", "bad"); return; }
+
+    // Make sure the wallet is on Arc (add the chain if MetaMask has never seen it).
+    const chainHex = "0x" + Number(r.chainId).toString(16);
+    const cur = await window.ethereum.request({ method: "eth_chainId" });
+    if (String(cur).toLowerCase() !== chainHex.toLowerCase()) {
+      setMsg("switching network to Arc\u2026");
+      const testnet = Number(r.chainId) !== 5042;
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainHex }] });
+      } catch (swErr) {
+        if (swErr && (swErr.code === 4902 || /Unrecognized chain ID/i.test(String(swErr.message)))) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: chainHex,
+              chainName: testnet ? "Arc Testnet" : "Arc",
+              nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+              rpcUrls: testnet ? ["https://rpc.testnet.arc.io"] : ["https://rpc.mainnet.arc.io"],
+              blockExplorerUrls: ["https://explorer.arc.io"],
+            }],
+          });
+        } else { throw swErr; }
+      }
+    }
+
+    // Build the EIP-3009 authorization the payer signs. uint256/bytes32 fields go as strings.
+    const deadline = Math.floor(Date.now() / 1000) + (r.maxTimeoutSeconds || 300);
+    const nonce = "0x" + [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const domain = { name: r.eip712.name, version: r.eip712.version, chainId: Number(r.chainId), verifyingContract: r.asset };
+    const message = { from, to: r.payTo, value: String(r.priceAtomic), validAfter: "0", validBefore: String(deadline), nonce };
+    const typed = {
+      types: {
+        EIP712Domain: [
+          { name: "name", type: "string" }, { name: "version", type: "string" },
+          { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" },
+        ],
+        TransferWithAuthorization: [
+          { name: "from", type: "address" }, { name: "to", type: "address" },
+          { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" },
+          { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" },
+        ],
+      },
+      primaryType: "TransferWithAuthorization",
+      domain, message,
+    };
+    setMsg("sign the EIP-3009 authorization in your wallet\u2026 (gasless)");
+    const signature = await window.ethereum.request({
+      method: "eth_signTypedData_v4", params: [from, JSON.stringify(typed)],
+    });
+
+    const payload = {
+      x402Version: 1, scheme: "exact", network: r.network,
+      payload: {
+        signature,
+        authorization: {
+          scheme: "exact", version: 1, from, to: r.payTo, value: String(r.priceAtomic),
+          maxDeadline: deadline, nonce, asset: r.asset, extra: {},
+        },
+      },
+    };
+    setMsg("relaying your payment on-chain\u2026");
+    const res = await fetch(API + "/signal/pulse", {
+      method: "GET", cache: "no-store",
+      headers: { "X-PAYMENT": btoa(JSON.stringify(payload)) },
+    });
+    if (res.status === 200) {
+      const j = await res.json();
+      pulsePaid = j;
+      setMsg("paid \u2713", "ok");
+      paintPulse();
+      // a sale bumps the revenue counter — refresh the leaderboard once, quietly
+      getJSON("/leaderboard", 8000).then((lb) => { if (lb && pulseOpen) { pulseLB = lb; paintPulse(); } }).catch(() => {});
+    } else {
+      let why = "payment rejected";
+      try { const b = await res.json(); if (b && b.error) why = b.error; } catch { /* keep default */ }
+      setMsg(why, "bad");
+    }
+  } catch (e) {
+    const m = (e && (e.message || e.code)) || "failed";
+    setMsg(/user rejected|denied|reject/i.test(String(m)) ? "cancelled in wallet" : "error: " + m, "bad");
+  } finally {
+    pulseBuying = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1640,6 +1895,7 @@ const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["co
 function select(id) {
   if (walletsOpen) closeWallets();   // selecting a fly (from canvas or roster) hands the right side to the inspector
   if (historyOpen) closeHistory();
+  if (pulseOpen) closePulse();
   selectedId = id;
   const ins = $("inspector");
   ins.hidden = false;
@@ -1979,6 +2235,13 @@ function bindUI() {
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
+  const ulb = $("pulse-btn"); if (ulb) ulb.addEventListener("click", togglePulse);
+  const ulc = $("pulse-close"); if (ulc) ulc.addEventListener("click", closePulse);
+  // the pulse drawer rebuilds each render, so bind the buy button by delegation once
+  const ulbd = $("pulse-body");
+  if (ulbd) ulbd.addEventListener("click", (e) => {
+    const b = e.target.closest(".pulse-buy"); if (b) { buySignal(b); return; }
+  });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -1996,7 +2259,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 

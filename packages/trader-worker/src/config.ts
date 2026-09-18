@@ -67,6 +67,14 @@ export interface Env {
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
   ECONOMY_REGISTRY_ADDRESS?: string;    // deployed NeuralReceiptRegistry (0x…40); when set, each mined net is committed on-chain so the receipt hash-chain head lives on Arc, not just in DO storage. Absent ⇒ commit step skipped (zero behaviour change).
 
+  // --- Paid data product: the "Arc Pulse" signal sold over x402 (HTTP 402) ---
+  //     A visitor's wallet signs an EIP-3009 authorization; the facilitator relays it and serves the
+  //     machine-readable signal. ALL inert unless SIGNAL_ENABLED and (onchain) a payee resolves.
+  SIGNAL_ENABLED?: string;              // "true"/"false" (default true) — expose GET /signal/pulse behind a 402 paywall
+  SIGNAL_PRICE_USDC?: string;           // price of one machine-readable signal read, USDC (default 0.01)
+  SIGNAL_MAX_USDC?: string;             // hard ceiling on a single purchase, USDC (default 0.25)
+  SIGNAL_PAYTO?: string;                // revenue address (0x…40); default = the facilitator relay/gas wallet
+
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
@@ -126,6 +134,15 @@ export interface RuntimeConfig {
     usdcEip712Version: string;
     /** Deployed NeuralReceiptRegistry address, or null when not configured (commit step skipped). */
     registryAddress: string | null;
+  };
+
+  // Paid data product (x402 "Arc Pulse" signal)
+  signal: {
+    enabled: boolean;
+    priceUsdc: number;
+    maxUsdc: number;
+    /** Revenue address, or null to fall back to the facilitator relay wallet at request time. */
+    payTo: string | null;
   };
 
   // Connectome sizing (ts-lif)
@@ -216,6 +233,13 @@ export function loadConfig(env: Env): RuntimeConfig {
       usdcEip712Name: env.ECONOMY_USDC_EIP712_NAME || "USDC",
       usdcEip712Version: env.ECONOMY_USDC_EIP712_VERSION || "2",
       registryAddress: (env.ECONOMY_REGISTRY_ADDRESS ?? "").trim() || null,
+    },
+
+    signal: {
+      enabled: (env.SIGNAL_ENABLED ?? "true").toLowerCase() !== "false",
+      priceUsdc: clamp(Number(env.SIGNAL_PRICE_USDC ?? "0.01"), 0.000001, 1000),
+      maxUsdc: clamp(Number(env.SIGNAL_MAX_USDC ?? "0.25"), 0.000001, 100_000),
+      payTo: (env.SIGNAL_PAYTO ?? "").trim() || null,
     },
 
     brainOpts: {

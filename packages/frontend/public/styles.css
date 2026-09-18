@@ -630,6 +630,75 @@ body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; point
 .pf-ct-head span.fp { color: var(--accent); opacity: 0.8; word-break: break-all; overflow-wrap: anywhere; }
 .pf-ct-ev { margin-top: 3px; font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--muted); opacity: 0.85; }
 
+/* ============ arc pulse drawer ============
+   The x402 paid-signal product + trustless PnL leaderboard. Reuses the generic
+   .drawer chrome; these are its innards. */
+.pulse-btn {
+  margin-top: 6px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.pulse-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+body.pulse-open .panel-pop, body.pulse-open .panel-about { opacity: 0.1; pointer-events: none; }
+
+.pulse-loading, .pulse-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.8; text-align: center; padding: 18px 6px; }
+.pulse-card { margin-bottom: 12px; padding: 12px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
+.pulse-card.paid { border-color: rgba(46, 148, 84, 0.4); background: rgba(46, 148, 84, 0.05); }
+.pulse-title { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.pulse-regime { font-size: 9px; letter-spacing: 0.1em; padding: 1px 7px; border-radius: 2px; border: 1px solid currentColor; }
+.pulse-regime.hot { color: #b2492a; background: rgba(192, 94, 60, 0.12); }
+.pulse-regime.cold { color: #3d6a86; background: rgba(91, 124, 141, 0.12); }
+.pulse-regime.calm { color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
+.pulse-blurb { font-size: 10px; line-height: 1.6; color: var(--muted); margin: 0 0 11px; }
+.pulse-blurb b { color: var(--ink); font-weight: 600; }
+
+.pulse-gauge { height: 8px; border: 1px solid var(--hair); border-radius: 4px; overflow: hidden; background: rgba(var(--ink-rgb), 0.05); }
+.pulse-gauge-fill { height: 100%; background: linear-gradient(90deg, #5b7c8d, #9a8c6e 55%, #c05e3c); transition: width 0.5s ease; }
+.pulse-gauge-meta { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--muted); margin-top: 5px; }
+.pulse-lock { margin-top: 11px; padding: 8px 10px; font-family: var(--mono); font-size: 8.5px; line-height: 1.5; letter-spacing: 0.02em; color: var(--muted); border: 1px dashed rgba(var(--accent-rgb), 0.4); border-radius: 2px; background: repeating-linear-gradient(45deg, rgba(var(--ink-rgb), 0.02), rgba(var(--ink-rgb), 0.02) 6px, transparent 6px, transparent 12px); }
+.pulse-buyrow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+.pulse-buy {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--paper); background: var(--accent);
+  border: 1px solid var(--accent); border-radius: 2px;
+  padding: 8px 14px; cursor: pointer; transition: opacity 0.18s ease, transform 0.12s ease;
+}
+.pulse-buy:hover { opacity: 0.9; }
+.pulse-buy:active { transform: translateY(1px); }
+.pulse-buy:disabled { opacity: 0.45; cursor: progress; }
+.pulse-mode { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.03em; color: var(--muted); }
+.pulse-status { margin-top: 9px; font-family: var(--mono); font-size: 9px; line-height: 1.5; color: var(--muted); min-height: 0; }
+.pulse-status:empty { display: none; }
+.pulse-status.ok { color: #1c5c33; }
+.pulse-status.bad { color: #8a2222; }
+
+.pulse-read { font-size: 10.5px; line-height: 1.6; color: var(--ink); margin-bottom: 10px; }
+.pulse-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 10px; }
+.pulse-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pulse-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pulse-meta dd { margin: 0; font-family: var(--mono); font-size: 9.5px; color: var(--ink); opacity: 0.88; }
+.pulse-json { max-height: 240px; overflow: auto; margin: 0 0 9px; padding: 9px; font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--ink); opacity: 0.85; background: rgba(var(--ink-rgb), 0.04); border: 1px solid var(--hair); border-radius: 2px; white-space: pre; }
+.pulse-simnote { font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--muted); }
+
+.lb-pulse { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--hair); font-family: var(--mono); font-size: 9px; color: var(--muted); }
+.lb-pulse b { color: var(--ink); font-weight: 600; }
+.lb-head, .lb-row { display: grid; grid-template-columns: 22px 1fr 62px 56px 44px; align-items: center; gap: 6px; }
+.lb-head { font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--hair); }
+.lb-head span:nth-child(n+3), .lb-row .lb-net, .lb-row .lb-bal, .lb-row .lb-deals { text-align: right; }
+.lb-row { padding: 5px 0; border-bottom: 1px solid rgba(var(--ink-rgb), 0.05); font-family: var(--mono); font-size: 9.5px; color: var(--ink); }
+.lb-rank { color: var(--muted); font-size: 9px; }
+.lb-agent { display: flex; align-items: baseline; gap: 5px; min-width: 0; overflow: hidden; }
+.lb-addr { color: var(--accent); opacity: 0.85; white-space: nowrap; }
+a.lb-addr:hover { opacity: 1; text-decoration: underline; }
+.lb-net { font-variant-numeric: tabular-nums; }
+.lb-net.pos { color: #1c5c33; }
+.lb-net.neg { color: #8a2222; }
+.lb-bal, .lb-deals { color: var(--muted); font-variant-numeric: tabular-nums; }
+.lb-reg { margin-top: 9px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
+.lb-reg .fp { color: var(--accent); opacity: 0.85; word-break: break-all; }
+
 /* ============ responsive ============
    The piece is four floating corner panels over a full-bleed field. That reads
    beautifully on a desktop, but the corners collide once the viewport narrows

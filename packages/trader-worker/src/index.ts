@@ -21,7 +21,10 @@ function corsHeaders(origin: string) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    // X-PAYMENT carries the browser-signed x402 payload for the paid /signal/pulse product.
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-PAYMENT",
+    // Let the browser read the x402 settlement result + the 402 requirements.
+    "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -50,6 +53,9 @@ export default {
             "GET  /population   (collective mood + per-fly drives + economy summary — the frontend feed)",
             "GET  /market       (current Arc activity → temperature / regime)",
             "GET  /economy      (agent wallets + x402 settlement ledger + totals)",
+            "GET  /leaderboard  (trustless per-agent PnL ranking + paid-signal revenue)",
+            "GET  /signal/pulse (x402 paywall: 402 → pay USDC → the machine-readable Arc-activity signal)",
+            "GET  /signal/requirements (the x402 payment requirements a browser signs to buy the signal)",
             "GET  /history      (D1 long-term archive: one row per cron — temperature/regime/deals/volume/gini/topStates)",
             "GET  /stimuli",
             "GET  /snapshot?flyId=N   (full neural state of one fly + its agent wallet)",

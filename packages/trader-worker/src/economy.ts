@@ -36,6 +36,8 @@ import {
   arcNetworkTag,
   buildPaymentRequired,
   buildPaymentPayload,
+  checkPaymentInvariants,
+  pseudoTxHash,
   makeFacilitator,
   addAtomic,
   subAtomic,
@@ -44,6 +46,8 @@ import {
   atomicToUsdc,
   type Facilitator,
   type PaymentRequirements,
+  type PaymentPayload,
+  type SettleResponse,
   type RegistryCommit,
 } from "./x402.js";
 import type { FlyReading, CollectiveState } from "./population.js";
@@ -128,6 +132,22 @@ export interface AgentReading {
   earned: string;
   deals: number;
   sales: number;
+}
+
+/**
+ * One row of the trustless PnL leaderboard: an agent's realized USDC flow (earned − paid) plus its
+ * balance and activity. Every figure is recomputable from on-chain settlements (each linked, via the
+ * NeuralReceiptRegistry, to the neural receipt that caused it), so the ranking is verifiable, not asserted.
+ */
+export interface LeaderRow {
+  id: number;
+  address: string;
+  netUsdc: number;       // earned − paid (realized flow); the ranking key
+  earnedUsdc: number;
+  paidUsdc: number;
+  balanceUsdc: number;
+  deals: number;         // settlements as buyer
+  sales: number;         // settlements as seller
 }
 
 export interface EconomyTotals {
@@ -908,6 +928,75 @@ export class AgentEconomy {
     const f = this.facilitator as { registryChainHead?: () => Promise<string | null> };
     if (typeof f.registryChainHead !== "function") return null;
     return f.registryChainHead();
+  }
+
+  // ---------- paid data products (external x402) + trustless leaderboard ----------
+
+  /** The live settlement mode ("onchain" only when real money is fully wired). */
+  get facilitatorMode(): "simulated" | "onchain" {
+    return this.facilitator.mode;
+  }
+
+  /**
+   * The relay/gas wallet address that also RECEIVES external data-product revenue (null in simulated
+   * mode). Used as the default `payTo` for the x402 signal product when no explicit payee is configured.
+   */
+  relayAddress(): string | null {
+    const f = this.facilitator as { relayAddress?: string };
+    return typeof f.relayAddress === "string" ? f.relayAddress : null;
+  }
+
+  /**
+   * Settle an EXTERNAL (browser-signed) x402 payment for a paid data product. Onchain: relay the buyer's
+   * EIP-3009 authorization (the facilitator never holds the buyer key — see x402.settleExternal).
+   * Simulated: a keyless success so the whole 402 flow is demoable locally without a wallet or funds.
+   * NEVER throws — a failed settle returns { success:false } for the caller to surface as a 402.
+   */
+  async settleExternal(reqs: PaymentRequirements, payload: PaymentPayload): Promise<SettleResponse> {
+    const f = this.facilitator as {
+      settleExternal?: (r: PaymentRequirements, p: PaymentPayload) => Promise<SettleResponse>;
+    };
+    if (typeof f.settleExternal === "function") {
+      try {
+        return await f.settleExternal(reqs, payload);
+      } catch (e) {
+        return { success: false, network: reqs.network, txHash: "0x", invalidReason: (e as Error).message };
+      }
+    }
+    // Keyless simulated fallback (local dev / simulated mode): same invariants, no chain, no funds.
+    const v = checkPaymentInvariants(payload, reqs);
+    if (!v.valid) {
+      return { success: false, network: reqs.network, txHash: "0x", simulated: true, invalidReason: v.invalidReason };
+    }
+    const auth = payload.payload.authorization;
+    return {
+      success: true,
+      network: reqs.network,
+      txHash: pseudoTxHash(auth.from, auth.to, auth.value, auth.nonce),
+      simulated: true,
+    };
+  }
+
+  /**
+   * The trustless PnL leaderboard: every agent ranked by realized USDC flow (earned − paid), descending,
+   * ties broken by balance. Pure read-out of persisted per-agent counters — no chain call, no mutation.
+   */
+  leaderboard(): LeaderRow[] {
+    return this.agents
+      .map((a) => {
+        const netAtomic = BigInt(a.earned) - BigInt(a.paid);
+        return {
+          id: a.id,
+          address: a.address,
+          netUsdc: Number(netAtomic) / 1e6,
+          earnedUsdc: atomicToUsdc(a.earned),
+          paidUsdc: atomicToUsdc(a.paid),
+          balanceUsdc: atomicToUsdc(a.balance),
+          deals: a.deals,
+          sales: a.sales,
+        };
+      })
+      .sort((x, y) => y.netUsdc - x.netUsdc || y.balanceUsdc - x.balanceUsdc || x.id - y.id);
   }
 }
 

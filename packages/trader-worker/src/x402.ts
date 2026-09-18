@@ -32,6 +32,7 @@ import {
   encodeFunctionData,
   parseAbi,
   parseSignature,
+  recoverTypedDataAddress,
   type Address,
   type Chain,
   type Hex,
@@ -159,6 +160,49 @@ export interface RegistryCommit {
 /** True when atomic string `a` <= `b` (cap checks). */
 export function lteAtomic(a: string, b: string): boolean {
   return BigInt(a) <= BigInt(b);
+}
+
+/**
+ * The EIP-712 message an authorization commits to, derived from its wire fields. Shared by BOTH the
+ * internal signing path (settle) and the external relay path (settleExternal) so a browser-signed
+ * authorization recovers to exactly the message we re-broadcast — validAfter is always 0 (immediately
+ * valid) and validBefore is the authorization's maxDeadline.
+ */
+export function eip3009Message(auth: PaymentAuthorization): {
+  from: Address; to: Address; value: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex;
+} {
+  return {
+    from: auth.from as Address,
+    to: auth.to as Address,
+    value: BigInt(auth.value),
+    validAfter: 0n,
+    validBefore: BigInt(auth.maxDeadline),
+    nonce: toNonce32(auth.nonce),
+  };
+}
+
+/**
+ * Recover the signer of an EIP-3009 `transferWithAuthorization` (null on any failure). This is what
+ * makes an EXTERNAL, browser-signed x402 payment safe to relay: before spending a wei of gas we recover
+ * the address that actually signed and require it to equal the claimed payer, so a forged or garbage
+ * payload is rejected for free and the relay wallet only ever broadcasts a transfer its payer signed.
+ */
+export async function recoverAuthorizationSigner(a: {
+  domain: { name: string; version: string; chainId: number; verifyingContract: Address };
+  auth: PaymentAuthorization;
+  signature: Hex;
+}): Promise<string | null> {
+  try {
+    return await recoverTypedDataAddress({
+      domain: a.domain,
+      types: EIP3009_TYPES,
+      primaryType: "TransferWithAuthorization",
+      message: eip3009Message(a.auth),
+      signature: a.signature,
+    });
+  } catch {
+    return null;
+  }
 }
 
 // ============================== message shapes ==============================
@@ -583,6 +627,93 @@ export class OnChainFacilitator implements Facilitator {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(`onchain settle error: ${msg}`);
     }
+  }
+
+  /** The EIP-712 domain this facilitator signs/recovers against (name+version overridable for Arc). */
+  private eip3009Domain() {
+    return {
+      name: this.domainName,
+      version: this.domainVersion,
+      chainId: this.o.chainId,
+      verifyingContract: this.o.asset,
+    };
+  }
+
+  /**
+   * Settle an EXTERNAL x402 payment — the canonical facilitator role for a paid data product. Unlike
+   * settle() (which re-signs with a Worker-derived agent key), here the PAYER is an outside wallet
+   * (a browser) that signed the EIP-3009 authorization with its OWN key, delivered in
+   * payload.payload.signature. We NEVER hold that key: we only recover the signer, require it to equal
+   * the claimed payer, re-read the payer's real on-chain balance, then relay the exact authorization and
+   * pay gas. Safety: structural invariants + per-deal cap + signature recovery + balance all gate the
+   * broadcast, so a forged/underfunded/oversized payload is rejected for free (no gas spent).
+   */
+  async settleExternal(reqs: PaymentRequirements, payload: PaymentPayload): Promise<SettleResponse> {
+    const net = reqs.network;
+    const fail = (invalidReason: string): SettleResponse =>
+      ({ success: false, network: net, txHash: "0x", invalidReason });
+    try {
+      const v = checkPaymentInvariants(payload, reqs);
+      if (!v.valid) return fail(v.invalidReason ?? "invalid payload");
+      const auth = payload.payload.authorization;
+      const signature = (payload.payload.signature ?? "") as Hex;
+      if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return fail("malformed signature");
+
+      const from = auth.from as Address;
+      const to = auth.to as Address;
+      const value = BigInt(auth.value);
+
+      // Per-deal hard cap — an outside caller can never make the relay move more than this.
+      if (this.o.maxAmountAtomic != null && !lteAtomic(auth.value, this.o.maxAmountAtomic)) {
+        return fail(`value ${auth.value} exceeds per-deal cap ${this.o.maxAmountAtomic}`);
+      }
+
+      // Recover the signer; it MUST be the claimed payer. This is the trust anchor for external payments.
+      const recovered = await recoverAuthorizationSigner({ domain: this.eip3009Domain(), auth, signature });
+      if (!recovered || recovered.toLowerCase() !== from.toLowerCase()) {
+        return fail("signature does not match payer");
+      }
+
+      // Authoritative on-chain balance read: the payer must actually hold the USDC right now.
+      const bal = await this.o.publicClient.readContract({
+        address: this.o.asset, abi: erc20Abi, functionName: "balanceOf", args: [from],
+      });
+      if (bal < value) return fail(`insufficient on-chain USDC: have ${bal}, need ${value}`);
+
+      const { r, s, v: vByte } = parseSignature(signature);
+      const msg = eip3009Message(auth);
+      const args: [Address, Address, bigint, bigint, bigint, Hex, number, Hex, Hex] =
+        [from, to, value, msg.validAfter, msg.validBefore, msg.nonce, Number(vByte), r, s];
+
+      if (this.o.shadowOnly) {
+        const data = encodeFunctionData({ abi: fiatTokenV2Abi, functionName: "transferWithAuthorization", args });
+        await this.o.publicClient.call({ account: this.o.wallet.account.address, to: this.o.asset, data });
+        return { success: true, network: net, txHash: "0x", simulated: true, shadow: true };
+      }
+
+      const hash = await this.o.wallet.writeContract({
+        address: this.o.asset,
+        abi: fiatTokenV2Abi,
+        functionName: "transferWithAuthorization",
+        args,
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1,
+      });
+      return { success: receipt.status === "success", network: net, txHash: hash, simulated: false };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return fail(`external settle error: ${msg}`);
+    }
+  }
+
+  /**
+   * The gas-paying relay wallet address. Doubles as the default `payTo` for paid data products, since it
+   * is the address the operator controls and already funds for gas.
+   */
+  get relayAddress(): string {
+    return this.o.wallet.account.address;
   }
 
   /**

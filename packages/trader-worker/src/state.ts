@@ -47,7 +47,7 @@ import {
 import type { PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
-import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic } from "./x402.js";
+import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
@@ -58,8 +58,18 @@ const KEY_LAST_SNAPSHOT = "lastSnapshot:v1";
 const KEY_PREV_TEMP = "prevTemperature";
 const KEY_STIMULI = "stimuli";
 const KEY_ECONOMY = "economy:v1";
+const KEY_PULSE = "pulse:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
+
+/** Lifetime stats for the paid x402 "Arc Pulse" signal product (persisted across evictions). */
+interface PulseSales {
+  sales: number;          // successful paid reads served
+  grossAtomic: string;    // cumulative USDC revenue (atomic, 6-dec)
+  lastTx: string | null;  // most recent settlement tx hash
+  lastBuyer: string | null;
+  lastTs: number | null;
+}
 
 export class FlyStateDO {
   private state: DurableObjectState;
@@ -328,6 +338,9 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/economy") return await this.getEconomy();
       if (req.method === "GET" && path === "/proofs") return await this.getProofs();
       if (req.method === "GET" && path === "/proofs/verify") return await this.getProofVerify(url);
+      if (req.method === "GET" && path === "/signal/pulse") return await this.getSignalPulse(req);
+      if (req.method === "GET" && path === "/signal/requirements") return await this.getSignalRequirements();
+      if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
@@ -616,6 +629,209 @@ export class FlyStateDO {
     });
   }
 
+  // ---------- paid data product: the x402 "Arc Pulse" signal (HTTP 402) ----------
+
+  /**
+   * Assemble the machine-readable signal sold over x402: the Arc-activity-derived market temperature +
+   * its facets (momentum/turbulence/density/richness), the raw activity vs baseline, the swarm's live
+   * positioning, and a plain-language read. This is the PREMIUM product — the free /market endpoint only
+   * exposes the headline temperature; the full bundle + a trader-readable interpretation is what a payer buys.
+   */
+  private async buildPulseSignal() {
+    const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
+    const prevTemp = await this.ensurePrevTemperature();
+    const snap = await this.loadSnapshot();
+    const swarm = await this.ensureSwarm();
+    const collective = snap?.collective ?? null;
+    const temperature = market?.temperature ?? prevTemp;
+    const regime: Regime =
+      market?.regime ??
+      (temperature >= this.cfg.regimeHot ? "HOT" : temperature <= this.cfg.regimeCold ? "COLD" : "CALM");
+    const pulse = market
+      ? derivePulse(market, prevTemp)
+      : { temperature, momentum: 0, turbulence: Math.abs(temperature - 0.5) * 2, density: 0.5, richness: 0.5 };
+    const states = collective?.states ?? null;
+    let topState: string | null = null;
+    if (states) { let best = -1; for (const [k, v] of Object.entries(states)) if (v > best) { best = v; topState = k; } }
+    return {
+      v: 1,
+      product: "arc-pulse",
+      ts: Date.now(),
+      chain: {
+        chainId: this.cfg.chainId,
+        network: arcNetworkTag(this.cfg.isTestnet),
+        isTestnet: this.cfg.isTestnet,
+        blockNumber: market?.sample.blockNumber ?? null,
+      },
+      temperature,
+      regime,
+      facets: pulse,
+      activity: market
+        ? {
+            txPerBlock: market.sample.txPerBlock,
+            gasPerBlock: market.sample.gasPerBlock,
+            baselineTx: market.baselineTx,
+            baselineGas: market.baselineGas,
+            sampleBlocks: market.sample.sampleBlocks,
+            txRatio: market.baselineTx > 1e-6 ? market.sample.txPerBlock / market.baselineTx : 1,
+            gasRatio: market.baselineGas > 1e-6 ? market.sample.gasPerBlock / market.baselineGas : 1,
+          }
+        : null,
+      swarm: collective
+        ? { size: collective.size, states, topState, temperature: collective.temperature }
+        : null,
+      tickIndex: swarm.getTickIndex(),
+      read: pulseRead(regime, pulse.momentum, temperature),
+    };
+  }
+
+  /** Build the PaymentRequirements for one Arc Pulse read (null payTo ⇒ product unavailable). */
+  private async signalRequirements(economy: AgentEconomy): Promise<{ reqs: PaymentRequirements | null; payTo: string | null }> {
+    const payTo = this.cfg.signal.payTo ?? economy.relayAddress();
+    if (!payTo) return { reqs: null, payTo: null };
+    const reqs: PaymentRequirements = {
+      scheme: SCHEME_EXACT,
+      network: arcNetworkTag(this.cfg.isTestnet),
+      maxAmountRequired: usdcToAtomic(this.cfg.signal.priceUsdc),
+      resource: "https://api.muros.live/signal/pulse",
+      description:
+        "murmur Arc Pulse — the machine-readable market-temperature signal derived from Arc whole-chain activity, plus the swarm's live neural positioning. One read.",
+      mimeType: "application/json",
+      payTo,
+      maxTimeoutSeconds: 300,
+      asset: ARC_USDC,
+      extra: { product: "arc-pulse", priceUsdc: this.cfg.signal.priceUsdc },
+    };
+    return { reqs, payTo };
+  }
+
+  /** Public payment requirements so a browser can build + sign the EIP-3009 authorization (no 402 round-trip needed). */
+  private async getSignalRequirements(): Promise<Response> {
+    if (!this.cfg.signal.enabled) return json({ enabled: false });
+    const economy = await this.ensureEconomy();
+    const { reqs, payTo } = await this.signalRequirements(economy);
+    if (!reqs) return json({ enabled: false, reason: "no payee configured (set SIGNAL_PAYTO or run onchain)" });
+    return json({
+      enabled: true,
+      mode: economy.facilitatorMode,
+      network: reqs.network,
+      chainId: this.cfg.chainId,
+      asset: reqs.asset,
+      payTo,
+      priceUsdc: this.cfg.signal.priceUsdc,
+      priceAtomic: reqs.maxAmountRequired,
+      maxUsdc: this.cfg.signal.maxUsdc,
+      maxTimeoutSeconds: reqs.maxTimeoutSeconds,
+      eip712: { name: this.cfg.economy.usdcEip712Name, version: this.cfg.economy.usdcEip712Version },
+      requirements: reqs,
+    });
+  }
+
+  /**
+   * The x402 resource itself. No payment ⇒ 402 Payment Required (requirements in body + PAYMENT-REQUIRED
+   * header). A base64 PaymentPayload in X-PAYMENT ⇒ verify + relay the buyer's EIP-3009 authorization
+   * (economy.settleExternal); on success serve the signal + X-PAYMENT-RESPONSE, else re-issue the 402.
+   */
+  private async getSignalPulse(req: Request): Promise<Response> {
+    if (!this.cfg.signal.enabled) return json({ error: "signal product disabled" }, 404);
+    const economy = await this.ensureEconomy();
+    const { reqs } = await this.signalRequirements(economy);
+    if (!reqs) return json({ error: "signal product not configured" }, 503);
+
+    const payHeader = req.headers.get("X-PAYMENT") ?? req.headers.get("x-payment");
+    if (!payHeader) return paymentRequired(reqs, "X-PAYMENT header required");
+
+    let payload: PaymentPayload;
+    try {
+      payload = JSON.parse(atob(payHeader)) as PaymentPayload;
+    } catch {
+      return paymentRequired(reqs, "malformed X-PAYMENT (expected base64 JSON PaymentPayload)");
+    }
+
+    // Cap what a caller can push through the relay (defense-in-depth beyond the facilitator's own cap).
+    const authVal = payload?.payload?.authorization?.value;
+    if (authVal != null && /^\d+$/.test(String(authVal)) && BigInt(authVal) > BigInt(usdcToAtomic(this.cfg.signal.maxUsdc))) {
+      return paymentRequired(reqs, `value exceeds max ${this.cfg.signal.maxUsdc} USDC`);
+    }
+
+    const settlement = await economy.settleExternal(reqs, payload);
+    if (!settlement.success) return paymentRequired(reqs, settlement.invalidReason ?? "settlement failed");
+
+    const signal = await this.buildPulseSignal();
+    await this.recordPulseSale(settlement, payload);
+    return new Response(
+      JSON.stringify({
+        paid: true,
+        product: "arc-pulse",
+        signal,
+        settlement: {
+          txHash: settlement.txHash,
+          simulated: !!settlement.simulated,
+          shadow: !!settlement.shadow,
+          network: settlement.network,
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-PAYMENT-RESPONSE": b64json(settlement),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+
+  /** Best-effort revenue telemetry for the paid signal (persisted; never blocks serving the product). */
+  private async recordPulseSale(s: SettleResponse, payload: PaymentPayload): Promise<void> {
+    try {
+      const cur = (await this.state.storage.get<PulseSales>(KEY_PULSE)) ??
+        { sales: 0, grossAtomic: "0", lastTx: null, lastBuyer: null, lastTs: null };
+      const amt = payload?.payload?.authorization?.value ?? "0";
+      cur.sales += 1;
+      cur.grossAtomic = (BigInt(cur.grossAtomic) + (/^\d+$/.test(String(amt)) ? BigInt(amt) : 0n)).toString();
+      cur.lastTx = s.txHash && s.txHash !== "0x" ? s.txHash : cur.lastTx;
+      cur.lastBuyer = payload?.payload?.authorization?.from ?? cur.lastBuyer;
+      cur.lastTs = Date.now();
+      await this.state.storage.put(KEY_PULSE, cur);
+    } catch {
+      /* telemetry only */
+    }
+  }
+
+  // ---------- trustless PnL leaderboard (built on the on-chain receipt registry) ----------
+
+  /**
+   * Every agent ranked by realized USDC flow, plus the paid-signal revenue counter. Each row's address is
+   * its real on-chain wallet, and the registryAddress lets a viewer re-verify the underlying settlements
+   * trustlessly (see /proofs/verify). Pure read-out — no chain call, no mutation.
+   */
+  private async getLeaderboard(): Promise<Response> {
+    if (!this.cfg.economy.enabled) return json({ enabled: false, rows: [] });
+    const economy = await this.ensureEconomy();
+    const snap = economy.snapshot();
+    const pulse = (await this.state.storage.get<PulseSales>(KEY_PULSE)) ??
+      { sales: 0, grossAtomic: "0", lastTx: null, lastBuyer: null, lastTs: null };
+    return json({
+      enabled: true,
+      mode: snap.mode,
+      network: snap.network,
+      asset: snap.asset,
+      registryAddress: this.cfg.economy.registryAddress ?? null,
+      rows: economy.leaderboard(),
+      totals: snap.totals,
+      pulse: {
+        enabled: this.cfg.signal.enabled,
+        priceUsdc: this.cfg.signal.priceUsdc,
+        sales: pulse.sales,
+        grossUsdc: atomicToUsdc(pulse.grossAtomic),
+        lastTx: pulse.lastTx,
+        lastBuyer: pulse.lastBuyer,
+        lastTs: pulse.lastTs,
+      },
+    });
+  }
+
   /**
    * Long-term history from D1: one archived row per cron tick (see archiveTick). Query params:
    *   limit  — max rows (default 500, capped 5000)
@@ -823,6 +1039,31 @@ function parseHistoryRow(r: any) {
     topState: r?.top_state ?? null,
     topStates,
   };
+}
+
+/** A 402 Payment Required response: the requirements in the body AND base64 in the PAYMENT-REQUIRED header. */
+function paymentRequired(reqs: PaymentRequirements, error?: string): Response {
+  const body = buildPaymentRequired(reqs, error);
+  return new Response(JSON.stringify(body), {
+    status: 402,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "PAYMENT-REQUIRED": b64json([reqs]),
+      "X-PAYMENT-VERSION": String(X402_VERSION),
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+/** A plain-language, trader-readable interpretation of the current Arc-activity regime. */
+function pulseRead(regime: Regime, momentum: number, temperature: number): string {
+  const dir = momentum > 0.05 ? "heating" : momentum < -0.05 ? "cooling" : "steady";
+  const t = temperature.toFixed(2);
+  if (regime === "HOT")
+    return `HOT · Arc activity is ${dir} and well above its learned norm (T=${t}) — risk-on, liquidity thick; the swarm is chasing momentum.`;
+  if (regime === "COLD")
+    return `COLD · Arc activity is ${dir} and below its norm (T=${t}) — thin, risk-off; the swarm is conserving.`;
+  return `CALM · Arc activity is ${dir} around its norm (T=${t}) — balanced; the swarm is exploring.`;
 }
 
 function json(data: unknown, status = 200): Response {
