@@ -65,28 +65,37 @@ persistence, zero-regression when no registry is set) is covered by `npm test` i
 
 ## 3. Deploy (viem)
 
-> ⚠️ This spends **real gas**. Point at Arc **testnet** (`CHAIN_ID=5042002`) first, then mainnet
-> (`CHAIN_ID=5042`). The deployer key is a plain env var — never commit it.
+> ⚠️ This spends **real gas**. The deployer key is read from a git-ignored local file and never printed.
+
+### One-command auto deploy (recommended)
+
+Put **one** key into `packages/trader-worker/.env.local` (git-ignored):
+
+- `ECONOMY_MNEMONIC` — the same seed the Worker uses; the script derives the *identical* gas wallet
+  (`accountIndex 2_000_000`, matching [`src/keys.ts`](../src/keys.ts)) so the committer is correct, or
+- `ECONOMY_FACILITATOR_PK` / `REGISTRY_DEPLOYER_PK` — a raw gas key.
 
 ```bash
 cd packages/trader-worker
-# testnet dry run
-CHAIN_ID=5042002 REGISTRY_DEPLOYER_PK=0x… node scripts/deploy-registry.mjs
-# mainnet, seeding the CURRENT /proofs chain head so the first commit chains onto history
-CHAIN_ID=5042 \
-REGISTRY_DEPLOYER_PK=0x… \
-REGISTRY_GENESIS_HEAD=$(curl -s https://api.muros.live/proofs | jq -r .chainHead) \
-node scripts/deploy-registry.mjs
+npm run deploy:registry        # = node scripts/deploy-registry-auto.mjs
 ```
 
-Env:
+It deploys with `committer =` the Worker's own signing address, self-verifies `committer()`/`chainHead()`,
+and writes the address to `contracts/REGISTRY_ADDRESS.txt` + back into `.env.local`. **Genesis is not
+seeded here on purpose** — the Worker lazily adopts its *current* chain head on its first commit
+(`x402.ts` `ensureGenesisSeeded`), which avoids a stale-head race because the swarm flushes continuously.
 
-| var | required | meaning |
-| --- | --- | --- |
-| `REGISTRY_DEPLOYER_PK` | yes | deployer **and** default `committer` (the gas wallet) |
-| `REGISTRY_COMMITTER` | no | committer address if different from the deployer |
-| `REGISTRY_GENESIS_HEAD` | no | `0x…64` head to `seedGenesis()` after deploy (adopt the pre-existing off-chain chain so the first on-chain commit chains onto it) |
-| `RPC_URL` / `CHAIN_ID` | no | default to Arc mainnet `5042` / `https://rpc.mainnet.arc.io` |
+### Manual deploy
+
+```bash
+cd packages/trader-worker
+CHAIN_ID=5042002 REGISTRY_DEPLOYER_PK=0x… node scripts/deploy-registry.mjs   # testnet dry run
+CHAIN_ID=5042 REGISTRY_DEPLOYER_PK=0x… node scripts/deploy-registry.mjs       # mainnet
+```
+
+`deploy-registry.mjs` env: `REGISTRY_DEPLOYER_PK` (required, deployer + default committer),
+`REGISTRY_COMMITTER` (optional override), `REGISTRY_GENESIS_HEAD` (optional `0x…64` to `seedGenesis()`),
+`RPC_URL` / `CHAIN_ID` (default mainnet `5042`).
 
 The deployer **must be the same key the Worker's facilitator uses** (`ECONOMY_MNEMONIC` /
 `ECONOMY_FACILITATOR_PK`), otherwise `commit()` reverts with `NotCommitter`.

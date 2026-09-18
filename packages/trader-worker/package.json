@@ -11,6 +11,8 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "test": "npx --yes tsx --test src/*.test.ts",
+    "compile:registry": "node scripts/compile-registry.mjs",
+    "deploy:registry": "node scripts/deploy-registry-auto.mjs",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {

@@ -628,6 +628,11 @@ export class OnChainFacilitator implements Facilitator {
   }): Promise<string | null> {
     if (!this.o.registryAddress) return null;
     try {
+      // Lazy genesis: the worker flushes continuously, so its off-chain head moves between deploy and
+      // first commit. Rather than seed a head that would already be stale (breaking continuity forever),
+      // the worker — which IS the committer — adopts its OWN current prevHead the instant the registry
+      // is still empty. No race, no gap: the on-chain chain starts exactly where the off-chain one is.
+      await this.ensureGenesisSeeded(a.prevHead);
       const hash = await this.o.wallet.writeContract({
         address: this.o.registryAddress,
         abi: neuralReceiptRegistryAbi,
@@ -648,6 +653,32 @@ export class OnChainFacilitator implements Facilitator {
       return receipt.status === "success" ? hash : null;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * One-shot lazy genesis: if the registry's chainHead is still bytes32(0), adopt `prevHead` as the
+   * starting anchor so the first commit chains onto the worker's existing off-chain history. Best-
+   * effort — any failure just means the following commit reverts (BadPrevHead) and returns null.
+   */
+  private async ensureGenesisSeeded(prevHead: string): Promise<void> {
+    const addr = this.o.registryAddress;
+    if (!addr) return;
+    const ZERO32 = `0x${"00".repeat(32)}`;
+    try {
+      const head = (await this.o.publicClient.readContract({
+        address: addr, abi: neuralReceiptRegistryAbi, functionName: "chainHead",
+      })) as string;
+      if (head.toLowerCase() !== ZERO32) return;         // already seeded or committed
+      const anchor = toBytes32(prevHead);
+      if (anchor.toLowerCase() === ZERO32) return;        // nothing to adopt; chain legitimately starts at 0
+      const h = await this.o.wallet.writeContract({
+        address: addr, abi: neuralReceiptRegistryAbi, functionName: "seedGenesis", args: [anchor],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      await this.o.publicClient.waitForTransactionReceipt({ hash: h, confirmations: this.o.confirmations ?? 1 });
+    } catch {
+      /* best-effort */
     }
   }
 
