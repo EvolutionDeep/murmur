@@ -1020,7 +1020,8 @@ function renderWallets() {
 
 function openWallets() {
   walletsOpen = true;
-  if (historyOpen) closeHistory();   // the two right-side drawers are mutually exclusive
+  if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
+  if (proofsOpen) closeProofs();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1171,6 +1172,7 @@ function renderHistory() {
 function openHistory() {
   historyOpen = true;
   if (walletsOpen) closeWallets();
+  if (proofsOpen) closeProofs();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1190,6 +1192,172 @@ function closeHistory() {
 }
 
 function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); }
+
+// ================= neural provenance ("the neurons did this, not a human / not an LLM") =================
+// Every real on-chain net transfer carries, as its EIP-3009 nonce, the sha256 of a receipt bundling the
+// frozen neural drives of every trade folded into it. This drawer publishes those receipts and lets a
+// visitor check the chain two independent ways, entirely in their own browser:
+//   1. recompute sha256(receipt) here (same canonical JSON the worker uses) and compare to the published
+//      receiptHash, and
+//   2. call /proofs/verify, which reads the nonce actually MINED on Arc and compares it to that hash.
+// If both agree, the transfer is cryptographically bound to the connectome read-out that caused it — a
+// receipt invented after the fact could never hash to a nonce that is already mined.
+let proofs = [];            // newest-first ProofRecord[]
+let proofsMeta = null;      // {version, policy, chainHead, count}
+let proofsOpen = false;
+let lastProofsPoll = 0;
+const PROOFS_POLL_MS = 30000;
+
+// canonical JSON + sha256, byte-identical to the worker's provenance.ts (sorted keys, arrays ordered)
+function canonicalJSON(v) {
+  const walk = (x) => {
+    if (Array.isArray(x)) return x.map(walk);
+    if (x && typeof x === "object") { const o = {}; for (const k of Object.keys(x).sort()) o[k] = walk(x[k]); return o; }
+    return x;
+  };
+  return JSON.stringify(walk(v));
+}
+async function sha256HexClient(v) {
+  const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJSON(v)));
+  return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function pollProofs(force) {
+  const now = Date.now();
+  if (!force && now - lastProofsPoll < PROOFS_POLL_MS) return;
+  lastProofsPoll = now;
+  try {
+    const p = await getJSON("/proofs", 6000);
+    if (p && p.enabled) {
+      proofs = Array.isArray(p.proofs) ? p.proofs : [];
+      proofsMeta = { version: p.version, policy: p.policy, chainHead: p.chainHead, count: p.count };
+      if (proofsOpen) renderProofs();
+    }
+  } catch { /* best-effort: provenance is a nicety and must never block the scene */ }
+}
+
+function openProofs() {
+  proofsOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  const d = $("proofs"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("proofs-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderProofs();
+  pollProofs(true);   // refresh immediately on open so it's never stale
+}
+function closeProofs() {
+  proofsOpen = false;
+  document.body.classList.remove("proofs-open");
+  const d = $("proofs"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!proofsOpen) d.hidden = true; }, 420);
+}
+function toggleProofs() { if (proofsOpen) closeProofs(); else openProofs(); }
+
+function renderProofs() {
+  const body = $("proofs-body"); if (!body) return;
+  const sub = $("proofs-sub");
+  if (sub) sub.textContent = proofsMeta ? `${proofsMeta.count} receipts · head ${shortHash(proofsMeta.chainHead || "")}` : "–";
+  body.innerHTML = "";
+
+  // autonomy attestation header
+  const auto = document.createElement("div"); auto.className = "pf-auto";
+  auto.innerHTML =
+    `<div class="pf-auto-title">autonomy attestation</div>` +
+    `<p class="pf-auto-body">No LLM and no human signs these trades. Each real transfer's EIP-3009 <b>nonce</b> IS the sha256 of the neural receipt that caused it — recompute it in your browser below, then read the same nonce off Arc.</p>` +
+    `<dl class="pf-auto-meta">` +
+    `<div><dt>policy</dt><dd>${proofsMeta ? proofsMeta.policy : "–"}</dd></div>` +
+    `<div><dt>schema</dt><dd>v${proofsMeta ? proofsMeta.version : "–"}</dd></div>` +
+    `<div><dt>chain head</dt><dd class="fp">${shortHash(proofsMeta ? proofsMeta.chainHead : "")}</dd></div>` +
+    `<div><dt>receipts</dt><dd>${proofs.length}</dd></div>` +
+    `</dl>`;
+  body.appendChild(auto);
+
+  if (!proofs.length) {
+    const empty = document.createElement("p"); empty.className = "pf-empty";
+    empty.textContent = "no on-chain receipts yet — the first net settlement will appear here.";
+    body.appendChild(empty);
+    return;
+  }
+  for (const p of proofs) body.appendChild(proofCard(p));
+}
+
+function proofCard(p) {
+  const r = p.receipt;
+  const card = document.createElement("div"); card.className = "pf-card"; card.dataset.tx = p.txHash;
+  const head = document.createElement("div"); head.className = "pf-head";
+  const tick = document.createElement("span"); tick.className = "pf-tick"; tick.textContent = `t#${r.tickIndex}`;
+  const amt = document.createElement("span"); amt.className = "pf-amt"; amt.textContent = `${atomicToUsdc(r.netAmount).toFixed(4)} usdc`;
+  const tr = document.createElement("span"); tr.className = "pf-trades"; tr.textContent = `${r.trades} trade${r.trades === 1 ? "" : "s"} · ${r.constituents.length} pinned`;
+  const link = document.createElement("a"); link.className = "tx-link"; link.href = `${ARC_EXPLORER}/tx/${p.txHash}`;
+  link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = `↗ ${shortHash(p.txHash)}`;
+  const vbtn = document.createElement("button"); vbtn.type = "button"; vbtn.className = "pf-verify"; vbtn.dataset.tx = p.txHash; vbtn.textContent = "verify";
+  const ebtn = document.createElement("button"); ebtn.type = "button"; ebtn.className = "pf-expand"; ebtn.dataset.tx = p.txHash; ebtn.textContent = "+";
+  head.append(tick, amt, tr, link, vbtn, ebtn);
+  const vout = document.createElement("div"); vout.className = "pf-verifyout"; vout.hidden = true;
+  const pbody = document.createElement("div"); pbody.className = "pf-body"; pbody.hidden = true;
+  pbody.appendChild(proofDetail(p));
+  card.append(head, vout, pbody);
+  return card;
+}
+
+function proofDetail(p) {
+  const r = p.receipt;
+  const wrap = document.createElement("div");
+  const meta = document.createElement("dl"); meta.className = "pf-meta";
+  meta.innerHTML =
+    `<div><dt>pair</dt><dd>${r.pair[0]} ⇄ ${r.pair[1]}</dd></div>` +
+    `<div><dt>net flows</dt><dd>${r.debtor} → ${r.creditor}</dd></div>` +
+    `<div><dt>good</dt><dd>${r.good}</dd></div>` +
+    `<div><dt>flush</dt><dd>#${r.flushSeq}·c${r.chunk}</dd></div>` +
+    `<div><dt>receipt sha256</dt><dd class="fp">${shortHash(p.receiptHash)}</dd></div>` +
+    `<div><dt>prev chain</dt><dd class="fp">${r.prevChain ? shortHash(r.prevChain) : "genesis"}</dd></div>`;
+  wrap.appendChild(meta);
+  const ct = document.createElement("div"); ct.className = "pf-ct-title"; ct.textContent = "frozen neural read-out per folded trade";
+  wrap.appendChild(ct);
+  for (const c of r.constituents) {
+    const row = document.createElement("div"); row.className = "pf-ct";
+    row.innerHTML =
+      `<div class="pf-ct-head"><b>${c.fromId} → ${c.toId}</b><span>${c.good}</span><span>${atomicToUsdc(c.amount).toFixed(4)}</span><span class="fp">${shortHash(c.decisionHash)}</span></div>` +
+      `<div class="pf-ct-ev">buyer ${c.buyer.state} a=${c.buyer.arousal} c=${c.buyer.cohesion} · seller ${c.seller.state} a=${c.seller.arousal} c=${c.seller.cohesion}</div>`;
+    ct.appendChild(row);
+  }
+  if (!r.constituents.length) {
+    const note = document.createElement("div"); note.className = "pf-ct-ev";
+    note.textContent = "net opened before provenance deployed — no neural constituents pinned for this one.";
+    ct.appendChild(note);
+  }
+  wrap.appendChild(ct);
+  return wrap;
+}
+
+async function verifyProof(tx, card) {
+  const out = card.querySelector(".pf-verifyout"); if (!out) return;
+  out.hidden = false; out.textContent = "checking…";
+  const stored = proofs.find((x) => x.txHash === tx);
+  let clientHash = null;
+  if (stored) { try { clientHash = await sha256HexClient(stored.receipt); } catch { clientHash = null; } }
+  try {
+    const v = await getJSON(`/proofs/verify?tx=${encodeURIComponent(tx)}`, 9000);
+    if (!v.found) { out.textContent = "receipt not found for this tx"; return; }
+    const selfOk = clientHash == null || clientHash === v.receiptHash;
+    const onchainOk = v.match === true;
+    out.innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = "pf-badge " + (selfOk && onchainOk ? "ok" : "bad");
+    badge.textContent = (selfOk && onchainOk) ? "✓ neural-origin verified on-chain" : "✗ mismatch";
+    const dl = document.createElement("dl"); dl.className = "pf-vmeta";
+    dl.innerHTML =
+      `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
+      `<div><dt>published receiptHash</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>` +
+      `<div><dt>EIP-3009 nonce mined on Arc</dt><dd class="fp">${shortHash(v.onchainNonce || "–")}</dd></div>`;
+    out.append(badge, dl);
+  } catch {
+    out.textContent = "verify request failed (network)";
+  }
+}
 
 // ================= data layer =================
 // Every request is timeout + abort guarded. When the Worker is undeployed the
@@ -1229,6 +1397,7 @@ async function poll() {
     // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
     getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
+    pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
   } catch (e) {
     if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
@@ -1732,10 +1901,26 @@ function bindUI() {
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
-  // Escape closes the topmost overlay first: history drawer, then wallets drawer, then the fly inspector.
+  const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
+  const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
+  // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
+  const pbd = $("proofs-body");
+  if (pbd) pbd.addEventListener("click", (e) => {
+    const vb = e.target.closest(".pf-verify");
+    if (vb) { verifyProof(vb.dataset.tx, vb.closest(".pf-card")); return; }
+    const eb = e.target.closest(".pf-expand");
+    if (eb) {
+      const card = eb.closest(".pf-card"); if (!card) return;
+      const body = card.querySelector(".pf-body"); if (!body) return;
+      const nowHidden = body.hidden;
+      body.hidden = !nowHidden;
+      eb.textContent = nowHidden ? "\u2013" : "+";
+    }
+  });
+  // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 

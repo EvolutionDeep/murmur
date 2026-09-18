@@ -46,6 +46,17 @@ import {
   type PaymentRequirements,
 } from "./x402.js";
 import type { FlyReading, CollectiveState } from "./population.js";
+import {
+  PROOF_VERSION,
+  POLICY_VERSION,
+  neuralEvidence,
+  sha256Hex,
+  netReceiptHash,
+  nonceFromReceiptHash,
+  type NetReceipt,
+  type NeuralConstituent,
+  type ProofRecord,
+} from "./provenance.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
 export type GoodKind = "signal" | "momentum" | "attestation";
@@ -86,6 +97,7 @@ export interface Settlement {
   valid: boolean;    // facilitator verify+settle succeeded AND buyer had funds
   reason?: string;   // why it failed, when valid=false
   simulated: boolean;
+  proofHash?: string; // net receipts only: the sha256 committed on-chain as the EIP-3009 nonce
 }
 
 /**
@@ -102,6 +114,7 @@ export interface PendingNet {
   good: GoodKind;        // last good traded (label for the net settlement)
   firstTick: number;     // sub-tick the net opened (drives the forced-flush age bound)
   constituents: Settlement[]; // the per-trade records folded in (informational; linked to the net tx)
+  proofs: NeuralConstituent[]; // neural provenance per folded trade (hashed into the on-chain nonce)
 }
 
 /** Per-agent read-out for the frontend. */
@@ -177,6 +190,8 @@ export interface EconomyDeps {
 
 const KEY_VERSION = "economy:v1";
 const RECENT_CAP = 48;
+/** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
+const PROOFS_CAP = 64;
 
 export class AgentEconomy {
   private cfg: EconomyConfig;
@@ -207,6 +222,10 @@ export class AgentEconomy {
   private pendingNets = new Map<string, PendingNet>();
   /** Monotonic counter mixed into net nonces so two flushes can never reuse an EIP-3009 nonce. */
   private flushSeq = 0;
+  /** Published neural-provenance receipts, newest first (each hashed into an on-chain nonce). */
+  private proofs: ProofRecord[] = [];
+  /** receiptHash of the most recent broadcast — the head of the tamper-evident proof chain. */
+  private proofChainHead = "";
 
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
@@ -281,6 +300,8 @@ export class AgentEconomy {
     if (onchain) this.rollSpendDay(Date.now());
 
     this.ensureAgents(readings);
+    const readingById = new Map<number, FlyReading>();
+    for (const r of readings) readingById.set(r.id, r);
     const n = readings.length;
     const T = clamp01(collective.temperature);
     const made: Settlement[] = [];
@@ -309,7 +330,7 @@ export class AgentEconomy {
       // (valid=false) so the frontend still shows the activity live without counting un-mined value.
       // SIMULATED: settle immediately as always (the internal ledger is the authority).
       if (onchain) {
-        made.push(this.queueNet(buyerIdx, sellerIdx, good, r, T, tickIndex));
+        made.push(await this.queueNet(buyerIdx, sellerIdx, good, r, T, tickIndex, readingById));
       } else {
         // Awaited sequentially: keeps relay submissions serialised through the one gas wallet
         // (no concurrent-nonce races on the facilitator).
@@ -352,7 +373,10 @@ export class AgentEconomy {
    * internal ledger (balances move only when flush() mines the net, so a failed broadcast can never leave
    * fictional money). Returns a "net-pending" placeholder so the frontend still shows the trade live.
    */
-  private queueNet(buyerIdx: number, sellerIdx: number, good: GoodKind, r: FlyReading, T: number, tick: number): Settlement {
+  private async queueNet(
+    buyerIdx: number, sellerIdx: number, good: GoodKind, r: FlyReading, T: number, tick: number,
+    readingById: Map<number, FlyReading>,
+  ): Promise<Settlement> {
     const buyer = this.agents[buyerIdx];
     const seller = this.agents[sellerIdx];
     const amount = this.dealAmount(r, T, good);
@@ -363,12 +387,27 @@ export class AgentEconomy {
     const signed = BigInt(amount) * (buyer.id === lo ? 1n : -1n);
     let pn = this.pendingNets.get(key);
     if (!pn) {
-      pn = { lo, hi, net: 0n, trades: 0, good, firstTick: tick, constituents: [] };
+      pn = { lo, hi, net: 0n, trades: 0, good, firstTick: tick, constituents: [], proofs: [] };
       this.pendingNets.set(key, pn);
     }
     pn.net += signed;
     pn.trades++;
     pn.good = good;
+    // Freeze the neural read-out that produced THIS trade and hash it. Bundled into the net receipt at
+    // flush time, this is what binds the eventual on-chain nonce to the connectome's decision.
+    const sellerReading = readingById.get(seller.id) ?? r;
+    if (pn.proofs.length < 64) {
+      const buyerEv = neuralEvidence(r);
+      const sellerEv = neuralEvidence(sellerReading);
+      pn.proofs.push({
+        tick, fromId: buyer.id, toId: seller.id, good, amount,
+        buyer: buyerEv, seller: sellerEv,
+        decisionHash: await sha256Hex({
+          v: PROOF_VERSION, policy: POLICY_VERSION, kind: "decision",
+          tick, good, amount, buyer: buyerEv, seller: sellerEv,
+        }),
+      });
+    }
     const rec: Settlement = {
       tick, ts: Date.now(), good, resource: `${good}:${seller.id}`,
       fromId: buyer.id, toId: seller.id, from: buyer.address, to: seller.address,
@@ -425,9 +464,19 @@ export class AgentEconomy {
         } as const;
         const capReason = this.spendCapReason(debtor.id, amountStr);
         if (capReason) { out.push({ ...base, txHash: "0x", valid: false, reason: capReason }); break; }
-        const nonce = "0x" +
-          (hash32(tickIndex, debtorId, creditorId + chunk * 7919) >>> 0).toString(16).padStart(8, "0") +
-          (hash32(this.flushSeq, chunk, debtorId) >>> 0).toString(16).padStart(8, "0");
+        // NEURAL PROVENANCE: the EIP-3009 nonce IS the sha256 of the net receipt (every folded trade's
+        // frozen neural drives + this net's terms + the previous chain head). The buyer signs it and it is
+        // mined into the calldata / AuthorizationUsed event, so the transfer cryptographically commits to
+        // the connectome read-out that caused it. flushSeq + chunk keep nonces unique across flushes.
+        const netReceipt: NetReceipt = {
+          v: PROOF_VERSION, policy: POLICY_VERSION, chain: this.cfg.network,
+          pair: [pn.lo, pn.hi], debtor: debtorId, creditor: creditorId,
+          netAmount: amountStr, trades: pn.trades, good,
+          tickIndex, flushSeq: this.flushSeq, chunk,
+          constituents: pn.proofs, prevChain: this.proofChainHead,
+        };
+        const receiptHash = await netReceiptHash(netReceipt);
+        const nonce = nonceFromReceiptHash(receiptHash);
         const reqs: PaymentRequirements = {
           scheme: SCHEME_EXACT, network: this.cfg.network, maxAmountRequired: amountStr,
           resource: base.resource, description: GOOD_META[good].description, mimeType: GOOD_META[good].mimeType,
@@ -455,7 +504,11 @@ export class AgentEconomy {
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
         if (primaryHash === "0x") primaryHash = receipt.txHash;
-        out.push({ ...base, txHash: receipt.txHash, valid: true });
+        // Publish + chain the proof now that the nonce-committing transfer is mined.
+        this.proofs.unshift({ txHash: receipt.txHash, receiptHash, receipt: netReceipt, ts: Date.now() });
+        if (this.proofs.length > PROOFS_CAP) this.proofs.length = PROOFS_CAP;
+        this.proofChainHead = receiptHash;
+        out.push({ ...base, txHash: receipt.txHash, valid: true, proofHash: receiptHash });
         chunk++;
       }
       // NOTE: constituents are deliberately left byte-identical to what their own cron already published
@@ -729,9 +782,11 @@ export class AgentEconomy {
       // eviction and is still owed/settled later rather than silently vanishing.
       pendingNets: Array.from(this.pendingNets.entries()).map(([key, v]) => ({
         key, lo: v.lo, hi: v.hi, net: v.net.toString(), trades: v.trades,
-        good: v.good, firstTick: v.firstTick, constituents: v.constituents,
+        good: v.good, firstTick: v.firstTick, constituents: v.constituents, proofs: v.proofs,
       })),
       flushSeq: this.flushSeq,
+      proofs: this.proofs,
+      proofChainHead: this.proofChainHead,
     });
   }
 
@@ -770,10 +825,43 @@ export class AgentEconomy {
           good: (e.good ?? "signal") as GoodKind,
           firstTick: Number(e.firstTick ?? 0),
           constituents: Array.isArray(e.constituents) ? e.constituents : [],
+          proofs: Array.isArray(e.proofs) ? e.proofs : [],
         });
       }
     }
     this.flushSeq = Number(p.flushSeq ?? 0);
+    this.proofs = Array.isArray(p.proofs) ? p.proofs : [];
+    this.proofChainHead = typeof p.proofChainHead === "string" ? p.proofChainHead : "";
+  }
+
+  // ---------- neural provenance ----------
+
+  /** The published proof log + chain head, for the /proofs endpoint. */
+  proofsSnapshot(): {
+    version: number; policy: string; chainHead: string; count: number; proofs: ProofRecord[];
+  } {
+    return {
+      version: PROOF_VERSION,
+      policy: POLICY_VERSION,
+      chainHead: this.proofChainHead,
+      count: this.proofs.length,
+      proofs: this.proofs,
+    };
+  }
+
+  proofForTx(txHash: string): ProofRecord | undefined {
+    const want = txHash.toLowerCase();
+    return this.proofs.find((p) => p.txHash.toLowerCase() === want);
+  }
+
+  /**
+   * Read the EIP-3009 nonce actually mined on-chain for a tx (null when not onchain / not found), so a
+   * caller can confirm it equals the published receiptHash. Delegates to the facilitator's RPC client.
+   */
+  async onchainNonceOf(txHash: string): Promise<string | null> {
+    const f = this.facilitator as { authorizationNonceOf?: (tx: string) => Promise<string | null> };
+    if (typeof f.authorizationNonceOf !== "function") return null;
+    return f.authorizationNonceOf(txHash);
   }
 }
 

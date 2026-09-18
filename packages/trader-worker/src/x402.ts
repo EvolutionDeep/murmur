@@ -40,6 +40,7 @@ import {
   type Transport,
   type WalletClient,
 } from "viem";
+import { nonceFromCalldata } from "./provenance.js";
 
 /** Protocol version we speak. The reference `exact` scheme ships at version 1. */
 export const X402_VERSION = 1;
@@ -539,6 +540,22 @@ export class OnChainFacilitator implements Facilitator {
       // mined; we report failure and rely on the next deal's authoritative balance read to stay honest.
       const msg = err instanceof Error ? err.message : String(err);
       return fail(`onchain settle error: ${msg}`);
+    }
+  }
+
+  /**
+   * Read the EIP-3009 `nonce` actually mined on-chain for a transfer (the neural-provenance commitment),
+   * straight from the calldata. Returns 64 lowercase hex chars (no 0x), or null if the tx is missing or
+   * isn't a transferWithAuthorization. Used by /proofs/verify to confirm a published receiptHash matches
+   * what the chain recorded — the crux of "the neurons, not a human, signed this".
+   */
+  async authorizationNonceOf(txHash: string): Promise<string | null> {
+    try {
+      const tx = await this.o.publicClient.getTransaction({ hash: txHash as Hex });
+      if (!tx) return null;
+      return nonceFromCalldata(tx.input);
+    } catch {
+      return null;
     }
   }
 }

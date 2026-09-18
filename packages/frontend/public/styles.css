@@ -512,6 +512,16 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 }
 .hist-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 
+/* --- "neural proofs" toggle (in the economy panel, under the wallets toggle) --- */
+.proofs-btn {
+  margin-top: 6px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.proofs-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+
 /* --- generic right-side drawer (swarm history) — mirrors the wallets drawer --- */
 .drawer {
   position: fixed; z-index: 12; right: 0; top: 0; bottom: 0;
@@ -554,6 +564,71 @@ body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; poi
 .hist-chart canvas { display: block; width: 100%; height: 74px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.02); }
 .hist-foot { margin-top: 14px; font-size: 9px; letter-spacing: 0.06em; color: var(--muted); opacity: 0.6; text-align: center; }
 
+/* ============ neural provenance drawer ============
+   Publishes the on-chain receipts that bind every real transfer to the connectome
+   read-out that caused it. Reuses the generic .drawer chrome; these are its innards. */
+body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; pointer-events: none; }
+
+.pf-auto {
+  margin: 0 0 14px; padding: 12px 13px;
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  background: rgba(var(--accent-rgb), 0.05);
+}
+.pf-auto-title { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin-bottom: 7px; }
+.pf-auto-body { margin: 0 0 10px; font-size: 10.5px; line-height: 1.55; color: var(--ink); opacity: 0.86; }
+.pf-auto-body b { font-weight: 600; color: var(--ink); opacity: 1; }
+.pf-auto-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 0; padding-top: 9px; border-top: 1px solid var(--hair); }
+.pf-auto-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pf-auto-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pf-auto-meta dd { margin: 0; font-family: var(--mono); font-size: 10px; color: var(--ink); opacity: 0.9; }
+.pf-auto-meta dd.fp { font-size: 9.5px; word-break: break-all; overflow-wrap: anywhere; }
+.pf-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.75; text-align: center; padding: 18px 6px; }
+
+.pf-card { margin-bottom: 9px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
+.pf-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px;
+  padding: 8px 10px;
+}
+.pf-tick { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; color: var(--muted); }
+.pf-amt { font-family: var(--display); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pf-trades { flex: 1; min-width: 0; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.03em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-verify, .pf-expand {
+  flex: none; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 2px;
+  padding: 3px 7px; cursor: pointer; transition: background 0.18s ease, color 0.18s ease;
+}
+.pf-verify:hover, .pf-expand:hover { background: rgba(var(--accent-rgb), 0.2); color: var(--ink); }
+.pf-expand { min-width: 24px; text-align: center; }
+
+.pf-verifyout { padding: 0 10px 9px; font-size: 9.5px; color: var(--muted); }
+.pf-badge {
+  display: inline-block; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em;
+  padding: 3px 8px; border-radius: 2px; margin-bottom: 6px;
+}
+.pf-badge.ok { color: #1c5c33; background: rgba(46, 148, 84, 0.14); border: 1px solid rgba(46, 148, 84, 0.42); }
+.pf-badge.bad { color: #8a2222; background: rgba(178, 58, 58, 0.13); border: 1px solid rgba(178, 58, 58, 0.42); }
+.pf-vmeta { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.pf-vmeta > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pf-vmeta dt { font-size: 8.5px; letter-spacing: 0.04em; color: var(--muted); }
+.pf-vmeta dd { margin: 0; font-family: var(--mono); font-size: 9px; color: var(--ink); opacity: 0.85; }
+.pf-vmeta dd.fp { word-break: break-all; overflow-wrap: anywhere; text-align: right; }
+
+.pf-body { padding: 0 10px 10px; border-top: 1px solid var(--hair); margin-top: 2px; padding-top: 9px; }
+.pf-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 10px; }
+.pf-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pf-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pf-meta dd { margin: 0; font-family: var(--mono); font-size: 9.5px; color: var(--ink); opacity: 0.88; }
+.pf-meta dd.fp { word-break: break-all; overflow-wrap: anywhere; }
+.pf-ct-title { font-family: var(--mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.pf-ct { padding: 6px 0; border-top: 1px solid var(--hair); }
+.pf-ct:first-of-type { border-top: none; }
+.pf-ct-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-family: var(--mono); font-size: 9.5px; color: var(--ink); }
+.pf-ct-head b { font-weight: 600; }
+.pf-ct-head span { color: var(--muted); font-size: 9px; }
+.pf-ct-head span.fp { color: var(--accent); opacity: 0.8; word-break: break-all; overflow-wrap: anywhere; }
+.pf-ct-ev { margin-top: 3px; font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--muted); opacity: 0.85; }
+
 /* ============ responsive ============
    The piece is four floating corner panels over a full-bleed field. That reads
    beautifully on a desktop, but the corners collide once the viewport narrows
@@ -580,6 +655,7 @@ body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; poi
   .wallets { width: min(86vw, 372px); }
   .drawer { width: min(90vw, 440px); }
   .hist-btn { margin-top: 8px; }
+  .proofs-btn { margin-top: 5px; }
   .inspector {
     right: var(--pad); left: var(--pad); width: auto; top: auto; bottom: var(--pad);
     transform: translateY(14px); max-height: 62vh; overflow-y: auto;

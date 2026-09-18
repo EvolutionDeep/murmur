@@ -30,6 +30,7 @@
 import type { StimulusEvent } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
+import { netReceiptHash } from "./provenance.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -324,6 +325,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/population") return await this.getPopulation();
       if (req.method === "GET" && path === "/market") return await this.getMarket();
       if (req.method === "GET" && path === "/economy") return await this.getEconomy();
+      if (req.method === "GET" && path === "/proofs") return await this.getProofs();
+      if (req.method === "GET" && path === "/proofs/verify") return await this.getProofVerify(url);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
@@ -549,6 +552,45 @@ export class FlyStateDO {
   private async getEconomy() {
     const economy = await this.ensureEconomy();
     return json(economy.snapshot());
+  }
+
+  /**
+   * Neural provenance log: every real on-chain net transfer carries, as its EIP-3009 nonce, the sha256 of
+   * a receipt bundling the frozen neural drives of every trade folded into it. Publishing the receipts
+   * here lets anyone recompute the hash and match it to the nonce mined on Arc — proof the connectome,
+   * not a human or an LLM, decided each transfer.
+   */
+  private async getProofs() {
+    if (!this.cfg.economy.enabled) return json({ enabled: false, proofs: [], chainHead: "", count: 0 });
+    const economy = await this.ensureEconomy();
+    return json({ enabled: true, ...economy.proofsSnapshot() });
+  }
+
+  /**
+   * One-click on-chain verification of a single proof: recompute sha256(receipt) server-side, read the
+   * EIP-3009 nonce actually mined for the tx, and report whether they match. `match:true` means the
+   * chain itself commits to this exact neural receipt.
+   */
+  private async getProofVerify(url: URL) {
+    if (!this.cfg.economy.enabled) return json({ enabled: false }, 400);
+    const tx = (url.searchParams.get("tx") ?? "").trim();
+    if (!tx) return json({ error: "tx required" }, 400);
+    const economy = await this.ensureEconomy();
+    const proof = economy.proofForTx(tx);
+    if (!proof) return json({ found: false, txHash: tx });
+    const recomputed = await netReceiptHash(proof.receipt);
+    const onchainNonce = await economy.onchainNonceOf(tx);
+    return json({
+      found: true,
+      enabled: true,
+      txHash: proof.txHash,
+      receiptHash: proof.receiptHash,
+      recomputedHash: recomputed,
+      onchainNonce,
+      selfConsistent: recomputed === proof.receiptHash,
+      match: onchainNonce != null && onchainNonce === proof.receiptHash,
+      receipt: proof.receipt,
+    });
   }
 
   /**
