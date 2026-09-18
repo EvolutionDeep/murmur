@@ -101,6 +101,13 @@ ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per U
 ECONOMY_NET_MIN_BROADCAST = "0.004"          # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (~2× base price, so gas stays a minority of face value)
 ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
 
+# ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
+# Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.
+# When set, each mined net is committed on-chain right after its EIP-3009 transfer, so the receipt
+# HASH-CHAIN HEAD lives on Arc and any verifier can rebuild the ordered chain from RPC events alone —
+# no murmur server in the loop. Absent ⇒ the commit step is skipped entirely (zero behaviour change).
+# ECONOMY_REGISTRY_ADDRESS = "0x…"            # deployed NeuralReceiptRegistry address
+
 
 # ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
 # 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:

@@ -204,6 +204,7 @@ export class FlyStateDO {
       maxAmountAtomic: usdcToAtomic(e.maxDealUsdc),
       shadowOnly: e.shadowOnly,
       gasPrice: e.gasPriceGwei != null ? BigInt(Math.round(e.gasPriceGwei * 1e9)) : undefined,
+      registryAddress: e.registryAddress ? (e.registryAddress as Address) : undefined,
     });
 
     console.warn(
@@ -580,6 +581,15 @@ export class FlyStateDO {
     if (!proof) return json({ found: false, txHash: tx });
     const recomputed = await netReceiptHash(proof.receipt);
     const onchainNonce = await economy.onchainNonceOf(tx);
+    // Trustless chain-ordering: read our OWN NeuralReceiptRegistry for this receipt's committed link
+    // and the registry's current head. Null when no registry is configured (or the commit hasn't
+    // landed) — the EIP-3009 nonce match above remains the authoritative on-chain commitment.
+    const registryCommit = await economy.registryCommitOf(proof.receiptHash);
+    const registryHead = await economy.registryChainHead();
+    const committedHead = registryCommit != null;
+    const registryTxMatch =
+      registryCommit != null &&
+      registryCommit.txHash.toLowerCase() === proof.txHash.toLowerCase();
     return json({
       found: true,
       enabled: true,
@@ -589,6 +599,19 @@ export class FlyStateDO {
       onchainNonce,
       selfConsistent: recomputed === proof.receiptHash,
       match: onchainNonce != null && onchainNonce === proof.receiptHash,
+      commitTx: proof.commitTx ?? null,
+      registryAddress: this.cfg.economy.registryAddress ?? null,
+      registry: registryCommit == null && registryHead == null ? null : {
+        committed: committedHead,
+        prevHead: registryCommit?.prevHead ?? null,
+        tickIndex: registryCommit?.tickIndex ?? null,
+        constituents: registryCommit?.constituents ?? null,
+        txHash: registryCommit?.txHash ?? null,
+        ts: registryCommit?.ts ?? null,
+        chainHead: registryHead,
+        isHead: registryHead != null && registryHead.toLowerCase() === `0x${proof.receiptHash}`.toLowerCase(),
+        txMatch: registryTxMatch,
+      },
       receipt: proof.receipt,
     });
   }

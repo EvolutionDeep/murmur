@@ -224,3 +224,120 @@ test("serialize/applySerialized round-trips the proof log + chain head", async (
   assert.equal(b.count, a.count);
   assert.equal(b.proofs[0].receiptHash, a.proofs[0].receiptHash);
 });
+
+// ============================== on-chain receipt registry (direction 1) ==============================
+//
+// The NeuralReceiptRegistry moves the hash-chain HEAD on-chain. Here we pin the economy↔facilitator
+// wiring against an in-memory registry that enforces the SAME continuity rule the Solidity contract
+// does (prevHead must equal chainHead; no double-commit), so a broken prevHead can never register.
+
+/** One committed link, mirroring the contract's Commit struct. */
+interface StubCommit { prevHead: string; tickIndex: number; constituents: number; txHash: string; ts: number; }
+
+/**
+ * Stub onchain facilitator WITH a registry: an in-memory chainHead + commits map that reproduces the
+ * contract's guards. commitReceipt returns a fake commit tx (like a mined writeContract) or null when
+ * the commit would revert (bad prevHead / already committed) — exactly the OnChainFacilitator contract.
+ */
+class StubRegistryFacilitator extends StubOnchainFacilitator {
+  chainHead = "0x" + "00".repeat(32);
+  commits = new Map<string, StubCommit>();
+  commitCalls: { receiptHash: string; prevHead: string; tickIndex: number; constituents: number; txHash: string }[] = [];
+  private cseq = 0;
+  /** When true, commitReceipt always fails — proves a registry outage never blocks settlement. */
+  failCommits = false;
+
+  async commitReceipt(a: { receiptHash: string; prevHead: string; tickIndex: number; constituents: number; txHash: string }): Promise<string | null> {
+    this.commitCalls.push(a);
+    if (this.failCommits) return null;
+    // Contract guard: prevHead (0x-prefixed) must equal the current chainHead, and no double-commit.
+    const prev = "0x" + a.prevHead.replace(/^0x/, "").padStart(64, "0");
+    if (prev.toLowerCase() !== this.chainHead.toLowerCase()) return null;   // BadPrevHead
+    const key = a.receiptHash.toLowerCase();
+    if (this.commits.has(key)) return null;                                  // AlreadyCommitted
+    this.cseq++;
+    this.commits.set(key, { prevHead: prev, tickIndex: a.tickIndex, constituents: a.constituents, txHash: a.txHash, ts: 1_700_000_000 + this.cseq });
+    this.chainHead = "0x" + a.receiptHash.replace(/^0x/, "").padStart(64, "0");
+    return "0xc" + String(this.cseq).padStart(63, "0");
+  }
+
+  async registryCommitOf(receiptHash: string): Promise<StubCommit | null> {
+    return this.commits.get(receiptHash.toLowerCase()) ?? null;
+  }
+
+  async registryChainHead(): Promise<string | null> {
+    return this.chainHead;
+  }
+}
+
+test("flush() registers each mined receipt on the registry, chaining prevHead==chainHead", async () => {
+  const fac = new StubRegistryFacilitator();
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  const readings = population("AGITATE");
+
+  // Broadcast several nets across ticks so the registry accumulates a real chain.
+  for (let tick = 1; tick <= 12 && fac.commits.size < 3; tick++) {
+    await econ.step(readings, collective(), tick);
+    await econ.flush(tick);
+  }
+  assert.ok(fac.commits.size >= 2, "expected >=2 on-chain registry commits");
+
+  // Every registered link chains onto the previous head, and each commit carried the transfer txHash.
+  let walked = fac.chainHead;
+  for (let i = 0; i < fac.commits.size; i++) {
+    const key = walked.replace(/^0x/, "").toLowerCase();
+    const c = fac.commits.get(key);
+    assert.ok(c, `registry holds the link for head ${key}`);
+    assert.match(c!.txHash, /^0x[0-9a-f]{64}$/);
+    walked = c!.prevHead;
+  }
+
+  // The economy recorded the commit tx on the published proof AND exposes the registry reads.
+  const proofs = econ.proofsSnapshot().proofs;
+  assert.ok(proofs.some((p) => typeof p.commitTx === "string" && p.commitTx.startsWith("0xc")));
+  const head = await econ.registryChainHead();
+  assert.equal((head ?? "").toLowerCase(), fac.chainHead.toLowerCase());
+  const newest = proofs[0];
+  const link = await econ.registryCommitOf(newest.receiptHash);
+  assert.ok(link, "newest proof is committed on the registry");
+  assert.equal((link!.txHash ?? "").toLowerCase(), newest.txHash.toLowerCase());
+});
+
+test("a registry outage never blocks settlement: commitReceipt failure leaves the proof valid", async () => {
+  const fac = new StubRegistryFacilitator();
+  fac.failCommits = true;   // registry write always fails
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  const mined = await mineOneProof(econ, fac);
+  assert.ok(mined, "settlement still mines when the registry is down");
+  assert.ok(mined!.hit.valid);
+  // commitReceipt WAS attempted, but no commitTx was recorded and nothing registered.
+  assert.ok(fac.commitCalls.length >= 1);
+  assert.equal(fac.commits.size, 0);
+  const proof = econ.proofForTx(mined!.hit.txHash);
+  assert.ok(proof);
+  assert.equal(proof!.commitTx, undefined);
+});
+
+test("a facilitator without a registry commits nothing (zero-regression default)", async () => {
+  const fac = new StubOnchainFacilitator();   // no commitReceipt method
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  const mined = await mineOneProof(econ, fac);
+  assert.ok(mined);
+  assert.equal(await econ.registryChainHead(), null);
+  assert.equal(await econ.registryCommitOf(mined!.hit.proofHash!), null);
+  assert.equal(econ.proofForTx(mined!.hit.txHash)!.commitTx, undefined);
+});
+
+test("commitTx survives serialize/applySerialized", async () => {
+  const fac = new StubRegistryFacilitator();
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  const mined = await mineOneProof(econ, fac);
+  assert.ok(mined);
+  const withCommit = econ.proofsSnapshot().proofs.find((p) => p.commitTx);
+  assert.ok(withCommit, "a proof carries commitTx after a successful registry commit");
+
+  const restored = new AgentEconomy(cfg(), econ.serialize(), { facilitator: fac });
+  const rProof = restored.proofForTx(withCommit!.txHash);
+  assert.ok(rProof);
+  assert.equal(rProof!.commitTx, withCommit!.commitTx);
+});

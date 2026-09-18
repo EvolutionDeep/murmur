@@ -44,6 +44,7 @@ import {
   atomicToUsdc,
   type Facilitator,
   type PaymentRequirements,
+  type RegistryCommit,
 } from "./x402.js";
 import type { FlyReading, CollectiveState } from "./population.js";
 import {
@@ -504,8 +505,18 @@ export class AgentEconomy {
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
         if (primaryHash === "0x") primaryHash = receipt.txHash;
+        // Mirror this receipt onto our own NeuralReceiptRegistry so the hash-chain head lives ON-CHAIN,
+        // not just in DO storage. BEST-EFFORT: prevHead is the chain head BEFORE this receipt (exactly
+        // what the contract enforces continuity against). A failure only means "not registered yet" —
+        // the authoritative commitment (the EIP-3009 nonce == receiptHash) already mined above.
+        const commitTx = await this.commitToRegistry(
+          receiptHash, netReceipt.prevChain, tickIndex, netReceipt.constituents.length, receipt.txHash,
+        );
         // Publish + chain the proof now that the nonce-committing transfer is mined.
-        this.proofs.unshift({ txHash: receipt.txHash, receiptHash, receipt: netReceipt, ts: Date.now() });
+        this.proofs.unshift({
+          txHash: receipt.txHash, receiptHash, receipt: netReceipt, ts: Date.now(),
+          ...(commitTx ? { commitTx } : {}),
+        });
         if (this.proofs.length > PROOFS_CAP) this.proofs.length = PROOFS_CAP;
         this.proofChainHead = receiptHash;
         out.push({ ...base, txHash: receipt.txHash, valid: true, proofHash: receiptHash });
@@ -862,6 +873,41 @@ export class AgentEconomy {
     const f = this.facilitator as { authorizationNonceOf?: (tx: string) => Promise<string | null> };
     if (typeof f.authorizationNonceOf !== "function") return null;
     return f.authorizationNonceOf(txHash);
+  }
+
+  /**
+   * Best-effort: register a mined receipt as the new on-chain chain head via the facilitator's
+   * NeuralReceiptRegistry wiring. Returns the commit tx hash, or null when no registry is configured
+   * or the commit failed. NEVER throws — a registry problem must not abort a settlement.
+   */
+  private async commitToRegistry(
+    receiptHash: string, prevHead: string, tickIndex: number, constituents: number, txHash: string,
+  ): Promise<string | null> {
+    const f = this.facilitator as {
+      commitReceipt?: (a: {
+        receiptHash: string; prevHead: string; tickIndex: number; constituents: number; txHash: string;
+      }) => Promise<string | null>;
+    };
+    if (typeof f.commitReceipt !== "function") return null;
+    try {
+      return await f.commitReceipt({ receiptHash, prevHead, tickIndex, constituents, txHash });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read this receipt's committed link from the on-chain registry (null when unwired/not committed). */
+  async registryCommitOf(receiptHash: string): Promise<RegistryCommit | null> {
+    const f = this.facilitator as { registryCommitOf?: (h: string) => Promise<RegistryCommit | null> };
+    if (typeof f.registryCommitOf !== "function") return null;
+    return f.registryCommitOf(receiptHash);
+  }
+
+  /** Read the on-chain registry's current chain head (0x…64), or null when unwired. */
+  async registryChainHead(): Promise<string | null> {
+    const f = this.facilitator as { registryChainHead?: () => Promise<string | null> };
+    if (typeof f.registryChainHead !== "function") return null;
+    return f.registryChainHead();
   }
 }
 

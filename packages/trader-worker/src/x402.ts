@@ -119,6 +119,43 @@ export function toNonce32(nonce: string): Hex {
   return `0x${hex.padStart(64, "0")}` as Hex;
 }
 
+/**
+ * Left-pad any short hex (a 64-char sha256 receipt hash, or an empty "" genesis head) into a bytes32
+ * for the NeuralReceiptRegistry. Mirrors toNonce32 but is named for the registry's bytes32 args so the
+ * intent reads clearly at the call site.
+ */
+export function toBytes32(hex: string): Hex {
+  const h = hex.replace(/^0x/i, "").toLowerCase();
+  if (h.length > 64) throw new Error(`not encodable as bytes32: ${hex}`);
+  return `0x${h.padStart(64, "0")}` as Hex;
+}
+
+/**
+ * murmur's OWN on-chain commitment log (contracts/NeuralReceiptRegistry.sol). It moves the neural
+ * receipt HASH-CHAIN HEAD on-chain: after each transfer mines, the facilitator commits the receipt
+ * hash + its predecessor, and the contract enforces prevHead == chainHead so the ordered chain is
+ * reconstructible purely from Arc RPC events — no murmur server, no trust in the operator. Pure
+ * commitment log: holds no funds, no upgrade path.
+ */
+export const neuralReceiptRegistryAbi = parseAbi([
+  "function commit(bytes32 receiptHash, bytes32 prevHead, uint64 tickIndex, uint32 constituents, bytes32 txHash)",
+  "function commits(bytes32) view returns (bytes32 prevHead, uint64 tickIndex, uint32 constituents, bytes32 txHash, uint64 ts)",
+  "function chainHead() view returns (bytes32)",
+  "function commitCount() view returns (uint256)",
+  "function committer() view returns (address)",
+  "function isCommitted(bytes32) view returns (bool)",
+  "function seedGenesis(bytes32 head)",
+]);
+
+/** One committed link, decoded from the registry's `commits` mapping (ts == 0 ⇒ not committed). */
+export interface RegistryCommit {
+  prevHead: string;      // 0x…64 chainHead before this receipt
+  tickIndex: number;
+  constituents: number;
+  txHash: string;        // 0x…64 the EIP-3009 transfer whose nonce == receiptHash
+  ts: number;            // 0 ⇒ never committed
+}
+
 /** True when atomic string `a` <= `b` (cap checks). */
 export function lteAtomic(a: string, b: string): boolean {
   return BigInt(a) <= BigInt(b);
@@ -430,6 +467,11 @@ export interface OnChainFacilitatorOpts {
   gasPrice?: bigint;
   /** Receipt confirmations to await (default 1). */
   confirmations?: number;
+  /**
+   * Deployed NeuralReceiptRegistry to mirror each mined receipt onto (moves the hash-chain head
+   * on-chain). Absent ⇒ no registry step; commits are silently skipped (zero behaviour change).
+   */
+  registryAddress?: Address;
 }
 
 export class OnChainFacilitator implements Facilitator {
@@ -554,6 +596,95 @@ export class OnChainFacilitator implements Facilitator {
       const tx = await this.o.publicClient.getTransaction({ hash: txHash as Hex });
       if (!tx) return null;
       return nonceFromCalldata(tx.input);
+    } catch {
+      return null;
+    }
+  }
+
+  // ============================== on-chain receipt registry ==============================
+  //
+  // These mirror the neural receipt hash-chain onto our OWN NeuralReceiptRegistry contract, so a
+  // verifier can rebuild the ordered chain from Arc RPC events alone. Every call is BEST-EFFORT: a
+  // registry hiccup must never fail or delay a settlement that already mined — the authoritative
+  // on-chain commitment is the transfer's EIP-3009 nonce (see authorizationNonceOf), and the registry
+  // only adds chain-ordering on top. All failures degrade to null.
+
+  /** True when a registry is wired for this facilitator. */
+  get hasRegistry(): boolean {
+    return this.o.registryAddress != null;
+  }
+
+  /**
+   * Register one mined receipt as the new on-chain chain head. Enforced by the contract to satisfy
+   * prevHead == chainHead, so out-of-order or duplicate commits revert and simply return null here.
+   * Returns the commit tx hash on success, or null when there is no registry / the commit failed.
+   */
+  async commitReceipt(a: {
+    receiptHash: string;   // 64-hex sha256 (no 0x) — becomes the new chainHead
+    prevHead: string;      // 64-hex predecessor, or "" for the very first (genesis-seeded) link
+    tickIndex: number;
+    constituents: number;
+    txHash: string;        // 0x…64 EIP-3009 transfer whose nonce == receiptHash
+  }): Promise<string | null> {
+    if (!this.o.registryAddress) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: this.o.registryAddress,
+        abi: neuralReceiptRegistryAbi,
+        functionName: "commit",
+        args: [
+          toBytes32(a.receiptHash),
+          toBytes32(a.prevHead),
+          BigInt(Math.max(0, Math.floor(a.tickIndex))),
+          Math.max(0, Math.floor(a.constituents)),
+          toBytes32(a.txHash),
+        ],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: this.o.confirmations ?? 1,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read one committed link from the registry (null when no registry / not committed / RPC error). */
+  async registryCommitOf(receiptHash: string): Promise<RegistryCommit | null> {
+    if (!this.o.registryAddress) return null;
+    try {
+      const c = await this.o.publicClient.readContract({
+        address: this.o.registryAddress,
+        abi: neuralReceiptRegistryAbi,
+        functionName: "commits",
+        args: [toBytes32(receiptHash)],
+      });
+      const [prevHead, tickIndex, constituents, txHash, ts] = c as [Hex, bigint, number, Hex, bigint];
+      const commit: RegistryCommit = {
+        prevHead,
+        tickIndex: Number(tickIndex),
+        constituents: Number(constituents),
+        txHash,
+        ts: Number(ts),
+      };
+      return commit.ts === 0 ? null : commit;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read the registry's current chain head (0x…64), or null when no registry / RPC error. */
+  async registryChainHead(): Promise<string | null> {
+    if (!this.o.registryAddress) return null;
+    try {
+      const head = await this.o.publicClient.readContract({
+        address: this.o.registryAddress,
+        abi: neuralReceiptRegistryAbi,
+        functionName: "chainHead",
+      });
+      return head as string;
     } catch {
       return null;
     }

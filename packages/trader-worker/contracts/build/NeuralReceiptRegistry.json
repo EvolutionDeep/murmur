@@ -1,0 +1,255 @@
+{
+  "contract": "NeuralReceiptRegistry",
+  "compiler": "0.8.37+commit.f401782d.Emscripten.clang",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "committer_",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AlreadyCommitted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BadPrevHead",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "GenesisLocked",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotCommitter",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "head",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "by",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ts",
+          "type": "uint256"
+        }
+      ],
+      "name": "GenesisSeeded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "receiptHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "prevHead",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "tickIndex",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "constituents",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "txHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "by",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ts",
+          "type": "uint256"
+        }
+      ],
+      "name": "ReceiptCommitted",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "chainHead",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "receiptHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "prevHead",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "tickIndex",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint32",
+          "name": "constituents",
+          "type": "uint32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "txHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "commit",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "commitCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "commits",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "prevHead",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "tickIndex",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint32",
+          "name": "constituents",
+          "type": "uint32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "txHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "ts",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "committer",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "receiptHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "isCommitted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "head",
+          "type": "bytes32"
+        }
+      ],
+      "name": "seedGenesis",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60a060405234801561000f575f5ffd5b506040516105f13803806105f183398101604081905261002e9161008a565b6001600160a01b0381166100795760405162461bcd60e51b815260206004820152600e60248201526d3d32b9379031b7b6b6b4ba3a32b960911b604482015260640160405180910390fd5b6001600160a01b03166080526100b7565b5f6020828403121561009a575f5ffd5b81516001600160a01b03811681146100b0575f5ffd5b9392505050565b6080516105146100dd5f395f8181610166015281816101dc01526103b901526105145ff3fe608060405234801561000f575f5ffd5b5060043610610079575f3560e01c80635bc8e8f9116100585780635bc8e8f9146101615780639123988b146101a0578063d144fdaa146101a9578063e1134bc7146101be575f5ffd5b80628f51c61461007d578063054765a31461009857806347885781146100d6575b5f5ffd5b6100855f5481565b6040519081526020015b60405180910390f35b6100c66100a6366004610465565b5f9081526002602052604090206003015467ffffffffffffffff16151590565b604051901515815260200161008f565b6101276100e4366004610465565b600260208190525f91825260409091208054600182015492820154600390920154909267ffffffffffffffff80821693600160401b90920463ffffffff16921685565b6040805195865267ffffffffffffffff948516602087015263ffffffff90931692850192909252606084015216608082015260a00161008f565b6101887f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b03909116815260200161008f565b61008560015481565b6101bc6101b736600461047c565b6101d1565b005b6101bc6101cc366004610465565b6103ae565b336001600160a01b037f0000000000000000000000000000000000000000000000000000000000000000161461021a57604051632e3bec6160e01b815260040160405180910390fd5b5f54841461023a576040516207a71b60e61b815260040160405180910390fd5b5f8581526002602052604090206003015467ffffffffffffffff1615610273576040516317fd8aab60e31b815260040160405180910390fd5b6040805160a08101825285815267ffffffffffffffff808616602080840191825263ffffffff8088168587019081526060860188815242808716608089019081525f8f81526002968790528a812099518a5596516001808b0180549651909716600160401b026bffffffffffffffffffffffff19909616918a1691909117949094179094559051938701939093559051600390950180549590941667ffffffffffffffff199590951694909417909255889055815482019091559051859187917f51bf1ed38b6b21c5143b5b6c9b90bf32b62f5c60282530b29be2906e9726a9459161039f91889188918891339167ffffffffffffffff95909516855263ffffffff93909316602085015260408401919091526001600160a01b03166060830152608082015260a00190565b60405180910390a35050505050565b336001600160a01b037f000000000000000000000000000000000000000000000000000000000000000016146103f757604051632e3bec6160e01b815260040160405180910390fd5b60015415158061040757505f5415155b156104245760405162d77b5b60e81b815260040160405180910390fd5b5f8190556040805133815242602082015282917f3e15058db70de10edf1b96ec54568c7904abe5018b80279d433e8c71f5cf26ba910160405180910390a250565b5f60208284031215610475575f5ffd5b5035919050565b5f5f5f5f5f60a08688031215610490575f5ffd5b8535945060208601359350604086013567ffffffffffffffff811681146104b5575f5ffd5b9250606086013563ffffffff811681146104cd575f5ffd5b94979396509194608001359291505056fea264697066735822122018bfc21ca9332ad8b5de10acc9765d4dfc222629ce6203c87121cb1e4c88ddcf64736f6c63430008250033"
+}

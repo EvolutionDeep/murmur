@@ -81,6 +81,12 @@ export interface ProofRecord {
   receiptHash: string;     // == the on-chain EIP-3009 nonce (hex, no 0x)
   receipt: NetReceipt;
   ts: number;
+  /**
+   * Tx that registered this receipt on our own NeuralReceiptRegistry (moves the hash-chain head
+   * on-chain). Present only when a registry is configured AND the best-effort commit mined; absent
+   * means "not yet / not registered" — it never blocks or invalidates the settlement itself.
+   */
+  commitTx?: string;
 }
 
 /** Round to 6 decimals so a float can survive a JSON round-trip into a stable hash input. */

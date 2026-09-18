@@ -613,6 +613,7 @@ body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; point
 .pf-vmeta dt { font-size: 8.5px; letter-spacing: 0.04em; color: var(--muted); }
 .pf-vmeta dd { margin: 0; font-family: var(--mono); font-size: 9px; color: var(--ink); opacity: 0.85; }
 .pf-vmeta dd.fp { word-break: break-all; overflow-wrap: anywhere; text-align: right; }
+.pf-vmeta dd.fp.ok { color: #1c5c33; opacity: 1; }
 
 .pf-body { padding: 0 10px 10px; border-top: 1px solid var(--hair); margin-top: 2px; padding-top: 9px; }
 .pf-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 10px; }

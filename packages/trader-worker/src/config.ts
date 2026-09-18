@@ -65,6 +65,7 @@ export interface Env {
   ECONOMY_GAS_PRICE_GWEI?: string;      // pin the relay gas price in gwei (default: let viem estimate; Arc launched ~20)
   ECONOMY_USDC_EIP712_NAME?: string;    // EIP-712 domain name override (default "USDC" = the Arc precompile's name())
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
+  ECONOMY_REGISTRY_ADDRESS?: string;    // deployed NeuralReceiptRegistry (0x…40); when set, each mined net is committed on-chain so the receipt hash-chain head lives on Arc, not just in DO storage. Absent ⇒ commit step skipped (zero behaviour change).
 
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
@@ -123,6 +124,8 @@ export interface RuntimeConfig {
     gasPriceGwei: number | null;
     usdcEip712Name: string;
     usdcEip712Version: string;
+    /** Deployed NeuralReceiptRegistry address, or null when not configured (commit step skipped). */
+    registryAddress: string | null;
   };
 
   // Connectome sizing (ts-lif)
@@ -212,6 +215,7 @@ export function loadConfig(env: Env): RuntimeConfig {
         : null,
       usdcEip712Name: env.ECONOMY_USDC_EIP712_NAME || "USDC",
       usdcEip712Version: env.ECONOMY_USDC_EIP712_VERSION || "2",
+      registryAddress: (env.ECONOMY_REGISTRY_ADDRESS ?? "").trim() || null,
     },
 
     brainOpts: {

@@ -118,6 +118,54 @@ const MAX_EDGES = 60;                                 // cap: a busy tick can't 
 // Official Arc block explorer (docs.arc.io → mainnet chain 5042). Every real settlement carries a
 // 64-hex txHash, so each ledger line links straight to it — a visitor can prove the money moved on-chain.
 const ARC_EXPLORER = "https://explorer.arc.io";
+// Public Arc RPC — the browser reads our NeuralReceiptRegistry DIRECTLY from here (no murmur server
+// in the loop) so the on-chain hash-chain head is verified trustlessly. Selectors are precomputed
+// keccak256 prefixes (viem toFunctionSelector) so we need no ABI encoder in the page.
+const ARC_RPC = "https://rpc.mainnet.arc.io";
+const REG_SEL_COMMITS = "0x47885781";   // commits(bytes32)
+const REG_SEL_CHAINHEAD = "0x008f51c6"; // chainHead()
+const bytes32 = (h) => "0x" + String(h || "").replace(/^0x/i, "").toLowerCase().padStart(64, "0");
+const wordToNum = (w) => Number(BigInt(w || "0x0"));
+/** One JSON-RPC call to Arc. Throws on transport/HTTP failure so callers can fall back. */
+async function arcRpc(method, params, timeoutMs = 8000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(ARC_RPC, {
+      method: "POST", cache: "no-store", signal: ctrl.signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    if (!r.ok) throw new Error(`rpc ${r.status}`);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message || "rpc error");
+    return j.result;
+  } finally { clearTimeout(timer); }
+}
+/**
+ * Read a receipt's committed link + the chain head straight from the on-chain registry via eth_call.
+ * Returns null when the read fails (CORS/network) or the receipt isn't committed — callers then fall
+ * back to the server-reported fields. `commits(bytes32)` returns 5 words: prevHead,tick,constituents,txHash,ts.
+ */
+async function readRegistryOnchain(registryAddress, receiptHash) {
+  if (!isRealAddr(registryAddress)) return null;
+  try {
+    const [commitRes, headRes] = await Promise.all([
+      arcRpc("eth_call", [{ to: registryAddress, data: REG_SEL_COMMITS + bytes32(receiptHash).slice(2) }, "latest"]),
+      arcRpc("eth_call", [{ to: registryAddress, data: REG_SEL_CHAINHEAD }, "latest"]),
+    ]);
+    const chainHead = typeof headRes === "string" ? headRes : null;
+    const hex = typeof commitRes === "string" ? commitRes.replace(/^0x/, "") : "";
+    if (hex.length < 5 * 64) return { committed: false, chainHead };
+    const word = (i) => "0x" + hex.slice(i * 64, (i + 1) * 64);
+    const ts = wordToNum(word(4));
+    return {
+      committed: ts !== 0,
+      prevHead: word(0), tickIndex: wordToNum(word(1)), constituents: wordToNum(word(2)),
+      txHash: word(3), ts, chainHead,
+    };
+  } catch { return null; }
+}
 const isRealTxHash = (h) => typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h);
 const isRealAddr = (a) => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
 const shortHash = (h) => `${h.slice(0, 6)}…${h.slice(-4)}`;
@@ -1344,6 +1392,16 @@ async function verifyProof(tx, card) {
     if (!v.found) { out.textContent = "receipt not found for this tx"; return; }
     const selfOk = clientHash == null || clientHash === v.receiptHash;
     const onchainOk = v.match === true;
+    // Trustless chain-ordering: read our NeuralReceiptRegistry DIRECTLY from Arc RPC in the browser
+    // (no murmur server in the loop). Fall back to the server-reported registry fields if the direct
+    // read fails (CORS/network) or no registry is configured yet.
+    let reg = null, regSource = "";
+    if (v.registryAddress) {
+      reg = await readRegistryOnchain(v.registryAddress, v.receiptHash);
+      regSource = reg ? "direct Arc RPC" : "";
+    }
+    if (!reg && v.registry) { reg = v.registry; regSource = "via murmur API"; }
+    const regOk = !!reg && reg.committed === true;
     out.innerHTML = "";
     const badge = document.createElement("span");
     badge.className = "pf-badge " + (selfOk && onchainOk ? "ok" : "bad");
@@ -1353,6 +1411,24 @@ async function verifyProof(tx, card) {
       `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
       `<div><dt>published receiptHash</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>` +
       `<div><dt>EIP-3009 nonce mined on Arc</dt><dd class="fp">${shortHash(v.onchainNonce || "–")}</dd></div>`;
+    // 4th row: the on-chain registry link. Shows the committed chain head + whether THIS receipt is a
+    // registered link (and whether the registry's txHash matches the transfer) — read trustlessly.
+    const regDiv = document.createElement("div");
+    if (reg) {
+      const headTxt = reg.chainHead ? shortHash(reg.chainHead) : "–";
+      const isHead = reg.chainHead && v.receiptHash &&
+        reg.chainHead.toLowerCase() === ("0x" + v.receiptHash).toLowerCase();
+      const txMatch = reg.txHash && v.txHash &&
+        reg.txHash.toLowerCase() === v.txHash.toLowerCase();
+      const stateTxt = !reg.committed ? "not committed" : (isHead ? "chain head ✓" : (txMatch ? "committed ✓" : "committed"));
+      regDiv.innerHTML =
+        `<div><dt>on-chain registry (${regSource})</dt>` +
+        `<dd class="fp${regOk ? " ok" : ""}">${stateTxt} · head ${headTxt}</dd></div>` +
+        (v.registryAddress ? `<div><dt>registry contract</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
+    } else {
+      regDiv.innerHTML = `<div><dt>on-chain registry</dt><dd class="fp">not configured</dd></div>`;
+    }
+    dl.append(...regDiv.children);
     out.append(badge, dl);
   } catch {
     out.textContent = "verify request failed (network)";
