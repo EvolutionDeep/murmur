@@ -51,6 +51,7 @@ import {
   type RegistryCommit,
 } from "./x402.js";
 import type { FlyReading, CollectiveState } from "./population.js";
+import type { PredictFlow } from "./prediction.js";
 import {
   PROOF_VERSION,
   POLICY_VERSION,
@@ -64,7 +65,7 @@ import {
 } from "./provenance.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
-export type GoodKind = "signal" | "momentum" | "attestation";
+export type GoodKind = "signal" | "momentum" | "attestation" | "prediction";
 
 const GOOD_META: Record<GoodKind, { description: string; mimeType: string; priceMult: number }> = {
   // A peer's live decoded drive vector — a market-timing signal.
@@ -73,6 +74,9 @@ const GOOD_META: Record<GoodKind, { description: string; mimeType: string; price
   momentum: { description: "peer temperature-momentum read", mimeType: "application/json", priceMult: 1.25 },
   // A peer's neural fingerprint — a "proof-of-feel" identity attestation, bought to bond with the swarm.
   attestation: { description: "peer neural-fingerprint attestation", mimeType: "application/json", priceMult: 0.8 },
+  // A settled prediction-market payout: the net USDC a round's loser owes its winner (see prediction.ts).
+  // priceMult is unused (the flow amount is fixed by the parimutuel resolution, not priced off a base).
+  prediction: { description: "prediction-market resolution payout (parimutuel net)", mimeType: "application/json", priceMult: 1.0 },
 };
 
 /** Persistent per-agent wallet + lifetime counters. */
@@ -454,6 +458,13 @@ export class AgentEconomy {
     const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
     const CONSTITUENT = new Set(["net-pending", "netted", "net-declined", "netted-to-zero"]);
 
+    // SELF-HEAL the proof chain before building any receipt: adopt the registry's true on-chain head if our
+    // off-chain head drifted from it (a past commit failed). Receipts embed prevChain and are hashed from it,
+    // so this MUST run first — otherwise every commit's prevHead misses the contract's chainHead and reverts
+    // (BadPrevHead), which is exactly how the chain wedged permanently. Skipped when there's nothing to flush
+    // (no RPC spent); commitRoundReceipt re-anchors independently for a round-only cron.
+    if (this.pendingNets.size > 0) await this.resyncChainHeadFromRegistry();
+
     for (const [key, pn] of Array.from(this.pendingNets.entries())) {
       const abs = pn.net < 0n ? -pn.net : pn.net;
       if (abs === 0n) {
@@ -538,6 +549,12 @@ export class AgentEconomy {
           ...(commitTx ? { commitTx } : {}),
         });
         if (this.proofs.length > PROOFS_CAP) this.proofs.length = PROOFS_CAP;
+        // Advance the off-chain head UNCONDITIONALLY: proofChainHead is the authoritative receipt-chain head
+        // (every receipt embeds it as prevChain and the EIP-3009 nonce commits to that hash), so it must move
+        // on each mined transfer whether or not the registry MIRROR commit landed. Registry continuity is kept
+        // by resyncChainHeadFromRegistry() re-anchoring to the true on-chain head at the next flush, so a
+        // failed commit costs at most that one registry link (the receipt stays nonce-verifiable) and can never
+        // wedge the chain — which is what advancing-then-never-resyncing used to do.
         this.proofChainHead = receiptHash;
         out.push({ ...base, txHash: receipt.txHash, valid: true, proofHash: receiptHash });
         chunk++;
@@ -553,6 +570,90 @@ export class AgentEconomy {
     for (const s of out) {
       if (CONSTITUENT.has(s.reason ?? "")) continue;   // keep the ledger to real nets + declines
       this.recent.unshift(s);
+    }
+    if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    return out;
+  }
+
+  /**
+   * Fold a resolved prediction round's bilateral net flows into the economy so they settle through the
+   * EXACT same rails as neural trades — there is NO separate money path for predictions. ONCHAIN: each
+   * flow accumulates into its pair's pending NET (good="prediction"), so flush() later broadcasts it
+   * subject to the kill switch, the daily/per-agent caps, the per-deal cap and the min-broadcast netting
+   * — balances move only on a mined receipt, exactly like a trade. SIMULATED: the internal ledger is the
+   * authority, so the mirror balances move now. Returns the settlement records (net-pending placeholders
+   * onchain, real records simulated) so the caller can publish them alongside the cron's other activity.
+   */
+  async absorbFlows(flows: PredictFlow[], tickIndex: number): Promise<Settlement[]> {
+    const out: Settlement[] = [];
+    if (!this.cfg.enabled || flows.length === 0) return out;
+    const onchain = this.facilitator.mode === "onchain";
+    // Kill switch: with real spend halted, fold nothing (mirrors step()). Inert in simulated mode.
+    if (onchain && !this.cfg.realSpendEnabled) return out;
+    this.tickIndex = tickIndex;
+
+    for (const f of flows) {
+      const amount = f.amount;
+      if (!/^\d+$/.test(amount) || BigInt(amount) <= 0n) continue;
+      const fromIdx = this.indexOfId.get(f.fromId);
+      const toIdx = this.indexOfId.get(f.toId);
+      // Both sides must already have wallets (they bet this round, so ensureAgents has seen them); skip
+      // anything unknown rather than mint an agent here.
+      if (fromIdx == null || toIdx == null || fromIdx === toIdx) continue;
+      const debtor = this.agents[fromIdx];
+      const creditor = this.agents[toIdx];
+      const resource = `predict:${f.round}:${creditor.id}`;
+
+      if (onchain) {
+        const lo = Math.min(debtor.id, creditor.id);
+        const hi = Math.max(debtor.id, creditor.id);
+        const key = `${lo}>${hi}`;
+        // debtor pays creditor: signed net is positive when the debtor is the lower id (mirrors queueNet).
+        const signed = BigInt(amount) * (debtor.id === lo ? 1n : -1n);
+        let pn = this.pendingNets.get(key);
+        if (!pn) {
+          pn = { lo, hi, net: 0n, trades: 0, good: "prediction", firstTick: tickIndex, constituents: [], proofs: [] };
+          this.pendingNets.set(key, pn);
+        }
+        pn.net += signed;
+        pn.trades++;
+        pn.good = "prediction";
+        if (pn.proofs.length < 64) {
+          pn.proofs.push({
+            tick: tickIndex, fromId: debtor.id, toId: creditor.id, good: "prediction", amount,
+            buyer: f.from, seller: f.to,
+            decisionHash: await sha256Hex({
+              v: PROOF_VERSION, policy: POLICY_VERSION, kind: "decision",
+              tick: tickIndex, good: "prediction", amount, buyer: f.from, seller: f.to,
+            }),
+          });
+        }
+        const rec: Settlement = {
+          tick: tickIndex, ts: Date.now(), good: "prediction", resource,
+          fromId: debtor.id, toId: creditor.id, from: debtor.address, to: creditor.address,
+          amount, txHash: "0x", valid: false, reason: "net-pending", simulated: false,
+        };
+        if (pn.constituents.length < 64) pn.constituents.push(rec);
+        out.push(rec);
+      } else {
+        // SIMULATED: move the mirror now (the ledger is the authority; no caps to meter).
+        debtor.balance = subAtomic(debtor.balance, amount);
+        debtor.paid = addAtomic(debtor.paid, amount);
+        debtor.lastTick = tickIndex;
+        creditor.balance = addAtomic(creditor.balance, amount);
+        creditor.earned = addAtomic(creditor.earned, amount);
+        creditor.lastTick = tickIndex;
+        const rec: Settlement = {
+          tick: tickIndex, ts: Date.now(), good: "prediction", resource,
+          fromId: debtor.id, toId: creditor.id, from: debtor.address, to: creditor.address,
+          amount, txHash: pseudoTxHash(debtor.address, creditor.address, amount, resource),
+          valid: true, simulated: true,
+        };
+        this.recent.unshift(rec);
+        this.volumeAtomic = addAtomic(this.volumeAtomic, amount);
+        this.count++;
+        out.push(rec);
+      }
     }
     if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
     return out;
@@ -914,6 +1015,43 @@ export class AgentEconomy {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Re-anchor the off-chain proof-chain head to the registry's TRUE on-chain head. If a past registry commit
+   * failed, proofChainHead drifts from the on-chain chainHead; because the contract enforces prevHead==chainHead,
+   * every later commit would then revert (BadPrevHead) forever — the chain wedges. Adopting the on-chain head
+   * resumes it from where it actually is. Best-effort and safe: a null read (no registry / RPC blip) is a no-op,
+   * and an all-zero head means the registry is still empty — that genesis case is the facilitator's
+   * ensureGenesisSeeded job, not ours, so we leave proofChainHead untouched.
+   */
+  private async resyncChainHeadFromRegistry(): Promise<void> {
+    const onchain = await this.registryChainHead();             // 0x…64, or null when unwired/unreadable
+    if (!onchain) return;
+    const head = onchain.replace(/^0x/, "").toLowerCase();
+    if (head.length !== 64 || head === "0".repeat(64)) return;  // empty registry → lazy genesis seeds it
+    if (head !== this.proofChainHead.toLowerCase()) this.proofChainHead = head;
+  }
+
+  /**
+   * Commit a PREDICTION-ROUND receipt to the on-chain registry, chaining it onto the SAME linear head the
+   * net receipts use (the contract enforces prevHead == chainHead, so there is one chain, not two). A
+   * round receipt is NOT an EIP-3009 transfer nonce, so txHash is "0x" — the registry still records it
+   * (ts != 0 proves it landed) and a verifier distinguishes resolutions from settlements by txHash == 0.
+   *
+   * SAFETY: the off-chain head advances ONLY when the registry commit actually mined. If it fails, the
+   * head stays put so the next net receipt's prevHead still equals the on-chain head — a failed round
+   * commit can never desync the chain. Returns the commit tx hash, or null (no registry / not committed).
+   */
+  async commitRoundReceipt(receiptHash: string, tickIndex: number, constituents: number): Promise<string | null> {
+    // Re-anchor first. A round receipt deliberately does NOT embed prevHead (see prediction.ts roundReceipt), so
+    // adopting the on-chain head here cannot invalidate its hash — it only makes the prevHead we pass match what
+    // the contract enforces continuity against. flush() resyncs too, but a cron can resolve a round without
+    // flushing any net, so the round commit must be able to re-anchor on its own.
+    await this.resyncChainHeadFromRegistry();
+    const commitTx = await this.commitToRegistry(receiptHash, this.proofChainHead, tickIndex, constituents, "0x");
+    if (commitTx) this.proofChainHead = receiptHash;
+    return commitTx;
   }
 
   /** Read this receipt's committed link from the on-chain registry (null when unwired/not committed). */

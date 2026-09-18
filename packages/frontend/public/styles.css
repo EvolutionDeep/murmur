@@ -643,6 +643,17 @@ body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; point
 .pulse-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 body.pulse-open .panel-pop, body.pulse-open .panel-about { opacity: 0.1; pointer-events: none; }
 
+/* --- "prediction market" toggle (in the temperature panel, under arc pulse) --- */
+.predict-btn {
+  margin-top: 6px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.predict-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+body.predict-open .panel-pop, body.predict-open .panel-about { opacity: 0.1; pointer-events: none; }
+
 .pulse-loading, .pulse-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.8; text-align: center; padding: 18px 6px; }
 .pulse-card { margin-bottom: 12px; padding: 12px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
 .pulse-card.paid { border-color: rgba(46, 148, 84, 0.4); background: rgba(46, 148, 84, 0.05); }
@@ -698,6 +709,99 @@ a.lb-addr:hover { opacity: 1; text-decoration: underline; }
 .lb-bal, .lb-deals { color: var(--muted); font-variant-numeric: tabular-nums; }
 .lb-reg { margin-top: 9px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
 .lb-reg .fp { color: var(--accent); opacity: 0.85; word-break: break-all; }
+
+/* ============ prediction market drawer ============
+   Neural-staked temperature bets: a live parimutuel book, on-chain resolutions and a
+   trustless hit-rate leaderboard. Reuses the generic .drawer chrome; these are its innards. */
+.predict-loading, .predict-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.8; text-align: center; padding: 18px 6px; }
+.predict-card { margin-bottom: 12px; padding: 12px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
+.predict-title { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.predict-mode { font-family: var(--mono); font-size: 8px; letter-spacing: 0.04em; text-transform: none; color: var(--accent); opacity: 0.85; }
+.predict-blurb { font-size: 10px; line-height: 1.6; color: var(--muted); margin: 0 0 11px; }
+.predict-blurb b { color: var(--ink); font-weight: 600; }
+
+/* live book */
+.pb-round { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 9px; }
+.pb-round b { color: var(--ink); font-weight: 600; }
+.pb-pools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+.pb-pool { display: flex; flex-direction: column; gap: 2px; padding: 7px 9px; border: 1px solid var(--hair); border-radius: 2px; }
+.pb-pool.up { border-color: rgba(46, 148, 84, 0.4); background: rgba(46, 148, 84, 0.06); }
+.pb-pool.down { border-color: rgba(178, 58, 58, 0.34); background: rgba(178, 58, 58, 0.05); }
+.pb-side { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pb-pool.up .pb-side { color: #1c5c33; }
+.pb-pool.down .pb-side { color: #8a2222; }
+.pb-amt { font-family: var(--display); font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pb-bar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; border: 1px solid var(--hair); margin-bottom: 10px; }
+.pb-bar-up { background: #2e9454; }
+.pb-bar-down { background: #b23a3a; }
+.pb-odds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.pb-odds > div { display: flex; flex-direction: column; gap: 1px; }
+.pb-odds dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pb-odds dd { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pb-odds dd.pb-prob { font-size: 9px; color: var(--accent); }
+.pb-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 4px; padding-top: 9px; border-top: 1px solid var(--hair); }
+.pb-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pb-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pb-meta dd { margin: 0; font-family: var(--mono); font-size: 9.5px; color: var(--ink); opacity: 0.88; }
+.pb-bets-title { font-family: var(--mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 10px 0 6px; }
+.pb-bets { display: flex; flex-wrap: wrap; gap: 4px; max-height: 96px; overflow-y: auto; }
+.pb-bet { font-family: var(--mono); font-size: 8.5px; padding: 2px 6px; border-radius: 2px; border: 1px solid var(--hair); white-space: nowrap; }
+.pb-bet.up { color: #1c5c33; border-color: rgba(46, 148, 84, 0.34); background: rgba(46, 148, 84, 0.07); }
+.pb-bet.down { color: #8a2222; border-color: rgba(178, 58, 58, 0.3); background: rgba(178, 58, 58, 0.06); }
+
+/* resolutions */
+.pr-round { padding: 9px 0; border-top: 1px solid var(--hair); }
+.pr-round:first-of-type { border-top: none; }
+.pr-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; }
+.pr-num { font-family: var(--mono); font-size: 9px; color: var(--muted); }
+.pr-outcome { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 1px 7px; border-radius: 2px; border: 1px solid currentColor; }
+.pr-outcome.up { color: #1c5c33; background: rgba(46, 148, 84, 0.12); }
+.pr-outcome.down { color: #8a2222; background: rgba(178, 58, 58, 0.11); }
+.pr-outcome.flat { color: var(--muted); background: rgba(var(--ink-rgb), 0.05); }
+.pr-delta { font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.pr-delta.pos { color: #1c5c33; }
+.pr-delta.neg { color: #8a2222; }
+.pr-temp { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-left: auto; }
+.pr-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
+.pr-hash { color: var(--accent); opacity: 0.85; word-break: break-all; }
+.pr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 7px; }
+.pr-verify {
+  flex: none; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 2px;
+  padding: 3px 8px; cursor: pointer; transition: background 0.18s ease, color 0.18s ease;
+}
+.pr-verify:hover { background: rgba(var(--accent-rgb), 0.2); color: var(--ink); }
+.pr-simnote { font-family: var(--mono); font-size: 8px; color: var(--muted); opacity: 0.8; }
+.pr-verifyout { padding-top: 8px; font-size: 9.5px; color: var(--muted); }
+.pr-badge { display: inline-block; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 2px; margin-bottom: 6px; }
+.pr-badge.ok { color: #1c5c33; background: rgba(46, 148, 84, 0.14); border: 1px solid rgba(46, 148, 84, 0.42); }
+.pr-badge.bad { color: #8a2222; background: rgba(178, 58, 58, 0.13); border: 1px solid rgba(178, 58, 58, 0.42); }
+.pr-vmeta { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.pr-vmeta > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pr-vmeta dt { font-size: 8.5px; letter-spacing: 0.04em; color: var(--muted); }
+.pr-vmeta dd { margin: 0; font-family: var(--mono); font-size: 9px; color: var(--ink); opacity: 0.85; text-align: right; }
+.pr-vmeta dd.fp { word-break: break-all; overflow-wrap: anywhere; }
+.pr-vmeta dd.fp.ok { color: #1c5c33; opacity: 1; }
+
+/* hit-rate leaderboard */
+.pl-totals { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--hair); font-family: var(--mono); font-size: 9px; color: var(--muted); }
+.pl-totals b { color: var(--ink); font-weight: 600; }
+.pl-head, .pl-row { display: grid; grid-template-columns: 22px 1fr 40px 62px 44px; align-items: center; gap: 6px; }
+.pl-head { font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--hair); }
+.pl-head span:nth-child(n+3), .pl-row .pl-hit, .pl-row .pl-net, .pl-row .pl-rounds { text-align: right; }
+.pl-row { padding: 5px 0; border-bottom: 1px solid rgba(var(--ink-rgb), 0.05); font-family: var(--mono); font-size: 9.5px; color: var(--ink); }
+.pl-rank { color: var(--muted); font-size: 9px; }
+.pl-agent { display: flex; align-items: baseline; gap: 5px; min-width: 0; overflow: hidden; }
+.pl-addr { color: var(--accent); opacity: 0.85; white-space: nowrap; }
+a.pl-addr:hover { opacity: 1; text-decoration: underline; }
+.pl-hit { color: var(--accent); font-variant-numeric: tabular-nums; }
+.pl-net { font-variant-numeric: tabular-nums; }
+.pl-net.pos { color: #1c5c33; }
+.pl-net.neg { color: #8a2222; }
+.pl-rounds { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-reg { margin-top: 9px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
+.pl-reg .fp { color: var(--accent); opacity: 0.85; word-break: break-all; }
 
 /* ============ responsive ============
    The piece is four floating corner panels over a full-bleed field. That reads

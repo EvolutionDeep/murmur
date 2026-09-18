@@ -47,6 +47,7 @@ import {
 import type { PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
+import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -59,6 +60,7 @@ const KEY_PREV_TEMP = "prevTemperature";
 const KEY_STIMULI = "stimuli";
 const KEY_ECONOMY = "economy:v1";
 const KEY_PULSE = "pulse:v1";
+const KEY_PREDICT = "predict:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
 
@@ -78,6 +80,7 @@ export class FlyStateDO {
   private swarm: SwarmBackend | null = null;
   private meter: MarketMeter | null = null;
   private economy: AgentEconomy | null = null;
+  private prediction: PredictionMarket | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
   private lastEconomy: EconomySnapshot | null = null;
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
@@ -163,6 +166,32 @@ export class FlyStateDO {
     return this.economy;
   }
 
+  /** Runtime prediction-market config derived from the loaded RuntimeConfig + chain network tag. */
+  private predictCfg(): PredictConfig {
+    const p = this.cfg.predict;
+    return {
+      enabled: p.enabled,
+      network: arcNetworkTag(this.cfg.isTestnet),
+      stakeUsdc: p.stakeUsdc,
+      maxStakeUsdc: p.maxStakeUsdc,
+      flatBand: p.flatBand,
+      commit: p.commit,
+      recentCap: 16,
+    };
+  }
+
+  /**
+   * The prediction market, or null when it (or the economy it settles through) is disabled. It borrows the
+   * economy's wallets + netting + registry, so it is only ever armed alongside an enabled agent economy.
+   */
+  private async ensurePrediction(): Promise<PredictionMarket | null> {
+    if (!this.cfg.predict.enabled || !this.cfg.economy.enabled) return null;
+    if (this.prediction) return this.prediction;
+    const stored = await this.state.storage.get<string>(KEY_PREDICT);
+    this.prediction = new PredictionMarket(this.predictCfg(), stored ?? undefined);
+    return this.prediction;
+  }
+
   /**
    * Construct the economy with the right dependencies: real-money wiring (HD keys + clients + onchain
    * facilitator) when onchain is requested AND wireable, else the keyless simulated default. Shared by
@@ -246,6 +275,7 @@ export class FlyStateDO {
     if (this.swarm) await this.swarm.persist(this.state.storage);
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
+    if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
     if (market) await this.state.storage.put(KEY_MARKET, market);
     if (snapshot) {
@@ -341,6 +371,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/signal/pulse") return await this.getSignalPulse(req);
       if (req.method === "GET" && path === "/signal/requirements") return await this.getSignalRequirements();
       if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
+      if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
+      if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
@@ -425,6 +457,27 @@ export class FlyStateDO {
     let econBudget = this.cfg.economy.maxDealsPerTick;
     const cronSettlements: Settlement[] = [];
     let deals = 0;
+
+    // PREDICTION MARKET — resolve the round opened last cron against THIS cron's freshly-sampled
+    //    temperature, then fold its parimutuel payouts into the economy's netting BEFORE the sub-ticks so
+    //    they flush with this cron's trades under the same real-money rails (kill switch, caps, netting,
+    //    registry). Strictly best-effort: any failure is logged and never blocks the live tick.
+    const prediction = await this.ensurePrediction();
+    let resolvedPredict: { round: ResolvedRound; flows: PredictFlow[] } | null = null;
+    if (prediction && economy) {
+      try {
+        const startTick = swarm.getTickIndex();
+        resolvedPredict = await prediction.resolveRound(temperature, startTick);
+        if (resolvedPredict) {
+          const absorbed = await economy.absorbFlows(resolvedPredict.flows, startTick);
+          cronSettlements.push(...absorbed);
+          deals += absorbed.filter((s) => s.valid).length;
+        }
+      } catch (e) {
+        console.warn("[DO] predict resolve failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     for (let st = 0; st < subTicks; st++) {
       // commit on the final sub-tick so a sharded swarm persists its shards' brains once per cron
       // (LocalSwarm ignores the flag — FlyStateDO.persist() writes its single population blob below).
@@ -453,6 +506,32 @@ export class FlyStateDO {
       // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
       economy.setLastTick(cronSettlements);
       this.lastEconomy = economy.snapshot();
+    }
+
+    // PREDICTION MARKET — commit the resolved round's receipt to the on-chain registry (sharing the SAME
+    //    linear chain head as the net receipts, so the resolution is trustlessly verifiable), then open the
+    //    next round from this cron's fresh neural read-out to be resolved next cron. Only decisive rounds
+    //    with participants are committed: a FLAT refund moves no money, so no gas is spent proving it.
+    if (prediction && economy && resolvedPredict) {
+      const rr = resolvedPredict.round;
+      if (this.cfg.predict.commit && rr.outcome !== "FLAT" && rr.bets.length > 0) {
+        try {
+          const commitTx = await economy.commitRoundReceipt(rr.receiptHash, swarm.getTickIndex(), rr.bets.length);
+          prediction.setCommitTx(rr.round, commitTx);
+        } catch (e) {
+          console.warn("[DO] predict commit failed (non-fatal):", (e as Error).message);
+        }
+      }
+    }
+    if (prediction && economy && snapshot) {
+      try {
+        prediction.openRound(
+          snapshot.flies, temperature, pulse.momentum, swarm.getTickIndex(),
+          (id) => economy.getAgent(id)?.balance ?? "0",
+        );
+      } catch (e) {
+        console.warn("[DO] predict open failed (non-fatal):", (e as Error).message);
+      }
     }
 
     // 5) Persist.
@@ -829,6 +908,76 @@ export class FlyStateDO {
         lastBuyer: pulse.lastBuyer,
         lastTs: pulse.lastTs,
       },
+    });
+  }
+
+  // ---------- on-chain prediction market (agents stake USDC on the next tick's temperature) ----------
+
+  /**
+   * The live prediction book: the open round (pools + parimutuel odds + every bet), recent resolutions and
+   * the hit-rate leaderboard. Each resolved round carries its receiptHash; pair it with /predictions/verify
+   * to recompute the hash and read its on-chain registry commitment (trustless resolution proof).
+   */
+  private async getPredictions(): Promise<Response> {
+    const prediction = await this.ensurePrediction();
+    if (!prediction) return json({ enabled: false });
+    const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    return json({
+      mode: economy?.facilitatorMode ?? "simulated",
+      registryAddress: this.cfg.economy.registryAddress ?? null,
+      ...prediction.snapshot(),
+    });
+  }
+
+  /**
+   * One-click trustless verification of a resolved round: recompute sha256(roundReceipt) server-side and
+   * read the round's committed link + the registry head from our own NeuralReceiptRegistry. `selfConsistent`
+   * means the stored resolution is the one that was hashed; `registry.committed` means it lives on Arc.
+   */
+  private async getPredictVerify(url: URL): Promise<Response> {
+    const prediction = await this.ensurePrediction();
+    if (!prediction) return json({ enabled: false }, 400);
+    const raw = url.searchParams.get("round");
+    const round = raw != null ? Number(raw) : NaN;
+    if (!Number.isFinite(round)) return json({ error: "round required" }, 400);
+    const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    const v = await prediction.verifyRound(round);
+    if (!v.found || !v.rr) return json({ found: false, round });
+    const rr = v.rr;
+    const registryCommit = economy ? await economy.registryCommitOf(rr.receiptHash) : null;
+    const registryHead = economy ? await economy.registryChainHead() : null;
+    return json({
+      found: true,
+      enabled: true,
+      round: rr.round,
+      outcome: rr.outcome,
+      entryTick: rr.entryTick,
+      exitTick: rr.exitTick,
+      entryTemp: rr.entryTemp,
+      exitTemp: rr.exitTemp,
+      delta: rr.delta,
+      flatBand: rr.flatBand,
+      receiptHash: rr.receiptHash,
+      recomputedHash: v.recomputed,
+      selfConsistent: v.selfConsistent,
+      commitTx: rr.commitTx ?? null,
+      registryAddress: this.cfg.economy.registryAddress ?? null,
+      registry:
+        registryCommit == null && registryHead == null
+          ? null
+          : {
+              committed: registryCommit != null,
+              prevHead: registryCommit?.prevHead ?? null,
+              tickIndex: registryCommit?.tickIndex ?? null,
+              constituents: registryCommit?.constituents ?? null,
+              txHash: registryCommit?.txHash ?? null,
+              ts: registryCommit?.ts ?? null,
+              chainHead: registryHead,
+              isHead:
+                registryHead != null &&
+                registryHead.toLowerCase() === `0x${rr.receiptHash}`.toLowerCase(),
+            },
+      receipt: v.receipt,
     });
   }
 

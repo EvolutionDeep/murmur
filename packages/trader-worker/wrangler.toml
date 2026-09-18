@@ -109,6 +109,26 @@ ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending n
 ECONOMY_REGISTRY_ADDRESS = "0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815"   # deployed on Arc mainnet (5042); committer = the Worker's facilitator wallet
 
 
+# ===== Prediction market (ONCHAIN — neural-staked temperature bets) =====
+# Each cron the swarm stakes real USDC on whether next tick's market temperature rises or falls; the
+# following cron resolves it parimutuel (winners split the losers' pool, strictly zero-sum) and folds the
+# net PnL through the SAME netting / EIP-3009 / registry path as every other settlement — no new spend
+# rail, bounded by the daily/per-agent caps + kill switch above. Decisive resolutions are committed to the
+# registry above (one extra registry tx/cron, only when the round is decisive and has participants).
+# ROLLOUT: was deployed once with PREDICT_ENABLED = "false" to prove the /predictions plumbing live without
+# moving a satoshi (verified: /predictions ⇒ {enabled:false}, /predictions/verify ⇒ 400, frontend v18 drawer
+# OK, economy unregressed), then flipped to "true" and redeployed to go live. Stakes are tiny (base 0.002,
+# cap 0.01 USDC, also capped at balance/4) and zero-sum across agents, so the only on-chain movement is the
+# netted PnL — and only when a round is decisive (|Δtemp| > flat band) and a pair's net clears the broadcast
+# threshold. Set PREDICT_ENABLED = "false" to halt the market instantly (the kill switch ECONOMY_REAL_SPEND
+# = "false" still halts ALL real settlement, predictions included).
+PREDICT_ENABLED = "true"                      # LIVE: the swarm stakes real USDC each cron; set "false" to halt the market instantly
+PREDICT_STAKE_USDC = "0.002"                  # base stake per bet (USDC), scaled by arousal (0.4 + 0.6·arousal)
+PREDICT_MAX_STAKE_USDC = "0.01"               # hard per-bet ceiling (USDC); each bet is also capped at balance/4
+PREDICT_FLAT_BAND = "0.008"                   # |Δtemperature| ≤ this ⇒ FLAT: full refund, no flows, not committed
+PREDICT_COMMIT = "true"                       # commit decisive resolutions to the on-chain NeuralReceiptRegistry
+
+
 # ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
 # 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:
 # connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically

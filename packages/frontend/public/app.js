@@ -112,7 +112,7 @@ let ripples = [];
 // ({ lastTick, totals, balances }). We render every settlement as a payment packet flying from
 // payer to payee, keep a rolling ledger ticker, and show the selected fly's wallet in the inspector.
 const atomicToUsdc = (a) => Number(a) / 1e6;         // amounts arrive as atomic-USDC strings (6 dec)
-const GOOD_COL = { signal: [91, 124, 141], momentum: [192, 94, 60], attestation: [139, 154, 134] };
+const GOOD_COL = { signal: [91, 124, 141], momentum: [192, 94, 60], attestation: [139, 154, 134], prediction: [122, 96, 150] };
 const ECON_EDGE_MS = 2000;                            // a payment packet lives ~2s
 const MAX_EDGES = 60;                                 // cap: a busy tick can't pile up unbounded arcs
 // Official Arc block explorer (docs.arc.io → mainnet chain 5042). Every real settlement carries a
@@ -1071,6 +1071,7 @@ function openWallets() {
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1223,6 +1224,7 @@ function openHistory() {
   if (walletsOpen) closeWallets();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1271,6 +1273,18 @@ let pulseLB = null;         // latest /leaderboard payload
 let pulseBuying = false;    // guard: one x402 buy in flight at a time
 let pulsePaid = null;       // last successfully-purchased {signal, settlement}
 
+// ================= prediction market · neural-staked temperature bets (right side) =================
+// Every cron the swarm stakes real USDC on whether next tick's market temperature rises or falls; the
+// following cron resolves it parimutuel (winners split the losers' pool, strictly zero-sum) and folds the
+// net PnL through the SAME netting / EIP-3009 / registry path as every other settlement. Each decisive
+// resolution is hashed and committed to the on-chain NeuralReceiptRegistry, so the hit-rate leaderboard is
+// trustless — a visitor recomputes the round receipt in-browser and reads the commitment straight off Arc.
+let predictOpen = false;
+let predictData = null;     // latest /predictions payload
+let predictVerifying = {};  // round → in-flight guard (one verify per round at a time)
+let lastPredictPoll = 0;    // throttle: the book only moves once a cron, so a slow poll is plenty
+const PREDICT_POLL_MS = 20000;
+
 // canonical JSON + sha256, byte-identical to the worker's provenance.ts (sorted keys, arrays ordered)
 function canonicalJSON(v) {
   const walk = (x) => {
@@ -1304,6 +1318,7 @@ function openProofs() {
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
   const d = $("proofs"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("proofs-open");
@@ -1457,6 +1472,7 @@ function openPulse() {
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
+  if (predictOpen) closePredict();
   const d = $("pulse"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("pulse-open");
@@ -1690,6 +1706,252 @@ async function buySignal(btn) {
   }
 }
 
+// ================= prediction market drawer (neural stakes + trustless hit-rate leaderboard) =================
+function openPredict() {
+  predictOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  const d = $("predict"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("predict-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderPredict();
+}
+function closePredict() {
+  predictOpen = false;
+  document.body.classList.remove("predict-open");
+  const d = $("predict"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!predictOpen) d.hidden = true; }, 420);
+}
+function togglePredict() { if (predictOpen) closePredict(); else openPredict(); }
+
+async function renderPredict() {
+  const body = $("predict-body"); if (!body) return;
+  body.innerHTML = `<p class="predict-loading">loading prediction market…</p>`;
+  const res = await getJSON("/predictions", 8000).catch(() => null);
+  if (!predictOpen) return;                 // closed while fetching
+  predictData = res || null;
+  paintPredict();
+}
+
+/** Throttled background refresh so an open drawer tracks the book as each cron resolves it. */
+async function pollPredict(force) {
+  if (!predictOpen) return;
+  const now = Date.now();
+  if (!force && now - lastPredictPoll < PREDICT_POLL_MS) return;
+  lastPredictPoll = now;
+  try {
+    const p = await getJSON("/predictions", 8000);
+    if (p && predictOpen) { predictData = p; paintPredict(); }
+  } catch { /* best-effort: the market is a nicety and must never block the scene */ }
+}
+
+/** (Re)build the drawer body from cached state — used on open, on poll, and after a verify. */
+function paintPredict() {
+  const body = $("predict-body"); if (!body) return;
+  const sub = $("predict-sub");
+  const d = predictData;
+  if (sub) sub.textContent = d && d.enabled
+    ? `${d.open ? "round #" + d.open.round + " open" : "between rounds"} · ${d.totals ? d.totals.roundsResolved : 0} settled`
+    : "neural stakes · parimutuel";
+  body.innerHTML = "";
+  if (!d || !d.enabled) {
+    body.innerHTML = `<p class="predict-empty">the prediction market is disabled on this deployment.</p>`;
+    return;
+  }
+  body.appendChild(predictBookCard(d));
+  body.appendChild(predictRecentCard(d));
+  body.appendChild(predictLeaderCard(d));
+}
+
+/** The live book: parimutuel UP/DOWN pools, implied odds, and every fly's neural stake. */
+function predictBookCard(d) {
+  const card = document.createElement("div"); card.className = "predict-card book";
+  const o = d.open;
+  const mode = d.mode === "onchain" ? "settles on Arc mainnet" : "simulated · no real funds";
+  let html =
+    `<div class="predict-title">live book <span class="predict-mode">${mode}</span></div>` +
+    `<p class="predict-blurb">Each fly reads its own connectome and stakes real USDC on whether the market temperature <b>rises</b> or <b>falls</b> by next tick. Pools are <b>parimutuel</b>: winners split the losers' pool, strictly zero-sum, and the net settles through the same on-chain netting path as every other trade.</p>`;
+  if (!o) {
+    html += `<p class="predict-empty">no open round — the swarm is between ticks. a new book opens every cron.</p>`;
+    card.innerHTML = html;
+    return card;
+  }
+  const upUsdc = Number(o.poolUpUsdc || 0), downUsdc = Number(o.poolDownUsdc || 0);
+  const tot = upUsdc + downUsdc;
+  const upPct = tot > 0 ? (upUsdc / tot) * 100 : 50;
+  const downPct = tot > 0 ? 100 - upPct : 50;
+  const band = Number((d.config && d.config.flatBand) || 0);
+  html +=
+    `<div class="pb-round">round <b>#${o.round}</b> · entry tick #${o.entryTick} · resolves next cron</div>` +
+    `<div class="pb-pools">` +
+      `<div class="pb-pool up"><span class="pb-side">▲ up</span><span class="pb-amt">${upUsdc.toFixed(4)}</span></div>` +
+      `<div class="pb-pool down"><span class="pb-side">▼ down</span><span class="pb-amt">${downUsdc.toFixed(4)}</span></div>` +
+    `</div>` +
+    `<div class="pb-bar"><div class="pb-bar-up" style="width:${upPct.toFixed(1)}%"></div><div class="pb-bar-down" style="width:${downPct.toFixed(1)}%"></div></div>` +
+    `<div class="pb-odds">` +
+      `<div><dt>up odds</dt><dd>${Number(o.oddsUp || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probUp || 0) * 100).toFixed(0)}%</dd></div>` +
+      `<div><dt>down odds</dt><dd>${Number(o.oddsDown || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probDown || 0) * 100).toFixed(0)}%</dd></div>` +
+    `</div>` +
+    `<dl class="pb-meta">` +
+      `<div><dt>entry temp</dt><dd>${Number(o.entryTemp || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>momentum</dt><dd>${(Number(o.momentum || 0) >= 0 ? "+" : "") + Number(o.momentum || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>bets</dt><dd>${o.betCount || 0}</dd></div>` +
+      `<div><dt>flat band</dt><dd>±${band.toFixed(3)}</dd></div>` +
+    `</dl>`;
+  const bets = Array.isArray(o.bets) ? o.bets : [];
+  if (bets.length) {
+    html += `<div class="pb-bets-title">neural stakes</div><div class="pb-bets">` +
+      bets.slice(0, 48).map((b) =>
+        `<span class="pb-bet ${b.side === "UP" ? "up" : "down"}">#${b.id} ${b.side === "UP" ? "▲" : "▼"} ${Number(b.stakeUsdc || 0).toFixed(4)}</span>`
+      ).join("") + `</div>`;
+  }
+  card.innerHTML = html;
+  return card;
+}
+
+/** Recent resolutions, each with a one-click trustless verify (browser recompute + direct Arc read). */
+function predictRecentCard(d) {
+  const card = document.createElement("div"); card.className = "predict-card recent";
+  const rows = Array.isArray(d.recent) ? d.recent : [];
+  let html =
+    `<div class="predict-title">resolutions</div>` +
+    `<p class="predict-blurb">Every decisive round is hashed and committed to the on-chain NeuralReceiptRegistry. Recompute the receipt in your browser, then read the same commitment straight off Arc — no murmur server in the loop.</p>`;
+  if (!rows.length) {
+    html += `<p class="predict-empty">no resolved rounds yet — the first book resolves on the next cron.</p>`;
+    card.innerHTML = html; return card;
+  }
+  html += rows.slice(0, 12).map((r) => {
+    const oc = String(r.outcome || "FLAT").toLowerCase();
+    const delta = Number(r.delta || 0);
+    const committed = !!r.commitTx && isRealTxHash(r.commitTx);
+    return `<div class="pr-round" data-round="${r.round}">` +
+      `<div class="pr-head">` +
+        `<span class="pr-num">#${r.round}</span>` +
+        `<span class="pr-outcome ${oc}">${r.outcome}</span>` +
+        `<span class="pr-delta ${delta > 0 ? "pos" : delta < 0 ? "neg" : ""}">${delta >= 0 ? "+" : ""}${delta.toFixed(4)}</span>` +
+        `<span class="pr-temp">${Number(r.entryTemp || 0).toFixed(3)} → ${Number(r.exitTemp || 0).toFixed(3)}</span>` +
+      `</div>` +
+      `<div class="pr-sub">` +
+        `<span>${r.betCount || 0} bets · ${Number(r.totalStakedUsdc || 0).toFixed(4)} usdc</span>` +
+        `<span class="pr-hash fp">${shortHash(r.receiptHash || "")}</span>` +
+      `</div>` +
+      `<div class="pr-actions">` +
+        `<button type="button" class="pr-verify" data-round="${r.round}">verify on-chain</button>` +
+        (committed
+          ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${r.commitTx}" target="_blank" rel="noopener noreferrer">↗ registry ${shortHash(r.commitTx)}</a>`
+          : `<span class="pr-simnote">${r.outcome === "FLAT" ? "flat · refunded · not committed" : "not committed"}</span>`) +
+      `</div>` +
+      `<div class="pr-verifyout" hidden></div>` +
+    `</div>`;
+  }).join("");
+  card.innerHTML = html;
+  return card;
+}
+
+/** Trustless hit-rate leaderboard: agents ranked by how often their neural read called the move. */
+function predictLeaderCard(d) {
+  const card = document.createElement("div"); card.className = "predict-card leader";
+  const rows = Array.isArray(d.leaderboard) ? d.leaderboard : [];
+  const t = d.totals || {};
+  let html =
+    `<div class="predict-title">hit-rate leaderboard</div>` +
+    `<p class="predict-blurb">Agents ranked by prediction accuracy — the share of decisive rounds where the fly's neural read called the temperature move. Net PnL is realised USDC folded through the on-chain economy.</p>`;
+  if (t.roundsResolved != null) {
+    html += `<div class="pl-totals">` +
+      `<span><b>${t.roundsResolved || 0}</b> rounds</span>` +
+      `<span><b>${t.committed || 0}</b> on-chain</span>` +
+      `<span><b>${Number(t.volumeUsdc || 0).toFixed(4)}</b> usdc</span>` +
+      `<span><b>${t.activeBettors || 0}</b> bettors</span>` +
+    `</div>`;
+  }
+  if (!rows.length) {
+    html += `<p class="predict-empty">no ranked agents yet — accuracy accrues as rounds resolve.</p>`;
+    card.innerHTML = html; return card;
+  }
+  const live = d.mode === "onchain";
+  const addrOf = (id) => { const a = econAgents.find((x) => x.id === id); return a && isRealAddr(a.address) ? a.address : null; };
+  html += `<div class="pl-head"><span>#</span><span>agent</span><span>hit</span><span>net</span><span>rnds</span></div>`;
+  html += rows.slice(0, 25).map((r, i) => {
+    const addr = addrOf(r.id);
+    const agent = addr
+      ? (live
+        ? `<a class="pl-addr" href="${ARC_EXPLORER}/address/${addr}" target="_blank" rel="noopener noreferrer" title="${addr}">${shortHash(addr)}</a>`
+        : `<span class="pl-addr" title="${addr}">${shortHash(addr)}</span>`)
+      : `<span class="pl-addr">–</span>`;
+    const net = Number(r.pnlUsdc || 0);
+    const hr = Number(r.hitRate || 0) * 100;
+    return `<div class="pl-row"><span class="pl-rank">${i + 1}</span>` +
+      `<span class="pl-agent">#${r.id} ${agent}</span>` +
+      `<span class="pl-hit">${hr.toFixed(0)}%</span>` +
+      `<span class="pl-net ${net > 0 ? "pos" : net < 0 ? "neg" : ""}">${net >= 0 ? "+" : ""}${net.toFixed(4)}</span>` +
+      `<span class="pl-rounds">${r.hits || 0}/${r.rounds || 0}</span></div>`;
+  }).join("");
+  const regAddr = isRealAddr(d.registryAddress) ? d.registryAddress : null;
+  if (regAddr) html += `<div class="pl-reg">registry <span class="fp">${shortHash(regAddr)}</span></div>`;
+  card.innerHTML = html;
+  return card;
+}
+
+/**
+ * One-click trustless verification of a resolved round. Recomputes sha256(roundReceipt) in THIS browser
+ * (byte-identical canonical JSON), then reads the commitment straight off the on-chain NeuralReceiptRegistry
+ * via Arc RPC — no murmur server trusted. FLAT / one-sided rounds are refunded and never committed, so a
+ * missing commitment there is expected, not a failure.
+ */
+async function verifyPredictRound(round, wrap) {
+  if (predictVerifying[round]) return;
+  const out = wrap ? wrap.querySelector(".pr-verifyout") : null;
+  if (out) { out.hidden = false; out.textContent = "checking…"; }
+  predictVerifying[round] = true;
+  try {
+    const v = await getJSON(`/predictions/verify?round=${encodeURIComponent(round)}`, 9000);
+    if (!v.found) { if (out) out.textContent = "round not found in recent history"; return; }
+    let clientHash = null;
+    if (v.receipt) { try { clientHash = await sha256HexClient(v.receipt); } catch { clientHash = null; } }
+    const selfOk = clientHash == null || clientHash === v.receiptHash;
+    const serverOk = v.selfConsistent === true;
+    let reg = null, regSource = "";
+    if (v.registryAddress) { reg = await readRegistryOnchain(v.registryAddress, v.receiptHash); regSource = reg ? "direct Arc RPC" : ""; }
+    if (!reg && v.registry) { reg = v.registry; regSource = "via murmur API"; }
+    const regOk = !!reg && reg.committed === true;
+    const expectCommit = v.outcome !== "FLAT";
+    const ok = selfOk && serverOk && (!expectCommit || regOk);
+    if (!out) return;
+    out.innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = "pr-badge " + (ok ? "ok" : "bad");
+    badge.textContent = ok
+      ? (expectCommit ? "✓ resolution verified on-chain" : "✓ receipt self-consistent (flat · refunded)")
+      : "✗ mismatch";
+    const dl = document.createElement("dl"); dl.className = "pr-vmeta";
+    dl.innerHTML =
+      `<div><dt>outcome</dt><dd>${v.outcome} · Δ ${(Number(v.delta || 0) >= 0 ? "+" : "") + Number(v.delta || 0).toFixed(4)} (band ±${Number(v.flatBand || 0).toFixed(3)})</dd></div>` +
+      `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
+      `<div><dt>published receiptHash</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>`;
+    const regDiv = document.createElement("div");
+    if (reg) {
+      const headTxt = reg.chainHead ? shortHash(reg.chainHead) : "–";
+      const isHead = reg.chainHead && v.receiptHash && reg.chainHead.toLowerCase() === ("0x" + v.receiptHash).toLowerCase();
+      const stateTxt = !reg.committed ? (expectCommit ? "not committed" : "refunded · not committed") : (isHead ? "chain head ✓" : "committed ✓");
+      regDiv.innerHTML =
+        `<div><dt>on-chain registry (${regSource})</dt><dd class="fp${regOk || !expectCommit ? " ok" : ""}">${stateTxt} · head ${headTxt}</dd></div>` +
+        (v.registryAddress ? `<div><dt>registry contract</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
+    } else {
+      regDiv.innerHTML = `<div><dt>on-chain registry</dt><dd class="fp">${expectCommit ? "not configured" : "flat · no commit expected"}</dd></div>`;
+    }
+    dl.append(...regDiv.children);
+    out.append(badge, dl);
+  } catch {
+    if (out) out.textContent = "verify request failed (network)";
+  } finally {
+    predictVerifying[round] = false;
+  }
+}
+
 // ================= data layer =================
 // Every request is timeout + abort guarded. When the Worker is undeployed the
 // workers.dev host black-holes TCP (connect never completes), so an unguarded
@@ -1729,6 +1991,7 @@ async function poll() {
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
     getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
+    pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
   } catch (e) {
     if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
@@ -1896,6 +2159,7 @@ function select(id) {
   if (walletsOpen) closeWallets();   // selecting a fly (from canvas or roster) hands the right side to the inspector
   if (historyOpen) closeHistory();
   if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
   selectedId = id;
   const ins = $("inspector");
   ins.hidden = false;
@@ -2242,6 +2506,14 @@ function bindUI() {
   if (ulbd) ulbd.addEventListener("click", (e) => {
     const b = e.target.closest(".pulse-buy"); if (b) { buySignal(b); return; }
   });
+  const prb = $("predict-btn"); if (prb) prb.addEventListener("click", togglePredict);
+  const prc = $("predict-close"); if (prc) prc.addEventListener("click", closePredict);
+  // the predict drawer rebuilds each render, so bind verify by delegation once
+  const prbd = $("predict-body");
+  if (prbd) prbd.addEventListener("click", (e) => {
+    const vb = e.target.closest(".pr-verify");
+    if (vb) verifyPredictRound(vb.dataset.round, vb.closest(".pr-round"));
+  });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -2259,7 +2531,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 

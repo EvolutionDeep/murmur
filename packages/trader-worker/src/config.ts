@@ -75,6 +75,17 @@ export interface Env {
   SIGNAL_MAX_USDC?: string;             // hard ceiling on a single purchase, USDC (default 0.25)
   SIGNAL_PAYTO?: string;                // revenue address (0x…40); default = the facilitator relay/gas wallet
 
+  // --- On-chain prediction market: agents stake real USDC on the NEXT tick's temperature direction ---
+  //     Resolved by the freshly-sampled Arc temperature; payouts are parimutuel and settle through the
+  //     SAME netting + EIP-3009 + registry rails as neural trades (no separate money path). ALL of it is
+  //     inert unless PREDICT_ENABLED and the agent economy is on; real stakes additionally require the
+  //     onchain facilitator + its kill switch/caps (see ECONOMY_* above).
+  PREDICT_ENABLED?: string;             // "true"/"false" (default true) — run one prediction round per cron
+  PREDICT_STAKE_USDC?: string;          // base stake per bet, USDC, scaled by arousal (default 0.002)
+  PREDICT_MAX_STAKE_USDC?: string;      // hard per-bet ceiling, USDC (default 0.01)
+  PREDICT_FLAT_BAND?: string;           // |Δtemperature| ≤ this ⇒ FLAT (full refund); a noise dead-zone (default 0.008)
+  PREDICT_COMMIT?: string;              // "true"/"false" (default true) — commit decisive resolutions to the on-chain registry (gas)
+
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
@@ -143,6 +154,15 @@ export interface RuntimeConfig {
     maxUsdc: number;
     /** Revenue address, or null to fall back to the facilitator relay wallet at request time. */
     payTo: string | null;
+  };
+
+  // On-chain prediction market (agents stake USDC on the next tick's temperature direction)
+  predict: {
+    enabled: boolean;
+    stakeUsdc: number;       // base stake per bet (scaled by arousal, capped at maxStakeUsdc)
+    maxStakeUsdc: number;    // hard per-bet ceiling
+    flatBand: number;        // |Δtemperature| ≤ this ⇒ FLAT (refund)
+    commit: boolean;         // commit decisive resolutions to the on-chain NeuralReceiptRegistry
   };
 
   // Connectome sizing (ts-lif)
@@ -240,6 +260,16 @@ export function loadConfig(env: Env): RuntimeConfig {
       priceUsdc: clamp(Number(env.SIGNAL_PRICE_USDC ?? "0.01"), 0.000001, 1000),
       maxUsdc: clamp(Number(env.SIGNAL_MAX_USDC ?? "0.25"), 0.000001, 100_000),
       payTo: (env.SIGNAL_PAYTO ?? "").trim() || null,
+    },
+
+    predict: {
+      // On by default: like the signal product it is inert until the economy is on, and real stakes are
+      // additionally bound by the onchain facilitator's kill switch + caps (never a separate money path).
+      enabled: (env.PREDICT_ENABLED ?? "true").toLowerCase() !== "false",
+      stakeUsdc: clamp(Number(env.PREDICT_STAKE_USDC ?? "0.002"), 0.000001, 100),
+      maxStakeUsdc: clamp(Number(env.PREDICT_MAX_STAKE_USDC ?? "0.01"), 0.000001, 100_000),
+      flatBand: clamp(Number(env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
+      commit: (env.PREDICT_COMMIT ?? "true").toLowerCase() !== "false",
     },
 
     brainOpts: {

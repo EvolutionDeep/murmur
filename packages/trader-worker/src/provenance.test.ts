@@ -341,3 +341,73 @@ test("commitTx survives serialize/applySerialized", async () => {
   assert.ok(rProof);
   assert.equal(rProof!.commitTx, withCommit!.commitTx);
 });
+
+test("a persisted head drift is re-anchored to the on-chain head, so commits resume (self-heal)", async () => {
+  const fac = new StubRegistryFacilitator();
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  // Build a real on-chain chain: mine a proof so the registry head advances to a committed receipt.
+  assert.ok(await mineOneProof(econ, fac), "mined a committed net");
+  const before = fac.chainHead;                       // 0x…64 — the TRUE on-chain head
+  assert.notEqual(before, "0x" + "00".repeat(32), "registry head is non-zero after a commit");
+
+  // Reproduce the historical wedge: a restored economy whose off-chain head DRIFTED from the on-chain head
+  // (an old build advanced proofChainHead even when the commit failed). Serialize → corrupt → restore.
+  const blob = JSON.parse(econ.serialize());
+  blob.proofChainHead = "deadbeef".padEnd(64, "0");   // a phantom head that is NOT on-chain
+  const drifted = new AgentEconomy(cfg(), JSON.stringify(blob), { facilitator: fac });
+  assert.equal(drifted.proofsSnapshot().chainHead, "deadbeef".padEnd(64, "0"));
+
+  // Without a resync the next commit's prevHead (the phantom) misses the on-chain head → BadPrevHead → null
+  // forever. With it, flush() re-anchors first, so the new receipt commits and the chain resumes.
+  assert.ok(await mineOneProof(drifted, fac), "a net still mines while drifted");
+  assert.notEqual(fac.chainHead, before, "the registry head ADVANCED — a new commit landed after the resync");
+  const newest = drifted.proofsSnapshot().proofs[0];
+  assert.ok(newest.commitTx, "the newest proof carries a commitTx (drift healed)");
+  assert.equal(newest.receiptHash.toLowerCase(), fac.chainHead.replace(/^0x/, "").toLowerCase());
+  assert.equal(drifted.proofsSnapshot().chainHead.toLowerCase(), fac.chainHead.replace(/^0x/, "").toLowerCase());
+});
+
+test("a failed registry commit is self-healed by the next flush's resync (no permanent wedge)", async () => {
+  const fac = new StubRegistryFacilitator();
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  assert.ok(await mineOneProof(econ, fac));
+  const head = fac.chainHead;                       // true on-chain head after one good commit
+
+  // Registry outage: the net still SETTLES (money moves, proof published) but its commit fails, so the
+  // off-chain head advances past the on-chain head. Historically that drift wedged the chain permanently.
+  fac.failCommits = true;
+  assert.ok(await mineOneProof(econ, fac), "settlement mines during the registry outage");
+  assert.equal(fac.chainHead, head, "on-chain registry head unchanged while commits fail");
+  assert.equal(econ.proofsSnapshot().proofs[0].commitTx, undefined, "the outage proof has no commitTx");
+
+  // The wedge is NOT permanent: once the registry recovers, the next flush re-anchors proofChainHead to the
+  // true on-chain head and the commit lands — the chain resumes with no manual intervention.
+  fac.failCommits = false;
+  assert.ok(await mineOneProof(econ, fac), "settlement mines after recovery");
+  assert.notEqual(fac.chainHead, head, "on-chain head advanced after recovery (resync re-anchored)");
+  const recovered = econ.proofsSnapshot().proofs[0];
+  assert.ok(recovered.commitTx, "the post-recovery proof committed on-chain");
+  assert.equal(recovered.receiptHash.toLowerCase(), fac.chainHead.replace(/^0x/, "").toLowerCase());
+});
+
+test("commitRoundReceipt re-anchors to the on-chain head, so a resolution commits even after drift", async () => {
+  const fac = new StubRegistryFacilitator();
+  const econ = new AgentEconomy(cfg(), undefined, { facilitator: fac });
+  assert.ok(await mineOneProof(econ, fac));           // registry has a real head to chain from
+
+  // Drift the off-chain head, then commit a ROUND receipt (a standalone hash that embeds no prevChain).
+  const blob = JSON.parse(econ.serialize());
+  blob.proofChainHead = "feedface".padEnd(64, "0");
+  const drifted = new AgentEconomy(cfg(), JSON.stringify(blob), { facilitator: fac });
+  const roundHash = await sha256Hex({ v: 1, round: 99, note: "standalone round receipt" });
+
+  const commitTx = await drifted.commitRoundReceipt(roundHash, 1234, 7);
+  assert.ok(commitTx, "the round receipt committed after re-anchoring");
+  assert.equal(fac.chainHead.replace(/^0x/, "").toLowerCase(), roundHash.toLowerCase(), "registry head == round receipt");
+  assert.equal(drifted.proofsSnapshot().chainHead.toLowerCase(), roundHash.toLowerCase(), "off-chain head follows");
+  const link = await drifted.registryCommitOf(roundHash);
+  assert.ok(link, "registry holds the round link");
+  assert.equal(link!.txHash, "0x", "a round receipt records txHash 0x (it is not an EIP-3009 nonce)");
+  assert.equal(link!.tickIndex, 1234);
+  assert.equal(link!.constituents, 7);
+});
