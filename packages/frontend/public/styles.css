@@ -103,13 +103,13 @@ body { transition: background 1.6s linear; }
   color: var(--muted);
 }
 .topmeta .sep { opacity: 0.4; }
-.x-link {
+.x-link, .gh-link {
   display: inline-flex; align-items: center; gap: 5px;
   color: var(--muted); text-decoration: none;
   transition: color 0.35s ease;
 }
-.x-link:hover { color: var(--ink); }
-.x-link .x-glyph { fill: currentColor; flex: none; }
+.x-link:hover, .gh-link:hover { color: var(--ink); }
+.x-link .x-glyph, .gh-link .gh-glyph { fill: currentColor; flex: none; }
 .x-link .x-handle { letter-spacing: 0.14em; }
 .link-dot {
   width: 6px; height: 6px; border-radius: 50%;
@@ -522,6 +522,32 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 }
 .proofs-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 
+/* --- project token contract address (in the economy panel): click to copy, ↗ verifies on Arc --- */
+.token-ca {
+  margin-top: 10px; padding-top: 9px;
+  border-top: 1px solid var(--hair);
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+}
+.tca-label {
+  flex: none; font-size: 9px; letter-spacing: 0.12em; text-transform: lowercase;
+  color: var(--muted);
+}
+.tca-addr {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em;
+  background: none; border: none; cursor: pointer; text-align: left;
+  color: var(--ink); opacity: 0.82; padding: 1px 5px; border-radius: 3px;
+  transition: background 0.25s ease, opacity 0.25s ease, color 0.25s ease;
+}
+.tca-addr:hover { background: rgba(var(--accent-rgb), 0.16); opacity: 1; }
+.tca-addr.copied { color: var(--accent); opacity: 1; }
+.tca-ex {
+  margin-left: auto; flex: none;
+  color: var(--muted); text-decoration: none; font-size: 12px;
+  transition: color 0.25s ease;
+}
+.tca-ex:hover { color: var(--ink); }
+
 /* --- generic right-side drawer (swarm history) — mirrors the wallets drawer --- */
 .drawer {
   position: fixed; z-index: 12; right: 0; top: 0; bottom: 0;
@@ -816,6 +842,27 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
    temperature at every breakpoint — never hardcode the panel background here.
    ========================================================================== */
 
+/* --- height-aware trims (corner layout only): on short viewports the top+bottom panels in each
+       column must not collide. Progressively drop the tallest blocks, and cap every corner panel
+       to a viewport fraction with internal scroll as a hard no-overlap guarantee (2*42vh + the
+       top/bottom offsets always <= 100vh, so a column pair can never intersect). Scoped to
+       min-height:601px so the stacked fallback below is unaffected. --- */
+@media (min-width: 681px) and (min-height: 601px) and (max-height: 900px) {
+  .econ-feed { display: none; }
+  .panel-econ, .panel-temp, .panel-pop, .panel-about {
+    max-height: 42vh; overflow-y: auto; scrollbar-width: thin;
+  }
+}
+@media (min-width: 681px) and (min-height: 601px) and (max-height: 800px) {
+  .temp-history { display: none; }
+  .net-note { display: none; }
+  .about-points { display: none; }
+}
+@media (min-width: 681px) and (min-height: 601px) and (max-height: 700px) {
+  .panel-pop { display: none; }
+  .panel-econ .micro, .panel-temp .micro { display: none; }
+}
+
 /* --- tablet & small phones in the corner layout: tighten, drop the feed --- */
 @media (max-width: 820px) {
   .bloom-wrap { display: none; }
@@ -839,9 +886,10 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
   .layer-toggles { top: auto; bottom: calc(var(--pad) + 4px); }
 }
 
-/* --- phones: stack the four panels into one scrollable column over the fixed
-       field. The document itself scrolls now (it was overflow:hidden before). --- */
-@media (max-width: 680px) {
+/* --- phones OR short viewports: stack the four panels into one scrollable column over the fixed
+       field. The document itself scrolls now (it was overflow:hidden before). Triggered by narrow
+       width OR insufficient height, so low-resolution / small monitors never collide either. --- */
+@media (max-width: 680px), (max-height: 600px) {
   html { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   body { height: auto; min-height: 100%; overflow: visible; }
 
@@ -868,13 +916,6 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
   .wallets { width: min(94vw, 372px); }
   .drawer { width: min(96vw, 440px); }
   .inspector { max-height: 70vh; }
-}
-
-/* --- short viewports (landscape phones / small windows): drop the tallest bits --- */
-@media (max-height: 560px) {
-  .micro { display: none; }
-  .about-points { display: none; }
-  .panel-pop { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

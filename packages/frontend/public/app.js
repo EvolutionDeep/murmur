@@ -2481,6 +2481,35 @@ function spawnRippleAt(x, y, color) {
   ripples.push({ x, y, t0: performance.now(), color });
 }
 
+// ================= token contract address (copy-to-clipboard) =================
+// The project token CA is shown truncated in the economy panel; clicking copies the FULL address.
+// navigator.clipboard works on our HTTPS origin; the hidden-textarea fallback covers older browsers
+// and non-secure contexts so the copy never silently fails.
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (_) { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", "");
+    ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) { return false; }
+}
+
+let tcaTimer = 0;
+async function copyTokenCA(btn) {
+  const ca = btn.dataset.ca; if (!ca) return;
+  const ok = await copyToClipboard(ca);
+  btn.textContent = ok ? "copied ✓" : shortHash(ca);
+  btn.classList.toggle("copied", ok);
+  clearTimeout(tcaTimer);
+  tcaTimer = setTimeout(() => { btn.textContent = shortHash(ca); btn.classList.remove("copied"); }, 1400);
+}
+
 // ================= misc UI bindings =================
 function bindUI() {
   $("ins-close").addEventListener("click", deselect);
@@ -2499,6 +2528,7 @@ function bindUI() {
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
+  const tca = $("tca-copy"); if (tca) tca.addEventListener("click", () => copyTokenCA(tca));
   const ulb = $("pulse-btn"); if (ulb) ulb.addEventListener("click", togglePulse);
   const ulc = $("pulse-close"); if (ulc) ulc.addEventListener("click", closePulse);
   // the pulse drawer rebuilds each render, so bind the buy button by delegation once
