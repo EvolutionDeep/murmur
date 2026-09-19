@@ -103,12 +103,12 @@ body { transition: background 1.6s linear; }
   color: var(--muted);
 }
 .topmeta .sep { opacity: 0.4; }
-.x-link, .gh-link {
+.x-link, .gh-link, .api-link {
   display: inline-flex; align-items: center; gap: 5px;
   color: var(--muted); text-decoration: none;
   transition: color 0.35s ease;
 }
-.x-link:hover, .gh-link:hover { color: var(--ink); }
+.x-link:hover, .gh-link:hover, .api-link:hover { color: var(--ink); }
 .x-link .x-glyph, .gh-link .gh-glyph { fill: currentColor; flex: none; }
 .x-link .x-handle { letter-spacing: 0.14em; }
 .link-dot {

@@ -41,14 +41,22 @@ function readEnv(file) {
     if (!line || line.startsWith("#")) continue;
     const i = line.indexOf("=");
     if (i < 0) continue;
-    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    // Strip one layer of matching surrounding quotes (standard .env convention): KEY="0x.." or KEY='0x..'.
+    // Without this, a quoted value would be fed to normPk as `"0x.."` -> `0x"0x.."` -> invalid private key.
+    let val = line.slice(i + 1).trim();
+    const q = val[0];
+    if (val.length >= 2 && (q === '"' || q === "'") && val[val.length - 1] === q) val = val.slice(1, -1).trim();
+    out[line.slice(0, i).trim()] = val;
   }
   return out;
 }
 const envFile = path.join(root, ".env.local");
 const env = { ...readEnv(envFile) };
+// Run-scoped knobs: an EXPLICIT process.env value WINS over .env.local. This matters because production
+// .env.local may pin CHAIN_ID=5042 (mainnet); an explicit `CHAIN_ID=5042002 npm run deploy:manifest` must
+// reliably target testnet regardless. Absent a process.env value we fall back to .env.local (or the default).
 for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "CHAIN_ID", "MANIFEST_CONFIRM", "MANIFEST_COMMITTER", "MANIFEST_HASH"]) {
-  if (!env[k] && process.env[k]) env[k] = process.env[k];
+  if (process.env[k]) env[k] = process.env[k];
 }
 
 // ---- proxy (Node's global fetch/undici honours the global dispatcher) ----

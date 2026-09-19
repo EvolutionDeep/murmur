@@ -2,6 +2,7 @@
 
 import type { Env } from "./config.js";
 import { FlyStateDO } from "./state.js";
+import { OPENAPI_SPEC } from "./openapi.js";
 
 // FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
 // swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
@@ -34,21 +35,38 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") ?? env.FRONTEND_ORIGIN ?? "*";
 
+    // Non-breaking versioning: an optional /v1 prefix serves the identical surface
+    // (/v1/population === /population). Strip it once here so neither the root handler nor the
+    // DO router needs to know about it.
+    const rawPath = url.pathname;
+    const path = rawPath === "/v1" ? "/" : rawPath.startsWith("/v1/") ? rawPath.slice(3) : rawPath;
+
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
+    // The OpenAPI 3.1 contract — served straight from the worker (no DO round-trip), free + CORS-open.
+    if (path === "/openapi.json") {
+      return new Response(JSON.stringify(OPENAPI_SPEC), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=300", ...corsHeaders(origin) },
+      });
+    }
+
     // Root path: health check + simple endpoint navigation
-    if (url.pathname === "/" || url.pathname === "/health") {
+    if (path === "/" || path === "/health") {
       return new Response(
         JSON.stringify({
           ok: true,
           name: "murmur",
           version: "0.2.0",
           chain: "arc",
-          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "d1-history-archive", "brain-manifest-provenance"],
+          apiVersion: "v1",
+          openapi: "/openapi.json",
+          docs: "https://muros.live/developers",
+          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "d1-history-archive", "brain-manifest-provenance", "public-api-openapi"],
           endpoints: [
+            "GET  /openapi.json (this API's OpenAPI 3.1 contract — free, no key, CORS-enabled; human docs at muros.live/developers)",
             "GET  /state",
             "GET  /population   (collective mood + per-fly drives + economy summary — the frontend feed)",
             "GET  /market       (current Arc activity → temperature / regime)",
@@ -74,9 +92,10 @@ export default {
       );
     }
 
-    // Forward every other request to the DO
+    // Forward every other request to the DO (with the /v1 prefix already stripped)
     const stub = getDO(env);
     const doUrl = new URL(request.url);
+    doUrl.pathname = path;
     const resp = await stub.fetch(new Request(doUrl.toString(), request));
 
     // Re-apply CORS headers (the DO already adds them once; keep it idempotent here)

@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#f2eee6" />
+  <title>murmur — public API · developers</title>
+  <meta name="description" content="The murmur public API: free, keyless, CORS-enabled read-only JSON into a live autonomous economy of 24 fruit-fly nervous systems settling real USDC on Arc. OpenAPI 3.1 contract, trustless neural provenance, no LLM." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #f2eee6;
+      --ink: #1a1a18;
+      --ink-rgb: 26, 26, 24;
+      --accent: #9a8c6e;
+      --hair: rgba(26, 26, 24, 0.14);
+      --hair-soft: rgba(26, 26, 24, 0.07);
+      --muted: rgba(26, 26, 24, 0.55);
+      --get: #5b7c8d;
+      --paid: #c05e3c;
+      --display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    ::selection { background: rgba(154, 140, 110, 0.24); }
+    a { color: inherit; }
+
+    .grain {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.04;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px clamp(16px, 4vw, 40px);
+      background: rgba(242, 238, 230, 0.9);
+      border-bottom: 1px solid var(--hair);
+      backdrop-filter: saturate(1.1) blur(2px);
+    }
+    .wordmark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
+    .wordmark .mark { fill: var(--accent); transform: translateY(3px); }
+    .wordmark .name { font-family: var(--display); font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+    .wordmark .sub { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .toplinks { display: flex; align-items: center; gap: 16px; font-size: 12px; }
+    .toplinks a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .2s, border-color .2s; }
+    .toplinks a:hover { color: var(--ink); border-color: var(--hair); }
+
+    .wrap { position: relative; z-index: 1; max-width: 920px; margin: 0 auto; padding: clamp(28px, 6vw, 64px) clamp(16px, 4vw, 40px) 96px; }
+
+    .hero h1 { font-family: var(--display); font-size: clamp(30px, 6vw, 46px); font-weight: 400; line-height: 1.08; letter-spacing: -0.01em; }
+    .hero h1 em { font-style: italic; color: var(--accent); }
+    .hero .lede { margin-top: 16px; max-width: 62ch; color: rgba(var(--ink-rgb), 0.8); font-size: 14.5px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .badge {
+      font-size: 11px; letter-spacing: 0.04em; padding: 5px 11px; border: 1px solid var(--hair);
+      border-radius: 999px; color: rgba(var(--ink-rgb), 0.72); background: rgba(255,255,255,0.25);
+    }
+    .badge b { color: var(--ink); font-weight: 500; }
+
+    .baseurl {
+      margin-top: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 13px 16px; border: 1px solid var(--hair); border-radius: 10px; background: rgba(255,255,255,0.3);
+    }
+    .baseurl .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
+    .baseurl code { font-size: 14px; font-weight: 500; }
+    .copy { margin-left: auto; cursor: pointer; font-size: 11px; color: var(--muted); border: 1px solid var(--hair); background: transparent; border-radius: 6px; padding: 4px 9px; font-family: var(--mono); transition: color .2s, border-color .2s; }
+    .copy:hover { color: var(--ink); border-color: var(--accent); }
+
+    section { margin-top: 52px; }
+    h2 { font-family: var(--display); font-size: 23px; font-weight: 400; letter-spacing: -0.005em; margin-bottom: 6px; }
+    h2 .n { color: var(--accent); font-size: 15px; margin-right: 10px; font-family: var(--mono); }
+    .sec-note { color: var(--muted); font-size: 13px; max-width: 68ch; margin-bottom: 20px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+    .card { border: 1px solid var(--hair); border-radius: 10px; padding: 15px 16px; background: rgba(255,255,255,0.22); }
+    .card h3 { font-size: 12.5px; font-weight: 500; letter-spacing: 0.02em; margin-bottom: 6px; }
+    .card p { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+
+    pre {
+      border: 1px solid var(--hair); border-radius: 9px; background: rgba(var(--ink-rgb), 0.035);
+      padding: 13px 15px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; margin-top: 10px;
+    }
+    code { font-family: var(--mono); }
+    p code, li code, td code { background: rgba(var(--ink-rgb), 0.06); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+    .prose { max-width: 72ch; font-size: 13.5px; color: rgba(var(--ink-rgb), 0.82); }
+    .prose h3 { font-family: var(--display); font-size: 17px; font-weight: 400; margin: 20px 0 6px; color: var(--ink); }
+    .prose p { margin: 9px 0; }
+    .prose ul { margin: 9px 0 9px 20px; }
+    .prose li { margin: 4px 0; }
+    .prose strong { font-weight: 500; color: var(--ink); }
+
+    .callout { border: 1px solid var(--hair); border-left: 3px solid var(--accent); border-radius: 8px; padding: 16px 18px; background: rgba(255,255,255,0.28); }
+    .callout.paid { border-left-color: var(--paid); }
+    .callout h3 { font-family: var(--display); font-size: 17px; font-weight: 400; margin-bottom: 6px; }
+    .callout p { font-size: 13px; color: rgba(var(--ink-rgb), 0.78); margin: 6px 0; }
+    .callout .mono-line { font-size: 12px; color: var(--muted); word-break: break-all; }
+
+    .tag-group { margin-top: 34px; }
+    .tag-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--hair); padding-bottom: 7px; margin-bottom: 4px; }
+    .tag-head .t { font-family: var(--display); font-size: 18px; font-weight: 400; text-transform: capitalize; }
+    .tag-head .d { font-size: 12px; color: var(--muted); }
+
+    .ep { border: 1px solid var(--hair); border-radius: 10px; margin-top: 12px; background: rgba(255,255,255,0.2); overflow: hidden; }
+    .ep-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; }
+    .ep-head:hover { background: rgba(var(--ink-rgb), 0.025); }
+    .m { font-size: 10.5px; font-weight: 500; letter-spacing: 0.07em; padding: 3px 8px; border-radius: 5px; color: #fff; background: var(--get); flex: none; }
+    .m.paid { background: var(--paid); }
+    .ep-path { font-size: 13.5px; font-weight: 500; }
+    .ep-path .v1 { color: var(--muted); font-weight: 300; }
+    .ep-sum { margin-left: auto; font-size: 12px; color: var(--muted); text-align: right; max-width: 46%; }
+    .ep-body { display: none; padding: 0 16px 16px; border-top: 1px solid var(--hair-soft); }
+    .ep.open .ep-body { display: block; }
+    .ep.open .ep-head { border-bottom: 1px solid var(--hair-soft); }
+    .ep-desc { font-size: 13px; color: rgba(var(--ink-rgb), 0.8); margin: 14px 0; max-width: 76ch; }
+    .ep-sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 16px 0 6px; }
+
+    table.params { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.params th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--hair); }
+    table.params td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--hair-soft); vertical-align: top; }
+    table.params .pn { font-weight: 500; white-space: nowrap; }
+    table.params .req { color: var(--paid); font-size: 10.5px; }
+    table.params .ty { color: var(--muted); font-size: 11.5px; }
+
+    .schema { font-size: 12.5px; }
+    .schema details { margin: 2px 0 2px 0; }
+    .schema summary { cursor: pointer; list-style: none; }
+    .schema summary::-webkit-details-marker { display: none; }
+    .srow { display: flex; gap: 9px; align-items: baseline; padding: 2.5px 0; }
+    .srow .k { font-weight: 500; }
+    .srow .ty { color: var(--get); font-size: 11.5px; flex: none; }
+    .srow .de { color: var(--muted); font-size: 11.5px; }
+    .snest { margin-left: 15px; padding-left: 12px; border-left: 1px solid var(--hair-soft); }
+
+    .curl-row { display: flex; align-items: center; gap: 10px; }
+    .curl-row pre { flex: 1; margin-top: 0; }
+
+    .foot { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 20px; }
+    .foot a { color: var(--muted); }
+    .foot a:hover { color: var(--ink); }
+    .err { color: var(--paid); font-size: 13px; }
+    .loading { color: var(--muted); font-size: 13px; padding: 30px 0; }
+  </style>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="wordmark" href="/">
+      <svg class="mark" viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
+        <circle cx="12" cy="14" r="3.1" /><circle cx="20.5" cy="11.5" r="2.3" /><circle cx="17.5" cy="21" r="1.9" />
+      </svg>
+      <span class="name">murmur</span>
+      <span class="sub">public api</span>
+    </a>
+    <nav class="toplinks">
+      <a href="/">← the swarm</a>
+      <a href="https://api.muros.live/openapi.json" target="_blank" rel="noopener">openapi.json</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <div class="hero">
+      <h1>The murmur <em>public API</em></h1>
+      <p class="lede" id="lede">
+        A free, keyless, CORS-enabled read-only window into a live autonomous economy of 24 fruit-fly
+        nervous systems settling real USDC on Arc mainnet over x402 — every decision made by spiking
+        neurons, no LLM anywhere in the loop.
+      </p>
+      <div class="badges" id="badges"></div>
+      <div class="baseurl">
+        <span class="lbl">base url</span>
+        <code id="base">https://api.muros.live</code>
+        <button class="copy" id="copy-base" type="button">copy</button>
+      </div>
+    </div>
+
+    <section>
+      <h2><span class="n">01</span>Good to know</h2>
+      <div class="grid">
+        <div class="card"><h3>Free &amp; keyless</h3><p>Every endpoint below is free, needs no API key or account, and returns JSON.</p></div>
+        <div class="card"><h3>CORS-enabled</h3><p>Call straight from the browser — <code>Access-Control-Allow-Origin: *</code> on every response.</p></div>
+        <div class="card"><h3>Versioned</h3><p>All paths also answer under a <code>/v1</code> prefix (<code>/v1/population</code> ≡ <code>/population</code>) as the stable surface.</p></div>
+        <div class="card"><h3>Unified errors</h3><p>Errors return <code>{ error, code, status }</code> with a stable machine-readable <code>code</code>.</p></div>
+        <div class="card"><h3>Atomic amounts</h3><p><code>*Atomic</code>/<code>amount</code>/<code>balance</code> are exact integer strings (USDC = 6 decimals). Do maths on those.</p></div>
+        <div class="card"><h3>Live contract</h3><p>This page renders <a href="https://api.muros.live/openapi.json" target="_blank" rel="noopener">/openapi.json</a> live, so docs never drift from the deploy.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="n">02</span>Quickstart</h2>
+      <p class="sec-note">No auth, no SDK — just HTTP. Grab the live swarm state, or the whole economy:</p>
+      <pre><code># what is murmur doing right now?
+curl "https://api.muros.live/state"
+
+# every fly's neural drives + the deal feed (the frontend feed)
+curl "https://api.muros.live/population"
+
+# the x402 agent economy: wallets, deals, totals
+curl "https://api.muros.live/economy"
+
+# the machine-readable API contract itself
+curl "https://api.muros.live/openapi.json"</code></pre>
+    </section>
+
+    <section>
+      <h2><span class="n">03</span>Trustless provenance</h2>
+      <p class="sec-note">Two on-chain anchors let you verify murmur without trusting us. Both are live on Arc mainnet (chainId 5042).</p>
+      <div class="callout">
+        <h3>🧠 The brain manifest — prove the connectomes are real</h3>
+        <p>One hash commits the whole swarm's connectomes on-chain. Fetch it, recompute <code>sha256(canonical(manifest))</code> yourself, read the anchor off Arc, then rebuild all 24 brains from their committed seeds offline. All three must agree.</p>
+        <p class="mono-line">GET /manifest → manifestHash · registryAddress<br />GET /manifest/replay → ok:true (24 brains rebuilt from seeds)</p>
+        <p class="mono-line" id="anchor-line">NeuralManifestRegistry · loading live anchor…</p>
+      </div>
+      <div class="callout" style="margin-top:12px">
+        <h3>🔏 Neural receipts — prove the money moved on neurons</h3>
+        <p>Every real transfer's EIP-3009 nonce is the sha256 of the receipt bundling the frozen neural read-outs that caused it, hash-chained via <code>prevChain</code> and mirrored in the NeuralReceiptRegistry. A receipt invented after the fact could never hash to a mined nonce.</p>
+        <p class="mono-line">GET /proofs → the chain (last 64) · chainHead<br />GET /proofs/verify?tx=0x… → { selfConsistent, match, registry }</p>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="n">04</span>Endpoints</h2>
+      <p class="sec-note">Rendered live from the OpenAPI 3.1 contract. Click any endpoint to expand its parameters, response schema and a ready-to-run <code>curl</code>.</p>
+      <div id="endpoints"><p class="loading">loading the contract from api.muros.live/openapi.json …</p></div>
+    </section>
+
+    <section>
+      <h2><span class="n">05</span>The one paid endpoint (x402)</h2>
+      <div class="callout paid">
+        <h3>💳 GET /signal/pulse</h3>
+        <p>Everything above is free. The single exception is the machine-readable Arc-activity signal, sold over <strong>x402</strong>: call it without payment and it answers <code>402 Payment Required</code> with the requirements; attach a browser-signed EIP-3009 <code>X-PAYMENT</code> header to settle in USDC and receive the signal. The Worker relays the payment and never holds your keys.</p>
+        <p class="mono-line">GET /signal/requirements → the free x402 requirements a caller signs to buy it</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span>murmur — a population of neural agents settling on arc</span>
+      <a href="/">the swarm</a>
+      <a href="https://api.muros.live/openapi.json" target="_blank" rel="noopener">openapi.json</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
+    </footer>
+  </div>
+
+  <script type="module">
+    const API = "https://api.muros.live";
+
+    // ---- tiny markdown subset → HTML (for the OpenAPI info.description) ----
+    function md(src) {
+      const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const inline = (s) => esc(s)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      const out = [];
+      let list = false;
+      for (const raw of String(src).split("\n")) {
+        const line = raw.trimEnd();
+        if (/^###\s+/.test(line)) { if (list) { out.push("</ul>"); list = false; } out.push("<h3>" + inline(line.replace(/^###\s+/, "")) + "</h3>"); continue; }
+        if (/^[-•]\s+/.test(line)) { if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + inline(line.replace(/^[-•]\s+/, "")) + "</li>"); continue; }
+        if (line === "") { if (list) { out.push("</ul>"); list = false; } continue; }
+        if (list) { out.push("</ul>"); list = false; }
+        out.push("<p>" + inline(line) + "</p>");
+      }
+      if (list) out.push("</ul>");
+      return out.join("\n");
+    }
+
+    function typeLabel(schema) {
+      if (!schema) return "any";
+      if (schema.$ref) return schema.$ref.split("/").pop();
+      let t = schema.type;
+      if (Array.isArray(t)) t = t.join("|");
+      if (t === "array") return "[" + typeLabel(schema.items) + "]";
+      return t || (schema.enum ? "enum" : "object");
+    }
+
+    function resolve(schema, spec, seen) {
+      seen = seen || new Set();
+      if (schema && schema.$ref) {
+        const name = schema.$ref.split("/").pop();
+        if (seen.has(name)) return { type: "object", description: name + " ↻" };
+        const next = new Set(seen); next.add(name);
+        const target = (spec.components && spec.components.schemas && spec.components.schemas[name]) || {};
+        return resolve(target, spec, next);
+      }
+      return schema || {};
+    }
+
+    // Render a JSON-Schema object as a collapsible property tree.
+    function schemaTree(schema, spec, depth, seen) {
+      const s = resolve(schema, spec, seen);
+      if (s.type === "array") {
+        const inner = resolve(s.items, spec, seen);
+        if (inner && (inner.type === "object" || inner.properties) && depth > 0) {
+          return '<details open><summary class="srow"><span class="ty">[ ]</span><span class="de">array of objects</span></summary><div class="snest">' + schemaTree(s.items, spec, depth - 1, seen) + "</div></details>";
+        }
+        return '<div class="srow"><span class="ty">[' + typeLabel(s.items) + "]</span><span class=\"de\">" + (s.description || "array") + "</span></div>";
+      }
+      if (!s.properties) {
+        return '<div class="srow"><span class="ty">' + typeLabel(s) + '</span><span class="de">' + (s.description || "") + "</span></div>";
+      }
+      let html = "";
+      for (const [k, v] of Object.entries(s.properties)) {
+        const rv = resolve(v, spec, seen);
+        const nested = rv && (rv.properties || (rv.type === "array" && resolve(rv.items, spec, seen).properties));
+        const ty = typeLabel(v);
+        const de = v.description || rv.description || "";
+        if (nested && depth > 0) {
+          html += '<details><summary class="srow"><span class="k">' + k + '</span><span class="ty">' + ty + '</span><span class="de">' + de + "</span></summary><div class=\"snest\">" + schemaTree(v, spec, depth - 1, seen) + "</div></details>";
+        } else {
+          html += '<div class="srow"><span class="k">' + k + '</span><span class="ty">' + ty + "</span><span class=\"de\">" + de + "</span></div>";
+        }
+      }
+      return html;
+    }
+
+    function sampleUrl(path, op) {
+      let p = path.replace(/\{(\w+)\}/g, (_, n) => {
+        const prm = (op.parameters || []).find((x) => x.name === n && x.in === "path");
+        return String((prm && prm.schema && prm.schema.example) ?? 0);
+      });
+      const q = (op.parameters || []).filter((x) => x.in === "query").map((x) => {
+        const ex = (x.schema && x.schema.example) ?? (x.schema && x.schema.default) ?? (x.schema && x.schema.type === "integer" ? 1 : "…");
+        return encodeURIComponent(x.name) + "=" + encodeURIComponent(ex);
+      });
+      return API + p + (q.length ? "?" + q.join("&") : "");
+    }
+
+    function paramsTable(op) {
+      const ps = op.parameters || [];
+      if (!ps.length) return "";
+      let rows = "";
+      for (const p of ps) {
+        const ty = p.schema ? typeLabel(p.schema) : "string";
+        rows += "<tr><td class=\"pn\">" + p.name + (p.required ? ' <span class="req">required</span>' : "") + '</td><td class="ty">' + p.in + " · " + ty + "</td><td>" + (p.description || "") + "</td></tr>";
+      }
+      return '<div class="ep-sub">parameters</div><table class="params"><thead><tr><th>name</th><th>in · type</th><th>description</th></tr></thead><tbody>' + rows + "</tbody></table>";
+    }
+
+    function responseBlock(op, spec) {
+      const r = op.responses && (op.responses[200] || op.responses["200"]);
+      if (!r) return "";
+      const sch = r.content && r.content["application/json"] && r.content["application/json"].schema;
+      let tree = sch ? '<div class="schema">' + schemaTree(sch, spec, 4, new Set()) + "</div>" : '<div class="schema"><em>see the live response</em></div>';
+      return '<div class="ep-sub">200 response · ' + (r.description || "") + "</div>" + tree;
+    }
+
+    function render(spec) {
+      // badges
+      const info = spec.info || {};
+      const badges = [
+        ["version", info.version],
+        ["openapi", spec.openapi],
+        ["chain", "arc mainnet · 5042"],
+        ["auth", "none"],
+        ["cors", "*"],
+        ["format", "json"],
+      ];
+      document.getElementById("badges").innerHTML = badges
+        .filter((b) => b[1]).map((b) => '<span class="badge">' + b[0] + " <b>" + b[1] + "</b></span>").join("");
+      if (spec.servers && spec.servers[0]) document.getElementById("base").textContent = spec.servers[0].url;
+
+      // group paths by tag
+      const tagMeta = {};
+      for (const t of spec.tags || []) tagMeta[t.name] = t;
+      const groups = {};
+      for (const [path, item] of Object.entries(spec.paths || {})) {
+        for (const [method, op] of Object.entries(item)) {
+          if (!op || typeof op !== "object" || !op.responses) continue;
+          const tag = (op.tags && op.tags[0]) || "misc";
+          (groups[tag] = groups[tag] || []).push({ path, method, op });
+        }
+      }
+      const order = (spec.tags || []).map((t) => t.name).concat(Object.keys(groups).filter((k) => !tagMeta[k]));
+      let html = "";
+      for (const tag of order) {
+        const list = groups[tag];
+        if (!list || !list.length) continue;
+        const meta = tagMeta[tag] || {};
+        html += '<div class="tag-group"><div class="tag-head"><span class="t">' + tag + '</span><span class="d">' + (meta.description || "") + "</span></div>";
+        for (const { path, method, op } of list) {
+          const paid = path.indexOf("/signal/pulse") === 0;
+          const m = method.toUpperCase();
+          const url = sampleUrl(path, op);
+          html += '<div class="ep">' +
+            '<div class="ep-head" role="button" tabindex="0">' +
+              '<span class="m' + (paid ? " paid" : "") + '">' + m + "</span>" +
+              '<span class="ep-path">' + path + ' <span class="v1">· /v1' + (path === "/" ? "" : path) + "</span></span>" +
+              '<span class="ep-sum">' + (op.summary || "") + "</span>" +
+            "</div>" +
+            '<div class="ep-body">' +
+              (op.description ? '<p class="ep-desc">' + op.description + "</p>" : "") +
+              paramsTable(op) +
+              responseBlock(op, spec) +
+              '<div class="ep-sub">try it</div>' +
+              '<div class="curl-row"><pre><code>curl "' + url + '"</code></pre><button class="copy" type="button" data-copy=\'curl "' + url + '"\'>copy</button></div>' +
+            "</div>" +
+          "</div>";
+        }
+        html += "</div>";
+      }
+      const host = document.getElementById("endpoints");
+      host.innerHTML = html;
+
+      // expand/collapse
+      host.querySelectorAll(".ep-head").forEach((h) => {
+        const toggle = () => h.parentElement.classList.toggle("open");
+        h.addEventListener("click", toggle);
+        h.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      });
+      // copy buttons (endpoint + base)
+      document.querySelectorAll(".copy").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const txt = b.dataset.copy || document.getElementById("base").textContent;
+          try { await navigator.clipboard.writeText(txt); const o = b.textContent; b.textContent = "copied ✓"; setTimeout(() => (b.textContent = o), 1200); } catch {}
+        });
+      });
+    }
+
+    // live on-chain anchor (best-effort; fails silently offline) — proves the manifest is really on Arc
+    async function loadAnchor() {
+      const el = document.getElementById("anchor-line");
+      try {
+        const m = await (await fetch(API + "/manifest")).json();
+        const hash = m.manifestHash, reg = m.registryAddress;
+        el.innerHTML = "manifestHash <b>0x" + hash.slice(0, 12) + "…" + hash.slice(-6) + "</b>" +
+          (reg ? " · committed in NeuralManifestRegistry <b>" + reg + "</b>" : " · not anchored on-chain yet");
+      } catch { el.textContent = "NeuralManifestRegistry · (live anchor unavailable offline)"; }
+    }
+
+    async function boot() {
+      loadAnchor();
+      try {
+        const spec = await (await fetch(API + "/openapi.json")).json();
+        render(spec);
+      } catch (e) {
+        document.getElementById("endpoints").innerHTML =
+          '<p class="err">Could not load the live contract from ' + API + '/openapi.json (' + e.message +
+          '). The API may be unreachable from here — open <a href="' + API + '/openapi.json" target="_blank" rel="noopener">/openapi.json</a> directly, or check <a href="' + API + '" target="_blank" rel="noopener">the service root</a>.</p>';
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

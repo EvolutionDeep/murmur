@@ -479,10 +479,10 @@ export class FlyStateDO {
       if (req.method === "POST" && path === "/stimulus") return await this.postStimulus(req);
       if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
-      return json({ error: "not found" }, 404);
+      return jsonError("not_found", "no such endpoint", 404);
     } catch (e) {
       console.error("[DO] fetch error:", e);
-      return json({ error: (e as Error).message }, 500);
+      return jsonError("internal_error", (e as Error).message, 500);
     }
   }
 
@@ -852,7 +852,7 @@ export class FlyStateDO {
   private async getProofVerify(url: URL) {
     if (!this.cfg.economy.enabled) return json({ enabled: false }, 400);
     const tx = (url.searchParams.get("tx") ?? "").trim();
-    if (!tx) return json({ error: "tx required" }, 400);
+    if (!tx) return jsonError("bad_request", "tx required", 400);
     const economy = await this.ensureEconomy();
     const proof = economy.proofForTx(tx);
     if (!proof) return json({ found: false, txHash: tx });
@@ -1044,10 +1044,10 @@ export class FlyStateDO {
    * (economy.settleExternal); on success serve the signal + X-PAYMENT-RESPONSE, else re-issue the 402.
    */
   private async getSignalPulse(req: Request): Promise<Response> {
-    if (!this.cfg.signal.enabled) return json({ error: "signal product disabled" }, 404);
+    if (!this.cfg.signal.enabled) return jsonError("not_found", "signal product disabled", 404);
     const economy = await this.ensureEconomy();
     const { reqs } = await this.signalRequirements(economy);
-    if (!reqs) return json({ error: "signal product not configured" }, 503);
+    if (!reqs) return jsonError("service_unavailable", "signal product not configured", 503);
 
     const payHeader = req.headers.get("X-PAYMENT") ?? req.headers.get("x-payment");
     if (!payHeader) return paymentRequired(reqs, "X-PAYMENT header required");
@@ -1171,7 +1171,7 @@ export class FlyStateDO {
     if (!prediction) return json({ enabled: false }, 400);
     const raw = url.searchParams.get("round");
     const round = raw != null ? Number(raw) : NaN;
-    if (!Number.isFinite(round)) return json({ error: "round required" }, 400);
+    if (!Number.isFinite(round)) return jsonError("bad_request", "round required", 400);
     const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
     const v = await prediction.verifyRound(round);
     if (!v.found || !v.rr) return json({ found: false, round });
@@ -1281,7 +1281,7 @@ export class FlyStateDO {
     const flyIdParam = url.searchParams.get("flyId");
     const flyId = flyIdParam ? Number(flyIdParam) : 0;
     const neural = await swarm.snapshotFly(flyId);
-    if (!neural) return json({ error: `fly ${flyId} not found` }, 404);
+    if (!neural) return jsonError("not_found", `fly ${flyId} not found`, 404);
     // Attach this fly's agent wallet (when the economy is on) so the inspector can show its economy.
     let agent: any = null;
     if (this.cfg.economy.enabled) {
@@ -1295,7 +1295,7 @@ export class FlyStateDO {
     const swarm = await this.ensureSwarm();
     const flyId = Number(flyIdStr);
     const detail = await swarm.flyDetail(flyId);
-    if (!detail) return json({ error: "not found" }, 404);
+    if (!detail) return jsonError("not_found", "no such fly", 404);
     const b = detail.behavior;
     let agent: any = null;
     if (this.cfg.economy.enabled) {
@@ -1361,7 +1361,7 @@ export class FlyStateDO {
     if (!token) return null;
     const url = new URL(req.url);
     const provided = req.headers.get("x-admin-token") ?? url.searchParams.get("token") ?? "";
-    return provided === token ? null : json({ error: "forbidden" }, 403);
+    return provided === token ? null : jsonError("forbidden", "forbidden", 403);
   }
 
   /** Debug: run one cron tick on demand. */
@@ -1458,4 +1458,15 @@ function json(data: unknown, status = 200): Response {
       "Cache-Control": "no-store",
     },
   });
+}
+
+/** Stable machine-readable error slugs for the public API (mirrors components.schemas.ApiError in openapi.ts). */
+type ApiErrorCode = "not_found" | "bad_request" | "internal_error" | "payment_required" | "forbidden" | "service_unavailable";
+
+/**
+ * The unified public-API error envelope `{ error, code, status }`. `error` stays a plain message string for
+ * backward compatibility with existing consumers; `code` is a stable slug and `status` mirrors the HTTP status.
+ */
+function jsonError(code: ApiErrorCode, message: string, status: number): Response {
+  return json({ error: message, code, status }, status);
 }

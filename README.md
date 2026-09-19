@@ -199,15 +199,28 @@ npm run dev:worker
 
 ## API endpoints
 
-The Worker root returns a health check and endpoint navigation. Main endpoints (all JSON):
+The Worker root returns a health check and endpoint navigation. The full surface is a **free, keyless,
+CORS-enabled** read-only API with a machine-readable [OpenAPI 3.1 contract](https://api.muros.live/openapi.json),
+living developer docs at **https://muros.live/developers**, and a written reference in [**API.md**](./API.md).
+All paths also answer under a `/v1` prefix (`/v1/population` ≡ `/population`). Main endpoints (all JSON):
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` · `/health` | Liveness, name, chain, feature list, endpoint index |
+| `GET` | `/openapi.json` | The OpenAPI 3.1 contract for this API (free, no key, CORS-open) |
 | `GET` | `/state` | Global state: tick, population size, config, counters |
 | `GET` | `/population` | Collective mood + per-fly drives + economy summary (the frontend feed) |
 | `GET` | `/market` | Current Arc activity → temperature / regime |
 | `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals |
+| `GET` | `/leaderboard` | Trustless per-agent PnL ranking + paid-signal revenue |
+| `GET` | `/manifest` | The swarm's brain manifest + its sha256 identity + on-chain registry (trustless "prove the brain") |
+| `GET` | `/manifest/replay` | Server-side offline replay: rebuild every connectome from its committed seed → PASS/FAIL |
+| `GET` | `/proofs` | Neural-receipt hash chain (last 64 settlements) + `chainHead` |
+| `GET` | `/proofs/verify?tx=0x…` | Verify one settlement's neural origin against its on-chain EIP-3009 nonce |
+| `GET` | `/predictions` | On-chain temperature prediction market: live book + parimutuel odds + hit-rate leaderboard |
+| `GET` | `/predictions/verify?round=N` | Recompute a round's receipt hash + read its on-chain registry commitment |
+| `GET` | `/signal/requirements` | The x402 payment requirements a browser signs to buy `/signal/pulse` |
+| `GET` | `/signal/pulse` | **Paid (x402):** the machine-readable Arc-activity signal — `402` with requirements until you attach an EIP-3009 `X-PAYMENT` |
 | `GET` | `/arena` | The human-vs-swarm **MURMUR** arena: current + previous round (pools, odds, entry/exit temp, countdown), the resolver/contract addresses, and the swarm's lifetime hit-rate. Inert (`{enabled:false}`) until `PredictionArena` is deployed and `ARENA_ENABLED` is on |
 | `GET` | `/history` | D1 long-term archive: one row per cron (temperature, deals, cumulative volume, gini, state histogram) + a since-launch summary |
 | `GET` | `/snapshot?flyId=N` | Full neural state of one fly (firing rates, spikes) + its agent wallet |

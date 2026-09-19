@@ -1,0 +1,3 @@
+# Cloudflare Pages redirects
+# Pretty URL for the developer docs (serves developers.html without changing the address bar)
+/developers   /developers.html   200

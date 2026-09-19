@@ -108,6 +108,14 @@ ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending n
 # no murmur server in the loop. Absent ⇒ the commit step is skipped entirely (zero behaviour change).
 ECONOMY_REGISTRY_ADDRESS = "0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815"   # deployed on Arc mainnet (5042); committer = the Worker's facilitator wallet
 
+# ===== Brain-MANIFEST REGISTRY (ONCHAIN ONLY — trustless "prove the brain") =====
+# Deployed contracts/NeuralManifestRegistry.sol via `npm run deploy:manifest` (mainnet needs CHAIN_ID=5042 +
+# MANIFEST_CONFIRM=1; it re-runs the offline replay and only commits the hash on PASS). When set, GET /manifest
+# reports this address so anyone can eth_call the committed manifestHash off Arc and rebuild every connectome
+# from its committed seeds offline — proving the swarm is real deterministic neurons, no LLM. Absent ⇒ the
+# manifest is still served + replayable, just not anchored on-chain yet (zero behaviour change).
+MANIFEST_REGISTRY_ADDRESS = "0x3412eb909252adb983aaf793f97a3754ca029a37"   # Arc mainnet (5042); committer = deployer 0x307D…3a0d; committed manifestHash 0x403551bb… (schema v1, pop 24)
+
 
 # ===== Circle Facilitator Service (the OFFICIAL hosted x402 facilitator — src/circle.ts) =====
 # Circle now hosts the exact role murmur self-built: its relayer screens both parties, submits the buyer's
