@@ -1,9 +1,11 @@
 name: CI
 
-# Runs the four project gates — typecheck, unit tests, build, and the neural smoke
-# test — on every push to main and every pull request. All four are keyless and
-# chain-free (the unit tests exercise the connectome, LIF dynamics, motor decoding
-# and the simulated economy in-process), so CI never needs a secret or a funded wallet.
+# Runs the project gates on every push to main, every pull request, and on demand:
+#   • verify    — typecheck, unit tests, build, and the neural smoke test (keyless, chain-free:
+#                 the unit tests exercise the connectome, LIF dynamics, motor decoding and the
+#                 simulated economy in-process, so CI never needs a secret or a funded wallet).
+#   • contracts — the on-chain Solidity suites (NeuralReceiptRegistry + PredictionArena) under forge,
+#                 including the fuzz invariants that prove the receipt hash-chain stays contiguous.
 on:
   push:
     branches: [main]
@@ -38,7 +40,7 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
 
-      - name: Unit tests (connectome · LIF · motor decoder · economy)
+      - name: Unit tests (connectome · LIF · motor decoder · economy · provenance · ipfs)
         run: npm test
 
       - name: Build (@fly/fly-brain → dist)
@@ -46,3 +48,25 @@ jobs:
 
       - name: Neural smoke test
         run: npm run smoke
+
+  contracts:
+    name: forge · registry + arena (unit + fuzz invariants)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/trader-worker/contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      # forge-std is not vendored (no lib/, no .gitmodules), so pull it here.
+      # --no-commit: the Actions checkout is a detached HEAD, and forge install would otherwise
+      # try to create a commit. solc 0.8.24 (per foundry.toml) is auto-fetched by foundry's svm.
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std --no-commit
+
+      - name: Run forge tests
+        run: forge test -vvv
