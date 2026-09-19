@@ -41,7 +41,7 @@ import {
   type BreedRequest,
   type LineageEntry,
 } from "./breed.js";
-import { planEvolution, germlineResolver, resolveNovelBreed, type EvolutionLimits } from "./evolution.js";
+import { planEvolution, germlineResolver, resolveNovelBreed, lineageAnchorPlan, type EvolutionLimits } from "./evolution.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -57,7 +57,7 @@ import {
 } from "./stimulus.js";
 import type { PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
-import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
+import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement, type LeaderRow } from "./economy.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
@@ -313,12 +313,18 @@ export class FlyStateDO {
     if (economy.facilitatorMode !== "onchain") return;                                  // no parent keys
     if (!this.cfg.economy.realSpendEnabled || this.cfg.economy.shadowOnly) return;      // master safety rails
 
+    const entries = await this.ensureLineage();
+    const rows = economy.leaderboard();
+    // ANCHOR THE ON-CHAIN FAMILY TREE first (best-effort, bounded): commit every lineage entry whose commitTx
+    // is still null and whose parents are already on Arc — the 24 genesis roots first, then their descendants
+    // — so ConnectomeLineage becomes a public, tamper-evident ancestry log AND the child bred below finds its
+    // parent already committed. Runs EVERY cron (even once the daily breeding budget is spent) so the backfill
+    // always progresses. Spends no agent funds: the gas wallet signs and commitLineage swallows any revert.
+    await this.anchorLineage(economy, entries, rows);
+
     const guard = await this.ensureEvolutionGuard();
     this.rollEvolutionDay(guard, Date.now());
     if (ev.globalDaily > 0 && guard.global >= ev.globalDaily) return;                   // daily swarm budget spent
-
-    const entries = await this.ensureLineage();
-    const rows = economy.leaderboard();
     // GERMLINE ADVANCEMENT: each agent breeds from its OWN most-recent offspring when it has one (so lines
     // accumulate generations and `cross` recombines two diverged germlines), else from its genesis root —
     // the genome the live agent actually runs + earns with. genesis[id] is valid because populationSeeds
@@ -389,6 +395,47 @@ export class FlyStateDO {
         `fee=${ev.feeUsdc}USDC gen=${child.generation} child=${child.genomeHash.slice(0, 12)} ` +
         `today=${guard.global}/${ev.globalDaily} tx=${fee.txHash.slice(0, 10)}`,
     );
+  }
+
+  /**
+   * Best-effort on-chain anchoring of the ConnectomeLineage log (idempotent, bounded). Delegates ordering +
+   * breeder resolution to the pure lineageAnchorPlan (evolution.ts), then commits each candidate with the gas
+   * wallet and records the tx on the entry. Genesis roots anchor first, so descendants — which the contract
+   * refuses until both parents are committed — follow on later ticks; the 24 roots backfill over a few crons.
+   * A failed commit simply stays null and is retried next tick. Spends no agent funds and never blocks the
+   * breed. Returns how many entries were newly anchored.
+   */
+  private async anchorLineage(
+    economy: AgentEconomy,
+    entries: LineageEntry[],
+    rows: LeaderRow[],
+    maxCommits = 6,
+  ): Promise<number> {
+    if (!this.cfg.lineageAddress || !this.cfg.economy.enabled) return 0;
+    const addrById = new Map<number, string>();
+    for (const r of rows) if (r.address) addrById.set(r.id, r.address.toLowerCase());
+    const plan = lineageAnchorPlan(entries, addrById, maxCommits);
+    if (plan.length === 0) return 0;
+    let anchored = 0;
+    for (const c of plan) {
+      const tx = await economy.commitLineage({
+        genomeHash: c.genomeHash,
+        parentA: c.parentA,
+        parentB: c.parentB,
+        op: c.op,
+        generation: c.generation,
+        breeder: c.breeder,
+      });
+      if (!tx) continue;                                        // reverted / RPC hiccup ⇒ retry next tick
+      const e = entries.find((x) => x.genomeHash === c.genomeHash);
+      if (e && !e.commitTx) { e.commitTx = tx; anchored++; }
+    }
+    if (anchored > 0) {
+      await this.state.storage.put(KEY_LINEAGE, entries);
+      const total = entries.filter((e) => e.commitTx).length;
+      console.log(`[DO] lineage anchored ${anchored} genome(s) on Arc (${total}/${entries.length} committed)`);
+    }
+    return anchored;
   }
 
   /**

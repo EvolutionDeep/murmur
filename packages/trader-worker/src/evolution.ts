@@ -188,3 +188,62 @@ export async function resolveNovelBreed<T>(
   }
   return null;
 }
+
+/** One on-chain ConnectomeLineage commit the anchoring pass should attempt (pure; the caller executes it). */
+export interface AnchorCandidate {
+  genomeHash: string;   // 64-hex sha256(canonical(genome)), no 0x
+  parentA: string;      // 64-hex, or "" for genesis
+  parentB: string;      // 64-hex, or "" unless op === 2
+  op: 0 | 1 | 2;        // genesis | mutate | cross
+  generation: number;
+  breeder: string;      // 0x… credited breeder (the contract rejects address(0))
+}
+
+/**
+ * Plan the batch of lineage entries to anchor on-chain now (pure; the caller performs the commits).
+ *
+ * ConnectomeLineage enforces ancestry IN-CONTRACT: a mutate/cross child reverts `ParentNotCommitted` unless
+ * both parents are already committed, and generations can never skip. The 24 genesis roots were seeded
+ * off-chain with breeder=null and never committed, so every descendant's commit reverted and the on-chain log
+ * stayed empty. This walks the append-ordered lineage and returns every entry whose commitTx is still null AND
+ * whose parents are all committed — either already on Arc, or committed EARLIER IN THIS SAME BATCH (so genesis
+ * roots go first and their descendants follow within one pass) — capped at `maxCommits` to bound the work per
+ * cron. Re-running is free: an anchored entry has commitTx set and is skipped, so the pass is idempotent and
+ * self-healing across ticks.
+ *
+ * Genesis roots have no breeder off-chain, so each is credited to the address of the agent that runs it,
+ * matched positionally (genesis order == fly-id == agent id — the same assumption germlineResolver makes). An
+ * entry with no resolvable non-zero breeder is skipped (the contract reverts ZeroBreeder) and retried later.
+ * Touches no storage and signs nothing.
+ */
+export function lineageAnchorPlan(
+  entries: LineageEntry[],
+  addrById: Map<number, string>,
+  maxCommits: number,
+): AnchorCandidate[] {
+  const committed = new Set(entries.filter((e) => e.commitTx).map((e) => e.genomeHash));
+  const genesisAddr = new Map<string, string>();
+  entries.filter((e) => e.op === "genesis").forEach((e, i) => {
+    const a = addrById.get(i);
+    if (a) genesisAddr.set(e.genomeHash, a.toLowerCase());
+  });
+  const out: AnchorCandidate[] = [];
+  for (const e of entries) {
+    if (out.length >= maxCommits) break;
+    if (e.commitTx || committed.has(e.genomeHash)) continue;      // already anchored (or planned below)
+    if (!e.parents.every((p) => committed.has(p))) continue;      // ancestry order: parents committed first
+    const breeder =
+      (e.breeder ?? "").trim() || (e.op === "genesis" ? genesisAddr.get(e.genomeHash) ?? "" : "");
+    if (!breeder) continue;                                       // ZeroBreeder would revert; retry next tick
+    out.push({
+      genomeHash: e.genomeHash,
+      parentA: e.parents[0] ?? "",
+      parentB: e.parents[1] ?? "",
+      op: (e.op === "genesis" ? 0 : e.op === "mutate" ? 1 : 2) as 0 | 1 | 2,
+      generation: e.generation,
+      breeder,
+    });
+    committed.add(e.genomeHash);                                  // enables this entry's descendants in-batch
+  }
+  return out;
+}

@@ -17,7 +17,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { planEvolution, germlineResolver, resolveNovelBreed, type EvolutionLimits } from "./evolution.js";
+import { planEvolution, germlineResolver, resolveNovelBreed, lineageAnchorPlan, type EvolutionLimits } from "./evolution.js";
 import { loadConfig, type Env } from "./config.js";
 import type { LeaderRow } from "./economy.js";
 import type { LineageEntry } from "./breed.js";
@@ -341,4 +341,76 @@ test("resolveNovelBreed re-throws a non-duplicate error without retrying", async
     /unknown parent genome/,
   );
   assert.equal(n, 1, "a real error is fatal, not retried");
+});
+
+// ---------- lineageAnchorPlan: bootstrap the on-chain family tree (genesis first, ancestry-ordered) ----------
+
+/** An id→address map driving the genesis positional-breeder resolution. */
+function addrs(pairs: Record<number, string>): Map<number, string> {
+  return new Map(Object.entries(pairs).map(([k, v]) => [Number(k), v]));
+}
+
+test("lineageAnchorPlan commits uncommitted genesis roots first, credited to their own agent by position", () => {
+  const g0 = hashById(0)!;
+  const g1 = hashById(1)!;
+  const entries = [
+    entry({ op: "genesis", genomeHash: g0 }),   // genesis[0] ⇒ agent 0
+    entry({ op: "genesis", genomeHash: g1 }),   // genesis[1] ⇒ agent 1
+  ];
+  const plan = lineageAnchorPlan(entries, addrs({ 0: "0xAAA", 1: "0xBBB" }), 6);
+  assert.equal(plan.length, 2);
+  assert.deepEqual(plan[0], { genomeHash: g0, parentA: "", parentB: "", op: 0, generation: 0, breeder: "0xaaa" });
+  assert.deepEqual(plan[1], { genomeHash: g1, parentA: "", parentB: "", op: 0, generation: 0, breeder: "0xbbb" });
+});
+
+test("lineageAnchorPlan skips an already-anchored entry (commitTx set) — idempotent", () => {
+  const entries = [entry({ op: "genesis", genomeHash: hashById(0)!, commitTx: "0xdead" })];
+  assert.deepEqual(lineageAnchorPlan(entries, addrs({ 0: "0xAAA" }), 6), []);
+});
+
+test("lineageAnchorPlan respects maxCommits, in append order (bounds work per cron)", () => {
+  const entries = [0, 1, 2, 3].map((i) => entry({ op: "genesis", genomeHash: hashById(i)! }));
+  const plan = lineageAnchorPlan(entries, addrs({ 0: "0xa", 1: "0xb", 2: "0xc", 3: "0xd" }), 2);
+  assert.equal(plan.length, 2, "capped at maxCommits");
+  assert.deepEqual(plan.map((c) => c.genomeHash), [hashById(0), hashById(1)], "append order preserved");
+});
+
+test("lineageAnchorPlan anchors a mutate child in the SAME batch once its genesis parent is planned first", () => {
+  const g0 = hashById(0)!;
+  const kid = "k1".padEnd(64, "0");
+  const entries = [
+    entry({ op: "genesis", genomeHash: g0 }),
+    entry({ op: "mutate", genomeHash: kid, parents: [g0], generation: 1, breeder: "0xCCC", ts: 10 }),
+  ];
+  const plan = lineageAnchorPlan(entries, addrs({ 0: "0xAAA" }), 6);
+  assert.deepEqual(plan.map((c) => c.genomeHash), [g0, kid], "parent committed before child within one pass");
+  assert.equal(plan[1]!.op, 1, "mutate ⇒ op code 1");
+  assert.equal(plan[1]!.parentA, g0);
+  assert.equal(plan[1]!.breeder, "0xCCC", "a bred entry keeps its own recorded breeder (trimmed, not re-cased)");
+});
+
+test("lineageAnchorPlan excludes a child whose parent is not committed (would revert ParentNotCommitted)", () => {
+  const missing = "ff".padEnd(64, "0");
+  const kid = "k1".padEnd(64, "0");
+  const entries = [entry({ op: "mutate", genomeHash: kid, parents: [missing], generation: 1, breeder: "0xCCC" })];
+  assert.deepEqual(lineageAnchorPlan(entries, addrs({}), 6), [], "uncommitted parent ⇒ waits for a later tick");
+});
+
+test("lineageAnchorPlan skips a genesis root with no known agent address (ZeroBreeder would revert)", () => {
+  const entries = [entry({ op: "genesis", genomeHash: hashById(0)! })];
+  assert.deepEqual(lineageAnchorPlan(entries, addrs({}), 6), [], "no address ⇒ skipped, retried later");
+});
+
+test("lineageAnchorPlan anchors a cross child (op=2) only once BOTH parents are committed", () => {
+  const gA = hashById(0)!;
+  const gB = hashById(1)!;
+  const kid = "cc".padEnd(64, "0");
+  const entries = [
+    entry({ op: "genesis", genomeHash: gA, commitTx: "0x1" }),   // already on-chain
+    entry({ op: "genesis", genomeHash: gB, commitTx: "0x2" }),   // already on-chain
+    entry({ op: "cross", genomeHash: kid, parents: [gA, gB], generation: 1, breeder: "0xDDD", ts: 5 }),
+  ];
+  const plan = lineageAnchorPlan(entries, addrs({}), 6);
+  assert.equal(plan.length, 1, "only the cross child is left to anchor");
+  assert.deepEqual(plan[0], { genomeHash: kid, parentA: gA, parentB: gB, op: 2, generation: 1, breeder: "0xDDD" });
 });
