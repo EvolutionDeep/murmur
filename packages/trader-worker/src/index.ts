@@ -47,7 +47,7 @@ export default {
           name: "murmur",
           version: "0.2.0",
           chain: "arc",
-          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "d1-history-archive"],
+          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "d1-history-archive"],
           endpoints: [
             "GET  /state",
             "GET  /population   (collective mood + per-fly drives + economy summary — the frontend feed)",
@@ -58,6 +58,7 @@ export default {
             "GET  /signal/requirements (the x402 payment requirements a browser signs to buy the signal)",
             "GET  /predictions  (on-chain prediction market: live book + parimutuel odds + hit-rate leaderboard)",
             "GET  /predictions/verify?round=N (recompute a round's receipt hash + read its on-chain registry commitment)",
+            "GET  /arena        (human-vs-swarm MURMUR arena: live book + parimutuel odds + you-vs-the-swarm hit rate)",
             "GET  /history      (D1 long-term archive: one row per cron — temperature/regime/deals/volume/gini/topStates)",
             "GET  /stimuli",
             "GET  /snapshot?flyId=N   (full neural state of one fly + its agent wallet)",

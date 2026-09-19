@@ -49,6 +49,7 @@ import {
   type PaymentPayload,
   type SettleResponse,
   type RegistryCommit,
+  type ArenaRoundInfo,
 } from "./x402.js";
 import type { FlyReading, CollectiveState } from "./population.js";
 import type { PredictFlow } from "./prediction.js";
@@ -1082,6 +1083,36 @@ export class AgentEconomy {
   relayAddress(): string | null {
     const f = this.facilitator as { relayAddress?: string };
     return typeof f.relayAddress === "string" ? f.relayAddress : null;
+  }
+
+  // ---------- human-vs-swarm prediction arena (on-chain, MURMUR-denominated, non-custodial) ----------
+  //
+  // Thin, best-effort delegators to the facilitator's arena wiring (see x402.ts). The Worker acts only as
+  // the authorized resolver that commits each round's baseline + exit temperature; the contract escrows
+  // bets and pays winners, and derives the outcome itself. Every call degrades to null when no arena is
+  // wired or the chain call fails, so the arena can never block or fail a live tick.
+
+  /** Open an arena round on-chain (commits its baseline temperature); null when unwired/failed. */
+  async arenaOpen(roundId: number, entryTempR6: number, flatBandR6: number, betDeadline: number): Promise<string | null> {
+    const f = this.facilitator as {
+      arenaOpen?: (id: number, entryTempR6: number, flatBandR6: number, betDeadline: number) => Promise<string | null>;
+    };
+    if (typeof f.arenaOpen !== "function") return null;
+    try { return await f.arenaOpen(roundId, entryTempR6, flatBandR6, betDeadline); } catch { return null; }
+  }
+
+  /** Resolve an arena round on-chain (supplies only the exit temperature); null when unwired/failed. */
+  async arenaResolve(roundId: number, exitTempR6: number): Promise<string | null> {
+    const f = this.facilitator as { arenaResolve?: (id: number, exitTempR6: number) => Promise<string | null> };
+    if (typeof f.arenaResolve !== "function") return null;
+    try { return await f.arenaResolve(roundId, exitTempR6); } catch { return null; }
+  }
+
+  /** Read an arena round's live on-chain state for the /arena endpoint; null when unwired/unreadable. */
+  async arenaRoundInfo(roundId: number): Promise<ArenaRoundInfo | null> {
+    const f = this.facilitator as { arenaRoundInfo?: (id: number) => Promise<ArenaRoundInfo | null> };
+    if (typeof f.arenaRoundInfo !== "function") return null;
+    try { return await f.arenaRoundInfo(roundId); } catch { return null; }
   }
 
   /**

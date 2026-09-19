@@ -1713,6 +1713,7 @@ function openPredict() {
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
+  if (arenaOpen) closeArena();
   const d = $("predict"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("predict-open");
@@ -1992,6 +1993,7 @@ async function poll() {
     getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
+    pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
   } catch (e) {
     if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
@@ -2544,6 +2546,15 @@ function bindUI() {
     const vb = e.target.closest(".pr-verify");
     if (vb) verifyPredictRound(vb.dataset.round, vb.closest(".pr-round"));
   });
+  const ab = $("arena-btn"); if (ab) ab.addEventListener("click", toggleArena);
+  const ac = $("arena-close"); if (ac) ac.addEventListener("click", closeArena);
+  // the arena drawer rebuilds each render, so bind connect/bet/claim by delegation once
+  const abd = $("arena-body");
+  if (abd) abd.addEventListener("click", (e) => {
+    const conn = e.target.closest(".ar-btn.connect"); if (conn) { arenaConnect(conn); return; }
+    const bet = e.target.closest(".ar-btn[data-side]"); if (bet) { arenaBet(Number(bet.dataset.side), bet); return; }
+    const claim = e.target.closest(".ar-btn[data-claim]"); if (claim) { arenaClaim(Number(claim.dataset.claim), claim); return; }
+  });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -2561,8 +2572,414 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
+}
+
+// ================= human-vs-swarm ARENA · bet MURMUR on the same temperature move (right drawer) =================
+// The fly swarm bets USDC on the market temperature (the "predict" drawer). The ARENA lets a HUMAN holder bet
+// MURMUR on the SAME move, head-to-head. It is NON-CUSTODIAL: you approve the deployed PredictionArena contract
+// to move your MURMUR, then bet UP/DOWN into a parimutuel pool the contract escrows and pays out itself. The
+// murmur Worker is only the RESOLVER — it commits each round's temperature, and the CONTRACT derives UP/DOWN/FLAT
+// from the entry temperature + flat band it committed at open, so no operator can steer an outcome. Every read
+// (balance/allowance/your bet) and write (approve/bet/claim) happens in THIS browser via MetaMask against Arc
+// directly — the murmur server is never in the money path.
+let arenaOpen = false;
+let arenaData = null;          // latest /arena payload
+let arenaBusy = false;         // one wallet write in flight at a time
+let lastArenaPoll = 0;
+const ARENA_POLL_MS = 15000;
+let arenaAcct = null;          // connected wallet (lowercased 0x…)
+let arenaUser = null;          // { balance, balanceRaw, allowance, allowanceRaw, side, amount, claims[] }
+let arenaTickTimer = 0;        // 1s countdown refresher while the drawer is open
+
+// Precomputed function selectors (keccak256 prefixes) — the page carries no ABI encoder, matching readRegistryOnchain.
+const MUR_SEL_BALANCE = "0x70a08231";    // balanceOf(address)
+const MUR_SEL_ALLOWANCE = "0xdd62ed3e";  // allowance(address,address)
+const MUR_SEL_APPROVE = "0x095ea7b3";    // approve(address,uint256)
+const ARENA_SEL_BET = "0xcf87935c";      // bet(uint256,uint8,uint256)
+const ARENA_SEL_CLAIM = "0x379607f5";    // claim(uint256)
+const ARENA_SEL_PAYOUT = "0x0523f1c3";   // payoutFor(uint256,address)
+const ARENA_SEL_BETS = "0xf644b3bb";     // bets(uint256,address)
+const ARENA_SIDE_UP = 1, ARENA_SIDE_DOWN = 2;
+const ARENA_OUTCOME = { 0: "pending", 1: "UP \u25b2", 2: "DOWN \u25bc", 3: "FLAT", 4: "REFUND" };
+
+// ---- ABI word helpers: 32-byte big-endian hex (no 0x) + 18-dec MURMUR conversions ----
+const wordAddr = (a) => String(a).replace(/^0x/i, "").toLowerCase().padStart(64, "0");
+const wordUint = (n) => BigInt(n).toString(16).padStart(64, "0");
+const wordAt = (hex, i) => "0x" + String(hex || "").replace(/^0x/, "").slice(i * 64, (i + 1) * 64);
+const atomicToMur = (a) => Number(BigInt(a || "0x0")) / 1e18;
+/** Parse a human MURMUR amount ("12.5") into an 18-dec atomic BigInt with no float drift. */
+function murToAtomic(str) {
+  const s = String(str).trim().replace(/,/g, "");
+  if (!/^\d*\.?\d*$/.test(s) || s === "" || s === ".") return 0n;
+  const [ip, fp = ""] = s.split(".");
+  return BigInt((ip || "0") + (fp + "000000000000000000").slice(0, 18));
+}
+const fmtMur = (n, dp = 2) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const arenaClock = (s) => {
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(ss).padStart(2, "0")}s`;
+};
+
+// ---- drawer lifecycle (mirrors the predict drawer; mutually exclusive with the others) ----
+function openArena() {
+  arenaOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  const d = $("arena"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("arena-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderArena();
+  if (!arenaTickTimer) arenaTickTimer = setInterval(arenaCountdownTick, 1000);
+}
+function closeArena() {
+  arenaOpen = false;
+  document.body.classList.remove("arena-open");
+  if (arenaTickTimer) { clearInterval(arenaTickTimer); arenaTickTimer = 0; }
+  const d = $("arena"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!arenaOpen) d.hidden = true; }, 420);
+}
+function toggleArena() { if (arenaOpen) closeArena(); else openArena(); }
+
+async function renderArena() {
+  const body = $("arena-body"); if (!body) return;
+  body.innerHTML = `<p class="ar-loading">loading arena\u2026</p>`;
+  const res = await getJSON("/arena", 8000).catch(() => null);
+  if (!arenaOpen) return;                 // closed while fetching
+  arenaData = res || null;
+  await arenaReadUser();
+  if (!arenaOpen) return;
+  paintArena();
+}
+
+/** Throttled background refresh so an open drawer tracks the book + your on-chain position each cron. */
+async function pollArena(force) {
+  if (!arenaOpen) return;
+  const now = Date.now();
+  if (!force && now - lastArenaPoll < ARENA_POLL_MS) return;
+  lastArenaPoll = now;
+  try {
+    const a = await getJSON("/arena", 8000);
+    if (!a || !arenaOpen) return;
+    arenaData = a;
+    await arenaReadUser();
+    if (arenaOpen) paintArena();
+  } catch { /* best-effort: the arena is a nicety and must never block the scene */ }
+}
+
+/** Refresh just the countdown each second (no full re-render) so the betting window visibly ticks down. */
+function arenaCountdownTick() {
+  const el = $("ar-countdown"); if (!el || !arenaData || !arenaData.current) return;
+  const secs = Math.max(0, Number(arenaData.current.betDeadline || 0) - Math.floor(Date.now() / 1000));
+  el.textContent = arenaClock(secs);
+  if (secs <= 0) { lastArenaPoll = 0; pollArena(true); }   // window closed ⇒ pull the fresh (resolving) book
+}
+
+// ---- on-chain reads of the connected wallet's MURMUR + this/last round's position (browser → Arc, no server) ----
+async function arenaReadUser() {
+  const d = arenaData;
+  if (!d || !d.enabled || !arenaAcct || !isRealAddr(d.arenaAddress) || !isRealAddr(d.token)) { arenaUser = null; return; }
+  const curId = d.current ? d.current.roundId : null;
+  const prevId = d.previous ? d.previous.roundId : null;
+  try {
+    const [bal, allow, betsRes, curPay, prevPay] = await Promise.all([
+      arcRpc("eth_call", [{ to: d.token, data: MUR_SEL_BALANCE + wordAddr(arenaAcct) }, "latest"]),
+      arcRpc("eth_call", [{ to: d.token, data: MUR_SEL_ALLOWANCE + wordAddr(arenaAcct) + wordAddr(d.arenaAddress) }, "latest"]),
+      curId != null ? arcRpc("eth_call", [{ to: d.arenaAddress, data: ARENA_SEL_BETS + wordUint(curId) + wordAddr(arenaAcct) }, "latest"]) : Promise.resolve(null),
+      curId != null ? arcRpc("eth_call", [{ to: d.arenaAddress, data: ARENA_SEL_PAYOUT + wordUint(curId) + wordAddr(arenaAcct) }, "latest"]) : Promise.resolve(null),
+      prevId != null ? arcRpc("eth_call", [{ to: d.arenaAddress, data: ARENA_SEL_PAYOUT + wordUint(prevId) + wordAddr(arenaAcct) }, "latest"]) : Promise.resolve(null),
+    ]);
+    const claims = [];
+    if (curPay && BigInt(wordAt(curPay, 2)) !== 0n) claims.push({ roundId: curId, payout: atomicToMur(wordAt(curPay, 1)) });
+    if (prevPay && BigInt(wordAt(prevPay, 2)) !== 0n) claims.push({ roundId: prevId, payout: atomicToMur(wordAt(prevPay, 1)) });
+    arenaUser = {
+      balance: atomicToMur(bal), balanceRaw: BigInt(bal || "0x0"),
+      allowance: atomicToMur(allow), allowanceRaw: BigInt(allow || "0x0"),
+      side: betsRes ? Number(BigInt(wordAt(betsRes, 0))) : 0,
+      amount: betsRes ? atomicToMur(wordAt(betsRes, 1)) : 0,
+      claims,
+    };
+  } catch { /* a failed read just leaves the last-known state; never break the drawer */ }
+}
+
+// ---- wallet plumbing: connect + ensure Arc, then send a tx and wait for its receipt ----
+async function arenaEnsureWallet(setMsg) {
+  if (!window.ethereum) { setMsg("no wallet found \u2014 install MetaMask to bet", "bad"); return null; }
+  const d = arenaData;
+  if (!d || !d.enabled) { setMsg("arena unavailable on this deployment", "bad"); return null; }
+  const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  const from = Array.isArray(accts) && accts[0];
+  if (!from) { setMsg("no account selected", "bad"); return null; }
+  const chainHex = "0x" + Number(d.chainId).toString(16);
+  const cur = await window.ethereum.request({ method: "eth_chainId" });
+  if (String(cur).toLowerCase() !== chainHex.toLowerCase()) {
+    setMsg("switching network to Arc\u2026");
+    const testnet = Number(d.chainId) !== 5042;
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainHex }] });
+    } catch (swErr) {
+      if (swErr && (swErr.code === 4902 || /Unrecognized chain ID/i.test(String(swErr.message)))) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: chainHex, chainName: testnet ? "Arc Testnet" : "Arc",
+            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+            rpcUrls: testnet ? ["https://rpc.testnet.arc.io"] : ["https://rpc.mainnet.arc.io"],
+            blockExplorerUrls: ["https://explorer.arc.io"],
+          }],
+        });
+      } else { throw swErr; }
+    }
+  }
+  arenaAcct = from.toLowerCase();
+  return from;
+}
+const arenaSendTx = (to, data) =>
+  window.ethereum.request({ method: "eth_sendTransaction", params: [{ from: arenaAcct, to, data, value: "0x0" }] });
+async function arenaWaitReceipt(hash, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const rc = await arcRpc("eth_getTransactionReceipt", [hash], 8000);
+      if (rc && rc.status) return rc.status === "0x1";
+    } catch { /* keep polling */ }
+  }
+  return null;
+}
+function arenaMsgFn(btn) {
+  const card = btn ? btn.closest(".ar-card") : null;
+  const status = (card && card.querySelector(".ar-status")) || document.querySelector("#arena-body .ar-status");
+  return (m, cls) => { if (status) { status.textContent = m || ""; status.className = "ar-status" + (cls ? " " + cls : ""); } };
+}
+function arenaErr(e) {
+  const m = (e && (e.message || e.code)) || "failed";
+  return /user rejected|denied|reject/i.test(String(m)) ? "cancelled in wallet" : "error: " + m;
+}
+
+// ---- actions ----
+async function arenaConnect(btn) {
+  if (arenaBusy) return;
+  const setMsg = arenaMsgFn(btn);
+  arenaBusy = true; if (btn) btn.disabled = true;
+  try {
+    setMsg("connecting wallet\u2026");
+    const from = await arenaEnsureWallet(setMsg);
+    if (!from) return;
+    await arenaReadUser();
+    if (!arenaOpen) return;
+    paintArena();
+    arenaMsgFn(null)("connected " + shortHash(from), "ok");
+  } catch (e) { setMsg(arenaErr(e), "bad"); }
+  finally { arenaBusy = false; if (btn) btn.disabled = false; }
+}
+
+async function arenaBet(side, btn) {
+  if (arenaBusy) return;
+  const setMsg = arenaMsgFn(btn);
+  const d = arenaData;
+  if (!d || !d.enabled || !d.current) { setMsg("no live round to bet on", "bad"); return; }
+  const c = d.current;
+  if (c.resolved || Number(c.secondsToDeadline || 0) <= 0) { setMsg("betting closed for round #" + c.roundId, "bad"); return; }
+  const amtEl = $("ar-amount");
+  const amt = murToAtomic(amtEl ? amtEl.value : "");
+  if (amt <= 0n) { setMsg("enter an amount to bet", "bad"); return; }
+  arenaBusy = true; if (btn) btn.disabled = true;
+  let finalMsg = "", finalCls = "";
+  try {
+    const from = await arenaEnsureWallet(setMsg);
+    if (!from) return;
+    await arenaReadUser();
+    if (arenaUser && amt > arenaUser.balanceRaw) { setMsg("amount exceeds your MURMUR balance", "bad"); return; }
+    // approve the arena to move this stake first if the allowance doesn't already cover it
+    if (!arenaUser || arenaUser.allowanceRaw < amt) {
+      setMsg("approve MURMUR in your wallet\u2026 (1 of 2)");
+      const ah = await arenaSendTx(d.token, MUR_SEL_APPROVE + wordAddr(d.arenaAddress) + wordUint(amt));
+      setMsg("approval sent \u2014 confirming\u2026");
+      const okA = await arenaWaitReceipt(ah);
+      if (okA !== true) { setMsg(okA === false ? "approval reverted" : "approval not confirmed \u2014 retry", "bad"); return; }
+      await arenaReadUser();
+    }
+    setMsg(`bet ${side === ARENA_SIDE_UP ? "UP \u25b2" : "DOWN \u25bc"} in your wallet\u2026 (2 of 2)`);
+    const bh = await arenaSendTx(d.arenaAddress, ARENA_SEL_BET + wordUint(c.roundId) + wordUint(side) + wordUint(amt));
+    setMsg("bet sent \u2014 confirming\u2026");
+    const okB = await arenaWaitReceipt(bh);
+    if (okB === true) { finalMsg = "bet placed \u2713 " + shortHash(bh); finalCls = "ok"; }
+    else if (okB === false) { finalMsg = "bet reverted \u2014 check the amount / window"; finalCls = "bad"; }
+    else { finalMsg = "bet sent " + shortHash(bh) + " \u2014 confirming\u2026"; finalCls = ""; }
+    setMsg(finalMsg, finalCls);
+    lastArenaPoll = 0; await pollArena(true);
+    if (arenaOpen) arenaMsgFn(null)(finalMsg, finalCls);
+  } catch (e) { setMsg(arenaErr(e), "bad"); }
+  finally { arenaBusy = false; if (btn) btn.disabled = false; }
+}
+
+async function arenaClaim(roundId, btn) {
+  if (arenaBusy) return;
+  const setMsg = arenaMsgFn(btn);
+  const d = arenaData;
+  if (!d || !d.enabled || !isRealAddr(d.arenaAddress)) { setMsg("arena unavailable", "bad"); return; }
+  arenaBusy = true; if (btn) btn.disabled = true;
+  let finalMsg = "", finalCls = "";
+  try {
+    const from = await arenaEnsureWallet(setMsg);
+    if (!from) return;
+    setMsg("claim in your wallet\u2026");
+    const ch = await arenaSendTx(d.arenaAddress, ARENA_SEL_CLAIM + wordUint(roundId));
+    setMsg("claim sent \u2014 confirming\u2026");
+    const ok = await arenaWaitReceipt(ch);
+    if (ok === true) { finalMsg = "claimed \u2713 " + shortHash(ch); finalCls = "ok"; }
+    else if (ok === false) { finalMsg = "claim reverted"; finalCls = "bad"; }
+    else { finalMsg = "claim sent " + shortHash(ch) + " \u2014 confirming\u2026"; finalCls = ""; }
+    setMsg(finalMsg, finalCls);
+    lastArenaPoll = 0; await pollArena(true);
+    if (arenaOpen) arenaMsgFn(null)(finalMsg, finalCls);
+  } catch (e) { setMsg(arenaErr(e), "bad"); }
+  finally { arenaBusy = false; if (btn) btn.disabled = false; }
+}
+
+// ---- render ----
+function paintArena() {
+  const body = $("arena-body"); if (!body) return;
+  const sub = $("arena-sub");
+  const d = arenaData;
+  if (sub) sub.textContent = d && d.enabled
+    ? (d.current ? "round #" + d.current.roundId + (d.current.resolved ? " closed" : " live") : "between rounds")
+    : "MURMUR \u00b7 you vs the swarm";
+  body.innerHTML = "";
+  if (!d || !d.enabled) {
+    body.innerHTML = `<p class="ar-empty">the human arena isn't enabled on this deployment yet. it goes live once the PredictionArena contract is deployed and <span class="fp">ARENA_ENABLED</span> is on \u2014 holders bet MURMUR on the same temperature move the swarm does, non-custodially, and the contract pays winners parimutuel.</p>`;
+    return;
+  }
+  body.appendChild(arenaBookCard(d));
+  body.appendChild(arenaYouCard(d));
+  body.appendChild(arenaVsSwarmCard(d));
+}
+
+/** The live human book: parimutuel UP/DOWN MURMUR pools, implied payout, countdown, entry temp + flat band. */
+function arenaBookCard(d) {
+  const card = document.createElement("div"); card.className = "ar-card book";
+  const c = d.current;
+  const mode = d.armed ? "settles on Arc \u00b7 MURMUR" : "resolver not armed \u00b7 read-only";
+  let html =
+    `<div class="ar-title">live book <span class="ar-mode">${mode}</span></div>` +
+    `<p class="ar-blurb">Bet <b>MURMUR</b> on whether the Arc market temperature is <b>higher</b> or <b>lower</b> when this round closes than the entry the resolver committed at open. Pools are <b>parimutuel</b> and peer-to-peer: the winning side splits the losing side's pool, strictly zero-sum, no house. Inside the flat band \u21d2 FLAT \u21d2 everyone is refunded.</p>`;
+  if (!c) {
+    html += `<p class="ar-empty">no live round right now. ${d.armed ? "the resolver opens a new one each cron." : "the resolver isn't armed on this deployment, so rounds aren't opening yet."}</p>`;
+    card.innerHTML = html; return card;
+  }
+  const up = Number(c.poolUpMur || 0), down = Number(c.poolDownMur || 0), tot = up + down;
+  const upPct = tot > 0 ? (up / tot) * 100 : 50, downPct = tot > 0 ? 100 - upPct : 50;
+  const oc = ARENA_OUTCOME[c.outcome] || "";
+  html +=
+    `<div class="ar-round">round <b>#${c.roundId}</b> \u00b7 ` +
+      (c.resolved
+        ? `<span class="ar-outcome ${String(oc).toLowerCase().replace(/[^a-z]/g, "")}">${oc}</span>`
+        : `closes in <b id="ar-countdown">${arenaClock(c.secondsToDeadline)}</b>`) +
+    `</div>` +
+    `<div class="ar-pools">` +
+      `<div class="ar-pool up"><span class="ar-side">\u25b2 up</span><span class="ar-amt">${fmtMur(up)}</span></div>` +
+      `<div class="ar-pool down"><span class="ar-side">\u25bc down</span><span class="ar-amt">${fmtMur(down)}</span></div>` +
+    `</div>` +
+    `<div class="ar-bar"><div class="ar-bar-up" style="width:${upPct.toFixed(1)}%"></div><div class="ar-bar-down" style="width:${downPct.toFixed(1)}%"></div></div>` +
+    `<div class="ar-odds">` +
+      `<div><dt>up pays</dt><dd>${Number(c.oddsUp || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probUp || 0) * 100).toFixed(0)}% of pool</dd></div>` +
+      `<div><dt>down pays</dt><dd>${Number(c.oddsDown || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probDown || 0) * 100).toFixed(0)}% of pool</dd></div>` +
+    `</div>` +
+    `<dl class="ar-meta">` +
+      `<div><dt>entry temp</dt><dd>${Number(c.entryTemp || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>${c.resolved ? "exit temp" : "window"}</dt><dd>${c.resolved ? Number(c.exitTemp || 0).toFixed(3) : arenaClock(c.secondsToDeadline)}</dd></div>` +
+      `<div><dt>flat band</dt><dd>\u00b1${Number(c.flatBand || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>bettors</dt><dd>${c.bettorCount || 0}</dd></div>` +
+    `</dl>`;
+  if (isRealAddr(d.arenaAddress)) {
+    html += `<div class="ar-contract">contract <a class="fp" href="${ARC_EXPLORER}/address/${d.arenaAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.arenaAddress)}</a></div>`;
+  }
+  card.innerHTML = html;
+  return card;
+}
+
+/** Your position: connect, see your MURMUR + allowance, bet UP/DOWN, and claim any winnings. */
+function arenaYouCard(d) {
+  const card = document.createElement("div"); card.className = "ar-card you";
+  const c = d.current;
+  let html =
+    `<div class="ar-title">your position</div>` +
+    `<p class="ar-blurb">Non-custodial: your MURMUR moves straight from your wallet into the arena contract (you approve, then bet). The murmur server never holds it, and only the contract can pay you back.</p>`;
+  if (!arenaAcct) {
+    html += `<div class="ar-actions"><button type="button" class="ar-btn connect">connect wallet</button></div><div class="ar-status"></div>`;
+    card.innerHTML = html; return card;
+  }
+  const u = arenaUser || {};
+  const live = c && !c.resolved && Number(c.secondsToDeadline || 0) > 0;
+  const yourSide = u.side === ARENA_SIDE_UP ? "UP \u25b2" : u.side === ARENA_SIDE_DOWN ? "DOWN \u25bc" : null;
+  html +=
+    `<dl class="ar-you-meta">` +
+      `<div><dt>wallet</dt><dd class="fp">${shortHash(arenaAcct)}</dd></div>` +
+      `<div><dt>MURMUR</dt><dd>${fmtMur(u.balance || 0, 4)}</dd></div>` +
+      `<div><dt>approved</dt><dd>${fmtMur(u.allowance || 0, 2)}</dd></div>` +
+    `</dl>`;
+  if (yourSide) {
+    html += `<div class="ar-yourbet">this round you bet <b class="${u.side === ARENA_SIDE_UP ? "up" : "down"}">${yourSide}</b> \u00b7 ${fmtMur(u.amount || 0, 2)} MURMUR</div>`;
+  }
+  if (live) {
+    html +=
+      `<div class="ar-betrow">` +
+        `<input class="ar-amount" id="ar-amount" type="number" min="0" step="any" placeholder="amount" inputmode="decimal" />` +
+        `<span class="ar-unit">MURMUR</span>` +
+      `</div>` +
+      `<div class="ar-actions">` +
+        `<button type="button" class="ar-btn up" data-side="${ARENA_SIDE_UP}">bet \u25b2 up</button>` +
+        `<button type="button" class="ar-btn down" data-side="${ARENA_SIDE_DOWN}">bet \u25bc down</button>` +
+      `</div>` +
+      `<div class="ar-fine">betting the same side again adds to your stake; the opposite side is rejected by the contract. Approve + bet are two wallet prompts the first time.</div>`;
+  } else if (c && c.resolved) {
+    html += `<div class="ar-closed">round #${c.roundId} is closed \u2014 ${ARENA_OUTCOME[c.outcome] || "resolved"}. a new round opens next cron.</div>`;
+  } else {
+    html += `<div class="ar-closed">no live betting window right now.</div>`;
+  }
+  if (Array.isArray(u.claims) && u.claims.length) {
+    html += `<div class="ar-actions">` + u.claims.map((cl) =>
+      `<button type="button" class="ar-btn claim" data-claim="${cl.roundId}">claim #${cl.roundId} \u00b7 ${fmtMur(cl.payout, 2)} MURMUR</button>`
+    ).join("") + `</div>`;
+  }
+  html += `<div class="ar-status"></div>`;
+  card.innerHTML = html;
+  return card;
+}
+
+/** You vs the swarm: the flies' lifetime hit-rate against the human crowd's lean + last-round result. */
+function arenaVsSwarmCard(d) {
+  const card = document.createElement("div"); card.className = "ar-card vs";
+  const s = d.swarm, c = d.current, prev = d.previous;
+  let html =
+    `<div class="ar-title">you vs the swarm</div>` +
+    `<p class="ar-blurb">The 24 flies bet their own USDC on the same temperature move every cron; their lifetime hit-rate is below. The human side is the crowd's parimutuel lean. Same market, same flat band \u2014 whoever reads Arc better, wins.</p>`;
+  const hr = s ? Number(s.hitRate) * 100 : null;
+  const crowdHasBets = c && (Number(c.probUp || 0) + Number(c.probDown || 0)) > 0;
+  const lean = crowdHasBets
+    ? (Number(c.probUp) >= Number(c.probDown) ? `\u25b2 ${Math.round(Number(c.probUp) * 100)}% up` : `\u25bc ${Math.round(Number(c.probDown) * 100)}% down`)
+    : "no bets";
+  html += `<div class="ar-vs-row">` +
+    `<div class="ar-vs swarm"><span class="ar-vs-label">swarm</span><span class="ar-vs-big">${hr == null ? "\u2013" : hr.toFixed(0) + "%"}</span><span class="ar-vs-sub">${s ? `${s.hits}/${s.rounds} decisive \u00b7 ${s.bettors} flies` : "accruing\u2026"}</span></div>` +
+    `<div class="ar-vs human"><span class="ar-vs-label">humans</span><span class="ar-vs-big">${lean}</span><span class="ar-vs-sub">${c ? `${fmtMur(Number(c.totalMur || 0), 0)} MURMUR \u00b7 ${c.bettorCount || 0} bettors` : "\u2013"}</span></div>` +
+  `</div>`;
+  if (prev && prev.resolved) {
+    const oc = ARENA_OUTCOME[prev.outcome] || "?";
+    const crowdUp = Number(prev.probUp || 0) >= Number(prev.probDown || 0);
+    const flat = prev.outcome === 3 || prev.outcome === 4;
+    const crowdWon = (prev.outcome === 1 && crowdUp) || (prev.outcome === 2 && !crowdUp);
+    html += `<div class="ar-last">round #${prev.roundId} closed <b class="ar-outcome ${String(oc).toLowerCase().replace(/[^a-z]/g, "")}">${oc}</b> \u00b7 ` +
+      (flat ? `everyone refunded` : crowdWon ? `the crowd called it \u2713` : `the crowd missed \u2717`) + `</div>`;
+  }
+  card.innerHTML = html;
+  return card;
 }
 
 // ================= offline synthetic pulse =================

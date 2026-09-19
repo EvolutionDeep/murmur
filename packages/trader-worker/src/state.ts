@@ -48,7 +48,8 @@ import type { PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
-import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse } from "./x402.js";
+import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
+import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo } from "./x402.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
@@ -61,6 +62,7 @@ const KEY_STIMULI = "stimuli";
 const KEY_ECONOMY = "economy:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
+const KEY_ARENA = "arena:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
 
@@ -73,6 +75,12 @@ interface PulseSales {
   lastTs: number | null;
 }
 
+/** Worker-side cursor for the on-chain human arena: which rounds it has opened/resolved as resolver. */
+interface ArenaState {
+  openedRound: number;    // last arena roundId openRound() succeeded for (-1 ⇒ none yet)
+  resolvedRound: number;  // last arena roundId resolve() succeeded for (-1 ⇒ none yet)
+}
+
 export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
@@ -81,6 +89,7 @@ export class FlyStateDO {
   private meter: MarketMeter | null = null;
   private economy: AgentEconomy | null = null;
   private prediction: PredictionMarket | null = null;
+  private arenaState: ArenaState | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
   private lastEconomy: EconomySnapshot | null = null;
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
@@ -192,6 +201,47 @@ export class FlyStateDO {
     return this.prediction;
   }
 
+  /** Load (or initialise) the arena resolver cursor. Persisted so an evicted DO resumes correctly. */
+  private async ensureArenaState(): Promise<ArenaState> {
+    if (this.arenaState) return this.arenaState;
+    this.arenaState = (await this.state.storage.get<ArenaState>(KEY_ARENA)) ?? { openedRound: -1, resolvedRound: -1 };
+    return this.arenaState;
+  }
+
+  /**
+   * Drive the on-chain human arena as its authorized resolver — at most one open + one resolve per round
+   * window, both best-effort. Rounds are unix time buckets (roundId = floor(now / roundLenSec)): the round
+   * that just closed is resolved with THIS cron's temperature as its exit, and the new bucket is opened
+   * with the same temperature as its baseline, so entry/exit are continuous across rounds. Gated behind
+   * the SAME real-money rails as settlement — no arena writes unless onchain is armed, real spend is on,
+   * and not shadow-only (the resolver calls cost real gas). A failed open/resolve is retried next cron
+   * within the window; a round never resolved is refundable by anyone after the contract's stale grace.
+   */
+  private async driveArena(temperature: number, economy: AgentEconomy): Promise<void> {
+    const a = this.cfg.arena;
+    if (!a.enabled || !a.address) return;
+    if (economy.facilitatorMode !== "onchain") return;                                  // no resolver key
+    if (!this.cfg.economy.realSpendEnabled || this.cfg.economy.shadowOnly) return;      // master safety rails
+    const st = await this.ensureArenaState();
+    const exitR6 = tempToR6(temperature);
+    // Which round to resolve / open is a PURE function of (now, cadence, cursor) — see arena.ts. The same
+    // temperature is prev's exit and cur's entry, so rounds are continuous and the resolver only reports T.
+    const plan = arenaRoundPlan(Math.floor(Date.now() / 1000), a.roundLenSec, st);
+
+    // 1) Resolve the round that just closed (prev), using this cron's temperature as its exit.
+    if (plan.resolveRound != null) {
+      const tx = await economy.arenaResolve(plan.resolveRound, exitR6);
+      if (tx) st.resolvedRound = plan.resolveRound;   // on failure leave the cursor put; retried next cron
+    }
+    // 2) Open the current round, committing its baseline temperature + flat band before betting on the exit.
+    if (plan.openRound != null) {
+      const tx = await economy.arenaOpen(plan.openRound, exitR6, tempToR6(a.flatBand), plan.betDeadline);
+      // cursorAfterOpen also baselines resolvedRound on a fresh mid-stream start, so we never chase a prev we
+      // didn't open (see arena.ts) — otherwise every cron this hour re-attempts a reverting resolve(prev).
+      if (tx) { const c = cursorAfterOpen(st, plan.openRound); st.openedRound = c.openedRound; st.resolvedRound = c.resolvedRound; }
+    }
+  }
+
   /**
    * Construct the economy with the right dependencies: real-money wiring (HD keys + clients + onchain
    * facilitator) when onchain is requested AND wireable, else the keyless simulated default. Shared by
@@ -244,6 +294,7 @@ export class FlyStateDO {
       shadowOnly: e.shadowOnly,
       gasPrice: e.gasPriceGwei != null ? BigInt(Math.round(e.gasPriceGwei * 1e9)) : undefined,
       registryAddress: e.registryAddress ? (e.registryAddress as Address) : undefined,
+      arenaAddress: this.cfg.arena.address ? (this.cfg.arena.address as Address) : undefined,
     });
 
     console.warn(
@@ -276,6 +327,7 @@ export class FlyStateDO {
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
+    if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
     if (market) await this.state.storage.put(KEY_MARKET, market);
     if (snapshot) {
@@ -373,6 +425,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
       if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
+      if (req.method === "GET" && path === "/arena") return await this.getArena();
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
@@ -534,6 +587,16 @@ export class FlyStateDO {
       }
     }
 
+    // HUMAN ARENA — drive the on-chain MURMUR arena as its resolver (open the new round, resolve the one
+    //    that just closed). Best-effort and gated behind the real-money rails; never blocks the live tick.
+    if (economy) {
+      try {
+        await this.driveArena(temperature, economy);
+      } catch (e) {
+        console.warn("[DO] arena drive failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // 5) Persist.
     await this.persist(market, snapshot);
 
@@ -554,6 +617,80 @@ export class FlyStateDO {
   }
 
   // ---------- Endpoint implementations ----------
+
+  /**
+   * GET /arena — the human-vs-swarm prediction arena: static wiring (token/arena/resolver/cadence), the
+   * live current-round book read straight from the contract (pools + parimutuel odds), the just-closed
+   * round, and the swarm's aggregate hit-rate for the "you vs the swarm" comparison. Inert
+   * (enabled:false, current:null) until ARENA_ENABLED + ARENA_ADDRESS are set and onchain is armed.
+   */
+  private async getArena() {
+    const a = this.cfg.arena;
+    const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    const base = {
+      enabled: a.enabled && a.address != null,
+      network: arcNetworkTag(this.cfg.isTestnet),
+      chainId: this.cfg.chainId,
+      token: a.token,
+      arenaAddress: a.address,
+      resolver: economy?.relayAddress() ?? null,
+      roundLenSec: a.roundLenSec,
+      flatBand: a.flatBand,
+      staleGraceSec: a.staleGraceSec,
+      armed: economy?.facilitatorMode === "onchain",
+    };
+    if (!base.enabled || !economy) return json({ ...base, current: null, previous: null, swarm: null, state: null });
+
+    const st = await this.ensureArenaState();
+    const now = Math.floor(Date.now() / 1000);
+    const cur = Math.floor(now / a.roundLenSec);
+    const info = await economy.arenaRoundInfo(cur);
+    const prevInfo = cur > 0 ? await economy.arenaRoundInfo(cur - 1) : null;
+    const current = info ? this.arenaRoundView(cur, info, now) : null;
+    const previous = prevInfo ? this.arenaRoundView(cur - 1, prevInfo, now) : null;
+
+    // Swarm side of the comparison: aggregate the flies' lifetime prediction hit-rate.
+    const prediction = await this.ensurePrediction();
+    let swarm: { bettors: number; rounds: number; hits: number; hitRate: number } | null = null;
+    if (prediction) {
+      const rows = prediction.leaderboard();
+      const rounds = rows.reduce((s, r) => s + r.rounds, 0);
+      const hits = rows.reduce((s, r) => s + r.hits, 0);
+      swarm = { bettors: rows.length, rounds, hits, hitRate: rounds ? hits / rounds : 0 };
+    }
+    return json({ ...base, current, previous, swarm, state: { openedRound: st.openedRound, resolvedRound: st.resolvedRound } });
+  }
+
+  /** Shape one on-chain arena round into the frontend view: human-readable MURMUR pools + parimutuel odds. */
+  private arenaRoundView(roundId: number, info: ArenaRoundInfo, now: number) {
+    const up = BigInt(info.poolUp);
+    const down = BigInt(info.poolDown);
+    const total = up + down;
+    const mur = (x: bigint): number => Number(x) / 1e18;   // MURMUR is 18-dec
+    return {
+      roundId,
+      opened: info.opened,
+      resolved: info.resolved,
+      outcome: info.outcome,           // 0 pending, 1 UP, 2 DOWN, 3 FLAT, 4 REFUND (stale)
+      entryTemp: info.entryTemp,
+      exitTemp: info.exitTemp,
+      flatBand: info.flatBand,
+      betDeadline: info.betDeadline,
+      openedAt: info.openedAt,
+      resolvedAt: info.resolvedAt,
+      secondsToDeadline: Math.max(0, info.betDeadline - now),
+      poolUp: info.poolUp,
+      poolDown: info.poolDown,
+      poolUpMur: mur(up),
+      poolDownMur: mur(down),
+      totalMur: mur(total),
+      bettorCount: info.bettorCount,
+      oddsUp: up > 0n ? Number(total) / Number(up) : 0,
+      oddsDown: down > 0n ? Number(total) / Number(down) : 0,
+      probUp: total > 0n ? Number(up) / Number(total) : 0,
+      probDown: total > 0n ? Number(down) / Number(total) : 0,
+    };
+  }
 
   private async getState() {
     const swarm = await this.ensureSwarm();

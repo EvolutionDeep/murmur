@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![CI](https://img.shields.io/badge/CI-typecheck%20%2B%20test%20%2B%20build%20%2B%20smoke-2ea44f)](./.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-36%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
+[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
 
 </div>
 
@@ -66,6 +66,7 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
 | **Visitor stimulus** | Anyone can "poke the swarm" (`food / threat / light / dark`), rate-limited per visitor, riding on top of the market pulse as a secondary sensory input. |
 | **Generative frontend** | A living canvas: the whole scene cools/warms with the market, flies murmur and scatter, touching one opens its drives + agent wallet, and an **all-agent wallet roster** lists every fly's on-chain address and balance. |
 | **Long-term memory (D1)** | Every cron archives one row — temperature, regime, deals, cumulative settlements/volume, wealth gini, behaviour histogram — to **Cloudflare D1**; `GET /history` serves it back for the frontend's swarm-history curves and research export. |
+| **Human arena (MURMUR)** | Token holders bet the project's own **MURMUR** token on the *same* Arc-temperature move the swarm bets — UP/DOWN into a **non-custodial, parimutuel** book escrowed and paid out by an on-chain `PredictionArena` contract. The Worker is only the **resolver**: it commits each round's temperature, and the contract derives UP/DOWN/FLAT from the committed entry + flat band, so no operator can steer an outcome. A live leaderboard pits the crowd's hit-rate against the flies'. |
 | **Real-money safety rails** | Kill switch (`ECONOMY_REAL_SPEND`), shadow mode (sign + simulate, never broadcast), global & per-agent daily caps, and a facilitator per-deal cap — **live and bounding the production deployment**. |
 
 ---
@@ -137,7 +138,8 @@ packages/
     src/           chain · market · population · economy · x402 · keys · stimulus · state · config · index
     schema.sql     D1 archival table (one row per cron) served back by GET /history
     src/*.test.ts  unit tests: the economy's one-directional read-out, conservation, determinism
-    scripts/       fund-agents.mjs (one-off real-money wallet distribution — dry-run by default)
+    contracts/     PredictionArena.sol (MURMUR human arena) + NeuralReceiptRegistry.sol (proof anchor) + foundry tests
+    scripts/       fund-agents.mjs · compile-*.mjs · deploy-registry(-auto).mjs · deploy-arena(-auto).mjs (dry-run / confirm-gated)
   frontend/        Static generative dashboard (HTML / CSS / vanilla JS) on Cloudflare Pages
 docs/
   ARCHITECTURE.md    system overview: Worker, Durable Object, data flow, endpoints, design boundaries
@@ -153,7 +155,8 @@ docs/
 ## Testing
 
 CI runs four gates, all keyless and chain-free (`npm run typecheck && npm test && npm run build && npm run smoke`).
-The **36 unit tests** are real behavioural assertions, not a smoke stub:
+The **85 unit tests** (27 in `fly-brain`, 58 in `trader-worker`) are real behavioural assertions, not a smoke stub.
+Key suites:
 
 ```bash
 npm test          # connectome · LIF · motor decoder · economy
@@ -165,6 +168,7 @@ npm test          # connectome · LIF · motor decoder · economy
 | `lif.test.ts` | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
 | `motor-decoder.test.ts` | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime state selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
 | `economy.test.ts` | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, **simulated money conservation**, the solvency floor, full determinism, and the per-agent wallet roster. |
+| `arena.test.ts` | The human-arena resolver is **safe by construction**: temperature→r6 encoding, the round-plan cursor (open/resolve exactly once, idempotent, retries a missed resolve, handles `cur=0` and a mid-stream start), the economy's arena delegators returning `null` in simulated mode (and swallowing a facilitator throw), and `loadConfig`'s arena gating (default-off, trim/clamp, `flatBand` falling back to `PREDICT_FLAT_BAND`). |
 
 > **Why no economic feedback into the neural layer?** It is a deliberate invariant, not a missing feature — see
 > [Design boundaries](./docs/ARCHITECTURE.md#design-boundaries-honest-scale--scope). `economy.test.ts` enforces it.
@@ -204,6 +208,7 @@ The Worker root returns a health check and endpoint navigation. Main endpoints (
 | `GET` | `/population` | Collective mood + per-fly drives + economy summary (the frontend feed) |
 | `GET` | `/market` | Current Arc activity → temperature / regime |
 | `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals |
+| `GET` | `/arena` | The human-vs-swarm **MURMUR** arena: current + previous round (pools, odds, entry/exit temp, countdown), the resolver/contract addresses, and the swarm's lifetime hit-rate. Inert (`{enabled:false}`) until `PredictionArena` is deployed and `ARENA_ENABLED` is on |
 | `GET` | `/history` | D1 long-term archive: one row per cron (temperature, deals, cumulative volume, gini, state histogram) + a since-launch summary |
 | `GET` | `/snapshot?flyId=N` | Full neural state of one fly (firing rates, spikes) + its agent wallet |
 | `GET` | `/flies/:id` | A single fly's drives, behaviour and vitals |
@@ -246,6 +251,12 @@ secret transparently falls back to the keyless `simulated` facilitator (see the 
 | `ECONOMY_SHADOW` | `false` | **`false` = LIVE broadcast**; `true` = sign + simulate each transfer, never broadcast |
 | `ECONOMY_NET_MIN_BROADCAST` | `0.004` | Netting: minimum net USDC per agent-pair before it is broadcast; dust carries forward |
 | `ECONOMY_NET_FLUSH_TICKS` | `30` | Netting: force-flush any nonzero pending net at least every N sub-ticks |
+| `ARENA_ENABLED` | `false` | Human **MURMUR** arena on/off; inert until `PredictionArena` is deployed **and** `ARENA_ADDRESS` is set |
+| `ARENA_ADDRESS` | *(unset)* | Deployed `PredictionArena` (Arc mainnet); absent ⇒ the arena step is skipped entirely (zero behaviour change) |
+| `ARENA_TOKEN` | `0x8faa…4a5d` | The **MURMUR** ERC-20 the arena is denominated in (informational / frontend) |
+| `ARENA_ROUND_MIN` | `60` | Minutes per arena round (== the betting window); clamped 1..1440 |
+| `ARENA_FLAT_BAND` | `0.008` | \|Δtemperature\| ≤ this ⇒ FLAT ⇒ full refund (defaults to `PREDICT_FLAT_BAND`) |
+| `ARENA_STALE_GRACE_SEC` | `259200` | Seconds past a round's deadline after which anyone may expire it for a refund (3 days) |
 
 **Real-money rails — LIVE in production** (`ECONOMY_FACILITATOR="onchain"`, `ECONOMY_SHADOW="false"`); they are
 inert only in the keyless local-dev fallback, where there is no real money to bound:

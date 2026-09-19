@@ -86,6 +86,19 @@ export interface Env {
   PREDICT_FLAT_BAND?: string;           // |Δtemperature| ≤ this ⇒ FLAT (full refund); a noise dead-zone (default 0.008)
   PREDICT_COMMIT?: string;              // "true"/"false" (default true) — commit decisive resolutions to the on-chain registry (gas)
 
+  // --- Human-vs-swarm prediction arena: holders bet MURMUR on the SAME temperature move the flies do ---
+  //     Non-custodial: bets are escrowed in the deployed PredictionArena contract and paid out by it; the
+  //     Worker only opens/resolves rounds as the authorized resolver (its facilitator wallet), and the
+  //     contract — not the Worker — derives UP/DOWN/FLAT from the temperatures committed at open. ALL of it
+  //     is inert unless ARENA_ENABLED="true" AND ARENA_ADDRESS is set AND the onchain facilitator is armed
+  //     with real spend on (it needs a resolver key + pays gas). Denominated in MURMUR, never the swarm's USDC.
+  ARENA_ENABLED?: string;               // "true"/"false" (default false) — drive the on-chain human arena
+  ARENA_ADDRESS?: string;               // deployed PredictionArena (0x…40); absent ⇒ arena step skipped entirely
+  ARENA_TOKEN?: string;                 // MURMUR ERC-20 the arena is denominated in (0x…40; informational/frontend)
+  ARENA_ROUND_MIN?: string;             // minutes per arena round (default 60; also the betting window)
+  ARENA_FLAT_BAND?: string;             // |Δtemperature| ≤ this ⇒ FLAT refund (default = PREDICT_FLAT_BAND)
+  ARENA_STALE_GRACE_SEC?: string;       // seconds past a round's deadline after which anyone may expire it for a refund (default 259200 = 3d)
+
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
@@ -164,8 +177,18 @@ export interface RuntimeConfig {
     flatBand: number;        // |Δtemperature| ≤ this ⇒ FLAT (refund)
     commit: boolean;         // commit decisive resolutions to the on-chain NeuralReceiptRegistry
   };
-
-  // Connectome sizing (ts-lif)
+  
+  // Human-vs-swarm prediction arena (holders bet MURMUR on the same temperature move the flies do)
+  arena: {
+    enabled: boolean;
+    address: string | null;     // deployed PredictionArena, or null (arena step skipped — zero behaviour change)
+    token: string | null;       // MURMUR ERC-20 the arena is denominated in (informational / frontend)
+    roundLenSec: number;        // seconds per arena round (== the betting window)
+    flatBand: number;           // |Δtemperature| ≤ this ⇒ FLAT (refund); matches the swarm for a fair comparison
+    staleGraceSec: number;      // seconds past deadline before an unresolved round is refundable by anyone
+  };
+  
+  // connectome sizing (ts-lif)
   brainOpts: {
     nSensory?: number;
     nInterL1?: number;
@@ -270,6 +293,18 @@ export function loadConfig(env: Env): RuntimeConfig {
       maxStakeUsdc: clamp(Number(env.PREDICT_MAX_STAKE_USDC ?? "0.01"), 0.000001, 100_000),
       flatBand: clamp(Number(env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
       commit: (env.PREDICT_COMMIT ?? "true").toLowerCase() !== "false",
+    },
+
+    arena: {
+      // OFF by default and inert until ARENA_ADDRESS is set AND the onchain facilitator is armed with real
+      // spend on — a simulated/keyless Worker has no resolver key, so it never touches the arena.
+      enabled: (env.ARENA_ENABLED ?? "false").toLowerCase() === "true",
+      address: (env.ARENA_ADDRESS ?? "").trim() || null,
+      token: (env.ARENA_TOKEN ?? "").trim() || null,
+      roundLenSec: clampInt(Number(env.ARENA_ROUND_MIN ?? "60"), 1, 1440) * 60,
+      // Default to the swarm's flat band so both markets resolve the same temperature move identically.
+      flatBand: clamp(Number(env.ARENA_FLAT_BAND ?? env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
+      staleGraceSec: clampInt(Number(env.ARENA_STALE_GRACE_SEC ?? "259200"), 3600, 30 * 86400),
     },
 
     brainOpts: {

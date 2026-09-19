@@ -154,7 +154,7 @@ All non-sensitive config is in `wrangler.toml` `[vars]`, with authoritative defa
 
 ```bash
 npm run typecheck     # tsc --noEmit for fly-brain + trader-worker
-npm test              # 36 unit tests (connectome · LIF · motor decoder · economy)
+npm test              # 85 unit tests (connectome · LIF · motor decoder · economy · x402 · provenance · prediction · arena)
 npm run smoke         # neural smoke test (no chain, no keys)
 npm run build         # workspace builds (where present)
 ```

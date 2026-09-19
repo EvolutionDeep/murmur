@@ -129,3 +129,122 @@ cast logs --address 0x<registry> \
 
 Each event's `prevHead` equals the previous event's `receiptHash`, and the newest `receiptHash` equals
 `chainHead()` — the whole ordered neural-receipt chain, rebuilt from the chain alone.
+
+---
+
+# PredictionArena — the human-vs-swarm MURMUR arena
+
+`PredictionArena.sol` gives the **MURMUR** token a use inside murmur: holders bet it on the *same* Arc
+market-temperature move the 24 fly agents bet, head-to-head on a live leaderboard. It is a **non-custodial,
+parimutuel** market — the contract escrows every stake and pays winners itself; the murmur Worker is only the
+**resolver** and never holds a bettor's funds or key.
+
+Each round is an opaque id chosen by the Worker (a unix time-bucket, `floor(now / roundLenSec)`). The resolver
+`openRound`s a round by **committing** the temperature it reads (the `entryTemp`) plus a `flatBand` and a
+`betDeadline` — *before anyone can bet on the exit* — and later `resolve`s it supplying **only** the exit
+temperature. The contract, not the resolver, derives the outcome from those committed numbers, so no operator can
+steer a result:
+
+- `Δ = exitTemp − entryTemp`; `Δ > flatBand` ⇒ **UP**, `Δ < −flatBand` ⇒ **DOWN**, otherwise **FLAT** (all refunded).
+- Winners split the losers' pool pro-rata (`stake + stake·losePool / winPool`, integer floor — sub-wei dust stays in
+  the contract, never taken). Σpayouts == Σstakes: strictly zero-sum, **no house, no owner take, no upgrade path**.
+- Re-betting the **same** side tops up a position; taking the **opposite** side in one round reverts (`SideTaken`).
+- `expireStale(roundId)` is a safety valve: a round the resolver never resolved becomes **refundable by anyone**
+  once `staleGrace` (default 3 days) has passed its deadline, so user funds can never be locked by a dead resolver.
+
+Only the single immutable `resolver` (the Worker's facilitator/gas wallet — the same identity that commits to
+`NeuralReceiptRegistry`) may `openRound`/`resolve`; `bet`/`claim`/`claimMany`/`expireStale` are permissionless. Bets
+are denominated in the immutable `token` (MURMUR) and move via standard ERC-20 `approve` + `transferFrom` — the
+frontend does this in-browser through MetaMask, so the murmur server is never in the money path.
+
+## Layout
+
+```
+contracts/
+├── PredictionArena.sol            # the contract
+├── build/PredictionArena.json     # compiled {abi, bytecode} artifact (checked in)
+├── foundry.toml                   # forge config
+├── test/PredictionArena.t.sol     # unit + invariant tests (forge)
+└── ../scripts/
+    ├── compile-arena.mjs          # solc-js → build/*.json
+    ├── deploy-arena-auto.mjs      # viem deploy (resolver = the Worker's own gas wallet) — mainnet confirm-gated
+    └── deploy-arena.mjs           # manual-env deploy
+```
+
+## 1. Compile (solc via npm)
+
+```bash
+cd packages/trader-worker
+npm run compile:arena              # = node scripts/compile-arena.mjs
+```
+
+Regenerates `build/PredictionArena.json` (solc 0.8.x, ABI + bytecode), checked in so the deploy step and the Worker
+integration need no toolchain.
+
+## 2. Test (foundry)
+
+```bash
+cd packages/trader-worker/contracts
+forge install foundry-rs/forge-std   # once
+forge test -vv
+```
+
+`test/PredictionArena.t.sol` covers: only-resolver open/resolve, the UP/DOWN/FLAT band math, parimutuel payout +
+zero-sum conservation, `approve`→`bet`→`claim`, same-side top-ups vs. opposite-side rejection, the FLAT/one-sided/
+`expireStale` refund paths, and pull-based `payoutFor`. The Worker-side wiring (round-plan cursor, simulated-mode
+`null` delegation, config gating, zero regression when the arena is off) is covered by `npm test` in
+[`../src/arena.test.ts`](../src/arena.test.ts).
+
+## 3. Deploy (viem)
+
+> ⚠️ This spends **real gas** and, on mainnet, connects a **real MURMUR** market. The deployer key is read from a
+> git-ignored local file and never printed. `deploy-arena-auto.mjs` **aborts on Arc mainnet (5042) unless
+> `ARENA_CONFIRM=1`** is set.
+
+Put **one** key into `packages/trader-worker/.env.local` (git-ignored) — `ECONOMY_MNEMONIC` (derives the *identical*
+`accountIndex 2_000_000` gas wallet the Worker uses, so the resolver is correct) or `ARENA_DEPLOYER_PK` /
+`ECONOMY_FACILITATOR_PK`:
+
+```bash
+cd packages/trader-worker
+npm run deploy:arena               # = node scripts/deploy-arena-auto.mjs
+```
+
+It resolves `token` (defaults to mainnet MURMUR `0x8faa…4a5d`; verified to be a contract), `resolver` (defaults to
+the Worker's own signing address, else the live `/proofs` `tx.from`) and `staleGrace`, deploys, self-verifies
+`token()`/`resolver()`/`staleGrace()`/`roundCount()`, and writes the address to `contracts/ARENA_ADDRESS.txt` + back
+into `.env.local`. Testnet dry run:
+
+```bash
+CHAIN_ID=5042002 ARENA_DEPLOYER_PK=0x… ARENA_TOKEN=0x… node scripts/deploy-arena.mjs
+```
+
+## 4. Wire the Worker
+
+```bash
+wrangler secret put ARENA_ADDRESS          # or set it under [vars] in wrangler.toml
+# value: 0x<deployed arena address>
+# then flip ARENA_ENABLED = "true" and redeploy
+```
+
+The resolver's `openRound`/`resolve` writes fire **only** when the onchain facilitator is armed with real spend on
+(`ECONOMY_FACILITATOR="onchain"`, `ECONOMY_SHADOW="false"`, `ECONOMY_REAL_SPEND="true"`) — a simulated/keyless Worker
+has no resolver key, so it never touches the arena. `ARENA_ADDRESS` absent or `ARENA_ENABLED="false"` ⇒ the arena step
+is skipped entirely: **zero behaviour change**. Roll back instantly by setting `ARENA_ENABLED="false"` and redeploying.
+
+## 5. Verify
+
+- **API** — `GET /arena` returns the current + previous round (pools, odds, entry/exit temp, countdown), the
+  resolver/contract addresses, and the swarm's lifetime hit-rate.
+- **Frontend** — the arena drawer reads balance/allowance/your-bet and writes approve/bet/claim **directly against
+  Arc RPC in the browser** (MetaMask), never through the murmur server.
+- **Trustless, by hand** — read a round straight from the contract:
+
+```bash
+cast call 0x<arena> "roundInfo(uint256)(bool,bool,uint8,int64,int64,int64,uint64,uint64,uint64,uint256,uint256,uint256)" <roundId> \
+  --rpc-url https://rpc.mainnet.arc.io
+```
+
+`outcome` decodes as `0 pending · 1 UP · 2 DOWN · 3 FLAT · 4 REFUND`; temperatures are r6 (÷1e6); pools are atomic
+MURMUR (18-dec). Walk `RoundOpened` / `RoundResolved` / `Claimed` events to rebuild any round's full history from the
+chain alone.

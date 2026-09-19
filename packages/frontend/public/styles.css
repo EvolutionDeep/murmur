@@ -829,6 +829,119 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
 .pl-reg { margin-top: 9px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
 .pl-reg .fp { color: var(--accent); opacity: 0.85; word-break: break-all; }
 
+/* ============ human-vs-swarm arena drawer ============
+   MURMUR-denominated, non-custodial head-to-head: a holder bets UP/DOWN on the SAME temperature move
+   the fly swarm bets, into a parimutuel book the PredictionArena contract escrows and pays out itself.
+   Reuses the generic .drawer chrome and the predict drawer's visual language; these are its innards. */
+.arena-btn {
+  margin-top: 6px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.arena-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer-events: none; }
+
+.ar-loading, .ar-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.85; text-align: center; padding: 18px 6px; }
+.ar-empty { text-align: left; opacity: 1; padding: 10px 2px; }
+.ar-empty .fp { color: var(--accent); font-family: var(--mono); opacity: 0.9; }
+
+.ar-card { margin-bottom: 12px; padding: 12px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
+.ar-card.you { border-color: rgba(var(--accent-rgb), 0.28); }
+.ar-title { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.ar-mode { font-family: var(--mono); font-size: 8px; letter-spacing: 0.04em; text-transform: none; color: var(--accent); opacity: 0.85; }
+.ar-blurb { font-size: 10px; line-height: 1.6; color: var(--muted); margin: 0 0 11px; }
+.ar-blurb b { color: var(--ink); font-weight: 600; }
+
+/* live book */
+.ar-round { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 9px; }
+.ar-round b { color: var(--ink); font-weight: 600; }
+.ar-round #ar-countdown { color: var(--accent); }
+.ar-outcome { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 1px 7px; border-radius: 2px; border: 1px solid currentColor; }
+.ar-outcome.up { color: #1c5c33; background: rgba(46, 148, 84, 0.12); }
+.ar-outcome.down { color: #8a2222; background: rgba(178, 58, 58, 0.11); }
+.ar-outcome.flat, .ar-outcome.refund { color: var(--muted); background: rgba(var(--ink-rgb), 0.05); }
+.ar-outcome.pending { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
+.ar-pools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+.ar-pool { display: flex; flex-direction: column; gap: 2px; padding: 7px 9px; border: 1px solid var(--hair); border-radius: 2px; }
+.ar-pool.up { border-color: rgba(46, 148, 84, 0.4); background: rgba(46, 148, 84, 0.06); }
+.ar-pool.down { border-color: rgba(178, 58, 58, 0.34); background: rgba(178, 58, 58, 0.05); }
+.ar-side { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.ar-pool.up .ar-side { color: #1c5c33; }
+.ar-pool.down .ar-side { color: #8a2222; }
+.ar-amt { font-family: var(--display); font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ar-bar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; border: 1px solid var(--hair); margin-bottom: 10px; }
+.ar-bar-up { background: #2e9454; }
+.ar-bar-down { background: #b23a3a; }
+.ar-odds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.ar-odds > div { display: flex; flex-direction: column; gap: 1px; }
+.ar-odds dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.ar-odds dd { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ar-odds dd.ar-prob { font-size: 9px; color: var(--accent); }
+.ar-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 4px; padding-top: 9px; border-top: 1px solid var(--hair); }
+.ar-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ar-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.ar-meta dd { margin: 0; font-family: var(--mono); font-size: 9.5px; color: var(--ink); opacity: 0.88; font-variant-numeric: tabular-nums; }
+.ar-contract { margin-top: 9px; font-family: var(--mono); font-size: 8.5px; color: var(--muted); }
+.ar-contract .fp { color: var(--accent); opacity: 0.85; word-break: break-all; }
+.ar-contract a.fp:hover { opacity: 1; text-decoration: underline; }
+
+/* your position */
+.ar-you-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 0 0 10px; }
+.ar-you-meta > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ar-you-meta > div:first-child { grid-column: 1 / -1; }
+.ar-you-meta dt { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.ar-you-meta dd { margin: 0; font-family: var(--mono); font-size: 10px; color: var(--ink); opacity: 0.9; font-variant-numeric: tabular-nums; }
+.ar-you-meta dd.fp { color: var(--accent); word-break: break-all; }
+.ar-yourbet { margin: 0 0 10px; padding: 8px 10px; font-family: var(--mono); font-size: 9px; line-height: 1.5; color: var(--muted); border: 1px dashed rgba(var(--accent-rgb), 0.4); border-radius: 2px; }
+.ar-yourbet b { font-weight: 600; }
+.ar-yourbet b.up { color: #1c5c33; }
+.ar-yourbet b.down { color: #8a2222; }
+.ar-betrow { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.ar-amount {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--ink);
+  background: rgba(var(--ink-rgb), 0.03); border: 1px solid var(--hair); border-radius: 2px;
+  padding: 7px 9px; transition: border-color 0.18s ease, background 0.18s ease;
+}
+.ar-amount:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.04); }
+.ar-unit { flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.ar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ar-btn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--paper); background: var(--accent);
+  border: 1px solid var(--accent); border-radius: 2px;
+  padding: 8px 14px; cursor: pointer; transition: opacity 0.18s ease, transform 0.12s ease, background 0.18s ease, color 0.18s ease;
+}
+.ar-btn:hover { opacity: 0.9; }
+.ar-btn:active { transform: translateY(1px); }
+.ar-btn:disabled { opacity: 0.45; cursor: progress; }
+.ar-btn.connect { color: var(--accent); background: rgba(var(--accent-rgb), 0.07); border-color: rgba(var(--accent-rgb), 0.34); }
+.ar-btn.connect:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); opacity: 1; }
+.ar-btn.up { background: #2e9454; border-color: #2e9454; }
+.ar-btn.down { background: #b23a3a; border-color: #b23a3a; }
+.ar-btn.claim { color: #1c5c33; background: rgba(46, 148, 84, 0.1); border-color: rgba(46, 148, 84, 0.42); font-size: 9px; padding: 6px 10px; }
+.ar-btn.claim:hover { background: rgba(46, 148, 84, 0.2); color: #14472a; opacity: 1; }
+.ar-fine { margin-top: 9px; font-family: var(--mono); font-size: 8px; line-height: 1.5; color: var(--muted); opacity: 0.75; }
+.ar-closed { margin-top: 2px; padding: 8px 10px; font-family: var(--mono); font-size: 9px; line-height: 1.5; color: var(--muted); border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--ink-rgb), 0.03); }
+.ar-status { margin-top: 9px; font-family: var(--mono); font-size: 9px; line-height: 1.5; color: var(--muted); min-height: 0; }
+.ar-status:empty { display: none; }
+.ar-status.ok { color: #1c5c33; }
+.ar-status.bad { color: #8a2222; }
+
+/* you vs the swarm */
+.ar-vs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ar-vs { display: flex; flex-direction: column; gap: 3px; padding: 10px 11px; border: 1px solid var(--hair); border-radius: 2px; }
+.ar-vs.swarm { border-color: rgba(var(--accent-rgb), 0.34); background: rgba(var(--accent-rgb), 0.05); }
+.ar-vs.human { border-color: rgba(46, 148, 84, 0.3); background: rgba(46, 148, 84, 0.04); }
+.ar-vs-label { font-family: var(--mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.ar-vs-big { font-family: var(--display); font-size: 17px; line-height: 1.15; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ar-vs.swarm .ar-vs-big { color: var(--accent); }
+.ar-vs-sub { font-family: var(--mono); font-size: 8px; line-height: 1.4; color: var(--muted); opacity: 0.85; }
+.ar-last { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--hair); font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--muted); }
+.ar-last b { font-weight: 600; }
+
 /* ============ responsive ============
    The piece is four floating corner panels over a full-bleed field. That reads
    beautifully on a desktop, but the corners collide once the viewport narrows

@@ -35,6 +35,19 @@ All notable changes to **murmur** are documented in this file. The format is bas
 - **`ADMIN_TOKEN` guard (optional secret)**: when set, the mutating `POST /tick` and `/reset` debug endpoints
   require it, so they can be locked down on a live deployment. The per-minute cron presents the token
   internally, so arming it never interrupts the scheduled tick.
+- **Human-vs-swarm prediction ARENA (`MURMUR` token utility)**: a new `PredictionArena.sol` contract + `GET /arena`
+  endpoint + frontend arena drawer let **MURMUR** holders bet the project's own token on the *same* Arc-temperature
+  move the fly swarm bets — UP/DOWN into a **non-custodial, parimutuel** book the contract escrows and pays out
+  itself. The Worker acts only as the **resolver**, committing each round's entry/exit temperature; the contract
+  derives UP/DOWN/FLAT from the committed entry + flat band, so no operator can steer an outcome, and a live
+  leaderboard compares the crowd's hit-rate against the flies'. Ships inert-by-default (`ARENA_ENABLED="false"`, no
+  `ARENA_ADDRESS`) and in the keyless/simulated fallback; `arena.test.ts` (+19 tests, suite now **89**) pins the
+  resolver's round-plan cursor — including the `cursorAfterOpen()` fresh-start baseline that stops a mid-stream first
+  open from re-chasing an un-opened `prev` (which the contract reverts `NotOpened`, wasting gas each cron) — and the
+  zero-regression gating. Deploy scripts `deploy-arena(-auto).mjs` are confirm-gated for mainnet (`ARENA_CONFIRM=1`).
+  **Live on Arc mainnet**: `PredictionArena` at `0xaf1ae61e12c101d179a2f65a5f2e02e690968525` (deploy tx
+  `0x187779a2…3f8c`, gas paid by `0x307D…3a0d`), resolver = the Worker facilitator `0x2b9a…055c` opening/resolving each
+  hourly bucket; the production Worker runs `ARENA_ENABLED="true"`, first live round `497162` opened on-chain.
 
 ### Changed
 - **GONE LIVE WITH REAL MONEY.** The production Worker now runs `ECONOMY_FACILITATOR = "onchain"` with

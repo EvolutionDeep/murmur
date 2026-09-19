@@ -129,6 +129,26 @@ PREDICT_FLAT_BAND = "0.008"                   # |Δtemperature| ≤ this ⇒ FLA
 PREDICT_COMMIT = "true"                       # commit decisive resolutions to the on-chain NeuralReceiptRegistry
 
 
+# ===== Human-vs-swarm prediction ARENA (ONCHAIN — MURMUR-denominated, NON-CUSTODIAL) =====
+# Holders bet MURMUR on the SAME Arc-temperature move the fly swarm does, head-to-head on a live
+# leaderboard. Bets are escrowed in the deployed PredictionArena contract and paid out parimutuel BY the
+# contract; the Worker is only the authorized RESOLVER (its facilitator wallet calls openRound/resolve) and
+# the CONTRACT — not the Worker — derives UP/DOWN/FLAT from the entry temperature + flat band committed at
+# open, so the resolver cannot steer an outcome. No user funds ever touch the Worker (non-custodial).
+# ROLLOUT (mirrors PREDICT): deploy with ARENA_ENABLED = "false" first to prove the /arena plumbing is inert
+# and the economy is unregressed; then deploy contracts/PredictionArena.sol (see contracts/README.md), set
+# ARENA_ADDRESS to it, flip ARENA_ENABLED = "true" and redeploy. The resolver writes cost real gas and fire
+# ONLY when the onchain facilitator is armed with real spend on (ECONOMY_FACILITATOR=onchain, ECONOMY_SHADOW
+# =false, ECONOMY_REAL_SPEND not false) — so this whole block is inert on any simulated/keyless deployment,
+# and stays inert here until ARENA_ADDRESS is set AND ARENA_ENABLED is flipped to "true".
+ARENA_ENABLED = "true"                        # LIVE: contract 0xaf1ae6…8525 deployed + ARENA_ADDRESS set; resolver = Worker facilitator 0x2b9a…055c opens/resolves each hourly bucket
+ARENA_ADDRESS = "0xaf1ae61e12c101d179a2f65a5f2e02e690968525"   # deployed PredictionArena (Arc mainnet 5042, deploy tx 0x187779a2…3f8c); resolver = Worker facilitator 0x2b9a…055c, deployer/gas 0x307D…3a0d
+ARENA_TOKEN = "0x8faae5592b9acc27a79fca745c6b872adf514a5d"   # MURMUR (18-dec) the arena is denominated in; informational / frontend
+ARENA_ROUND_MIN = "60"                        # minutes per round (== the betting window); clamped 1..1440
+ARENA_FLAT_BAND = "0.008"                     # |Δtemperature| ≤ this ⇒ FLAT (refund); matches PREDICT_FLAT_BAND for a fair human-vs-swarm comparison
+ARENA_STALE_GRACE_SEC = "259200"              # 3 days past a round's deadline before anyone may expire it for a refund
+
+
 # ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
 # 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:
 # connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically

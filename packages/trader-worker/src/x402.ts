@@ -169,6 +169,39 @@ export interface RegistryCommit {
   ts: number;            // 0 ⇒ never committed
 }
 
+/**
+ * murmur's human-vs-swarm prediction arena (contracts/PredictionArena.sol). Holders bet MURMUR on the
+ * same Arc-temperature move the fly swarm does; the contract escrows the stakes and pays winners
+ * parimutuel, and IT — not the Worker — derives UP/DOWN/FLAT from the entry temperature + flat band the
+ * resolver committed at open. The Worker only ever calls openRound/resolve as the authorized resolver.
+ */
+export const predictionArenaAbi = parseAbi([
+  "function openRound(uint256 roundId, int64 entryTempR6, int64 flatBandR6, uint64 betDeadline)",
+  "function resolve(uint256 roundId, int64 exitTempR6)",
+  "function roundInfo(uint256 roundId) view returns (bool opened, bool resolved, uint8 outcome, int64 entryTemp, int64 exitTemp, int64 flatBand, uint64 betDeadline, uint64 openedAt, uint64 resolvedAt, uint256 poolUp, uint256 poolDown, uint256 bettorCount)",
+  "function payoutFor(uint256 roundId, address who) view returns (uint256 stake, uint256 payout, bool claimable)",
+  "function resolver() view returns (address)",
+  "function token() view returns (address)",
+  "function roundCount() view returns (uint256)",
+  "function escrow() view returns (uint256)",
+]);
+
+/** A decoded arena round: temperatures unscaled from r6 (÷1e6), pools as atomic MURMUR (18-dec) strings. */
+export interface ArenaRoundInfo {
+  opened: boolean;
+  resolved: boolean;
+  outcome: number;         // 0 pending, 1 UP, 2 DOWN, 3 FLAT, 4 REFUND (stale)
+  entryTemp: number;
+  exitTemp: number;
+  flatBand: number;
+  betDeadline: number;     // unix seconds
+  openedAt: number;
+  resolvedAt: number;
+  poolUp: string;          // atomic MURMUR (18-dec) as a decimal string
+  poolDown: string;
+  bettorCount: number;
+}
+
 /** True when atomic string `a` <= `b` (cap checks). */
 export function lteAtomic(a: string, b: string): boolean {
   return BigInt(a) <= BigInt(b);
@@ -528,6 +561,11 @@ export interface OnChainFacilitatorOpts {
    * on-chain). Absent ⇒ no registry step; commits are silently skipped (zero behaviour change).
    */
   registryAddress?: Address;
+  /**
+   * Deployed PredictionArena to drive as the authorized resolver (open/resolve rounds). Absent ⇒ no
+   * arena step; the resolver calls are silently skipped (zero behaviour change).
+   */
+  arenaAddress?: Address;
 }
 
 export class OnChainFacilitator implements Facilitator {
@@ -863,6 +901,93 @@ export class OnChainFacilitator implements Facilitator {
         functionName: "chainHead",
       });
       return head as string;
+    } catch {
+      return null;
+    }
+  }
+
+  // ============================== on-chain prediction arena ==============================
+  //
+  // The human side of the prediction market (contracts/PredictionArena.sol), denominated in MURMUR and
+  // non-custodial: the contract escrows bets and pays winners; the Worker only acts as the authorized
+  // resolver that commits each round's baseline temperature and later its exit. Every call is BEST-EFFORT
+  // and degrades to null — an arena hiccup must never delay or fail the live tick (mirrors commitReceipt).
+
+  /** True when a PredictionArena is wired for this facilitator. */
+  get hasArena(): boolean {
+    return this.o.arenaAddress != null;
+  }
+
+  /**
+   * Open an arena round, committing its baseline temperature + flat band on-chain BEFORE anyone can bet
+   * on the exit (so the outcome is pinned to numbers fixed in advance). Returns the tx hash, or null when
+   * no arena is wired / the call failed — a round that fails to open simply never accepts bets.
+   */
+  async arenaOpen(roundId: number, entryTempR6: number, flatBandR6: number, betDeadline: number): Promise<string | null> {
+    const addr = this.o.arenaAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr,
+        abi: predictionArenaAbi,
+        functionName: "openRound",
+        args: [BigInt(roundId), BigInt(entryTempR6), BigInt(flatBandR6), BigInt(betDeadline)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve an arena round by supplying ONLY the exit temperature; the contract derives UP/DOWN/FLAT from
+   * the entry + flat band committed at open, so the resolver cannot fudge the outcome. Returns the tx hash,
+   * or null on any failure (the round stays open and, if never resolved, is refundable after the grace).
+   */
+  async arenaResolve(roundId: number, exitTempR6: number): Promise<string | null> {
+    const addr = this.o.arenaAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: predictionArenaAbi, functionName: "resolve",
+        args: [BigInt(roundId), BigInt(exitTempR6)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read an arena round's live state (pools/outcome/timing) for the /arena endpoint; null when unwired. */
+  async arenaRoundInfo(roundId: number): Promise<ArenaRoundInfo | null> {
+    const addr = this.o.arenaAddress;
+    if (!addr) return null;
+    try {
+      const r = (await this.o.publicClient.readContract({
+        address: addr, abi: predictionArenaAbi, functionName: "roundInfo", args: [BigInt(roundId)],
+      })) as readonly [boolean, boolean, number, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
+      return {
+        opened: r[0],
+        resolved: r[1],
+        outcome: Number(r[2]),
+        entryTemp: Number(r[3]) / 1e6,
+        exitTemp: Number(r[4]) / 1e6,
+        flatBand: Number(r[5]) / 1e6,
+        betDeadline: Number(r[6]),
+        openedAt: Number(r[7]),
+        resolvedAt: Number(r[8]),
+        poolUp: r[9].toString(),
+        poolDown: r[10].toString(),
+        bettorCount: Number(r[11]),
+      };
     } catch {
       return null;
     }
