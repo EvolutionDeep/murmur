@@ -77,6 +77,15 @@ export interface Env {
   CIRCLE_MAX_TIMEOUT_SECONDS?: string;  // seconds Circle may wait for terminal settlement before returning "pending" (default 12; Arc settles with instant finality).
   CIRCLE_API_KEY?: string;              // SECRET (optional): Circle API key → Bearer auth in production. Absent ⇒ keyless trial, authenticating each settle with an EIP-712 seller proof signed by the payTo key we already hold. Set with `wrangler secret put CIRCLE_API_KEY`.
 
+  // --- Trustless receipt availability: pin each neural receipt BODY to IPFS (see src/ipfs.ts) ---
+  //     The receipt HASH is already committed on-chain (EIP-3009 nonce + registry); pinning the BODY lets
+  //     anyone fetch it from a content-addressed gateway and confirm sha256(body)==receiptHash with NO murmur
+  //     server in the loop. ALL inert unless IPFS_PINNER="pinata" AND PINATA_JWT is set, and best-effort, so a
+  //     pin failure never blocks, delays, or invalidates a settlement.
+  IPFS_PINNER?: string;                 // "off" (default; no pinning, byte-for-byte today's behaviour) | "pinata" (pin each mined net receipt body)
+  PINATA_JWT?: string;                  // SECRET (optional): Pinata API JWT → Bearer auth for pinning. Set with `wrangler secret put PINATA_JWT`.
+  IPFS_GATEWAY?: string;                // public gateway the frontend fetches pinned bodies from (default https://ipfs.io)
+
   // --- Paid data product: the "Arc Pulse" signal sold over x402 (HTTP 402) ---
   //     A visitor's wallet signs an EIP-3009 authorization; the facilitator relays it and serves the
   //     machine-readable signal. ALL inert unless SIGNAL_ENABLED and (onchain) a payee resolves.
@@ -179,6 +188,17 @@ export interface RuntimeConfig {
       apiKey: string | null;
       baseUrl: string;
       maxTimeoutSeconds: number;
+    };
+    /**
+     * Trustless receipt-body availability. pinner "off" ⇒ no pinning (today's behaviour, zero change).
+     * "pinata" + a JWT ⇒ each mined net receipt's canonical body is pinned to IPFS (best-effort) and its CID
+     * published via /proofs, so anyone can fetch the body and check sha256(body)==the on-chain receiptHash
+     * without trusting murmur. gateway is the public IPFS gateway the frontend reads pinned bodies from.
+     */
+    ipfs: {
+      pinner: "off" | "pinata";
+      jwt: string | null;
+      gateway: string;
     };
   };
 
@@ -309,6 +329,11 @@ export function loadConfig(env: Env): RuntimeConfig {
         apiKey: (env.CIRCLE_API_KEY ?? "").trim() || null,
         baseUrl: (env.CIRCLE_FACILITATOR_URL ?? "").trim() || "https://api.circle.com",
         maxTimeoutSeconds: clampInt(Number(env.CIRCLE_MAX_TIMEOUT_SECONDS ?? "12"), 1, 300),
+      },
+      ipfs: {
+        pinner: (env.IPFS_PINNER ?? "").trim().toLowerCase() === "pinata" ? "pinata" : "off",
+        jwt: (env.PINATA_JWT ?? "").trim() || null,
+        gateway: (env.IPFS_GATEWAY ?? "").trim() || "https://ipfs.io",
       },
     },
 

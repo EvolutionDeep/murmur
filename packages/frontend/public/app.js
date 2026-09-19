@@ -1255,7 +1255,7 @@ function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); 
 // If both agree, the transfer is cryptographically bound to the connectome read-out that caused it — a
 // receipt invented after the fact could never hash to a nonce that is already mined.
 let proofs = [];            // newest-first ProofRecord[]
-let proofsMeta = null;      // {version, policy, chainHead, count}
+let proofsMeta = null;      // {version, policy, chainHead, count, ipfsGateway}
 let proofsOpen = false;
 let lastProofsPoll = 0;
 const PROOFS_POLL_MS = 30000;
@@ -1298,6 +1298,13 @@ async function sha256HexClient(v) {
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJSON(v)));
   return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+// sha256 of a RAW string's UTF-8 bytes (no canonicalization). A body fetched from an IPFS gateway is already
+// the exact canonical bytes that were hashed on-chain, so we hash them verbatim — re-parsing and re-
+// canonicalizing could drift (float formatting) and break the match against the on-chain receiptHash.
+async function sha256HexText(text) {
+  const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 async function pollProofs(force) {
   const now = Date.now();
@@ -1307,7 +1314,7 @@ async function pollProofs(force) {
     const p = await getJSON("/proofs", 6000);
     if (p && p.enabled) {
       proofs = Array.isArray(p.proofs) ? p.proofs : [];
-      proofsMeta = { version: p.version, policy: p.policy, chainHead: p.chainHead, count: p.count };
+      proofsMeta = { version: p.version, policy: p.policy, chainHead: p.chainHead, count: p.count, ipfsGateway: p.ipfsGateway || "" };
       if (proofsOpen) renderProofs();
     }
   } catch { /* best-effort: provenance is a nicety and must never block the scene */ }
@@ -1392,7 +1399,8 @@ function proofDetail(p) {
     `<div><dt>good</dt><dd>${r.good}</dd></div>` +
     `<div><dt>flush</dt><dd>#${r.flushSeq}·c${r.chunk}</dd></div>` +
     `<div><dt>receipt sha256</dt><dd class="fp">${shortHash(p.receiptHash)}</dd></div>` +
-    `<div><dt>prev chain</dt><dd class="fp">${r.prevChain ? shortHash(r.prevChain) : "genesis"}</dd></div>`;
+    `<div><dt>prev chain</dt><dd class="fp">${r.prevChain ? shortHash(r.prevChain) : "genesis"}</dd></div>` +
+    (p.ipfsCid ? `<div><dt>ipfs cid</dt><dd class="fp">${shortHash(p.ipfsCid)}</dd></div>` : "");
   wrap.appendChild(meta);
   const ct = document.createElement("div"); ct.className = "pf-ct-title"; ct.textContent = "frozen neural read-out per folded trade";
   wrap.appendChild(ct);
@@ -1433,10 +1441,29 @@ async function verifyProof(tx, card) {
     }
     if (!reg && v.registry) { reg = v.registry; regSource = "via murmur API"; }
     const regOk = !!reg && reg.committed === true;
+    // Trustless body retrieval: if this receipt was pinned to IPFS, fetch the body from a PUBLIC gateway (no
+    // murmur server in the loop) and confirm sha256(body) == the on-chain receiptHash. The CID is only a
+    // convenience pointer — a wrong/malicious CID can never fake a receipt, because whatever body it resolves
+    // to must still hash to the nonce already mined on Arc. Best-effort: any failure leaves ipfsOk=null and
+    // the nonce+registry verification is unchanged (never a regression).
+    let ipfsOk = null;
+    const ipfsCid = stored && stored.ipfsCid ? stored.ipfsCid : "";
+    const ipfsGw = ((proofsMeta && proofsMeta.ipfsGateway) || "https://ipfs.io").replace(/\/+$/, "");
+    if (ipfsCid) {
+      try {
+        const ctl = new AbortController();
+        const to = setTimeout(() => ctl.abort(), 12000);
+        const r = await fetch(`${ipfsGw}/ipfs/${ipfsCid}?format=raw`, { signal: ctl.signal });
+        clearTimeout(to);
+        if (r.ok) ipfsOk = (await sha256HexText(await r.text())) === v.receiptHash;
+      } catch { ipfsOk = null; }
+    }
     out.innerHTML = "";
     const badge = document.createElement("span");
     badge.className = "pf-badge " + (selfOk && onchainOk ? "ok" : "bad");
-    badge.textContent = (selfOk && onchainOk) ? "✓ neural-origin verified on-chain" : "✗ mismatch";
+    badge.textContent = (selfOk && onchainOk)
+      ? (ipfsOk ? "✓ neural-origin verified on-chain · body pinned to IPFS" : "✓ neural-origin verified on-chain")
+      : "✗ mismatch";
     const dl = document.createElement("dl"); dl.className = "pf-vmeta";
     dl.innerHTML =
       `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
@@ -1460,6 +1487,16 @@ async function verifyProof(tx, card) {
       regDiv.innerHTML = `<div><dt>on-chain registry</dt><dd class="fp">not configured</dd></div>`;
     }
     dl.append(...regDiv.children);
+    // IPFS row: the pinned CID (linked to a gateway) + whether the fetched body hashed to the on-chain value.
+    if (ipfsCid) {
+      const ipfsState = ipfsOk === true ? "body fetched · sha256 ✓ matches chain"
+        : (ipfsOk === false ? "body hash ✗ mismatch" : "not retrievable yet (gateway/propagation)");
+      const ipfsDiv = document.createElement("div");
+      ipfsDiv.innerHTML =
+        `<div><dt>receipt body on IPFS</dt>` +
+        `<dd class="fp${ipfsOk ? " ok" : ""}"><a href="${ipfsGw}/ipfs/${ipfsCid}" target="_blank" rel="noopener noreferrer">${shortHash(ipfsCid)}</a> · ${ipfsState}</dd></div>`;
+      dl.append(...ipfsDiv.children);
+    }
     out.append(badge, dl);
   } catch {
     out.textContent = "verify request failed (network)";

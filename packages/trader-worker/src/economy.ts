@@ -56,6 +56,7 @@ import type { PredictFlow } from "./prediction.js";
 import {
   PROOF_VERSION,
   POLICY_VERSION,
+  canonical,
   neuralEvidence,
   sha256Hex,
   netReceiptHash,
@@ -64,6 +65,7 @@ import {
   type NeuralConstituent,
   type ProofRecord,
 } from "./provenance.js";
+import type { ReceiptPinner } from "./ipfs.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
 export type GoodKind = "signal" | "momentum" | "attestation" | "prediction";
@@ -212,6 +214,11 @@ export interface EconomyDeps {
   facilitator?: Facilitator;
   /** Real on-chain address for an agent id (HD-derived). Absent ⇒ deterministic pseudo-address. */
   addressOf?(id: number): string;
+  /**
+   * Optional best-effort IPFS pinner for net receipt bodies (trustless availability). Absent ⇒ no pinning,
+   * byte-for-byte today's behaviour. See src/ipfs.ts — the trust root stays sha256(body)==the on-chain hash.
+   */
+  pinner?: ReceiptPinner;
 }
 
 const KEY_VERSION = "economy:v1";
@@ -252,6 +259,8 @@ export class AgentEconomy {
   private proofs: ProofRecord[] = [];
   /** receiptHash of the most recent broadcast — the head of the tamper-evident proof chain. */
   private proofChainHead = "";
+  /** Optional best-effort IPFS pinner for receipt bodies (absent ⇒ no pinning). Injected via deps. */
+  private pinner?: ReceiptPinner;
 
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
@@ -259,6 +268,7 @@ export class AgentEconomy {
     // THROWS by design, so real money can never be half-enabled — onchain MUST be injected from state.ts.
     this.facilitator = deps?.facilitator ?? makeFacilitator(cfg.facilitatorMode);
     this.addressOf = deps?.addressOf ?? ((id) => AgentEconomy.addressOf(cfg.seedBase, id));
+    this.pinner = deps?.pinner;
     if (restored) {
       try { this.applySerialized(restored); } catch { this.agents = []; }
     }
@@ -544,10 +554,15 @@ export class AgentEconomy {
         const commitTx = await this.commitToRegistry(
           receiptHash, netReceipt.prevChain, tickIndex, netReceipt.constituents.length, receipt.txHash,
         );
+        // Best-effort: pin the receipt BODY to IPFS so anyone can fetch it trustlessly and recompute the
+        // on-chain hash with no murmur server. A failure only means "not pinned" — the receipt stays nonce-
+        // and registry-verifiable. This never touches the signature/nonce path above.
+        const ipfsCid = await this.pinReceipt(netReceipt, receiptHash);
         // Publish + chain the proof now that the nonce-committing transfer is mined.
         this.proofs.unshift({
           txHash: receipt.txHash, receiptHash, receipt: netReceipt, ts: Date.now(),
           ...(commitTx ? { commitTx } : {}),
+          ...(ipfsCid ? { ipfsCid } : {}),
         });
         if (this.proofs.length > PROOFS_CAP) this.proofs.length = PROOFS_CAP;
         // Advance the off-chain head UNCONDITIONALLY: proofChainHead is the authoritative receipt-chain head
@@ -1013,6 +1028,21 @@ export class AgentEconomy {
     if (typeof f.commitReceipt !== "function") return null;
     try {
       return await f.commitReceipt({ receiptHash, prevHead, tickIndex, constituents, txHash });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Best-effort: pin a receipt's canonical body to IPFS and return its CID (null when no pinner is wired or
+   * the pin failed). The body is canonical(receipt) — the EXACT bytes whose sha256 is receiptHash — so a
+   * verifier who fetches the CID from any gateway recomputes the on-chain hash trustlessly. NEVER throws:
+   * pinning is an availability nicety and must not abort or delay a settlement that already mined.
+   */
+  private async pinReceipt(receipt: NetReceipt, receiptHash: string): Promise<string | null> {
+    if (!this.pinner) return null;
+    try {
+      return await this.pinner.pin(canonical(receipt), receiptHash);
     } catch {
       return null;
     }

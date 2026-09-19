@@ -47,6 +47,7 @@ import {
 import type { PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement } from "./economy.js";
+import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo } from "./x402.js";
@@ -330,7 +331,20 @@ export class FlyStateDO {
       );
     }
 
-    return { facilitator, addressOf: (id) => keys.address(id) };
+    // Optional IPFS pinner: when IPFS_PINNER="pinata" + a JWT, pin each mined net receipt's canonical body to
+    // IPFS (best-effort) so anyone can fetch it from a public gateway and confirm sha256(body)==the on-chain
+    // receiptHash with no murmur server in the loop. "off"/no JWT ⇒ omitted ⇒ flush skips pinning entirely
+    // (byte-for-byte today's behaviour). The trust root stays the on-chain hash, never the CID.
+    const pinner =
+      e.ipfs.pinner === "pinata" && e.ipfs.jwt ? new PinataPinner({ jwt: e.ipfs.jwt }) : undefined;
+    if (pinner) {
+      console.warn(
+        `[DO] IPFS receipt pinning ARMED (pinata, gateway=${e.ipfs.gateway}): each mined net receipt body is ` +
+          `pinned best-effort; verifiers fetch it trustlessly and match sha256(body) to the on-chain receiptHash.`,
+      );
+    }
+
+    return { facilitator, addressOf: (id) => keys.address(id), pinner };
   }
 
   private async ensurePrevTemperature(): Promise<number> {
@@ -820,7 +834,9 @@ export class FlyStateDO {
   private async getProofs() {
     if (!this.cfg.economy.enabled) return json({ enabled: false, proofs: [], chainHead: "", count: 0 });
     const economy = await this.ensureEconomy();
-    return json({ enabled: true, ...economy.proofsSnapshot() });
+    // ipfsGateway lets the frontend fetch a pinned receipt body from a public gateway (trustless retrieval,
+    // no murmur server in the loop). Published even when pinning is off so the UI can show "not pinned".
+    return json({ enabled: true, ipfsGateway: this.cfg.economy.ipfs.gateway, ...economy.proofsSnapshot() });
   }
 
   /**

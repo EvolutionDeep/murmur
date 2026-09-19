@@ -87,6 +87,13 @@ export interface ProofRecord {
    * means "not yet / not registered" — it never blocks or invalidates the settlement itself.
    */
   commitTx?: string;
+  /**
+   * IPFS CID of the pinned canonical receipt body, when a pinner is configured AND the best-effort pin
+   * landed. A convenience pointer for trustless retrieval: a verifier fetches this CID from any public
+   * gateway and confirms sha256(body) == receiptHash (the on-chain nonce), so a correct CID is NOT a trust
+   * assumption — the hash match is. Absent means "not pinned"; nonce/registry verification is unchanged.
+   */
+  ipfsCid?: string;
 }
 
 /** Round to 6 decimals so a float can survive a JSON round-trip into a stable hash input. */
