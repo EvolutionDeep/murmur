@@ -1103,6 +1103,7 @@ function openWallets() {
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1257,6 +1258,7 @@ function openHistory() {
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1359,6 +1361,7 @@ function openProofs() {
   if (historyOpen) closeHistory();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
   const d = $("proofs"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("proofs-open");
@@ -1587,6 +1590,7 @@ function openBrain() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (arenaOpen) closeArena();
+  if (lineageOpen) closeLineage();
   const d = $("brain"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("brain-open");
@@ -1724,6 +1728,240 @@ function brainVerifyCard() {
   return card;
 }
 
+// ================= connectome breeding market (lineage drawer) =================
+// The breeding market's public face: a read-only family tree of every connectome GENOME (the 24 genesis
+// roots + any bred offspring). A genome is a brain's complete heritable identity — the generator parameters
+// that deterministically rebuild it — so each individual is verifiable trustlessly right here: your browser
+// recomputes sha256(canonical(genome)), matches it to the served id, and (when anchored) reads the committed
+// ancestry straight off Arc. Breeding itself is operator-gated (POST /breed, ADMIN_TOKEN); the breed control
+// only appears when ?token= is in the URL, so the public surface stays read-only.
+let lineageOpen = false;
+let lineageData = null;        // latest /lineage payload {count, genesis, bred, generations, entries[]}
+let lineageLoading = false;
+let lineageSel = null;         // {hash, detail, verify, clientHash, bodyOk} for the selected individual
+let lineageSelLoading = false;
+let lineageBreedMsg = null;    // last breed result/error text (operator panel)
+const LIN_ADMIN_TOKEN = params.get("token") || "";
+
+const LIN_OP = { genesis: "◦ genesis", mutate: "↻ mutate", cross: "⤫ cross" };
+
+async function loadLineage() {
+  lineageLoading = true; renderLineage();
+  lineageData = await getJSON("/lineage?limit=500", 12000).catch(() => null);
+  lineageLoading = false; renderLineage();
+}
+
+function openLineage() {
+  lineageOpen = true;
+  if (brainOpen) closeBrain();
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (arenaOpen) closeArena();
+  const d = $("lineage"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("lineage-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  if (!lineageData && !lineageLoading) loadLineage(); else renderLineage();
+}
+function closeLineage() {
+  lineageOpen = false;
+  document.body.classList.remove("lineage-open");
+  const d = $("lineage"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!lineageOpen) d.hidden = true; }, 420);
+}
+function toggleLineage() { if (lineageOpen) closeLineage(); else openLineage(); }
+
+// Load one individual's full detail + server verify, and recompute its genome hash in-browser (the trustless bit).
+async function selectLineage(hash) {
+  lineageSelLoading = true; lineageSel = { hash }; renderLineage();
+  const [detail, verify] = await Promise.all([
+    getJSON("/lineage/" + hash, 12000).catch(() => null),
+    getJSON("/lineage/verify?hash=" + hash, 12000).catch(() => null),
+  ]);
+  let clientHash = null;
+  const genome = detail && detail.entry ? detail.entry.genome : null;
+  if (genome) { try { clientHash = await sha256HexClient(genome); } catch { clientHash = null; } }
+  const bodyOk = clientHash != null && detail && detail.entry
+    && clientHash === String(detail.entry.genomeHash || "").toLowerCase();
+  lineageSel = { hash, detail, verify, clientHash, bodyOk };
+  lineageSelLoading = false; renderLineage();
+}
+
+// Operator-only: apply a genetic operator to committed parents and record the offspring.
+async function doBreed() {
+  if (!LIN_ADMIN_TOKEN) return;
+  const op = ($("lin-op") || {}).value || "mutate";
+  const a = ($("lin-pa") || {}).value || "";
+  const b = ($("lin-pb") || {}).value || "";
+  const parents = [a.trim(), op === "cross" ? b.trim() : ""].filter(Boolean);
+  const seedRaw = ($("lin-seed") || {}).value || "";
+  const breeder = ($("lin-breeder") || {}).value || "";
+  const body = { op, parents };
+  if (seedRaw.trim() !== "" && Number.isFinite(Number(seedRaw))) body.rngSeed = Number(seedRaw) >>> 0;
+  if (breeder.trim()) body.breeder = breeder.trim();
+  lineageBreedMsg = "breeding …"; renderLineage();
+  try {
+    const r = await fetch(API + "/breed?token=" + encodeURIComponent(LIN_ADMIN_TOKEN), {
+      method: "POST", cache: "no-store", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || j.ok !== true) {
+      lineageBreedMsg = "✗ " + ((j && (j.error || j.code)) || ("HTTP " + r.status));
+    } else {
+      lineageBreedMsg = "✓ bred " + shortHash(j.entry.genomeHash) + " · gen " + j.entry.generation + (j.entry.commitTx ? " · on-chain " + shortHash(j.entry.commitTx) : "");
+      lineageData = null; await loadLineage(); await selectLineage(j.entry.genomeHash); return;
+    }
+  } catch (e) {
+    lineageBreedMsg = "✗ " + (e && e.message ? e.message : "network error");
+  }
+  renderLineage();
+}
+
+function renderLineage() {
+  const body = $("lineage-body"); if (!body) return;
+  const sub = $("lineage-sub");
+  body.innerHTML = "";
+  if (lineageLoading || !lineageData) {
+    if (sub) sub.textContent = lineageLoading ? "loading…" : "–";
+    const p = document.createElement("p"); p.className = "pf-empty";
+    p.textContent = lineageLoading
+      ? "loading the connectome lineage (genesis roots + bred individuals) …"
+      : "lineage unavailable — is the worker online?";
+    body.appendChild(p);
+    return;
+  }
+  const d = lineageData;
+  const entries = Array.isArray(d.entries) ? d.entries : [];
+  if (sub) sub.textContent = `${d.count ?? entries.length} genomes · ${d.bred ?? 0} bred · gen ${d.generations ?? 0}`;
+
+  // header / attestation
+  const auto = document.createElement("div"); auto.className = "pf-auto";
+  const anchored = isRealAddr(d.lineageAddress || "");
+  auto.innerHTML =
+    `<div class="pf-auto-title">connectome breeding market</div>` +
+    `<p class="pf-auto-body">Every brain's heritable identity is its <b>genome</b> — the generator parameters that deterministically rebuild it. The 24 base-population brains are generation-0 <b>genesis</b> roots; breeding applies pure genetic operators (<b>mutate</b> / <b>cross</b>) and records each offspring's ancestry. Select any individual to rebuild + verify it in your browser.</p>` +
+    `<dl class="pf-auto-meta">` +
+    `<div><dt>genomes</dt><dd>${d.count ?? entries.length}</dd></div>` +
+    `<div><dt>genesis · bred</dt><dd>${d.genesis ?? 0} · ${d.bred ?? 0}</dd></div>` +
+    `<div><dt>generations</dt><dd>${d.generations ?? 0}</dd></div>` +
+    `<div><dt>chain</dt><dd>arc (${d.chainId ?? "–"})</dd></div>` +
+    `<div><dt>on-chain anchor</dt><dd class="fp">${anchored ? `<a href="${ARC_EXPLORER}/address/${d.lineageAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.lineageAddress)}</a>` : "not configured"}</dd></div>` +
+    `</dl>`;
+  body.appendChild(auto);
+
+  if (LIN_ADMIN_TOKEN) body.appendChild(lineageBreedPanel());
+
+  // family tree, grouped by generation (roots first)
+  const byGen = new Map();
+  for (const e of entries) {
+    const g = e.generation ?? 0;
+    if (!byGen.has(g)) byGen.set(g, []);
+    byGen.get(g).push(e);
+  }
+  const gens = [...byGen.keys()].sort((a, b) => a - b);
+  const tree = document.createElement("div"); tree.className = "pf-card lin-tree";
+  tree.innerHTML = `<div class="pf-ct-title">family tree (${entries.length} shown)</div>`;
+  for (const g of gens) {
+    const gEl = document.createElement("div"); gEl.className = "lin-gen";
+    gEl.innerHTML = `<span class="lin-gen-label">gen ${g}</span>`;
+    const rows = document.createElement("div"); rows.className = "lin-rows";
+    for (const e of byGen.get(g)) {
+      const sel = lineageSel && lineageSel.hash === e.genomeHash;
+      const row = document.createElement("button");
+      row.type = "button"; row.className = "lin-row" + (sel ? " is-sel" : "");
+      row.dataset.linHash = e.genomeHash;
+      const opCls = "lin-op lin-op-" + (e.op || "genesis");
+      row.innerHTML =
+        `<span class="${opCls}">${LIN_OP[e.op] || e.op}</span>` +
+        `<span class="fp lin-hash">${shortHash(e.genomeHash)}</span>` +
+        `<span class="lin-breeder">${isRealAddr(e.breeder || "") ? shortHash(e.breeder) : (e.breeder ? e.breeder : "–")}</span>` +
+        `<span class="lin-commit" title="${e.commitTx ? "anchored on Arc " + e.commitTx : "not anchored"}">${e.commitTx ? "⛓" : ""}</span>`;
+      rows.appendChild(row);
+    }
+    gEl.appendChild(rows);
+    tree.appendChild(gEl);
+  }
+  body.appendChild(tree);
+
+  if (lineageSel) body.appendChild(lineageDetailCard());
+}
+
+function lineageBreedPanel() {
+  const p = document.createElement("div"); p.className = "pf-card lin-breed";
+  p.innerHTML =
+    `<div class="pf-ct-title">breed (operator)</div>` +
+    `<div class="lin-breed-row">` +
+    `<select id="lin-op" class="lin-in"><option value="mutate">mutate</option><option value="cross">cross</option></select>` +
+    `<input id="lin-pa" class="lin-in fp" placeholder="parent A genomeHash" />` +
+    `<input id="lin-pb" class="lin-in fp" placeholder="parent B (cross only)" />` +
+    `</div>` +
+    `<div class="lin-breed-row">` +
+    `<input id="lin-seed" class="lin-in" placeholder="rngSeed (optional)" />` +
+    `<input id="lin-breeder" class="lin-in fp" placeholder="breeder 0x… (optional)" />` +
+    `<button id="lin-breed-go" type="button" class="lin-breed-btn">breed</button>` +
+    `</div>` +
+    (lineageBreedMsg ? `<div class="lin-breed-msg">${lineageBreedMsg}</div>` : "");
+  return p;
+}
+
+function lineageDetailCard() {
+  const card = document.createElement("div"); card.className = "pf-card lin-detail";
+  if (lineageSelLoading || !lineageSel.detail) {
+    card.innerHTML = `<div class="pf-ct-title">individual</div><div class="pf-ct-ev">${lineageSelLoading ? "loading + verifying …" : "unavailable"}</div>`;
+    return card;
+  }
+  const det = lineageSel.detail, e = det.entry || {}, s = det.spec || {}, v = lineageSel.verify || {};
+  const g = e.genome || {};
+  const clientHash = lineageSel.clientHash;
+  const bodyOk = lineageSel.bodyOk;
+  const chainOk = v.checks ? v.checks.chainOk : null;
+  const specOk = v.checks ? v.checks.specOk : null;
+  const hardOk = bodyOk === true && specOk !== false;
+  const parents = Array.isArray(e.parents) ? e.parents : [];
+  const children = Array.isArray(det.children) ? det.children : [];
+
+  const badge = document.createElement("div");
+  if (hardOk && chainOk === true) { badge.className = "pf-badge ok"; badge.textContent = "✓ genome proven end-to-end · body hash + replay + on-chain ancestry all match"; }
+  else if (hardOk) { badge.className = "pf-badge ok"; badge.textContent = "✓ body hash + replay match · not anchored on Arc yet"; }
+  else { badge.className = "pf-badge bad"; badge.textContent = "✗ verification failed"; }
+  card.appendChild(badge);
+
+  const dl = document.createElement("dl"); dl.className = "pf-vmeta";
+  dl.innerHTML =
+    `<div><dt>genomeHash</dt><dd class="fp">${shortHash(e.genomeHash || "")}</dd></div>` +
+    `<div><dt>sha256(genome) in your browser</dt><dd class="fp${bodyOk ? " ok" : ""}">${clientHash ? shortHash(clientHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>` +
+    `<div><dt>op · generation</dt><dd>${LIN_OP[e.op] || e.op} · gen ${e.generation ?? 0}</dd></div>` +
+    `<div><dt>rngSeed</dt><dd class="fp">${e.rngSeed == null ? "– (genesis)" : e.rngSeed}</dd></div>` +
+    `<div><dt>breeder</dt><dd class="fp">${isRealAddr(e.breeder || "") ? `<a href="${ARC_EXPLORER}/address/${e.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(e.breeder)}</a>` : (e.breeder || "–")}</dd></div>` +
+    `<div><dt>neurons · synapses</dt><dd>${Number(s.neuronCount || 0).toLocaleString()} · ${Number(s.synapseCount || 0).toLocaleString()}</dd></div>` +
+    `<div><dt>edgeHash (topology)</dt><dd class="fp">${s.edgeHash || "–"}</dd></div>` +
+    `<div><dt>parents</dt><dd class="fp">${parents.length ? parents.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : "– (genesis root)"}</dd></div>` +
+    `<div><dt>children · fertility</dt><dd class="fp">${children.length ? children.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : "none"} · ${det.fertility ?? children.length}</dd></div>`;
+  if (e.commitTx) {
+    dl.innerHTML += `<div><dt>on-chain commit</dt><dd class="fp"><a href="${ARC_EXPLORER}/tx/${e.commitTx}" target="_blank" rel="noopener noreferrer">↗ ${shortHash(e.commitTx)}</a></dd></div>`;
+  }
+  if (det.onchain) {
+    dl.innerHTML += `<div><dt>on-chain ancestry (direct Arc RPC)</dt><dd class="fp${chainOk ? " ok" : ""}">op ${det.onchain.op} · gen ${det.onchain.generation} ${chainOk ? "✓ matches" : "✗"}</dd></div>`;
+  } else if (isRealAddr(d0LineageAddr())) {
+    dl.innerHTML += `<div><dt>on-chain ancestry</dt><dd class="fp">not committed</dd></div>`;
+  }
+  card.appendChild(dl);
+
+  const genomeBox = document.createElement("div"); genomeBox.className = "lin-genome";
+  genomeBox.innerHTML = `<div class="pf-ct-ev" style="margin-top:8px">genome (rebuild this brain offline):</div>` +
+    `<pre class="lin-genome-json">${JSON.stringify(g, null, 0)}</pre>`;
+  card.appendChild(genomeBox);
+  return card;
+}
+
+// The configured lineage contract address (from the loaded /lineage payload), for the detail card's fallback.
+function d0LineageAddr() { return (lineageData && lineageData.lineageAddress) || ""; }
+
 // ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
 function openPulse() {
   pulseOpen = true;
@@ -1732,6 +1970,7 @@ function openPulse() {
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
   if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
   const d = $("pulse"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("pulse-open");
@@ -1974,6 +2213,7 @@ function openPredict() {
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (arenaOpen) closeArena();
+  if (lineageOpen) closeLineage();
   const d = $("predict"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("predict-open");
@@ -2792,6 +3032,16 @@ function bindUI() {
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
   const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);
   const bc = $("brain-close"); if (bc) bc.addEventListener("click", closeBrain);
+  const lb = $("lineage-btn"); if (lb) lb.addEventListener("click", toggleLineage);
+  const lc = $("lineage-close"); if (lc) lc.addEventListener("click", closeLineage);
+  // the lineage drawer rebuilds each render, so bind row/parent-select + breed by delegation once
+  const lbody = $("lineage-body");
+  if (lbody) lbody.addEventListener("click", (e) => {
+    const go = e.target.closest("#lin-breed-go");
+    if (go) { e.preventDefault(); doBreed(); return; }
+    const row = e.target.closest("[data-lin-hash]");
+    if (row) { e.preventDefault(); selectLineage(row.dataset.linHash); }
+  });
   const tca = $("tca-copy"); if (tca) tca.addEventListener("click", () => copyTokenCA(tca));
   const ulb = $("pulse-btn"); if (ulb) ulb.addEventListener("click", togglePulse);
   const ulc = $("pulse-close"); if (ulc) ulc.addEventListener("click", closePulse);
@@ -2839,7 +3089,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -2899,6 +3149,7 @@ function openArena() {
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
   const d = $("arena"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("arena-open");

@@ -220,6 +220,43 @@ const BRAIN_MANIFEST = {
   },
 } as const;
 
+const GENOME = {
+  type: "object",
+  description:
+    "A connectome's complete heritable identity: the effective generator parameters that deterministically rebuild the exact brain offline. genomeHash = sha256(canonical(genome)) — recompute it from these fields to confirm identity, then rebuild the connectome to re-derive its StructuralSpec.",
+  additionalProperties: false,
+  required: ["v", "seed", "nSensory", "nInterL1", "nInterL2", "nModulatory", "nMotorPerChannel", "density"],
+  properties: {
+    v: { type: "integer", description: "Genome schema version.", example: 1 },
+    seed: { type: "integer", description: "uint32 PRNG seed — the wiring identity." },
+    nSensory: { type: "integer" },
+    nInterL1: { type: "integer" },
+    nInterL2: { type: "integer" },
+    nModulatory: { type: "integer" },
+    nMotorPerChannel: { type: "integer" },
+    density: { type: "number", description: "Synapse density fraction (0,1], rounded to 4dp." },
+  },
+} as const;
+
+const LINEAGE_ENTRY = {
+  type: "object",
+  description:
+    "One connectome individual in the breeding market + its ancestry. Genesis roots are the 24 base-population brains (op=genesis, generation 0, no parents); bred individuals record their parents, the pure operator applied, the generation, the credited breeder and the operator's rngSeed — enough for anyone to re-derive the offspring genome.",
+  additionalProperties: false,
+  required: ["genomeHash", "genome", "parents", "op", "generation"],
+  properties: {
+    genomeHash: { type: "string", description: "sha256(canonical(genome)), 64 lowercase hex (no 0x) — the on-chain identity." },
+    genome: GENOME,
+    parents: { type: "array", items: { type: "string" }, description: "Parent genomeHashes: [] genesis, [a] mutate, [a,b] cross." },
+    op: { type: "string", enum: ["genesis", "mutate", "cross"], description: "The genetic operator that produced this individual." },
+    generation: { type: "integer", description: "0 for genesis roots; max(parents.generation)+1 otherwise." },
+    breeder: { type: ["string", "null"], description: "Address credited with breeding (royalty payee off-chain); null for genesis roots." },
+    rngSeed: { type: ["integer", "null"], description: "The integer seed the operator used — recorded so the offspring is reproducible; null for genesis." },
+    ts: { type: "integer", description: "ms epoch when bred (0 for genesis roots)." },
+    commitTx: { type: ["string", "null"], description: "On-chain ConnectomeLineage commit tx (0x…), when anchored; null otherwise." },
+  },
+} as const;
+
 function ok(schema: unknown, description: string) {
   return {
     response: {
@@ -263,6 +300,9 @@ export const OPENAPI_SPEC = {
       "  read-outs that caused it (`GET /proofs`, `GET /proofs/verify`).",
       "- **The brain manifest** — one hash commits the whole swarm's connectomes to Arc; recompute it and rebuild every brain",
       "  from its committed seed offline (`GET /manifest`, `GET /manifest/replay`).",
+      "- **The breeding market** — every connectome's heritable identity is its *genome*; breeding applies pure genetic",
+      "  operators and commits each offspring's ancestry to Arc, so lineage is a public, re-derivable fact",
+      "  (`GET /lineage`, `GET /lineage/{hash}`, `GET /lineage/verify`).",
       "",
       "### Conventions",
       "- `*Atomic` / `amount` / `balance` fields are exact **integer strings** in the asset base unit (USDC = 6 decimals).",
@@ -282,6 +322,7 @@ export const OPENAPI_SPEC = {
     { name: "swarm", description: "The population's live neural state." },
     { name: "economy", description: "The x402 agent economy: wallets, deals, PnL." },
     { name: "provenance", description: "Trustless on-chain proof: brain manifest + neural receipts." },
+    { name: "lineage", description: "The connectome breeding market: tradeable, breedable brains with on-chain ancestry." },
     { name: "predictions", description: "The on-chain prediction market + human-vs-swarm arena." },
     { name: "signal", description: "The x402 paid Arc-activity signal (the one non-free endpoint)." },
   ],
@@ -552,6 +593,79 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/lineage": {
+      get: {
+        tags: ["lineage"],
+        operationId: "getLineage",
+        summary: "The connectome breeding market: the whole family tree",
+        description:
+          "Every committed connectome genome + its ancestry (parents, operator, generation, breeder). The 24 base-population brains are generation-0 `genesis` roots; bred individuals are `mutate` (one parent) or `cross` (two parents). Filter with `gen`, `op`, `breeder`; newest first, capped by `limit`. Read-only, keyless, CORS-open.",
+        parameters: [
+          { name: "gen", in: "query", required: false, schema: { type: "integer" }, description: "Only this generation (0 = genesis roots)." },
+          { name: "op", in: "query", required: false, schema: { type: "string", enum: ["genesis", "mutate", "cross"] }, description: "Only this operator." },
+          { name: "breeder", in: "query", required: false, schema: { type: "string" }, description: "Only offspring credited to this address (0x…)." },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 500 }, description: "Max entries returned (newest first)." },
+        ],
+        ...ok(
+          obj({
+            lineageAddress: { type: ["string", "null"], description: "Deployed ConnectomeLineage contract (0x…), or null when not yet anchored on-chain." },
+            chainId: { type: "integer", example: 5042 },
+            count: { type: "integer", description: "Total individuals in the lineage." },
+            genesis: { type: "integer", description: "Generation-0 root count (the base population)." },
+            bred: { type: "integer", description: "Non-genesis (bred) individual count." },
+            generations: { type: "integer", description: "Highest generation reached." },
+            matching: { type: "integer", description: "Entries matching the filters (before limit)." },
+            returned: { type: "integer" },
+            entries: { type: "array", items: { $ref: "#/components/schemas/LineageEntry" } },
+          }, ["count", "entries"]),
+          "The lineage snapshot.",
+        ).response,
+      },
+    },
+    "/lineage/{hash}": {
+      get: {
+        tags: ["lineage"],
+        operationId: "getLineageOne",
+        summary: "One bred brain: genome body + ancestry + re-derived structural spec",
+        description:
+          "Everything needed to trustlessly rebuild one individual: its full genome body (rebuild the exact connectome offline), its parents/children (the local family tree), the StructuralSpec re-derived from that genome, and — when the ConnectomeLineage contract is wired — its committed ancestry read straight off Arc.",
+        parameters: [{ name: "hash", in: "path", required: true, schema: { type: "string" }, description: "The genomeHash (64 hex, 0x optional).", example: "0x…" }],
+        ...ok(
+          obj({
+            lineageAddress: { type: ["string", "null"] },
+            chainId: { type: "integer", example: 5042 },
+            entry: { $ref: "#/components/schemas/LineageEntry" },
+            children: { type: "array", items: { type: "string" }, description: "genomeHashes of individuals bred from this one." },
+            fertility: { type: "integer", description: "Number of committed children." },
+            spec: STRUCTURAL_SPEC,
+            onchain: { type: ["object", "null"], additionalProperties: true, description: "The on-chain ancestry { parentA, parentB, op, generation, breeder, ts }, or null when not anchored." },
+          }, ["entry"]),
+          "One lineage individual.",
+        ).response,
+      },
+    },
+    "/lineage/verify": {
+      get: {
+        tags: ["lineage"],
+        operationId: "verifyLineage",
+        summary: "Verify one genome's identity + replay + on-chain ancestry",
+        description:
+          "The trustless check, run server-side for convenience: recompute sha256(canonical(genome)) from the served genome body (`hashOk`), rebuild the connectome and re-derive its spec (`specOk`), and — when wired — confirm the ancestry is committed on Arc and agrees with the served op/generation (`chainOk`). `pass` is true when the identity and replay hold and the chain (if any) does not contradict. A stranger can run the identical check offline from `/lineage/{hash}` alone.",
+        parameters: [{ name: "hash", in: "query", required: true, schema: { type: "string" }, description: "The genomeHash to verify (64 hex, 0x optional).", example: "0x…" }],
+        ...ok(
+          obj({
+            genomeHash: { type: "string" },
+            pass: { type: "boolean" },
+            checks: { type: "object", additionalProperties: false, properties: { hashOk: { type: "boolean" }, specOk: { type: "boolean" }, chainOk: { type: ["boolean", "null"] }, committed: { type: "boolean" } } },
+            generation: { type: "integer" },
+            op: { type: "string", enum: ["genesis", "mutate", "cross"] },
+            spec: STRUCTURAL_SPEC,
+            onchain: { type: ["object", "null"], additionalProperties: true },
+          }, ["pass", "checks"]),
+          "Verification result.",
+        ).response,
+      },
+    },
     "/predictions": {
       get: {
         tags: ["predictions"],
@@ -768,6 +882,8 @@ export const OPENAPI_SPEC = {
       Trade: TRADE,
       StructuralSpec: STRUCTURAL_SPEC,
       BrainManifest: BRAIN_MANIFEST,
+      Genome: GENOME,
+      LineageEntry: LINEAGE_ENTRY,
     },
   },
 } as const;

@@ -18,6 +18,8 @@
     "replay": "npx --yes tsx scripts/replay-brain.ts",
     "compile:arena": "node scripts/compile-arena.mjs",
     "deploy:arena": "node scripts/deploy-arena-auto.mjs",
+    "compile:lineage": "node scripts/compile-lineage.mjs",
+    "deploy:lineage": "node scripts/deploy-lineage-auto.mjs",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {

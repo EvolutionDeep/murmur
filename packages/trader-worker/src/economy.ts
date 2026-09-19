@@ -1146,6 +1146,31 @@ export class AgentEconomy {
   }
 
   /**
+   * Commit one bred genome + its ancestry to the on-chain ConnectomeLineage log (best-effort). Delegates to
+   * the facilitator when it is wired with a lineage contract; null when simulated / no contract / failed.
+   */
+  async commitLineage(a: {
+    genomeHash: string; parentA: string; parentB: string; op: 0 | 1 | 2; generation: number; breeder: string;
+  }): Promise<string | null> {
+    const f = this.facilitator as { commitLineage?: (arg: {
+      genomeHash: string; parentA: string; parentB: string; op: 0 | 1 | 2; generation: number; breeder: string;
+    }) => Promise<string | null> };
+    if (typeof f.commitLineage !== "function") return null;
+    try { return await f.commitLineage(a); } catch { return null; }
+  }
+
+  /** Read one committed genome's on-chain ancestry (null when unwired / not committed / unreadable). */
+  async lineageOf(genomeHash: string): Promise<{
+    parentA: string; parentB: string; op: number; generation: number; breeder: string; ts: number;
+  } | null> {
+    const f = this.facilitator as { lineageOf?: (h: string) => Promise<{
+      parentA: string; parentB: string; op: number; generation: number; breeder: string; ts: number;
+    } | null> };
+    if (typeof f.lineageOf !== "function") return null;
+    try { return await f.lineageOf(genomeHash); } catch { return null; }
+  }
+
+  /**
    * Settle an EXTERNAL (browser-signed) x402 payment for a paid data product. Onchain: relay the buyer's
    * EIP-3009 authorization (the facilitator never holds the buyer key — see x402.settleExternal).
    * Simulated: a keyless success so the whole 402 flow is demoable locally without a wallet or funds.

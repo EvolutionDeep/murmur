@@ -11,6 +11,7 @@ node_modules/
 # Local one-off ops scripts (deploy preflight/verify/wipe) + generated registry address
 packages/trader-worker/scripts/_*.mjs
 packages/trader-worker/contracts/REGISTRY_ADDRESS.txt
+packages/trader-worker/contracts/LINEAGE_ADDRESS.txt
 
 # Build output
 dist/

@@ -217,6 +217,9 @@ All paths also answer under a `/v1` prefix (`/v1/population` ≡ `/population`).
 | `GET` | `/manifest/replay` | Server-side offline replay: rebuild every connectome from its committed seed → PASS/FAIL |
 | `GET` | `/proofs` | Neural-receipt hash chain (last 64 settlements) + `chainHead` |
 | `GET` | `/proofs/verify?tx=0x…` | Verify one settlement's neural origin against its on-chain EIP-3009 nonce |
+| `GET` | `/lineage` | The connectome breeding market: every genome + its on-chain ancestry (genesis roots + bred individuals) |
+| `GET` | `/lineage/{hash}` | One bred brain: genome body + parents/children + re-derived structural spec + on-chain commit |
+| `GET` | `/lineage/verify?hash=0x…` | Recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL |
 | `GET` | `/predictions` | On-chain temperature prediction market: live book + parimutuel odds + hit-rate leaderboard |
 | `GET` | `/predictions/verify?round=N` | Recompute a round's receipt hash + read its on-chain registry commitment |
 | `GET` | `/signal/requirements` | The x402 payment requirements a browser signs to buy `/signal/pulse` |

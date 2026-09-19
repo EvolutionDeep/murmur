@@ -67,6 +67,7 @@ export interface Env {
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
   ECONOMY_REGISTRY_ADDRESS?: string;    // deployed NeuralReceiptRegistry (0x…40); when set, each mined net is committed on-chain so the receipt hash-chain head lives on Arc, not just in DO storage. Absent ⇒ commit step skipped (zero behaviour change).
   MANIFEST_REGISTRY_ADDRESS?: string;   // deployed NeuralManifestRegistry (0x…40); when set, GET /manifest reports it so anyone can read the committed brain-manifest hash off Arc and replay the connectomes offline (trustless "prove the brain"). Absent ⇒ the manifest is still served + replayable, just not anchored on-chain yet (zero behaviour change).
+  LINEAGE_ADDRESS?: string;             // deployed ConnectomeLineage (0x…40); when set, each bred connectome genome is committed on-chain (best-effort) so its ancestry is a public, tamper-evident fact. Absent ⇒ the lineage store + /lineage endpoints still work, just not anchored on-chain yet (zero behaviour change).
 
   // --- Circle Facilitator Service (the OFFICIAL hosted x402 facilitator; see src/circle.ts) ---
   //     Circle's relayer screens both parties, submits the buyer's EIP-3009 USDC transfer and pays the
@@ -156,6 +157,8 @@ export interface RuntimeConfig {
   frontendOrigin: string;
   /** Deployed NeuralManifestRegistry address (the brain-manifest on-chain anchor), or null when not configured. */
   manifestRegistryAddress: string | null;
+  /** Deployed ConnectomeLineage address (the breeding-market on-chain ancestry anchor), or null when not configured. */
+  lineageAddress: string | null;
 
   // Agent economy (x402)
   economy: {
@@ -301,6 +304,7 @@ export function loadConfig(env: Env): RuntimeConfig {
     stimulusCooldownSec: Number(env.STIMULUS_COOLDOWN_SEC || "30"),
     frontendOrigin: env.FRONTEND_ORIGIN || "*",
     manifestRegistryAddress: (env.MANIFEST_REGISTRY_ADDRESS ?? "").trim() || null,
+    lineageAddress: (env.LINEAGE_ADDRESS ?? "").trim() || null,
 
     economy: {
       // On by default: the agent economy is the piece's headline capability. Set ECONOMY_ENABLED="false"

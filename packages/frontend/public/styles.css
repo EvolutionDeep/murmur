@@ -532,6 +532,7 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 }
 .brain-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 body.brain-open .panel-pop, body.brain-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.lineage-open .panel-pop, body.lineage-open .panel-about { opacity: 0.1; pointer-events: none; }
 .br-table { margin-top: 4px; }
 .br-row {
   display: grid; grid-template-columns: 20px 58px 1fr 74px; gap: 6px; align-items: baseline;
@@ -544,6 +545,60 @@ body.brain-open .panel-pop, body.brain-open .panel-about { opacity: 0.1; pointer
   border-top: none; padding-bottom: 4px;
 }
 .br-row .fp { color: var(--accent); opacity: 0.82; text-align: right; }
+
+/* ============ connectome breeding market (lineage drawer) ============ */
+.lineage-btn { margin-top: 6px; }
+.lin-tree { padding: 10px 12px; }
+.lin-gen { margin-top: 9px; }
+.lin-gen:first-of-type { margin-top: 4px; }
+.lin-gen-label {
+  display: block; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+}
+.lin-rows { display: flex; flex-direction: column; gap: 3px; }
+.lin-row {
+  display: grid; grid-template-columns: 74px 1fr 66px 14px; gap: 7px; align-items: baseline;
+  width: 100%; text-align: left; cursor: pointer;
+  font-family: var(--mono); font-size: 9px; color: var(--ink);
+  background: rgba(var(--accent-rgb), 0.04);
+  border: 1px solid var(--hair); border-radius: 2px;
+  padding: 5px 7px; transition: background 0.18s ease, border-color 0.18s ease;
+}
+.lin-row:hover { background: rgba(var(--accent-rgb), 0.11); border-color: rgba(var(--accent-rgb), 0.4); }
+.lin-row.is-sel { background: rgba(var(--accent-rgb), 0.16); border-color: var(--accent); }
+.lin-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lin-op { letter-spacing: 0.04em; }
+.lin-op-genesis { color: var(--muted); }
+.lin-op-mutate { color: var(--agitate); }
+.lin-op-cross { color: var(--aggregate); }
+.lin-hash { color: var(--accent); }
+.lin-breeder { color: var(--muted); text-align: right; }
+.lin-commit { text-align: center; color: var(--rest); }
+.lin-detail { padding: 10px 12px; }
+.lin-plink { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(var(--accent-rgb), 0.4); cursor: pointer; }
+.lin-plink:hover { color: var(--ink); border-color: var(--ink); }
+.lin-genome-json {
+  margin-top: 5px; padding: 7px 8px; max-height: 132px; overflow: auto;
+  font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--ink);
+  background: rgba(var(--ink-rgb), 0.04); border: 1px solid var(--hair); border-radius: 2px;
+  white-space: pre-wrap; word-break: break-all;
+}
+.lin-breed { padding: 10px 12px; }
+.lin-breed-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.lin-in {
+  flex: 1 1 120px; min-width: 0;
+  font-family: var(--mono); font-size: 9px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--hair); border-radius: 2px;
+  padding: 5px 7px;
+}
+.lin-in:focus { outline: none; border-color: var(--accent); }
+.lin-breed-btn {
+  flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--paper); background: var(--accent); border: 1px solid var(--accent);
+  border-radius: 2px; padding: 5px 12px; cursor: pointer; transition: opacity 0.18s ease;
+}
+.lin-breed-btn:hover { opacity: 0.86; }
+.lin-breed-msg { margin-top: 7px; font-family: var(--mono); font-size: 9px; color: var(--muted); word-break: break-word; }
 
 /* --- project token contract address (in the economy panel): click to copy, ↗ verifies on Arc --- */
 .token-ca {

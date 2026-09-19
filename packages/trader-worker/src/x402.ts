@@ -209,6 +209,24 @@ export interface ArenaRoundInfo {
   bettorCount: number;
 }
 
+/**
+ * murmur's connectome BREEDING-market ancestry log (contracts/ConnectomeLineage.sol). Each bred genome
+ * (sha256 of its canonical Genome body) is committed here with its parents, operator and generation, so
+ * "who bred whom, from whom" is a public, tamper-evident fact re-derivable from Arc RPC events alone —
+ * the same trustless-commitment discipline as NeuralReceiptRegistry. Pure log: holds no funds, no upgrade.
+ */
+export const connectomeLineageAbi = parseAbi([
+  "function commit(bytes32 genomeHash, bytes32 parentA, bytes32 parentB, uint8 op, uint32 generation, address breeder)",
+  "function lineages(bytes32) view returns (bytes32 genomeHash, bytes32 parentA, bytes32 parentB, uint8 op, uint32 generation, address breeder, uint64 ts)",
+  "function isCommitted(bytes32) view returns (bool)",
+  "function generationOf(bytes32) view returns (uint32)",
+  "function breederOf(bytes32) view returns (address)",
+  "function childCount(bytes32) view returns (uint32)",
+  "function latestHash() view returns (bytes32)",
+  "function commitCount() view returns (uint256)",
+  "function committer() view returns (address)",
+]);
+
 /** True when atomic string `a` <= `b` (cap checks). */
 export function lteAtomic(a: string, b: string): boolean {
   return BigInt(a) <= BigInt(b);
@@ -597,6 +615,11 @@ export interface OnChainFacilitatorOpts {
    * arena step; the resolver calls are silently skipped (zero behaviour change).
    */
   arenaAddress?: Address;
+  /**
+   * Deployed ConnectomeLineage to mirror each bred genome onto (makes breeding ancestry a public,
+   * tamper-evident on-chain fact). Absent ⇒ no lineage step; commits are silently skipped (zero change).
+   */
+  lineageAddress?: Address;
   /**
    * Optional Circle Facilitator Service backend. When set (and not shadowOnly), the USDC broadcast in
    * settle()/settleExternal() is delegated to Circle per `circle.scope`; everything else is unchanged.
@@ -1117,6 +1140,69 @@ export class OnChainFacilitator implements Facilitator {
         poolUp: r[9].toString(),
         poolDown: r[10].toString(),
         bettorCount: Number(r[11]),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Commit one bred connectome genome + its ancestry to the ConnectomeLineage log. Mirrors commitReceipt:
+   * BEST-EFFORT — a lineage hiccup must never fail the breed that produced the genome (the authoritative
+   * identity is the genome hash itself, reproducible offline; the contract only makes ancestry public and
+   * tamper-evident). op is 0 genesis / 1 mutate / 2 cross; parentB is "" unless op === 2. The contract
+   * enforces that both parents are already committed and that generation == max(parents)+1, so a forged or
+   * generation-skipping child simply reverts and returns null here. Returns the commit tx hash, or null.
+   */
+  async commitLineage(a: {
+    genomeHash: string;   // 64-hex sha256(canonical(genome)), no 0x
+    parentA: string;      // 64-hex, or "" for genesis
+    parentB: string;      // 64-hex, or "" unless op === 2
+    op: 0 | 1 | 2;        // genesis | mutate | cross
+    generation: number;
+    breeder: string;      // 0x…40 credited breeder (the contract rejects address(0))
+  }): Promise<string | null> {
+    const addr = this.o.lineageAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr,
+        abi: connectomeLineageAbi,
+        functionName: "commit",
+        args: [
+          toBytes32(a.genomeHash),
+          toBytes32(a.parentA || ""),
+          toBytes32(a.parentB || ""),
+          a.op,
+          Math.max(0, Math.floor(a.generation)),
+          a.breeder as Address,
+        ],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read one committed genome's on-chain ancestry (null when no lineage contract / not committed / RPC error). */
+  async lineageOf(genomeHash: string): Promise<{
+    parentA: string; parentB: string; op: number; generation: number; breeder: string; ts: number;
+  } | null> {
+    const addr = this.o.lineageAddress;
+    if (!addr) return null;
+    try {
+      const r = (await this.o.publicClient.readContract({
+        address: addr, abi: connectomeLineageAbi, functionName: "lineages", args: [toBytes32(genomeHash)],
+      })) as readonly [Hex, Hex, Hex, number, number, Address, bigint];
+      const ts = Number(r[6]);
+      if (ts === 0) return null;   // never committed
+      return {
+        parentA: r[1], parentB: r[2], op: Number(r[3]),
+        generation: Number(r[4]), breeder: r[5], ts,
       };
     } catch {
       return null;

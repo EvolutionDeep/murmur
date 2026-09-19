@@ -36,3 +36,15 @@ export {
   effectiveConnectomeOptions,
   type ConnectomeStructuralSpec,
 } from "./manifest.js";
+export {
+  GENOME_SCHEMA_VERSION,
+  GENOME_BOUNDS,
+  canonicalGenome,
+  genomeFromOptions,
+  genomeFromSeed,
+  mutateGenome,
+  crossoverGenome,
+  buildFromGenome,
+  specFromGenome,
+  type Genome,
+} from "./genome.js";

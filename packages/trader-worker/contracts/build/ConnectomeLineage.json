@@ -1,0 +1,348 @@
+{
+  "contract": "ConnectomeLineage",
+  "compiler": "0.8.37+commit.f401782d.Emscripten.clang",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "committer_",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AlreadyCommitted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BadGeneration",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BadGenesis",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "BadOp",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NotCommitter",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ParentNotCommitted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroBreeder",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroHash",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "parentA",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "parentB",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "op",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "generation",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "breeder",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "ts",
+          "type": "uint256"
+        }
+      ],
+      "name": "LineageCommitted",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "OP_CROSS",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "OP_GENESIS",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "OP_MUTATE",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "breederOf",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "childCount",
+      "outputs": [
+        {
+          "internalType": "uint32",
+          "name": "",
+          "type": "uint32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "parentA",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "parentB",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint8",
+          "name": "op",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint32",
+          "name": "generation",
+          "type": "uint32"
+        },
+        {
+          "internalType": "address",
+          "name": "breeder",
+          "type": "address"
+        }
+      ],
+      "name": "commit",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "commitCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "committer",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "generationOf",
+      "outputs": [
+        {
+          "internalType": "uint32",
+          "name": "",
+          "type": "uint32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "isCommitted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "latestHash",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "lineages",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "genomeHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "parentA",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "parentB",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint8",
+          "name": "op",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint32",
+          "name": "generation",
+          "type": "uint32"
+        },
+        {
+          "internalType": "address",
+          "name": "breeder",
+          "type": "address"
+        },
+        {
+          "internalType": "uint64",
+          "name": "ts",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60a060405234801561000f575f5ffd5b506040516109dd3803806109dd83398101604081905261002e9161008a565b6001600160a01b0381166100795760405162461bcd60e51b815260206004820152600e60248201526d3d32b9379031b7b6b6b4ba3a32b960911b604482015260640160405180910390fd5b6001600160a01b03166080526100b7565b5f6020828403121561009a575f5ffd5b81516001600160a01b03811681146100b0575f5ffd5b9392505050565b6080516109086100d55f395f818160fd01526102f501526109085ff3fe608060405234801561000f575f5ffd5b50600436106100b1575f3560e01c8063981a31371161006e578063981a3137146101b15780639d12256d146101d6578063cb3c498c146101de578063ce3dace4146101f3578063fb2c7e60146102ae578063ff03365b146102b6575f5ffd5b8063054765a3146100b55780635bc8e8f9146100f85780635dc8c86c146101375780636f17d25814610150578063877037f3146101665780639123988b146101a8575b5f5ffd5b6100e36100c3366004610812565b5f9081526002602052604090206004015467ffffffffffffffff16151590565b60405190151581526020015b60405180910390f35b61011f7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020016100ef565b61013e5f81565b60405160ff90911681526020016100ef565b6101585f5481565b6040519081526020016100ef565b610193610174366004610812565b5f90815260026020526040902060030154610100900463ffffffff1690565b60405163ffffffff90911681526020016100ef565b61015860015481565b6101936101bf366004610812565b60036020525f908152604090205463ffffffff1681565b61013e600281565b6101f16101ec366004610829565b6102ea565b005b61025e610201366004610812565b600260208190525f918252604090912080546001820154928201546003830154600490930154919392909160ff821691610100810463ffffffff1691650100000000009091046001600160a01b03169067ffffffffffffffff1687565b6040805197885260208801969096529486019390935260ff909116606085015263ffffffff1660808401526001600160a01b031660a083015267ffffffffffffffff1660c082015260e0016100ef565b61013e600181565b61011f6102c4366004610812565b5f908152600260205260409020600301546501000000000090046001600160a01b031690565b336001600160a01b037f0000000000000000000000000000000000000000000000000000000000000000161461033357604051632e3bec6160e01b815260040160405180910390fd5b856103515760405163f1ae58d560e01b815260040160405180910390fd5b5f8681526002602052604090206004015467ffffffffffffffff161561038a576040516317fd8aab60e31b815260040160405180910390fd5b6001600160a01b0381166103b1576040516350db181960e11b815260040160405180910390fd5b60ff83166103f957841515806103c657508315155b806103d6575063ffffffff821615155b156103f4576040516306e0dabd60e11b815260040160405180910390fd5b610615565b5f1960ff8416016104ba5784158061041057508315155b1561042e57604051633405f81960e21b815260040160405180910390fd5b5f8581526002602052604081206004015467ffffffffffffffff169003610468576040516318a9ffa960e01b815260040160405180910390fd5b5f8581526002602052604090206003015461048f90610100900463ffffffff1660016108a4565b63ffffffff168263ffffffff16146103f457604051631a29d5d160e31b815260040160405180910390fd5b60011960ff8416016105fc578415806104d1575083155b156104ef57604051633405f81960e21b815260040160405180910390fd5b5f8581526002602052604090206004015467ffffffffffffffff16158061052e57505f8481526002602052604090206004015467ffffffffffffffff16155b1561054c576040516318a9ffa960e01b815260040160405180910390fd5b5f84815260026020526040808220600390810154888452918320015463ffffffff6101009283900481169290910416116105a1575f85815260026020526040902060030154610100900463ffffffff166105be565b5f86815260026020526040902060030154610100900463ffffffff165b90506105cb8160016108a4565b63ffffffff168363ffffffff16146105f657604051631a29d5d160e31b815260040160405180910390fd5b50610615565b604051633405f81960e21b815260040160405180910390fd5b6040518060e001604052808781526020018681526020018581526020018460ff1681526020018363ffffffff168152602001826001600160a01b031681526020014267ffffffffffffffff1681525060025f8881526020019081526020015f205f820151815f015560208201518160010155604082015181600201556060820151816003015f6101000a81548160ff021916908360ff16021790555060808201518160030160016101000a81548163ffffffff021916908363ffffffff16021790555060a08201518160030160056101000a8154816001600160a01b0302191690836001600160a01b0316021790555060c0820151816004015f6101000a81548167ffffffffffffffff021916908367ffffffffffffffff160217905550905050855f819055506001805f82825401925050819055505f5f1b851461077c575f858152600360205260409020805463ffffffff8082166001011663ffffffff199091161790555b83156107aa575f848152600360205260409020805463ffffffff8082166001011663ffffffff199091161790555b6040805185815260ff8516602082015263ffffffff8416818301526001600160a01b03831660608201524260808201529051869188917f3e55adbdbb2c3da0128bcf14b0be478895d51a1bf1afd10be5b20659865f47ad9181900360a00190a3505050505050565b5f60208284031215610822575f5ffd5b5035919050565b5f5f5f5f5f5f60c0878903121561083e575f5ffd5b863595506020870135945060408701359350606087013560ff81168114610863575f5ffd5b9250608087013563ffffffff8116811461087b575f5ffd5b915060a08701356001600160a01b0381168114610896575f5ffd5b809150509295509295509295565b63ffffffff81811683821601908111156108cc57634e487b7160e01b5f52601160045260245ffd5b9291505056fea2646970667358221220fdba9a10631b5b7d38fb453098e3050293286a80a2b7cf6db28274a9cbe38e7264736f6c63430008250033"
+}

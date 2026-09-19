@@ -249,6 +249,51 @@ Returns `{ found, txHash, selfConsistent, match, registry }`.
 
 ---
 
+### lineage — the connectome breeding market
+
+Every connectome's complete heritable identity is its **genome**: the effective generator parameters
+(`seed` + per-layer neuron counts + `density`) that deterministically rebuild the exact brain offline.
+`genomeHash = sha256(canonical(genome))`. The 24 base-population brains are generation-0 **genesis** roots;
+breeding applies pure genetic operators — **mutate** (one parent) or **cross** (two parents) — and records
+each offspring's ancestry. Because the operators are pure in `(parents, rngSeed)`, anyone can re-derive an
+offspring from its recorded fields, and when the `ConnectomeLineage` contract is deployed the ancestry is a
+public, tamper-evident fact on Arc.
+
+#### `GET /lineage`
+The whole family tree: every committed genome + its ancestry. Read-only, keyless, CORS-open.
+
+| query     | type    | required | meaning                                              |
+| --------- | ------- | -------- | ---------------------------------------------------- |
+| `gen`     | integer | no       | Only this generation (`0` = genesis roots).          |
+| `op`      | string  | no       | Only this operator: `genesis` \| `mutate` \| `cross`. |
+| `breeder` | string  | no       | Only offspring credited to this address (`0x…`).     |
+| `limit`   | integer | no       | Max entries returned, newest first (default `500`).  |
+
+Returns `{ lineageAddress, chainId, count, genesis, bred, generations, matching, returned, entries[] }`,
+where each entry is a `LineageEntry`:
+`{ genomeHash, genome, parents[], op, generation, breeder, rngSeed, ts, commitTx }`.
+
+#### `GET /lineage/{hash}`
+One individual: its full **genome body** (rebuild the exact connectome offline), its parents + children (the
+local family tree), the `StructuralSpec` re-derived from that genome, and — when the contract is wired — its
+committed ancestry read straight off Arc.
+
+Returns `{ lineageAddress, chainId, entry, children[], fertility, spec, onchain }`.
+
+#### `GET /lineage/verify?hash=0x…`
+The trustless check, run server-side for convenience: recompute `sha256(canonical(genome))` from the served
+genome body (`hashOk`), rebuild the connectome and re-derive its spec (`specOk`), and — when wired — confirm
+the ancestry is committed on Arc and agrees with the served `op`/`generation` (`chainOk`).
+
+| query  | type   | required | meaning                                  |
+| ------ | ------ | -------- | ---------------------------------------- |
+| `hash` | string | yes      | The `genomeHash` to verify (`0x…`).      |
+
+Returns `{ genomeHash, pass, checks: { hashOk, specOk, chainOk, committed }, generation, op, spec, onchain }`.
+You can run the identical check offline from `GET /lineage/{hash}` alone — no murmur server in the trust path.
+
+---
+
 ### predictions — the on-chain prediction market + arena
 
 #### `GET /predictions`
@@ -328,6 +373,9 @@ Full field-level definitions live in [`/openapi.json`](https://api.muros.live/op
 These exist but are intentionally **undocumented / gated** — do not build on them:
 
 - `POST /stimulus` — poke the swarm (public but not a read endpoint; behaviour may change).
+- `POST /breed` — apply a genetic operator to committed parents and record the offspring in the lineage;
+  `ADMIN_TOKEN`-gated (`403 forbidden` without it). Breeding mutates the store, so it is operator-only for now
+  (a future x402 paywall may front it). Body: `{ op: "mutate"|"cross", parents: [hash(,hash)], rngSeed?, breeder? }`.
 - `POST /tick`, `POST /reset` — debug, `ADMIN_TOKEN`-gated (`403 forbidden` without it).
 
 ---

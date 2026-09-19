@@ -33,6 +33,15 @@ import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
 import { netReceiptHash } from "./provenance.js";
 import { assembleManifest, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
 import {
+  applyBreed,
+  genesisLineage,
+  genomeHash,
+  replayEntry,
+  verifyEntryHash,
+  type BreedRequest,
+  type LineageEntry,
+} from "./breed.js";
+import {
   MarketMeter,
   sampleArcActivity,
   derivePulse,
@@ -66,6 +75,7 @@ const KEY_ECONOMY = "economy:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
+const KEY_LINEAGE = "lineage:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
 
@@ -95,6 +105,8 @@ export class FlyStateDO {
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
   private arenaState: ArenaState | null = null;
+  /** The breeding-market lineage store (genesis roots + every bred individual), lazily loaded from DO storage. */
+  private lineage: LineageEntry[] | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
   private lastEconomy: EconomySnapshot | null = null;
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
@@ -318,6 +330,7 @@ export class FlyStateDO {
       gasPrice: e.gasPriceGwei != null ? BigInt(Math.round(e.gasPriceGwei * 1e9)) : undefined,
       registryAddress: e.registryAddress ? (e.registryAddress as Address) : undefined,
       arenaAddress: this.cfg.arena.address ? (this.cfg.arena.address as Address) : undefined,
+      lineageAddress: this.cfg.lineageAddress ? (this.cfg.lineageAddress as Address) : undefined,
       circle: circleOpts,
     });
 
@@ -472,11 +485,15 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
       if (req.method === "GET" && path === "/arena") return await this.getArena();
+      if (req.method === "GET" && path === "/lineage") return await this.getLineage(url);
+      if (req.method === "GET" && path === "/lineage/verify") return await this.getLineageVerify(url);
+      if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
       if (req.method === "POST" && path === "/stimulus") return await this.postStimulus(req);
+      if (req.method === "POST" && path === "/breed") return this.adminGate(req) ?? (await this.postBreed(req));
       if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
       return jsonError("not_found", "no such endpoint", 404);
@@ -938,6 +955,195 @@ export class FlyStateDO {
       this.manifestCache = { manifest, hash };
     }
     return this.manifestCache;
+  }
+
+  // ---------- connectome breeding market: the lineage store + its endpoints ----------
+
+  /**
+   * Load the breeding-market lineage from DO storage; on first ever read, seed it with the base population's
+   * genomes as generation-0 roots (one per manifest seed) and persist. The store is append-only: breeding
+   * adds offspring, nothing is ever removed, so the family tree is stable across evictions.
+   */
+  private async ensureLineage(): Promise<LineageEntry[]> {
+    if (this.lineage) return this.lineage;
+    const stored = await this.state.storage.get<LineageEntry[]>(KEY_LINEAGE);
+    if (stored && stored.length) {
+      this.lineage = stored;
+    } else {
+      this.lineage = await genesisLineage(this.cfg);
+      await this.state.storage.put(KEY_LINEAGE, this.lineage);
+    }
+    return this.lineage;
+  }
+
+  /**
+   * GET /lineage — the breeding-market family tree: every committed connectome genome + its ancestry
+   * (parents, operator, generation, breeder). Read-only and keyless. Optional filters: ?gen=N (one
+   * generation), ?op=genesis|mutate|cross, ?breeder=0x… (one breeder's offspring), ?limit=N (newest first,
+   * default 500). Reports the on-chain ConnectomeLineage anchor when configured.
+   */
+  private async getLineage(url: URL): Promise<Response> {
+    const entries = await this.ensureLineage();
+    const genParam = url.searchParams.get("gen");
+    const op = url.searchParams.get("op");
+    const breeder = (url.searchParams.get("breeder") ?? "").trim().toLowerCase();
+    const limit = Math.max(1, Math.min(5000, Number(url.searchParams.get("limit") ?? "500") || 500));
+
+    let out = entries.slice();
+    if (genParam != null && genParam !== "") {
+      const g = Number(genParam);
+      if (Number.isFinite(g)) out = out.filter((e) => e.generation === g);
+    }
+    if (op) out = out.filter((e) => e.op === op);
+    if (breeder) out = out.filter((e) => (e.breeder ?? "").toLowerCase() === breeder);
+
+    // Newest first (genesis roots have ts 0 so they sort last), then trim to the limit.
+    out.sort((a, b) => b.ts - a.ts || b.generation - a.generation);
+    const total = out.length;
+    out = out.slice(0, limit);
+
+    const generations = entries.reduce((m, e) => Math.max(m, e.generation), 0);
+    const bred = entries.filter((e) => e.op !== "genesis").length;
+    return json({
+      lineageAddress: this.cfg.lineageAddress,
+      chainId: this.cfg.chainId,
+      count: entries.length,
+      genesis: entries.length - bred,
+      bred,
+      generations,
+      matching: total,
+      returned: out.length,
+      entries: out,
+    });
+  }
+
+  /**
+   * GET /lineage/:hash — one individual: its genome body (so anyone can rebuild it offline), its ancestry,
+   * the structural spec re-derived from that genome (the per-individual trustless replay), and — when the
+   * on-chain ConnectomeLineage is wired — its committed ancestry read straight off Arc.
+   */
+  private async getLineageOne(hash: string): Promise<Response> {
+    const h = (hash ?? "").trim().toLowerCase().replace(/^0x/, "");
+    if (!/^[0-9a-f]{64}$/.test(h)) return jsonError("bad_request", "hash must be 64 hex chars", 400);
+    const entries = await this.ensureLineage();
+    const entry = entries.find((e) => e.genomeHash === h);
+    if (!entry) return jsonError("not_found", "no such genome in the lineage", 404);
+
+    const children = entries.filter((e) => e.parents.includes(h)).map((e) => e.genomeHash);
+    const onchain =
+      this.cfg.lineageAddress && this.cfg.economy.enabled
+        ? await (await this.ensureEconomy()).lineageOf(h)
+        : null;
+    return json({
+      lineageAddress: this.cfg.lineageAddress,
+      chainId: this.cfg.chainId,
+      entry,
+      children,
+      fertility: children.length,
+      spec: replayEntry(entry),
+      onchain,
+    });
+  }
+
+  /**
+   * GET /lineage/verify?hash=0x… — the trustless check, run server-side for convenience: recompute
+   * sha256(canonical(genome)) from the SERVED genome body (must equal the id), rebuild the connectome and
+   * re-derive its spec (proving the published brain is exactly what that genome deterministically generates),
+   * and — when wired — confirm the ancestry is committed on Arc. A stranger can run the identical check
+   * offline from /lineage/:hash alone; no murmur server is in the trust path.
+   */
+  private async getLineageVerify(url: URL): Promise<Response> {
+    const h = (url.searchParams.get("hash") ?? "").trim().toLowerCase().replace(/^0x/, "");
+    if (!/^[0-9a-f]{64}$/.test(h)) return jsonError("bad_request", "hash must be 64 hex chars", 400);
+    const entries = await this.ensureLineage();
+    const entry = entries.find((e) => e.genomeHash === h);
+    if (!entry) return jsonError("not_found", "no such genome in the lineage", 404);
+
+    const hashOk = await verifyEntryHash(entry);
+    let spec = null as ReturnType<typeof replayEntry> | null;
+    let specOk = false;
+    try {
+      spec = replayEntry(entry);
+      specOk = spec != null && Number.isFinite(spec.neuronCount) && spec.neuronCount > 0;
+    } catch {
+      specOk = false;
+    }
+    const onchain =
+      this.cfg.lineageAddress && this.cfg.economy.enabled
+        ? await (await this.ensureEconomy()).lineageOf(h)
+        : null;
+    // On-chain agreement: when committed, the recorded op/generation must match the served entry.
+    const opCode = entry.op === "genesis" ? 0 : entry.op === "mutate" ? 1 : 2;
+    const chainOk = onchain == null ? null : onchain.op === opCode && onchain.generation === entry.generation;
+    const pass = hashOk && specOk && chainOk !== false;
+    return json({
+      genomeHash: h,
+      pass,
+      checks: { hashOk, specOk, chainOk, committed: onchain != null },
+      generation: entry.generation,
+      op: entry.op,
+      spec,
+      onchain,
+    });
+  }
+
+  /**
+   * POST /breed — apply a pure genetic operator to committed parents and record the offspring in the lineage.
+   * Admin-gated (like /tick + /reset): breeding mutates the store, so it is not open to anonymous callers yet
+   * (a future x402 paywall can front it). Body: { op: "mutate"|"cross", parents: [hash(,hash)], rngSeed?,
+   * breeder? }. Because the operators are pure in (parents, rngSeed), the offspring is reproducible by anyone
+   * from the recorded fields. When a breeder address is supplied and the on-chain ConnectomeLineage is wired,
+   * the offspring is committed to Arc best-effort (a commit failure never fails the breed).
+   */
+  private async postBreed(req: Request): Promise<Response> {
+    let body: BreedRequest;
+    try {
+      body = (await req.json()) as BreedRequest;
+    } catch {
+      return jsonError("bad_request", "body must be JSON", 400);
+    }
+    if (!body || (body.op !== "mutate" && body.op !== "cross")) {
+      return jsonError("bad_request", 'op must be "mutate" or "cross"', 400);
+    }
+    if (!Array.isArray(body.parents)) return jsonError("bad_request", "parents must be an array", 400);
+    const parents = body.parents.map((p) => String(p).trim().toLowerCase().replace(/^0x/, ""));
+    for (const p of parents) {
+      if (!/^[0-9a-f]{64}$/.test(p)) return jsonError("bad_request", "each parent must be a 64-hex genomeHash", 400);
+    }
+
+    const entries = await this.ensureLineage();
+    let child: LineageEntry;
+    try {
+      child = await applyBreed(entries, { ...body, parents });
+    } catch (e) {
+      return jsonError("bad_request", (e as Error).message, 400);
+    }
+
+    // Persist the append-only store, then best-effort anchor the offspring on Arc when a breeder is credited
+    // (the contract rejects address(0), so a breederless offspring simply isn't committed — it stays verifiable
+    // off-chain by hash + replay, exactly like the genesis roots).
+    entries.push(child);
+    this.lineage = entries;
+    await this.state.storage.put(KEY_LINEAGE, entries);
+
+    const breeder = (child.breeder ?? "").trim();
+    if (breeder && this.cfg.lineageAddress && this.cfg.economy.enabled) {
+      const opCode = child.op === "genesis" ? 0 : child.op === "mutate" ? 1 : 2;
+      const tx = await (await this.ensureEconomy()).commitLineage({
+        genomeHash: child.genomeHash,
+        parentA: child.parents[0] ?? "",
+        parentB: child.parents[1] ?? "",
+        op: opCode as 0 | 1 | 2,
+        generation: child.generation,
+        breeder,
+      });
+      if (tx) {
+        child.commitTx = tx;
+        await this.state.storage.put(KEY_LINEAGE, entries);
+      }
+    }
+
+    return json({ ok: true, lineageAddress: this.cfg.lineageAddress, entry: child, spec: replayEntry(child) });
   }
 
   // ---------- paid data product: the x402 "Arc Pulse" signal (HTTP 402) ----------
