@@ -106,15 +106,31 @@ function makeMeta(
   };
 }
 
+/**
+ * The exact default generator parameters buildConnectome() falls back to. Exported so a brain manifest
+ * can record the AUTHORITATIVE sizing from one source of truth (a verifier rebuilding from these opts +
+ * a seed reproduces the graph byte-for-byte). buildConnectome keeps destructuring-with-defaults below, so
+ * an explicit `undefined` in opts still falls back to these — behaviour is identical to before.
+ */
+export const DEFAULT_CONNECTOME_OPTIONS: Required<ConnectomeOptions> = {
+  seed: 0xfeedface,
+  nSensory: 180,
+  nInterL1: 400,
+  nInterL2: 400,
+  nModulatory: 40,
+  nMotorPerChannel: 12,
+  density: 0.02,
+};
+
 export function buildConnectome(opts: ConnectomeOptions = {}): Connectome {
   const {
-    seed = 0xfeedface,
-    nSensory = 180,
-    nInterL1 = 400,
-    nInterL2 = 400,
-    nModulatory = 40,
-    nMotorPerChannel = 12,
-    density = 0.02,
+    seed = DEFAULT_CONNECTOME_OPTIONS.seed,
+    nSensory = DEFAULT_CONNECTOME_OPTIONS.nSensory,
+    nInterL1 = DEFAULT_CONNECTOME_OPTIONS.nInterL1,
+    nInterL2 = DEFAULT_CONNECTOME_OPTIONS.nInterL2,
+    nModulatory = DEFAULT_CONNECTOME_OPTIONS.nModulatory,
+    nMotorPerChannel = DEFAULT_CONNECTOME_OPTIONS.nMotorPerChannel,
+    density = DEFAULT_CONNECTOME_OPTIONS.density,
   } = opts;
 
   const rand = mulberry32(seed);

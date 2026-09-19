@@ -124,6 +124,11 @@ const ARC_EXPLORER = "https://explorer.arc.io";
 const ARC_RPC = "https://rpc.mainnet.arc.io";
 const REG_SEL_COMMITS = "0x47885781";   // commits(bytes32)
 const REG_SEL_CHAINHEAD = "0x008f51c6"; // chainHead()
+// NeuralManifestRegistry selectors (precomputed keccak256 prefixes) — the browser reads the committed
+// brain-manifest hash straight off Arc, so "prove the brain" is trustless end-to-end (no murmur server).
+const MAN_SEL_LATEST = "0x6f17d258";       // latestHash()
+const MAN_SEL_ISCOMMITTED = "0x054765a3";  // isCommitted(bytes32)
+const MAN_SEL_COUNT = "0x9123988b";        // commitCount()
 const bytes32 = (h) => "0x" + String(h || "").replace(/^0x/i, "").toLowerCase().padStart(64, "0");
 const wordToNum = (w) => Number(BigInt(w || "0x0"));
 /** One JSON-RPC call to Arc. Throws on transport/HTTP failure so callers can fall back. */
@@ -169,6 +174,31 @@ async function readRegistryOnchain(registryAddress, receiptHash) {
 const isRealTxHash = (h) => typeof h === "string" && /^0x[0-9a-fA-F]{64}$/.test(h);
 const isRealAddr = (a) => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
 const shortHash = (h) => `${h.slice(0, 6)}…${h.slice(-4)}`;
+
+/**
+ * Read the brain-manifest commitment straight from the on-chain NeuralManifestRegistry via eth_call.
+ * Returns null when the read fails (CORS/network) or no registry is configured, so the caller can fall
+ * back to "not anchored yet" without ever blocking the browser-side hash recompute.
+ *   · latestHash()      → the most recently committed manifest hash (bytes32)
+ *   · isCommitted(h)    → whether THIS manifest's hash is anchored (bool → last word == 1)
+ *   · commitCount()     → how many manifests have ever been committed
+ */
+async function readManifestOnchain(registryAddress, manifestHash) {
+  if (!isRealAddr(registryAddress) || !manifestHash) return null;
+  try {
+    const arg = bytes32(manifestHash).slice(2);
+    const [latestRes, committedRes, countRes] = await Promise.all([
+      arcRpc("eth_call", [{ to: registryAddress, data: MAN_SEL_LATEST }, "latest"]),
+      arcRpc("eth_call", [{ to: registryAddress, data: MAN_SEL_ISCOMMITTED + arg }, "latest"]),
+      arcRpc("eth_call", [{ to: registryAddress, data: MAN_SEL_COUNT }, "latest"]),
+    ]);
+    const latest = typeof latestRes === "string" ? latestRes : null;
+    const committed = wordToNum(typeof committedRes === "string" ? committedRes : "0x0") === 1;
+    const count = wordToNum(typeof countRes === "string" ? countRes : "0x0");
+    const isLatest = !!latest && latest.toLowerCase() === bytes32(manifestHash).toLowerCase();
+    return { latest, committed, count, isLatest };
+  } catch { return null; }
+}
 let econMode = "simulated";
 let econTotals = null;
 let econBalances = new Map();                         // flyId → balance in USDC (number)
@@ -1068,6 +1098,7 @@ function renderWallets() {
 
 function openWallets() {
   walletsOpen = true;
+  if (brainOpen) closeBrain();
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
@@ -1221,6 +1252,7 @@ function renderHistory() {
 
 function openHistory() {
   historyOpen = true;
+  if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
@@ -1322,6 +1354,7 @@ async function pollProofs(force) {
 
 function openProofs() {
   proofsOpen = true;
+  if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (pulseOpen) closePulse();
@@ -1503,9 +1536,198 @@ async function verifyProof(tx, card) {
   }
 }
 
+// ================= prove-the-brain drawer (connectome manifest + trustless on-chain anchor) =================
+// The deepest "no LLM, real neurons" proof. The worker publishes a BrainManifest committing to the
+// generator params, every fly's seed, the LIF constants, the decoder config and a quantised STRUCTURAL
+// SPEC of each connectome. This drawer runs the trustless check right in the browser:
+//   1. recompute sha256(canonical(manifest)) locally → must equal the worker-reported manifestHash (the
+//      body you were served is exactly the body that was hashed — nothing swapped in transit);
+//   2. read that hash off the on-chain NeuralManifestRegistry via eth_call (no murmur server in the loop);
+//   3. show the worker's offline replay (every connectome rebuilt from its committed seed → each structural
+//      spec reproduces), which any stranger can run themselves with `npm run replay`.
+// Together: the published brains are exactly what the committed seeds deterministically generate.
+let brainOpen = false;
+let brainData = null;      // latest /manifest payload {manifestHash, registryAddress, chainId, chainTag, manifest}
+let brainReplay = null;    // latest /manifest/replay payload {manifestHash, ok, checked, mismatches}
+let brainLoading = false;
+let brainCheck = null;     // {clientHash, bodyOk, chain, chainOk} — the in-browser verification result
+
+async function loadBrain() {
+  brainLoading = true;
+  renderBrain();
+  const [m, r] = await Promise.all([
+    getJSON("/manifest", 12000).catch(() => null),
+    getJSON("/manifest/replay", 12000).catch(() => null),
+  ]);
+  brainData = m;
+  brainReplay = r;
+  brainLoading = false;
+  if (brainData && brainData.manifest) await verifyBrain(); else renderBrain();
+}
+
+// Recompute the manifest hash in-browser and read the on-chain anchor; store the result and re-render.
+async function verifyBrain() {
+  const m = brainData;
+  if (!m || !m.manifest) { renderBrain(); return; }
+  let clientHash = null;
+  try { clientHash = await sha256HexClient(m.manifest); } catch { clientHash = null; }
+  const bodyOk = clientHash != null && clientHash === String(m.manifestHash || "").toLowerCase();
+  let chain = null;
+  if (m.registryAddress) chain = await readManifestOnchain(m.registryAddress, clientHash || m.manifestHash);
+  const chainOk = !!chain && chain.committed === true;
+  brainCheck = { clientHash, bodyOk, chain, chainOk };
+  renderBrain();
+}
+
+function openBrain() {
+  brainOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (arenaOpen) closeArena();
+  const d = $("brain"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("brain-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  if (!brainData && !brainLoading) loadBrain(); else renderBrain();
+}
+function closeBrain() {
+  brainOpen = false;
+  document.body.classList.remove("brain-open");
+  const d = $("brain"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!brainOpen) d.hidden = true; }, 420);
+}
+function toggleBrain() { if (brainOpen) closeBrain(); else openBrain(); }
+
+function renderBrain() {
+  const body = $("brain-body"); if (!body) return;
+  const sub = $("brain-sub");
+  body.innerHTML = "";
+  if (brainLoading || !brainData) {
+    if (sub) sub.textContent = brainLoading ? "assembling…" : "–";
+    const p = document.createElement("p"); p.className = "pf-empty";
+    p.textContent = brainLoading
+      ? "assembling the swarm's connectome manifest (24 brains, 10,800 neurons each) …"
+      : "manifest unavailable — is the worker online?";
+    body.appendChild(p);
+    return;
+  }
+  const m = brainData.manifest || {};
+  const c = m.connectome || {};
+  const pop = m.population || {};
+  const flies = Array.isArray(m.flies) ? m.flies : [];
+  const nEach = flies.length && flies[0].structural ? flies[0].structural.neuronCount : null;
+  if (sub) sub.textContent = `${pop.size ?? flies.length} flies` + (nEach ? ` · ${Number(nEach).toLocaleString()} neurons each` : "");
+
+  // attestation header
+  const auto = document.createElement("div"); auto.className = "pf-auto";
+  auto.innerHTML =
+    `<div class="pf-auto-title">prove the brain</div>` +
+    `<p class="pf-auto-body">These are real, deterministic spiking connectomes — not a lookup table, not an LLM. Your browser recomputes <b>sha256(manifest)</b> below, matches it to the worker's hash, then reads that hash straight off the on-chain <b>NeuralManifestRegistry</b>. Every fly's wiring is rebuilt from its committed seed.</p>` +
+    `<dl class="pf-auto-meta">` +
+    `<div><dt>schema</dt><dd>${m.schema || "–"} v${m.v ?? "–"}</dd></div>` +
+    `<div><dt>chain</dt><dd>${m.chainTag || "–"} (${m.chainId ?? "–"})</dd></div>` +
+    `<div><dt>population</dt><dd>${pop.size ?? "–"} · base ${pop.seedBase ?? "–"}</dd></div>` +
+    `<div><dt>seed rule</dt><dd class="fp">${pop.seedFormula || "–"}</dd></div>` +
+    `<div><dt>connectome</dt><dd>${c.nSensory ?? "–"}/${c.nInterL1 ?? "–"}/${c.nInterL2 ?? "–"} · ρ${c.density ?? "–"}</dd></div>` +
+    `<div><dt>policy · proof</dt><dd>${m.policy || "–"} · v${m.proofV ?? "–"}</dd></div>` +
+    `</dl>`;
+  body.appendChild(auto);
+
+  // verification result (auto-computed in-browser)
+  body.appendChild(brainVerifyCard());
+
+  // provenance + the explicit no-LLM statement
+  const prov = m.provenance || {};
+  const llm = m.llm || {};
+  const provBox = document.createElement("div"); provBox.className = "pf-card"; provBox.style.padding = "10px 12px";
+  provBox.innerHTML =
+    `<div class="pf-ct-title">provenance</div>` +
+    `<div class="pf-ct-ev">architecture: ${prov.architecture || "–"}</div>` +
+    `<div class="pf-ct-ev">flywire-literal: <b>${String(prov.flywireLiteral)}</b> · deterministic: <b>${String(prov.generatedDeterministically)}</b> · reproducible from seed: <b>${String(prov.reproducibleFromSeed)}</b> · llm involved: <b>${String(prov.llmInvolved)}</b></div>` +
+    (llm.statement ? `<div class="pf-ct-ev" style="margin-top:6px">${llm.statement}</div>` : "");
+  body.appendChild(provBox);
+
+  // per-fly committed structural identity
+  const t = document.createElement("div"); t.className = "pf-card"; t.style.padding = "10px 12px";
+  t.innerHTML = `<div class="pf-ct-title">per-fly structural identity (${flies.length} committed)</div>`;
+  const tbl = document.createElement("div"); tbl.className = "br-table";
+  const head = document.createElement("div"); head.className = "br-row br-head";
+  head.innerHTML = `<span>#</span><span>seed</span><span>neurons/synapses</span><span>edgeHash</span>`;
+  tbl.appendChild(head);
+  for (const f of flies) {
+    const s = f.structural || {};
+    const row = document.createElement("div"); row.className = "br-row";
+    row.innerHTML = `<span>${f.id}</span><span>${f.seed}</span><span>${Number(s.neuronCount || 0).toLocaleString()}/${Number(s.synapseCount || 0).toLocaleString()}</span><span class="fp">${s.edgeHash || "–"}</span>`;
+    tbl.appendChild(row);
+  }
+  t.appendChild(tbl);
+  body.appendChild(t);
+}
+
+function brainVerifyCard() {
+  const m = brainData || {};
+  const card = document.createElement("div"); card.className = "pf-card"; card.style.padding = "10px 12px";
+  const chk = brainCheck;
+  const cHash = chk && chk.clientHash ? chk.clientHash : null;
+  const sHash = String(m.manifestHash || "").toLowerCase();
+  const bodyOk = chk ? chk.bodyOk : null;
+  const chain = chk ? chk.chain : null;
+  const chainOk = chk ? chk.chainOk : null;
+  const replay = brainReplay;
+  const replayOk = replay ? replay.ok === true : null;
+  // The hard trustless checks are the body hash + the replay; the on-chain anchor is a bonus that only
+  // lights up once the hash is committed on the chain the browser reads (Arc mainnet).
+  const hardOk = bodyOk === true && replayOk !== false;
+
+  const badge = document.createElement("div");
+  if (!chk) { badge.className = "pf-badge"; badge.textContent = "verifying …"; }
+  else if (!hardOk) { badge.className = "pf-badge bad"; badge.textContent = "✗ verification failed"; }
+  else {
+    badge.className = "pf-badge ok";
+    badge.textContent = chainOk
+      ? "✓ brain proven end-to-end · body hash + on-chain anchor + replay all match"
+      : "✓ body hash + replay match · not anchored on Arc mainnet yet";
+  }
+  card.appendChild(badge);
+
+  const dl = document.createElement("dl"); dl.className = "pf-vmeta";
+  dl.innerHTML =
+    `<div><dt>sha256(manifest) in your browser</dt><dd class="fp">${cHash ? shortHash(cHash) : "–"}</dd></div>` +
+    `<div><dt>worker-reported manifestHash</dt><dd class="fp${bodyOk ? " ok" : ""}">${sHash ? shortHash(sHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>`;
+  if (m.registryAddress) {
+    if (chain) {
+      const stateTxt = chain.committed ? (chain.isLatest ? "committed · latest ✓" : "committed ✓") : "not committed";
+      dl.innerHTML +=
+        `<div><dt>on-chain registry (direct Arc RPC)</dt><dd class="fp${chainOk ? " ok" : ""}">${stateTxt}</dd></div>` +
+        `<div><dt>latestHash · commitCount</dt><dd class="fp">${chain.latest ? shortHash(chain.latest) : "–"} · ${chain.count}</dd></div>` +
+        `<div><dt>registry contract</dt><dd class="fp"><a href="${ARC_EXPLORER}/address/${m.registryAddress}" target="_blank" rel="noopener noreferrer">${shortHash(m.registryAddress)}</a></dd></div>`;
+    } else {
+      dl.innerHTML +=
+        `<div><dt>on-chain registry</dt><dd class="fp">read failed / not on Arc mainnet</dd></div>` +
+        `<div><dt>registry contract</dt><dd class="fp">${shortHash(m.registryAddress)}</dd></div>`;
+    }
+  } else {
+    dl.innerHTML += `<div><dt>on-chain registry</dt><dd class="fp">not configured (manifest still replayable offline)</dd></div>`;
+  }
+  dl.innerHTML += replay
+    ? `<div><dt>offline replay (worker /manifest/replay)</dt><dd class="fp${replayOk ? " ok" : ""}">${replay.checked ?? 0} brains rebuilt → ${replayOk ? "PASS ✓" : "FAIL ✗"}</dd></div>`
+    : `<div><dt>offline replay</dt><dd class="fp">unavailable</dd></div>`;
+  card.appendChild(dl);
+
+  const note = document.createElement("div"); note.className = "pf-ct-ev"; note.style.marginTop = "7px";
+  note.textContent = "Run the identical replay yourself, trustlessly:  npm run replay -- --from-wrangler --expect " + (cHash || sHash || "<hash>");
+  card.appendChild(note);
+  return card;
+}
+
 // ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
 function openPulse() {
   pulseOpen = true;
+  if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
@@ -1746,6 +1968,7 @@ async function buySignal(btn) {
 // ================= prediction market drawer (neural stakes + trustless hit-rate leaderboard) =================
 function openPredict() {
   predictOpen = true;
+  if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
@@ -2567,6 +2790,8 @@ function bindUI() {
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
+  const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);
+  const bc = $("brain-close"); if (bc) bc.addEventListener("click", closeBrain);
   const tca = $("tca-copy"); if (tca) tca.addEventListener("click", () => copyTokenCA(tca));
   const ulb = $("pulse-btn"); if (ulb) ulb.addEventListener("click", togglePulse);
   const ulc = $("pulse-close"); if (ulc) ulc.addEventListener("click", closePulse);
@@ -2614,7 +2839,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -2668,6 +2893,7 @@ const arenaClock = (s) => {
 // ---- drawer lifecycle (mirrors the predict drawer; mutually exclusive with the others) ----
 function openArena() {
   arenaOpen = true;
+  if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();

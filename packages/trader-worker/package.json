@@ -13,6 +13,9 @@
     "test": "npx --yes tsx --test src/*.test.ts",
     "compile:registry": "node scripts/compile-registry.mjs",
     "deploy:registry": "node scripts/deploy-registry-auto.mjs",
+    "compile:manifest": "node scripts/compile-manifest.mjs",
+    "deploy:manifest": "node scripts/deploy-manifest-auto.mjs",
+    "replay": "npx --yes tsx scripts/replay-brain.ts",
     "compile:arena": "node scripts/compile-arena.mjs",
     "deploy:arena": "node scripts/deploy-arena-auto.mjs",
     "cf-typegen": "wrangler types"

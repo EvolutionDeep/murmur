@@ -31,6 +31,7 @@ import type { StimulusEvent } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
 import { netReceiptHash } from "./provenance.js";
+import { assembleManifest, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -90,6 +91,8 @@ export class FlyStateDO {
   private swarm: SwarmBackend | null = null;
   private meter: MarketMeter | null = null;
   private economy: AgentEconomy | null = null;
+  /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
+  private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
   private arenaState: ArenaState | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
@@ -461,6 +464,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/economy") return await this.getEconomy();
       if (req.method === "GET" && path === "/proofs") return await this.getProofs();
       if (req.method === "GET" && path === "/proofs/verify") return await this.getProofVerify(url);
+      if (req.method === "GET" && path === "/manifest") return await this.getManifest();
+      if (req.method === "GET" && path === "/manifest/replay") return await this.getManifestReplay();
       if (req.method === "GET" && path === "/signal/pulse") return await this.getSignalPulse(req);
       if (req.method === "GET" && path === "/signal/requirements") return await this.getSignalRequirements();
       if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
@@ -886,6 +891,53 @@ export class FlyStateDO {
       },
       receipt: proof.receipt,
     });
+  }
+
+  // ---------- brain manifest: the trustless "prove the brain" commitment ----------
+
+  /**
+   * The swarm's brain manifest + its sha256 identity. Deterministic from the runtime config (no clock, no
+   * randomness), so it is assembled once and cached for this DO's lifetime. The registry address (when
+   * configured) lets a verifier read the committed hash straight off Arc and compare — the browser does
+   * that on-chain read directly (eth_call), so the anchor is trustless, not our word. Pure read-out.
+   */
+  private async getManifest(): Promise<Response> {
+    const { manifest, hash } = await this.ensureManifest();
+    return json({
+      manifestHash: hash,
+      registryAddress: this.cfg.manifestRegistryAddress,
+      chainId: this.cfg.chainId,
+      chainTag: manifest.chainTag,
+      manifest,
+    });
+  }
+
+  /**
+   * The OFFLINE REPLAY, run server-side for browsers that can't rebuild a connectome: re-derive every fly's
+   * structural spec from the committed (seed, opts) and report PASS/FAIL. A trustless verifier can instead
+   * run the identical check offline via `npm run replay` (scripts/replay-brain.ts) — this is the SAME pure
+   * function, exposed for convenience. No chain call, no mutation.
+   */
+  private async getManifestReplay(): Promise<Response> {
+    const { manifest, hash } = await this.ensureManifest();
+    const replay = replayVerifyManifest(manifest);
+    return json({ manifestHash: hash, ...replay });
+  }
+
+  /**
+   * Assemble (once) + hash the brain manifest; cached because it is a pure function of the config.
+   * Cost is bounded: connectomeSpecForSeed builds ONE fly's connectome, digests it and drops it, so peak
+   * memory is a single 10,800-neuron brain (tens of MB), not all 24 — safe inside this coordinator DO
+   * (which holds no brains at SHARD_COUNT>1). Measured ~0.65s to assemble the full 10x roster locally;
+   * a few seconds of CPU on Cloudflare, paid once per DO lifetime and then served from the cache.
+   */
+  private async ensureManifest(): Promise<{ manifest: BrainManifest; hash: string }> {
+    if (!this.manifestCache) {
+      const manifest = assembleManifest(this.cfg);
+      const hash = await manifestHash(manifest);
+      this.manifestCache = { manifest, hash };
+    }
+    return this.manifestCache;
   }
 
   // ---------- paid data product: the x402 "Arc Pulse" signal (HTTP 402) ----------

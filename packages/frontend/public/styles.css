@@ -522,6 +522,29 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 }
 .proofs-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 
+/* --- "prove the brain" toggle (in the population panel) + its connectome-manifest drawer --- */
+.brain-btn {
+  margin-top: 10px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+}
+.brain-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+body.brain-open .panel-pop, body.brain-open .panel-about { opacity: 0.1; pointer-events: none; }
+.br-table { margin-top: 4px; }
+.br-row {
+  display: grid; grid-template-columns: 20px 58px 1fr 74px; gap: 6px; align-items: baseline;
+  font-family: var(--mono); font-size: 8.5px; color: var(--ink);
+  padding: 3px 0; border-top: 1px solid var(--hair);
+}
+.br-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-row.br-head {
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+  border-top: none; padding-bottom: 4px;
+}
+.br-row .fp { color: var(--accent); opacity: 0.82; text-align: right; }
+
 /* --- project token contract address (in the economy panel): click to copy, ↗ verifies on Arc --- */
 .token-ca {
   margin-top: 10px; padding-top: 9px;

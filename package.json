@@ -35,6 +35,7 @@
     "typecheck": "tsc --noEmit -p packages/fly-brain/tsconfig.json && tsc --noEmit -p packages/trader-worker/tsconfig.json && tsc --noEmit -p packages/arc-circle-x402/tsconfig.json",
     "test": "npm run test --workspaces --if-present",
     "smoke": "npx --yes tsx packages/fly-brain/smoke.ts",
+    "replay": "npm run replay -w @fly/trader-worker -- --from-wrangler",
     "dev:worker": "npm run dev -w @fly/trader-worker",
     "deploy:worker": "npm run deploy -w @fly/trader-worker",
     "deploy:frontend": "npm run deploy -w @fly/frontend",

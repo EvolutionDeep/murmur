@@ -1,11 +1,15 @@
 name: CI
 
 # Runs the project gates on every push to main, every pull request, and on demand:
-#   • verify    — typecheck, unit tests, build, and the neural smoke test (keyless, chain-free:
-#                 the unit tests exercise the connectome, LIF dynamics, motor decoding and the
-#                 simulated economy in-process, so CI never needs a secret or a funded wallet).
-#   • contracts — the on-chain Solidity suites (NeuralReceiptRegistry + PredictionArena) under forge,
-#                 including the fuzz invariants that prove the receipt hash-chain stays contiguous.
+#   • verify    — typecheck, unit tests, build, the neural smoke test, and the brain-manifest replay
+#                 (keyless, chain-free: the unit tests exercise the connectome, LIF dynamics, motor
+#                 decoding and the simulated economy in-process, so CI never needs a secret or a funded
+#                 wallet). The replay rebuilds every fly's connectome from the committed seeds in
+#                 wrangler.toml and asserts each structural spec reproduces — a standing trustless check
+#                 that the published brain is exactly what its seeds deterministically generate (no LLM).
+#   • contracts — the on-chain Solidity suites (NeuralReceiptRegistry + NeuralManifestRegistry +
+#                 PredictionArena) under forge, including the fuzz invariants that prove the receipt
+#                 hash-chain stays contiguous and the brain-manifest anchor is immutable.
 on:
   push:
     branches: [main]
@@ -49,8 +53,14 @@ jobs:
       - name: Neural smoke test
         run: npm run smoke
 
+      # Standing trustless gate: rebuild the production (10x, from wrangler.toml) brain manifest offline
+      # and assert every fly's connectome reproduces from its committed seed. Exits non-zero on any
+      # mismatch, so a change that breaks connectome determinism — or a tampered manifest — fails CI.
+      - name: Brain-manifest replay (prove the brain, offline)
+        run: npm run replay
+
   contracts:
-    name: forge · registry + arena (unit + fuzz invariants)
+    name: forge · registry + manifest + arena (unit + fuzz invariants)
     runs-on: ubuntu-latest
     defaults:
       run:
