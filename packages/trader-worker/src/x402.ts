@@ -42,6 +42,13 @@ import {
   type WalletClient,
 } from "viem";
 import { nonceFromCalldata } from "./provenance.js";
+import {
+  CIRCLE_SETTLE_PATH,
+  buildCircleSettleBody,
+  signSellerProof,
+  circleAuthHeaders,
+  parseSettleResponse,
+} from "./circle.js";
 
 /** Protocol version we speak. The reference `exact` scheme ships at version 1. */
 export const X402_VERSION = 1;
@@ -534,6 +541,30 @@ export class SimulatedFacilitator implements Facilitator {
  * Only ever constructed by makeFacilitator when mode==="onchain" AND full wiring is supplied; the
  * default simulated economy never touches this class.
  */
+/**
+ * Config for delegating USDC settlement to Circle's hosted Facilitator Service (see circle.ts). When
+ * wired into OnChainFacilitator, the per-deal USDC broadcast is handed to Circle's relayer (which screens
+ * both parties and pays the settlement gas) instead of this wallet — killing the self-funded gas wallet's
+ * per-transfer cost on the hot path. Registry commits + arena open/resolve are NOT USDC transfers, so they
+ * always still use this wallet. Absent ⇒ self-broadcast, byte-for-byte today's behaviour.
+ */
+export interface CircleBackendOpts {
+  /** Circle API base URL (CIRCLE_PROD_URL = https://api.circle.com). */
+  baseUrl: string;
+  /** CAIP-2 network id Circle routes by: eip155:5042 (mainnet) / eip155:5042002 (testnet). */
+  networkCaip2: string;
+  /** Numeric chain id — the seller-proof EIP-712 domain's chainId. */
+  chainId: number;
+  /** Circle API key (Bearer, production). Null/absent ⇒ keyless trial via a payTo-signed seller proof. */
+  apiKey?: string | null;
+  /** Seconds Circle may wait for terminal settlement before returning pending (default 12). */
+  maxTimeoutSeconds: number;
+  /** Which settle paths route through Circle: "external" = the Arc Pulse seller side; "all" = + the internal agent economy. */
+  scope: "external" | "all";
+  /** Injectable fetch (tests). Defaults to the runtime global fetch. */
+  fetchImpl?: typeof fetch;
+}
+
 export interface OnChainFacilitatorOpts {
   /** Real USDC precompile this settles against (ARC_USDC). */
   asset: Address;
@@ -566,6 +597,11 @@ export interface OnChainFacilitatorOpts {
    * arena step; the resolver calls are silently skipped (zero behaviour change).
    */
   arenaAddress?: Address;
+  /**
+   * Optional Circle Facilitator Service backend. When set (and not shadowOnly), the USDC broadcast in
+   * settle()/settleExternal() is delegated to Circle per `circle.scope`; everything else is unchanged.
+   */
+  circle?: CircleBackendOpts;
 }
 
 export class OnChainFacilitator implements Facilitator {
@@ -655,6 +691,10 @@ export class OnChainFacilitator implements Facilitator {
         return { success: true, network: net, txHash: "0x", simulated: true, shadow: true };
       }
 
+      // Circle Facilitator Service (scope "all"): delegate the USDC broadcast to Circle's relayer, which
+      // screens both parties and pays the settlement gas. Our wallet is untouched for this transfer.
+      if (this.o.circle && this.o.circle.scope === "all") return this.settleViaCircle(signature, auth, reqs);
+
       // Broadcast. writeContract runs eth_estimateGas first — an implicit shadow-verify that throws if
       // the transfer would revert (bad signature / domain / reused nonce), so nothing is sent on a
       // would-be failure. Arc has deterministic finality, so a mined receipt needs no reorg handling.
@@ -742,6 +782,10 @@ export class OnChainFacilitator implements Facilitator {
         return { success: true, network: net, txHash: "0x", simulated: true, shadow: true };
       }
 
+      // Circle Facilitator Service (scope "external" or "all"): an OUTSIDE wallet signed this with its own
+      // key; hand the authorization to Circle's relayer to screen + broadcast + pay gas (we never relay it).
+      if (this.o.circle) return this.settleViaCircle(signature, auth, reqs);
+
       const hash = await this.o.wallet.writeContract({
         address: this.o.asset,
         abi: fiatTokenV2Abi,
@@ -756,6 +800,92 @@ export class OnChainFacilitator implements Facilitator {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(`external settle error: ${msg}`);
+    }
+  }
+
+  /**
+   * Delegate the USDC transfer to Circle's hosted Facilitator Service (POST /v1/facilitator/x402/settle).
+   * Circle's relayer validates the buyer's EIP-3009 signature + balance, screens both parties, submits the
+   * transfer on-chain, and pays the settlement gas — so THIS wallet never broadcasts or funds the payment.
+   * We sign the buyer authorization exactly as before (settle) or forward the browser's signature
+   * (settleExternal); only the broadcast hop changes. Auth is exactly one mode: Bearer when a Circle API
+   * key is configured, else a keyless seller proof signed by the payTo key we hold. Arc settlements are
+   * final, so a 200 success needs no reorg handling; a pending outcome is reported as a soft failure so the
+   * netting ledger never moves without a mined receipt, and the payment-identifier (= the authorization
+   * nonce) makes a retry converge on the same Circle payment instead of double-charging.
+   */
+  private async settleViaCircle(
+    signature: Hex,
+    auth: PaymentAuthorization,
+    reqs: PaymentRequirements,
+  ): Promise<SettleResponse> {
+    const c = this.o.circle!;
+    const net = reqs.network;
+    const fail = (invalidReason: string): SettleResponse =>
+      ({ success: false, network: net, txHash: "0x", invalidReason });
+    try {
+      const nonce32 = toNonce32(auth.nonce);
+      const payTo = auth.to as Address;
+      const { bodyStr } = buildCircleSettleBody({
+        networkCaip2: c.networkCaip2,
+        asset: this.o.asset,
+        payTo: auth.to,
+        amount: auth.value,                 // exact scheme: amount == authorization.value
+        maxTimeoutSeconds: c.maxTimeoutSeconds,
+        signature,
+        from: auth.from,
+        to: auth.to,
+        value: auth.value,
+        validAfter: "0",
+        validBefore: String(auth.maxDeadline),
+        nonce32,
+        resourceUrl: typeof reqs.resource === "string" && /^https?:\/\//i.test(reqs.resource) ? reqs.resource : undefined,
+        resourceDescription: reqs.description,
+        resourceMime: reqs.mimeType,
+        idempotencyId: nonce32.slice(2),     // 64 hex chars ⊂ [A-Za-z0-9_-], within Circle's 16–128 bound
+      });
+
+      // Exactly one auth mode. Bearer when an API key is set; else a keyless seller proof from the payTo key.
+      let headers: Record<string, string>;
+      if (c.apiKey) {
+        headers = circleAuthHeaders({ apiKey: c.apiKey });
+      } else {
+        const seller =
+          payTo.toLowerCase() === this.o.wallet.account.address.toLowerCase()
+            ? this.o.wallet.account
+            : this.o.buyerAccount(payTo);
+        if (!seller) return fail(`keyless Circle settle needs the payTo key; none for ${auth.to}`);
+        const proof = await signSellerProof({
+          account: seller,
+          purpose: "settle",
+          method: "POST",
+          bodyStr,
+          networkCaip2: c.networkCaip2,
+          payTo,
+          chainId: c.chainId,
+        });
+        headers = circleAuthHeaders({ sellerProof: proof });
+      }
+
+      const resp = await (c.fetchImpl ?? fetch)(`${c.baseUrl}${CIRCLE_SETTLE_PATH}`, {
+        method: "POST",
+        headers,
+        body: bodyStr,
+      });
+      const json = await resp.json().catch(() => null);
+      const parsed = parseSettleResponse(resp.status, json);
+      if (parsed.kind === "success") {
+        return { success: true, network: net, txHash: parsed.txHash, simulated: false };
+      }
+      if (parsed.kind === "pending") {
+        return fail(`circle settlement_pending${parsed.paymentId ? ` id=${parsed.paymentId}` : ""}`);
+      }
+      if (parsed.kind === "failed") return fail(`circle: ${parsed.reason}`);
+      return fail(
+        `circle http ${parsed.status}${parsed.reasons.length ? ` ${parsed.reasons.join(",")}` : ` ${parsed.message}`}`,
+      );
+    } catch (err) {
+      return fail(`circle settle error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

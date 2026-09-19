@@ -109,6 +109,29 @@ ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending n
 ECONOMY_REGISTRY_ADDRESS = "0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815"   # deployed on Arc mainnet (5042); committer = the Worker's facilitator wallet
 
 
+# ===== Circle Facilitator Service (the OFFICIAL hosted x402 facilitator — src/circle.ts) =====
+# Circle now hosts the exact role murmur self-built: its relayer screens both parties, submits the buyer's
+# EIP-3009 USDC transfer and PAYS the settlement gas — "no relayer keys, no separate gas wallet". This block
+# delegates ONLY the per-deal USDC broadcast to Circle; the NeuralReceiptRegistry commits + PredictionArena
+# open/resolve are not USDC transfers, so they always still use murmur's own facilitator wallet (0x2b9a…055c).
+# CURRENT: "external" (mode line below) — LIVE on Arc MAINNET, verified with a zero-value keyless probe:
+# Circle accepted our EIP-712 seller proof + x402v2 body and reached the balance check (HTTP 200,
+# insufficient_funds for the 0-balance test buyer), so the hosted keyless path is correct. "off" ⇒ self-broadcast.
+# The buyer still signs the SAME EIP-3009 authorization; only the network string is translated to CAIP-2
+# (eip155:5042 mainnet / eip155:5042002 testnet) for Circle's routing, which never invalidates a signature.
+# ROLLOUT (done): straight to Arc MAINNET "external" (Arc Pulse seller side only), keyless — probe-verified
+# above. The internal agent economy still self-broadcasts; only flip to "all" after external proves out under
+# real traffic (that puts the core hot path on an external API). The keyless trial is rate-limited per payTo
+# and returns 403 registration_required once exhausted — for sustained high-volume mainnet use, add a Circle
+# API key (secret below) so auth switches to Bearer. Rollback = set the mode back to "off" and redeploy.
+ECONOMY_CIRCLE_FACILITATOR = "external"     # LIVE: Arc Pulse seller side settles via Circle's relayer (keyless trial; payTo 0x2b9a…055c signs the seller proof, Circle pays gas). Internal agent economy still self-broadcasts. "off"=self-broadcast all · "all"=+internal economy. Inert unless ECONOMY_FACILITATOR="onchain".
+CIRCLE_FACILITATOR_URL = "https://api.circle.com"   # Circle API base URL; sandbox = https://api-sandbox.circle.com. One host routes testnet+mainnet by the CAIP-2 network in the body.
+CIRCLE_MAX_TIMEOUT_SECONDS = "12"           # seconds Circle may wait for terminal settlement before returning "pending" (Arc settles with instant finality)
+# SECRET (optional) — set with `wrangler secret put CIRCLE_API_KEY`, NEVER written here: a Circle API key for
+# Bearer auth in production. Absent ⇒ keyless trial, authenticating each settle with an EIP-712 seller proof
+# signed by the payTo key murmur already holds. Mixing Bearer + seller-proof on one request is a 400.
+
+
 # ===== Prediction market (ONCHAIN — neural-staked temperature bets) =====
 # Each cron the swarm stakes real USDC on whether next tick's market temperature rises or falls; the
 # following cron resolves it parimutuel (winners split the losers' pool, strictly zero-sum) and folds the

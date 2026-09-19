@@ -67,6 +67,16 @@ export interface Env {
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
   ECONOMY_REGISTRY_ADDRESS?: string;    // deployed NeuralReceiptRegistry (0x…40); when set, each mined net is committed on-chain so the receipt hash-chain head lives on Arc, not just in DO storage. Absent ⇒ commit step skipped (zero behaviour change).
 
+  // --- Circle Facilitator Service (the OFFICIAL hosted x402 facilitator; see src/circle.ts) ---
+  //     Circle's relayer screens both parties, submits the buyer's EIP-3009 USDC transfer and pays the
+  //     settlement gas, so murmur no longer has to self-fund a gas wallet for the USDC hop. ALL inert unless
+  //     ECONOMY_FACILITATOR="onchain" AND ECONOMY_CIRCLE_FACILITATOR is "external"/"all". Registry commits +
+  //     arena open/resolve are NOT USDC transfers, so they always still use murmur's own wallet.
+  ECONOMY_CIRCLE_FACILITATOR?: string;  // "off" (default; self-broadcast, byte-for-byte today's behaviour) | "external" (only the Arc Pulse seller side routes via Circle) | "all" (+ the internal agent economy)
+  CIRCLE_FACILITATOR_URL?: string;      // Circle API base URL (default https://api.circle.com; sandbox https://api-sandbox.circle.com). One host routes testnet+mainnet by the CAIP-2 network in the body.
+  CIRCLE_MAX_TIMEOUT_SECONDS?: string;  // seconds Circle may wait for terminal settlement before returning "pending" (default 12; Arc settles with instant finality).
+  CIRCLE_API_KEY?: string;              // SECRET (optional): Circle API key → Bearer auth in production. Absent ⇒ keyless trial, authenticating each settle with an EIP-712 seller proof signed by the payTo key we already hold. Set with `wrangler secret put CIRCLE_API_KEY`.
+
   // --- Paid data product: the "Arc Pulse" signal sold over x402 (HTTP 402) ---
   //     A visitor's wallet signs an EIP-3009 authorization; the facilitator relays it and serves the
   //     machine-readable signal. ALL inert unless SIGNAL_ENABLED and (onchain) a payee resolves.
@@ -158,6 +168,18 @@ export interface RuntimeConfig {
     usdcEip712Version: string;
     /** Deployed NeuralReceiptRegistry address, or null when not configured (commit step skipped). */
     registryAddress: string | null;
+    /**
+     * Circle Facilitator Service backend (hosted x402 settlement). mode "off" ⇒ self-broadcast the USDC
+     * transfer from murmur's own gas wallet (today's behaviour, zero change). "external" ⇒ only the Arc
+     * Pulse seller side routes via Circle; "all" ⇒ + the internal agent economy. apiKey null ⇒ keyless
+     * trial (a payTo-signed EIP-712 seller proof authenticates each settle).
+     */
+    circle: {
+      mode: "off" | "external" | "all";
+      apiKey: string | null;
+      baseUrl: string;
+      maxTimeoutSeconds: number;
+    };
   };
 
   // Paid data product (x402 "Arc Pulse" signal)
@@ -211,6 +233,12 @@ function posFrac(v: string | undefined): number | undefined {
   if (v == null || v.trim() === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 && n <= 1 ? n : undefined;
+}
+
+/** Circle Facilitator Service scope: only an exact "external"/"all" enables it; anything else ⇒ "off". */
+function parseCircleMode(v: string | undefined): "off" | "external" | "all" {
+  const s = (v ?? "").trim().toLowerCase();
+  return s === "external" || s === "all" ? s : "off";
 }
 
 export function loadConfig(env: Env): RuntimeConfig {
@@ -276,6 +304,12 @@ export function loadConfig(env: Env): RuntimeConfig {
       usdcEip712Name: env.ECONOMY_USDC_EIP712_NAME || "USDC",
       usdcEip712Version: env.ECONOMY_USDC_EIP712_VERSION || "2",
       registryAddress: (env.ECONOMY_REGISTRY_ADDRESS ?? "").trim() || null,
+      circle: {
+        mode: parseCircleMode(env.ECONOMY_CIRCLE_FACILITATOR),
+        apiKey: (env.CIRCLE_API_KEY ?? "").trim() || null,
+        baseUrl: (env.CIRCLE_FACILITATOR_URL ?? "").trim() || "https://api.circle.com",
+        maxTimeoutSeconds: clampInt(Number(env.CIRCLE_MAX_TIMEOUT_SECONDS ?? "12"), 1, 300),
+      },
     },
 
     signal: {

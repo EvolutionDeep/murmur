@@ -50,6 +50,7 @@ import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDep
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
 import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo } from "./x402.js";
+import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
@@ -282,6 +283,24 @@ export class FlyStateDO {
       byAddress.set(keys.address(id).toLowerCase(), keys.account(id));
     }
 
+    // Optional Circle Facilitator Service backend: when ECONOMY_CIRCLE_FACILITATOR is "external"/"all",
+    // hand the per-deal USDC broadcast to Circle's hosted relayer (which screens both parties and pays the
+    // settlement gas) instead of this wallet. The CAIP-2 network Circle routes by is derived from chainId,
+    // so the SAME wiring serves Arc testnet (eip155:5042002) and mainnet (eip155:5042). "off" ⇒ omitted
+    // entirely ⇒ self-broadcast, byte-for-byte today's behaviour. Registry commits + arena open/resolve are
+    // NOT USDC transfers, so they always still use this wallet regardless of the Circle scope.
+    const circleOpts =
+      e.circle.mode === "off"
+        ? undefined
+        : {
+            baseUrl: e.circle.baseUrl,
+            networkCaip2: caip2(this.cfg.chainId),
+            chainId: this.cfg.chainId,
+            apiKey: e.circle.apiKey,
+            maxTimeoutSeconds: e.circle.maxTimeoutSeconds,
+            scope: e.circle.mode,
+          };
+
     const facilitator = makeFacilitator("onchain", {
       asset: ARC_USDC as Address,
       chainId: this.cfg.chainId,
@@ -295,6 +314,7 @@ export class FlyStateDO {
       gasPrice: e.gasPriceGwei != null ? BigInt(Math.round(e.gasPriceGwei * 1e9)) : undefined,
       registryAddress: e.registryAddress ? (e.registryAddress as Address) : undefined,
       arenaAddress: this.cfg.arena.address ? (this.cfg.arena.address as Address) : undefined,
+      circle: circleOpts,
     });
 
     console.warn(
@@ -302,6 +322,13 @@ export class FlyStateDO {
         `${keys.facilitatorAddress()}, shadowOnly=${e.shadowOnly}, realSpend=${e.realSpendEnabled}, ` +
         `perDealCap=${e.maxDealUsdc} USDC, dailyCap=${e.dailyCapUsdc} USDC, perAgentDailyCap=${e.perAgentDailyCapUsdc} USDC.`,
     );
+    if (circleOpts) {
+      console.warn(
+        `[DO] Circle Facilitator Service ARMED (scope=${circleOpts.scope}, network=${circleOpts.networkCaip2}, ` +
+          `auth=${circleOpts.apiKey ? "api-key" : "keyless seller-proof"}, baseUrl=${circleOpts.baseUrl}): USDC ` +
+          `settlement delegated to Circle's hosted relayer; registry/arena still use ${keys.facilitatorAddress()}.`,
+      );
+    }
 
     return { facilitator, addressOf: (id) => keys.address(id) };
   }
