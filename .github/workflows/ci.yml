@@ -62,11 +62,13 @@ jobs:
       - name: Set up Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      # forge-std is not vendored (no lib/, no .gitmodules), so pull it here.
-      # --no-commit: the Actions checkout is a detached HEAD, and forge install would otherwise
-      # try to create a commit. solc 0.8.24 (per foundry.toml) is auto-fetched by foundry's svm.
-      - name: Install forge-std
-        run: forge install foundry-rs/forge-std --no-commit
+      # forge-std is not vendored (no lib/, no .gitmodules). Clone a PINNED tag deterministically
+      # rather than `forge install`: this sidesteps git-submodule / detached-HEAD behaviour entirely
+      # and locks the version so the suite can't drift with a forge-std HEAD change. v1.9.4 is
+      # contemporaneous with solc 0.8.24. The existing remapping forge-std/=lib/forge-std/src/
+      # (foundry.toml) resolves against this path; solc 0.8.24 is auto-fetched by foundry's svm.
+      - name: Install forge-std (pinned v1.9.4)
+        run: git clone --depth 1 --branch v1.9.4 https://github.com/foundry-rs/forge-std lib/forge-std
 
       - name: Run forge tests
         run: forge test -vvv
