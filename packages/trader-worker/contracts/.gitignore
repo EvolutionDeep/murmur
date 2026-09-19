@@ -1,0 +1,6 @@
+# Foundry build artifacts + installed dependencies.
+# forge-std is NOT vendored — CI clones it fresh (pinned tag) into lib/forge-std,
+# so lib/, out/ and cache/ are all local/ephemeral and must never be committed.
+out/
+cache/
+lib/

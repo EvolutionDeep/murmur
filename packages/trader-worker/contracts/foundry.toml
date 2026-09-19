@@ -15,3 +15,8 @@ remappings = [
 [invariant]
 # Fail fast on any broken chain link — the whole point of the registry is chain continuity.
 fail_on_revert = true
+# Bound the fuzz campaign so CI stays in seconds: invariant_chain_is_contiguous re-walks the whole
+# chain after every call (O(depth^2) per run), so the default depth=500 / runs=256 grinds for minutes.
+# 100-deep chains x 50 random sequences still exercise continuity, double-commit and head-tracking.
+runs = 50
+depth = 100

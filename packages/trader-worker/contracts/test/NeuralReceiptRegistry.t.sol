@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "forge-std/Invariant.sol";
+import "forge-std/StdInvariant.sol";
 import "../NeuralReceiptRegistry.sol";
 
 /// @notice Unit + invariant tests for murmur's on-chain neural-receipt commitment log.
@@ -172,7 +172,7 @@ contract RegistryHandler is Test {
     function headAt(uint256 i) public view returns (bytes32) { return heads[i]; }
 }
 
-contract NeuralReceiptRegistryInvariantTest is InvariantTest {
+contract NeuralReceiptRegistryInvariantTest is StdInvariant, Test {
     NeuralReceiptRegistry internal reg;
     RegistryHandler internal handler;
     address internal committer = makeAddr("committer");

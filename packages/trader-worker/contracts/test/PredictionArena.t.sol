@@ -181,11 +181,13 @@ contract PredictionArenaTest is Test {
         (,bool resolved, uint8 outcome,, int64 exitT,,,,,,,) = arena.roundInfo(1);
         assertTrue(resolved); assertEq(outcome, 1); assertEq(exitT, 520_000);
 
-        _open(2, 500_000, uint64(t0 + 100));
+        _open(2, 500_000, uint64(t0 + 200));
+        vm.warp(t0 + 201);
         vm.prank(resolver); arena.resolve(2, 480_000);           // Δ −20000 < −8000 ⇒ DOWN
         (,,uint8 o2,,,,,,,,,) = arena.roundInfo(2); assertEq(o2, 2);
 
-        _open(3, 500_000, uint64(t0 + 100));
+        _open(3, 500_000, uint64(t0 + 300));
+        vm.warp(t0 + 301);
         vm.prank(resolver); arena.resolve(3, 505_000);           // Δ +5000 ≤ 8000 ⇒ FLAT
         (,,uint8 o3,,,,,,,,,) = arena.roundInfo(3); assertEq(o3, 3);
     }
