@@ -1,0 +1,45 @@
+{
+  "name": "arc-circle-x402",
+  "version": "0.1.0",
+  "description": "Minimal, dependency-light client for Circle's hosted x402 Facilitator Service on Arc (and Base/Polygon): settle EIP-3009 USDC payments with a keyless EIP-712 seller proof or a Circle API key. No relayer keys, no separate gas wallet.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "keywords": [
+    "arc",
+    "circle",
+    "x402",
+    "usdc",
+    "eip-3009",
+    "eip-712",
+    "facilitator",
+    "agent-payments",
+    "keyless",
+    "stablecoins",
+    "micropayments"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EvolutionDeep/murmur.git",
+    "directory": "packages/arc-circle-x402"
+  },
+  "homepage": "https://github.com/EvolutionDeep/murmur/tree/main/packages/arc-circle-x402",
+  "scripts": {
+    "test": "npx --yes tsx --test src/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "example": "npx --yes tsx examples/settle.ts"
+  },
+  "dependencies": {
+    "viem": "^2.21.45"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

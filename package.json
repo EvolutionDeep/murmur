@@ -27,11 +27,12 @@
   "workspaces": [
     "packages/fly-brain",
     "packages/trader-worker",
-    "packages/frontend"
+    "packages/frontend",
+    "packages/arc-circle-x402"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc --noEmit -p packages/fly-brain/tsconfig.json && tsc --noEmit -p packages/trader-worker/tsconfig.json",
+    "typecheck": "tsc --noEmit -p packages/fly-brain/tsconfig.json && tsc --noEmit -p packages/trader-worker/tsconfig.json && tsc --noEmit -p packages/arc-circle-x402/tsconfig.json",
     "test": "npm run test --workspaces --if-present",
     "smoke": "npx --yes tsx packages/fly-brain/smoke.ts",
     "dev:worker": "npm run dev -w @fly/trader-worker",
