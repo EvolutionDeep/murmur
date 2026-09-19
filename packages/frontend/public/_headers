@@ -7,7 +7,8 @@
   Cache-Control: no-store, max-age=0
 
 # The developer docs page renders /openapi.json live — keep the HTML uncached too
-/developers.html
+# (Cloudflare Pages serves developers.html at the clean URL /developers)
+/developers
   Cache-Control: no-store, max-age=0
 
 # JS/CSS force revalidation (paired with the ?v= version query in index.html as belt-and-braces)
