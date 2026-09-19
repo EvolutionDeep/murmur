@@ -19,6 +19,7 @@
 // set). A simulated/keyless Worker never evolves.
 
 import type { LeaderRow } from "./economy.js";
+import type { LineageEntry } from "./breed.js";
 
 /** One autonomous breeding decision the cron step should carry out (null = nothing worth breeding). */
 export interface EvolutionPlan {
@@ -116,4 +117,74 @@ export function planEvolution(
     payerAddress: top.row.address,
     rngSeed,
   };
+}
+
+/**
+ * Build the live-agent-id → parent-genomeHash resolver that ADVANCES each agent's germline.
+ *
+ * An agent breeds from its OWN most-recent offspring when it has one, so its line accumulates generations
+ * (gen1 → gen2 → …) instead of re-spawning gen1 clones of its genesis root forever. Only once lines have
+ * diverged does `cross` become meaningful: two germlines with different layer sizes recombine into a novel
+ * genome, whereas two genesis roots (identical sizing, seed inherited whole) only ever copy a parent
+ * verbatim. An agent that has not bred yet falls back to its genesis root — the genome it actually runs and
+ * earns with. Pure over (leaderboard rows, lineage entries); touches no storage.
+ *
+ * Assumes genesis entries are stored in fly-id order (cfg.populationSeeds order == spawn order), so
+ * `genesis[id]` is agent `id`'s root. Offspring are matched to their funder by `breeder` address (the payer
+ * credited on the entry), keeping the most recent by `ts`.
+ */
+export function germlineResolver(
+  rows: LeaderRow[],
+  entries: LineageEntry[],
+): (id: number) => string | null {
+  const genesis = entries.filter((e) => e.op === "genesis");
+  const addrById = new Map<number, string>();
+  for (const r of rows) if (r.address) addrById.set(r.id, r.address.toLowerCase());
+  const latestByBreeder = new Map<string, LineageEntry>();
+  for (const e of entries) {
+    if (e.op === "genesis" || !e.breeder) continue;
+    const b = e.breeder.toLowerCase();
+    const cur = latestByBreeder.get(b);
+    if (!cur || e.ts >= cur.ts) latestByBreeder.set(b, e);   // entries are append-ordered ⇒ keep the newest
+  }
+  return (id: number): string | null => {
+    const addr = addrById.get(id);
+    const own = addr ? latestByBreeder.get(addr) : undefined;
+    return own?.genomeHash ?? genesis[id]?.genomeHash ?? null;
+  };
+}
+
+/**
+ * Resolve a proposed breed into a NOVEL offspring, or null when none could be produced within `maxAttempts`.
+ *
+ * `applyBreed` is pure and refuses a duplicate genome FOR FREE, so this never spends on a no-op. Because
+ * crossing two undiverged roots copies a parent verbatim ("already in lineage"), on a duplicate we retry
+ * with a fresh seed and downgrade `cross` → `mutate` (mutate always reseeds ⇒ always novel), guaranteeing a
+ * real fee is only ever charged for a genuinely new genome. A NON-duplicate failure (e.g. unknown parent) is
+ * a real error and is re-thrown for the caller to log — it is not retried.
+ *
+ * `breed` is injected as (op, parents, rngSeed) ⇒ offspring | throws, so this stays unit-testable without
+ * the DO / storage / crypto.subtle wiring. The first attempt uses the plan's own recorded `rngSeed` (so a
+ * clean success is reproducible from the plan); later attempts perturb it by a golden-ratio stride.
+ */
+export async function resolveNovelBreed<T>(
+  plan: Pick<EvolutionPlan, "op" | "parents" | "rngSeed">,
+  breed: (op: "mutate" | "cross", parents: string[], rngSeed: number) => Promise<T>,
+  maxAttempts = 4,
+): Promise<{ child: T; op: "mutate" | "cross" } | null> {
+  let op = plan.op;
+  let parents = plan.parents;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const seed = (plan.rngSeed + attempt * 2654435761) >>> 0;
+    try {
+      const child = await breed(op, parents, seed);
+      return { child, op };
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!msg.includes("already in lineage")) throw e;              // real error ⇒ caller logs, no retry
+      if (op === "cross") { op = "mutate"; parents = [parents[0]]; } // degenerate recomb ⇒ clone-and-mutate
+      // else: a mutate seed collision ⇒ loop retries with a fresh seed
+    }
+  }
+  return null;
 }

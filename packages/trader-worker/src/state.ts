@@ -41,7 +41,7 @@ import {
   type BreedRequest,
   type LineageEntry,
 } from "./breed.js";
-import { planEvolution, type EvolutionLimits } from "./evolution.js";
+import { planEvolution, germlineResolver, resolveNovelBreed, type EvolutionLimits } from "./evolution.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -318,10 +318,12 @@ export class FlyStateDO {
     if (ev.globalDaily > 0 && guard.global >= ev.globalDaily) return;                   // daily swarm budget spent
 
     const entries = await this.ensureLineage();
-    // Genesis roots are stored in cfg.populationSeeds order, which IS fly-id order (population.ts spawns fly
-    // i from populationSeeds[i]), so genesis[id] is the genome the live agent `id` actually runs + earns with.
-    const genesis = entries.filter((e) => e.op === "genesis");
-    const genomeHashById = (id: number): string | null => genesis[id]?.genomeHash ?? null;
+    const rows = economy.leaderboard();
+    // GERMLINE ADVANCEMENT: each agent breeds from its OWN most-recent offspring when it has one (so lines
+    // accumulate generations and `cross` recombines two diverged germlines), else from its genesis root —
+    // the genome the live agent actually runs + earns with. genesis[id] is valid because populationSeeds
+    // order == fly-id order (population.ts spawns fly i from populationSeeds[i]); see evolution.ts.
+    const genomeHashById = germlineResolver(rows, entries);
 
     const rngSeed = (Date.now() & 0xffffffff) >>> 0;
     const lim: EvolutionLimits = {
@@ -329,16 +331,23 @@ export class FlyStateDO {
       perAgentDaily: ev.perAgentDaily, globalDaily: ev.globalDaily, globalUsed: guard.global,
       perAgentUsed: guard.perAgent, crossBias: ev.crossBias,
     };
-    const plan = planEvolution(economy.leaderboard(), genomeHashById, lim, Math.random, rngSeed);
+    const plan = planEvolution(rows, genomeHashById, lim, Math.random, rngSeed);
     if (!plan) return;                                                                  // nobody fit / budget hit
 
-    // Compute + validate the offspring BEFORE spending: applyBreed is pure and refuses unknown parents and
-    // duplicate genomes, so a guaranteed-no-op breed never costs a real fee.
+    // Compute + validate the offspring BEFORE spending. applyBreed is pure and refuses unknown parents and
+    // duplicate genomes FOR FREE, so a guaranteed-no-op breed never costs a real fee. resolveNovelBreed
+    // retries a duplicate with a fresh seed and downgrades cross→mutate (mutate always reseeds ⇒ novel), so
+    // a fee is only ever spent on a genuinely NEW genome; a non-duplicate error (unknown parent) is fatal.
     let child: LineageEntry;
     try {
-      child = await applyBreed(entries, {
-        op: plan.op, parents: plan.parents, rngSeed: plan.rngSeed, breeder: plan.payerAddress,
-      });
+      const resolved = await resolveNovelBreed(plan, (op, parents, seed) =>
+        applyBreed(entries, { op, parents, rngSeed: seed, breeder: plan.payerAddress }),
+      );
+      if (!resolved) {
+        console.warn("[DO] evolution: no novel offspring this cron (every attempt duplicated)");
+        return;
+      }
+      child = resolved.child;
     } catch (e) {
       console.warn("[DO] evolution breed invalid (no fee spent):", (e as Error).message);
       return;
@@ -376,7 +385,7 @@ export class FlyStateDO {
     }
 
     console.log(
-      `[DO] evolution tick#${tickIndex} ${plan.op} by #${plan.payerId} (${plan.payerAddress}) ` +
+      `[DO] evolution tick#${tickIndex} ${child.op} by #${plan.payerId} (${plan.payerAddress}) ` +
         `fee=${ev.feeUsdc}USDC gen=${child.generation} child=${child.genomeHash.slice(0, 12)} ` +
         `today=${guard.global}/${ev.globalDaily} tx=${fee.txHash.slice(0, 10)}`,
     );

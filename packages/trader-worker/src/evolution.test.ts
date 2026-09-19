@@ -17,9 +17,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { planEvolution, type EvolutionLimits } from "./evolution.js";
+import { planEvolution, germlineResolver, resolveNovelBreed, type EvolutionLimits } from "./evolution.js";
 import { loadConfig, type Env } from "./config.js";
 import type { LeaderRow } from "./economy.js";
+import type { LineageEntry } from "./breed.js";
 
 // ---------- helpers ----------
 
@@ -50,6 +51,25 @@ function row(id: number, netUsdc: number, over: Partial<LeaderRow> = {}): Leader
 
 /** genomeHashById: every id resolves to a distinct, non-empty fake genome hash. */
 const hashById = (id: number): string | null => `g${id}`.padEnd(64, "0");
+
+/**
+ * A minimal lineage entry. germlineResolver only reads op / breeder / genomeHash / ts, and the genome body
+ * is never touched by the pure helpers, so a cast stub keeps these tests dependency-free (no crypto.subtle).
+ */
+function entry(over: Partial<LineageEntry> = {}): LineageEntry {
+  return {
+    genomeHash: "0".repeat(64),
+    genome: {} as LineageEntry["genome"],
+    parents: [],
+    op: "genesis",
+    generation: 0,
+    breeder: null,
+    rngSeed: null,
+    ts: 0,
+    commitTx: null,
+    ...over,
+  };
+}
 
 /** A permissive budget (1/cron, unlimited daily, mutate-by-default); tests override what they exercise. */
 function lim(over: Partial<EvolutionLimits> = {}): EvolutionLimits {
@@ -210,4 +230,115 @@ test("fee, budgets and crossBias are parsed and clamped to safe ranges", () => {
   assert.equal(loadConfig(env({ EVOLUTION_GLOBAL_DAILY: "10" })).evolution.globalDaily, 10);
   assert.equal(loadConfig(env({ EVOLUTION_CROSS_BIAS: "0.8" })).evolution.crossBias, 0.8);
   assert.equal(loadConfig(env({ EVOLUTION_CROSS_BIAS: "5" })).evolution.crossBias, 1, "clamped to 1");
+});
+
+// ---------- germlineResolver: agents breed from their OWN latest line, not always genesis ----------
+
+test("germlineResolver falls back to the genesis root when an agent has not bred yet", () => {
+  const rows = [row(0, 1), row(1, 0.5)];
+  const entries = [
+    entry({ op: "genesis", genomeHash: hashById(0)! }),   // genesis[0] ⇒ agent 0's root
+    entry({ op: "genesis", genomeHash: hashById(1)! }),   // genesis[1] ⇒ agent 1's root
+  ];
+  const resolve = germlineResolver(rows, entries);
+  assert.equal(resolve(0), hashById(0), "no offspring ⇒ its genesis root");
+  assert.equal(resolve(1), hashById(1), "no offspring ⇒ its genesis root");
+});
+
+test("germlineResolver advances an agent to its own most-recent offspring (latest ts wins)", () => {
+  const rows = [row(0, 1), row(1, 0.8)];
+  const gen1 = hashById(1)!;
+  const kid1a = "a1".padEnd(64, "0");
+  const kid1b = "b1".padEnd(64, "0");
+  const entries = [
+    entry({ op: "genesis", genomeHash: hashById(0)! }),
+    entry({ op: "genesis", genomeHash: gen1 }),
+    entry({ op: "mutate", genomeHash: kid1a, parents: [gen1], generation: 1, breeder: "0xagent1", ts: 100 }),
+    entry({ op: "mutate", genomeHash: kid1b, parents: [kid1a], generation: 2, breeder: "0xagent1", ts: 200 }),
+  ];
+  const resolve = germlineResolver(rows, entries);
+  assert.equal(resolve(1), kid1b, "agent 1 breeds from its NEWEST offspring, so generations accumulate");
+  assert.equal(resolve(0), hashById(0), "agent 0 has no offspring ⇒ still its genesis root");
+});
+
+test("germlineResolver matches breeder addresses case-insensitively", () => {
+  const rows = [row(1, 0.8)];   // address 0xagent1
+  const kid = "c1".padEnd(64, "0");
+  const entries = [
+    entry({ op: "genesis", genomeHash: hashById(0)! }),
+    entry({ op: "genesis", genomeHash: hashById(1)! }),
+    entry({ op: "mutate", genomeHash: kid, breeder: "0xAGENT1", ts: 5 }),   // checksum-y casing
+  ];
+  assert.equal(germlineResolver(rows, entries)(1), kid, "0xAGENT1 == row address 0xagent1");
+});
+
+test("germlineResolver returns null for an id with no row and no genesis root", () => {
+  const entries = [entry({ op: "genesis", genomeHash: hashById(0)! })];
+  assert.equal(germlineResolver([], entries)(5), null);
+});
+
+// ---------- resolveNovelBreed: never spend on a duplicate; downgrade cross→mutate ----------
+
+test("resolveNovelBreed returns the child on the first attempt with the plan's own seed + op", async () => {
+  const calls: Array<{ op: string; parents: string[]; seed: number }> = [];
+  const res = await resolveNovelBreed(
+    { op: "mutate", parents: ["p0"], rngSeed: SEED },
+    async (op, parents, seed) => { calls.push({ op, parents, seed }); return { hash: "kid" }; },
+  );
+  assert.deepEqual(res, { child: { hash: "kid" }, op: "mutate" });
+  assert.equal(calls.length, 1, "no retry when the first attempt is novel");
+  assert.equal(calls[0]!.seed, SEED, "the first attempt uses the plan's recorded seed (reproducible)");
+});
+
+test("resolveNovelBreed downgrades a duplicate cross to mutate and retries with a fresh seed", async () => {
+  const seen: Array<{ op: string; parents: string[]; seed: number }> = [];
+  const res = await resolveNovelBreed<string>(
+    { op: "cross", parents: ["pA", "pB"], rngSeed: SEED },
+    async (op, parents, seed) => {
+      seen.push({ op, parents, seed });
+      if (op === "cross") throw new Error("offspring genome already in lineage");   // degenerate recombination
+      return `mutated:${parents[0]}@${seed}`;
+    },
+  );
+  assert.equal(res!.op, "mutate", "cross → mutate after the duplicate");
+  assert.equal(res!.child, `mutated:pA@${(SEED + 2654435761) >>> 0}`, "retried with the top parent + a fresh seed");
+  assert.deepEqual(seen[0], { op: "cross", parents: ["pA", "pB"], seed: SEED });
+  assert.deepEqual(seen[1], { op: "mutate", parents: ["pA"], seed: (SEED + 2654435761) >>> 0 });
+});
+
+test("resolveNovelBreed retries a duplicate mutate with fresh seeds (never downgrades below mutate)", async () => {
+  const seeds: number[] = [];
+  const res = await resolveNovelBreed<string>(
+    { op: "mutate", parents: ["pA"], rngSeed: SEED },
+    async (_op, _parents, seed) => {
+      seeds.push(seed);
+      if (seeds.length < 3) throw new Error("offspring genome already in lineage");   // collide twice
+      return `ok@${seed}`;
+    },
+  );
+  assert.equal(res!.op, "mutate");
+  assert.equal(seeds.length, 3, "two collisions then success");
+  assert.equal(res!.child, `ok@${(SEED + 2 * 2654435761) >>> 0}`);
+});
+
+test("resolveNovelBreed returns null when every attempt duplicates", async () => {
+  let n = 0;
+  const res = await resolveNovelBreed(
+    { op: "mutate", parents: ["pA"], rngSeed: SEED },
+    async () => { n++; throw new Error("offspring genome already in lineage"); },
+  );
+  assert.equal(res, null);
+  assert.equal(n, 4, "gave up after the default maxAttempts");
+});
+
+test("resolveNovelBreed re-throws a non-duplicate error without retrying", async () => {
+  let n = 0;
+  await assert.rejects(
+    resolveNovelBreed(
+      { op: "mutate", parents: ["bad"], rngSeed: SEED },
+      async () => { n++; throw new Error("unknown parent genome bad"); },
+    ),
+    /unknown parent genome/,
+  );
+  assert.equal(n, 1, "a real error is fatal, not retried");
 });
