@@ -930,6 +930,26 @@ body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer
 .ar-status.ok { color: #1c5c33; }
 .ar-status.bad { color: #8a2222; }
 
+/* quick-stake chips + live payout preview (bet box) */
+.ar-chips { display: flex; align-items: center; gap: 6px; margin: -3px 0 9px; }
+.ar-chip {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); background: rgba(var(--ink-rgb), 0.03);
+  border: 1px solid var(--hair); border-radius: 2px;
+  padding: 4px 9px; cursor: pointer; transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.ar-chip:hover { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.45); background: rgba(var(--accent-rgb), 0.06); }
+.ar-chip:active { transform: translateY(1px); }
+.ar-preview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 9px; min-height: 14px; }
+.ar-preview:empty { display: none; }
+.ar-pv { font-family: var(--mono); font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ar-pv b { font-size: 11px; font-weight: 600; }
+.ar-pv em { font-style: normal; opacity: 0.7; font-size: 8.5px; }
+.ar-pv.up b { color: #1c5c33; }
+.ar-pv.down b { color: #8a2222; }
+.ar-pv-hint { font-family: var(--mono); font-size: 8.5px; color: var(--muted); opacity: 0.6; }
+.ar-pv-note { flex-basis: 100%; font-family: var(--mono); font-size: 8px; color: var(--muted); opacity: 0.6; }
+
 /* you vs the swarm */
 .ar-vs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ar-vs { display: flex; flex-direction: column; gap: 3px; padding: 10px 11px; border: 1px solid var(--hair); border-radius: 2px; }

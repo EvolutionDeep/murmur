@@ -2588,9 +2588,14 @@ function bindUI() {
   // the arena drawer rebuilds each render, so bind connect/bet/claim by delegation once
   const abd = $("arena-body");
   if (abd) abd.addEventListener("click", (e) => {
+    const chip = e.target.closest(".ar-chip"); if (chip) { arenaApplyChip(chip); return; }
     const conn = e.target.closest(".ar-btn.connect"); if (conn) { arenaConnect(conn); return; }
     const bet = e.target.closest(".ar-btn[data-side]"); if (bet) { arenaBet(Number(bet.dataset.side), bet); return; }
     const claim = e.target.closest(".ar-btn[data-claim]"); if (claim) { arenaClaim(Number(claim.dataset.claim), claim); return; }
+  });
+  // the payout preview tracks the bet box as the trader types (delegated: the card rebuilds each render)
+  if (abd) abd.addEventListener("input", (e) => {
+    if (e.target && e.target.id === "ar-amount") arenaUpdatePreview();
   });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
@@ -2881,6 +2886,53 @@ async function arenaClaim(roundId, btn) {
   finally { arenaBusy = false; if (btn) btn.disabled = false; }
 }
 
+// ---- live payout preview (pure client-side parimutuel math; mirrors PredictionArena._payout) ----
+/**
+ * Estimate a WINNER's payout for a hypothetical `amtAtomic` on `side`, folding that stake into its own
+ * pool first — exactly the contract's integer math: payout = amt + amt*losePool/winPool (floor). Returns
+ * atomic MURMUR as a BigInt, or null for a zero/invalid stake or a missing round. Preview only: nothing
+ * here is ever sent on-chain, and it drifts as other bettors move the pools between crons.
+ */
+function arenaEstPayout(c, side, amtAtomic) {
+  if (!c || !(amtAtomic > 0n)) return null;
+  const up = BigInt(c.poolUp || "0"), down = BigInt(c.poolDown || "0");
+  const amt = amtAtomic;
+  const winPool = side === ARENA_SIDE_UP ? up + amt : down + amt;
+  const losePool = side === ARENA_SIDE_UP ? down : up;
+  if (winPool <= 0n) return null;
+  return amt + (amt * losePool) / winPool;
+}
+
+/** Fill the bet box from a percentage-of-balance chip (25% / 50% / max), then refresh the preview. */
+function arenaApplyChip(btn) {
+  const frac = Number(btn && btn.dataset ? btn.dataset.frac : 0) || 0;
+  const bal = Number((arenaUser && arenaUser.balance) || 0);
+  const amtEl = $("ar-amount"); if (!amtEl) return;
+  const v = bal * frac;
+  amtEl.value = v > 0 ? String(Math.floor(v * 1e4) / 1e4) : "";
+  arenaUpdatePreview();
+}
+
+/** Repaint the "if you win" line under the bet box from the current amount + the live pools. */
+function arenaUpdatePreview() {
+  const el = $("ar-preview"); if (!el) return;
+  const c = arenaData && arenaData.current;
+  if (!c || c.resolved || Number(c.secondsToDeadline || 0) <= 0) { el.textContent = ""; return; }
+  const amtEl = $("ar-amount");
+  const amt = murToAtomic(amtEl ? amtEl.value : "");
+  if (amt <= 0n) { el.innerHTML = `<span class="ar-pv-hint">enter an amount to preview your payout</span>`; return; }
+  const staked = Number(amt) / 1e18;
+  const cell = (side, cls, arrow) => {
+    const pay = arenaEstPayout(c, side, amt);
+    if (pay == null) return `<span class="ar-pv ${cls}">${arrow} win <b>\u2013</b></span>`;
+    const payMur = Number(pay) / 1e18;
+    const mult = staked > 0 ? payMur / staked : 0;
+    return `<span class="ar-pv ${cls}">${arrow} win <b>${fmtMur(payMur)}</b> <em>${mult.toFixed(2)}\u00d7 \u00b7 +${fmtMur(payMur - staked)}</em></span>`;
+  };
+  el.innerHTML = cell(ARENA_SIDE_UP, "up", "\u25b2") + cell(ARENA_SIDE_DOWN, "down", "\u25bc") +
+    `<span class="ar-pv-note">parimutuel estimate \u00b7 shifts as others bet \u00b7 FLAT refunds your stake</span>`;
+}
+
 // ---- render ----
 function paintArena() {
   const body = $("arena-body"); if (!body) return;
@@ -2897,6 +2949,7 @@ function paintArena() {
   body.appendChild(arenaBookCard(d));
   body.appendChild(arenaYouCard(d));
   body.appendChild(arenaVsSwarmCard(d));
+  arenaUpdatePreview();
 }
 
 /** The live human book: parimutuel UP/DOWN MURMUR pools, implied payout, countdown, entry temp + flat band. */
@@ -2971,6 +3024,12 @@ function arenaYouCard(d) {
         `<input class="ar-amount" id="ar-amount" type="number" min="0" step="any" placeholder="amount" inputmode="decimal" />` +
         `<span class="ar-unit">MURMUR</span>` +
       `</div>` +
+      `<div class="ar-chips">` +
+        `<button type="button" class="ar-chip" data-frac="0.25">25%</button>` +
+        `<button type="button" class="ar-chip" data-frac="0.5">50%</button>` +
+        `<button type="button" class="ar-chip" data-frac="1">max</button>` +
+      `</div>` +
+      `<div class="ar-preview" id="ar-preview"></div>` +
       `<div class="ar-actions">` +
         `<button type="button" class="ar-btn up" data-side="${ARENA_SIDE_UP}">bet \u25b2 up</button>` +
         `<button type="button" class="ar-btn down" data-side="${ARENA_SIDE_DOWN}">bet \u25bc down</button>` +
