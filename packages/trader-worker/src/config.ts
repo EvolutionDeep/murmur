@@ -120,6 +120,21 @@ export interface Env {
   ARENA_FLAT_BAND?: string;             // |Δtemperature| ≤ this ⇒ FLAT refund (default = PREDICT_FLAT_BAND)
   ARENA_STALE_GRACE_SEC?: string;       // seconds past a round's deadline after which anyone may expire it for a refund (default 259200 = 3d)
 
+  // --- Autonomous evolution: profitable agents self-fund breeding from their OWN wallets ---
+  //     Each cron, the top agents by realized PnL (netUsdc>0) may autonomously initiate a mutate/cross over
+  //     the SAME x402/EIP-3009 rails, paying the breeding fee from the parent's own HD wallet (the
+  //     facilitator only relays gas). Offspring enter the on-chain lineage market (breeder = the paying
+  //     parent's address); they do NOT join the live trading population (the 24-fly manifest stays fixed).
+  //     ALL inert unless EVOLUTION_ENABLED="true" AND EVOLUTION_TREASURY is set AND the onchain facilitator
+  //     is armed with real spend on (it moves real USDC + pays gas). Denominated in the swarm's USDC.
+  EVOLUTION_ENABLED?: string;           // "true"/"false" (default false) — run the autonomous evolution step
+  EVOLUTION_TREASURY?: string;          // revenue address (0x…40) collecting each breeding fee; REQUIRED (absent ⇒ step skipped)
+  EVOLUTION_FEE_USDC?: string;          // breeding fee per offspring, USDC, paid by the parent (default 0.002)
+  EVOLUTION_MAX_PER_CRON?: string;      // max offspring bred per cron tick (default 1; bounds CPU + spend)
+  EVOLUTION_PER_AGENT_DAILY?: string;   // max offspring one agent may fund per UTC day (default 1)
+  EVOLUTION_GLOBAL_DAILY?: string;      // max offspring bred per UTC day across the swarm (default 4)
+  EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
+
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
@@ -234,6 +249,17 @@ export interface RuntimeConfig {
     roundLenSec: number;        // seconds per arena round (== the betting window)
     flatBand: number;           // |Δtemperature| ≤ this ⇒ FLAT (refund); matches the swarm for a fair comparison
     staleGraceSec: number;      // seconds past deadline before an unresolved round is refundable by anyone
+  };
+
+  // Autonomous evolution (profitable agents self-fund breeding from their own wallets)
+  evolution: {
+    enabled: boolean;
+    feeUsdc: number;          // breeding fee per offspring, paid by the parent from its own wallet
+    maxPerCron: number;       // max offspring bred per cron tick
+    perAgentDaily: number;    // max offspring one agent may fund per UTC day
+    globalDaily: number;      // max offspring bred per UTC day across the swarm
+    crossBias: number;        // 0..1 — P(cross top-2) when ≥2 eligible, else mutate top-1
+    treasury: string | null;  // revenue address collecting each fee; null ⇒ step skipped entirely
   };
   
   // connectome sizing (ts-lif)
@@ -372,6 +398,19 @@ export function loadConfig(env: Env): RuntimeConfig {
       // Default to the swarm's flat band so both markets resolve the same temperature move identically.
       flatBand: clamp(Number(env.ARENA_FLAT_BAND ?? env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
       staleGraceSec: clampInt(Number(env.ARENA_STALE_GRACE_SEC ?? "259200"), 3600, 30 * 86400),
+    },
+
+    evolution: {
+      // OFF by default and inert until EVOLUTION_TREASURY is set AND the onchain facilitator is armed with
+      // real spend on — it moves real USDC (the breeding fee) and pays gas, so a simulated/keyless Worker
+      // never evolves. The step is additionally gated in state.ts on the same master rails as the arena.
+      enabled: (env.EVOLUTION_ENABLED ?? "false").toLowerCase() === "true",
+      treasury: (env.EVOLUTION_TREASURY ?? "").trim() || null,
+      feeUsdc: clamp(Number(env.EVOLUTION_FEE_USDC ?? "0.002"), 0.000001, 100),
+      maxPerCron: clampInt(Number(env.EVOLUTION_MAX_PER_CRON ?? "1"), 0, 64),
+      perAgentDaily: clampInt(Number(env.EVOLUTION_PER_AGENT_DAILY ?? "1"), 0, 1000),
+      globalDaily: clampInt(Number(env.EVOLUTION_GLOBAL_DAILY ?? "4"), 0, 1000),
+      crossBias: clamp(Number(env.EVOLUTION_CROSS_BIAS ?? "0.5"), 0, 1),
     },
 
     brainOpts: {

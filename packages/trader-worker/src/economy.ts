@@ -255,6 +255,8 @@ export class AgentEconomy {
   private pendingNets = new Map<string, PendingNet>();
   /** Monotonic counter mixed into net nonces so two flushes can never reuse an EIP-3009 nonce. */
   private flushSeq = 0;
+  /** Monotonic counter mixed into breeding-fee nonces so two evolution breeds never reuse an EIP-3009 nonce. */
+  private evoNonceSeq = 0;
   /** Published neural-provenance receipts, newest first (each hashed into an on-chain nonce). */
   private proofs: ProofRecord[] = [];
   /** receiptHash of the most recent broadcast — the head of the tamper-evident proof chain. */
@@ -804,6 +806,100 @@ export class AgentEconomy {
     if (onchain) this.recordSpend(buyer.id, amount);
 
     return { ...base, txHash: receipt.txHash, valid: true };
+  }
+
+  /**
+   * AUTONOMOUS EVOLUTION — charge one breeding fee to a parent agent's OWN wallet and pay it to the
+   * evolution treasury, over the SAME x402/EIP-3009 rails as a neural trade. The parent signs the
+   * authorization with its OWN HD key (the facilitator only relays gas), so the offspring is genuinely
+   * self-funded by the agent that earned the money — never minted, never treasury-subsidized. This is the
+   * cost of reproduction: it debits the payer's realized PnL, so breeding itself lowers fitness and an
+   * agent must keep earning to keep founding generations (a natural brake on runaway breeding).
+   *
+   * Returns the Settlement (valid=true only once the transfer is MINED), or null when evolution is not
+   * armed here (economy disabled, or onchain with the real-spend kill switch off). Mirrors settleTrade's
+   * guardrails exactly: the daily spend caps are checked BEFORE signing (a capped breed costs no gas), the
+   * facilitator re-reads the real on-chain balance and is the sole authority, and shadow/failed settles move
+   * nothing. The fee is NOT pushed to lastTick (it is not an agent→agent edge) but is counted in real volume
+   * and kept in the `recent` audit window with toId -1 (the treasury is external, not a fly).
+   */
+  async payBreedingFee(
+    payerId: number,
+    toAddress: string,
+    amountUsdc: number,
+    tickIndex: number,
+  ): Promise<Settlement | null> {
+    if (!this.cfg.enabled) return null;
+    const onchain = this.facilitator.mode === "onchain";
+    // Real-money master rail: never move USDC for a breed when the kill switch is off. (Shadow-only is
+    // handled below via receipt.shadow, exactly as settleTrade does.)
+    if (onchain && !this.cfg.realSpendEnabled) return null;
+
+    const idx = this.indexOfId.get(payerId);
+    if (idx == null) return null;
+    const payer = this.agents[idx];
+    const amount = String(usdcToAtomic(amountUsdc));
+    const resource = `evolution:breed:${payer.id}`;
+    const base = {
+      tick: tickIndex, ts: Date.now(), good: "attestation" as GoodKind, resource,
+      fromId: payer.id, toId: -1, from: payer.address, to: toAddress,
+      amount, simulated: !onchain,
+    } as const;
+
+    // Daily real-spend caps — ONCHAIN ONLY. Refuse BEFORE signing/broadcasting so a capped breed costs no gas.
+    if (onchain) {
+      const capReason = this.spendCapReason(payer.id, amount);
+      if (capReason) return { ...base, txHash: "0x", valid: false, reason: capReason };
+    }
+
+    // Unique EIP-3009 nonce: a time-based prefix mixed with a monotonic per-DO counter, so two breeds can
+    // never reuse a nonce (a reuse would revert as AuthorizationUsed). A breeding fee carries no neural
+    // receipt — its on-chain identity is the ConnectomeLineage commit (breeder = payer), not a proof hash.
+    const nonce =
+      "0x" +
+      (BigInt(Date.now()) * 1_000_000n + BigInt(this.evoNonceSeq++)).toString(16).padStart(64, "0");
+    const reqs: PaymentRequirements = {
+      scheme: SCHEME_EXACT,
+      network: this.cfg.network,
+      maxAmountRequired: amount,
+      resource,
+      description: "autonomous evolution breeding fee (self-funded by the parent agent)",
+      mimeType: "application/json",
+      payTo: toAddress,
+      maxTimeoutSeconds: 60,
+      asset: this.facilitator.asset,
+      extra: { evolution: true, payerId: payer.id },
+    };
+    const payload = buildPaymentPayload({
+      reqs, from: payer.address, value: amount, nonce, nowSec: Math.floor(Date.now() / 1000),
+    });
+
+    const verified = await this.facilitator.verify(payload, reqs);
+    if (!verified.valid) {
+      return { ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" };
+    }
+    const receipt = await this.facilitator.settle(payload, reqs);
+    // Shadow dry-run: proved the signed transfer WOULD succeed but broadcast nothing ⇒ no real value moved.
+    if (receipt.shadow) {
+      return { ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" };
+    }
+    if (!receipt.success) {
+      return { ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" };
+    }
+
+    // MINED: commit the outflow on the payer's ledger mirror, meter the daily caps, count real volume.
+    payer.balance = subAtomic(payer.balance, amount);
+    payer.paid = addAtomic(payer.paid, amount);
+    payer.deals++;
+    payer.lastTick = tickIndex;
+    if (onchain) this.recordSpend(payer.id, amount);
+    this.volumeAtomic = addAtomic(this.volumeAtomic, amount);
+    this.count++;
+
+    const settled: Settlement = { ...base, txHash: receipt.txHash, valid: true };
+    this.recent.unshift(settled);
+    if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    return settled;
   }
 
   /** Top up any agent below the solvency floor from the simulated treasury (conserves liveness). */

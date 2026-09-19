@@ -41,6 +41,7 @@ import {
   type BreedRequest,
   type LineageEntry,
 } from "./breed.js";
+import { planEvolution, type EvolutionLimits } from "./evolution.js";
 import {
   MarketMeter,
   sampleArcActivity,
@@ -76,6 +77,7 @@ const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
 const KEY_LINEAGE = "lineage:v1";
+const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
 
@@ -94,6 +96,16 @@ interface ArenaState {
   resolvedRound: number;  // last arena roundId resolve() succeeded for (-1 ⇒ none yet)
 }
 
+/**
+ * Persisted per-UTC-day budget for the autonomous evolution step, so a mid-day DO eviction can't reset the
+ * daily breeding count and overspend. Armed (onchain + real spend) evolution only; never written when inert.
+ */
+interface EvolutionGuard {
+  dayKey: string;                    // UTC calendar day ("YYYY-MM-DD") these counters bucket to
+  global: number;                    // offspring bred today across the whole swarm
+  perAgent: Record<number, number>;  // offspring funded per agent id today
+}
+
 export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
@@ -107,6 +119,8 @@ export class FlyStateDO {
   private arenaState: ArenaState | null = null;
   /** The breeding-market lineage store (genesis roots + every bred individual), lazily loaded from DO storage. */
   private lineage: LineageEntry[] | null = null;
+  /** Per-day autonomous-evolution breeding budget (persisted so an eviction can't reset it). */
+  private evolutionGuard: EvolutionGuard | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
   private lastEconomy: EconomySnapshot | null = null;
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
@@ -257,6 +271,115 @@ export class FlyStateDO {
       // didn't open (see arena.ts) — otherwise every cron this hour re-attempts a reverting resolve(prev).
       if (tx) { const c = cursorAfterOpen(st, plan.openRound); st.openedRound = c.openedRound; st.resolvedRound = c.resolvedRound; }
     }
+  }
+
+  /** Load (or initialise) the persisted per-day evolution breeding budget. */
+  private async ensureEvolutionGuard(): Promise<EvolutionGuard> {
+    if (this.evolutionGuard) return this.evolutionGuard;
+    this.evolutionGuard =
+      (await this.state.storage.get<EvolutionGuard>(KEY_EVOLUTION)) ?? { dayKey: "", global: 0, perAgent: {} };
+    return this.evolutionGuard;
+  }
+
+  /** Reset the daily breeding counters when the UTC day rolls over. */
+  private rollEvolutionDay(g: EvolutionGuard, nowMs: number): void {
+    const key = new Date(nowMs).toISOString().slice(0, 10);
+    if (key !== g.dayKey) {
+      g.dayKey = key;
+      g.global = 0;
+      g.perAgent = {};
+    }
+  }
+
+  /**
+   * AUTONOMOUS EVOLUTION — let the swarm found its own next generation. Each cron, the fittest agents by
+   * realized PnL may breed (mutate/cross) into the on-chain lineage market, paying the breeding fee from
+   * their OWN wallet (economy.payBreedingFee → an EIP-3009 transfer the parent signs with its own HD key;
+   * the facilitator only relays gas). The offspring is credited to the paying parent (breeder = its address)
+   * and committed to ConnectomeLineage best-effort, so ancestry is a public, self-funded fact.
+   *
+   * Gated behind the SAME master rails as the arena/settlement: it runs only when evolution is enabled AND a
+   * treasury is set AND the economy is on AND (onchain) real spend is on and not shadow-only — a simulated
+   * or keyless Worker never evolves and never moves funds. Offspring deliberately do NOT join the live 24-fly
+   * trading population (the manifest/sharding/funding stay fixed); they live only in the breeding market.
+   *
+   * Order of operations is spend-safe: the pure planner proposes one breed, applyBreed computes + validates
+   * the offspring BEFORE any payment (a no-op mutation or duplicate genome is refused for free), and only a
+   * MINED fee persists the child. Best-effort throughout — any failure is logged and never blocks the tick.
+   */
+  private async driveEvolution(economy: AgentEconomy, tickIndex: number): Promise<void> {
+    const ev = this.cfg.evolution;
+    if (!ev.enabled || !ev.treasury || !this.cfg.economy.enabled) return;
+    if (economy.facilitatorMode !== "onchain") return;                                  // no parent keys
+    if (!this.cfg.economy.realSpendEnabled || this.cfg.economy.shadowOnly) return;      // master safety rails
+
+    const guard = await this.ensureEvolutionGuard();
+    this.rollEvolutionDay(guard, Date.now());
+    if (ev.globalDaily > 0 && guard.global >= ev.globalDaily) return;                   // daily swarm budget spent
+
+    const entries = await this.ensureLineage();
+    // Genesis roots are stored in cfg.populationSeeds order, which IS fly-id order (population.ts spawns fly
+    // i from populationSeeds[i]), so genesis[id] is the genome the live agent `id` actually runs + earns with.
+    const genesis = entries.filter((e) => e.op === "genesis");
+    const genomeHashById = (id: number): string | null => genesis[id]?.genomeHash ?? null;
+
+    const rngSeed = (Date.now() & 0xffffffff) >>> 0;
+    const lim: EvolutionLimits = {
+      perCron: ev.maxPerCron, perCronUsed: 0,
+      perAgentDaily: ev.perAgentDaily, globalDaily: ev.globalDaily, globalUsed: guard.global,
+      perAgentUsed: guard.perAgent, crossBias: ev.crossBias,
+    };
+    const plan = planEvolution(economy.leaderboard(), genomeHashById, lim, Math.random, rngSeed);
+    if (!plan) return;                                                                  // nobody fit / budget hit
+
+    // Compute + validate the offspring BEFORE spending: applyBreed is pure and refuses unknown parents and
+    // duplicate genomes, so a guaranteed-no-op breed never costs a real fee.
+    let child: LineageEntry;
+    try {
+      child = await applyBreed(entries, {
+        op: plan.op, parents: plan.parents, rngSeed: plan.rngSeed, breeder: plan.payerAddress,
+      });
+    } catch (e) {
+      console.warn("[DO] evolution breed invalid (no fee spent):", (e as Error).message);
+      return;
+    }
+
+    // Charge the breeding fee to the parent's OWN wallet. Only a MINED transfer (valid) founds the child.
+    const fee = await economy.payBreedingFee(plan.payerId, ev.treasury, ev.feeUsdc, tickIndex);
+    if (!fee || !fee.valid) {
+      console.warn("[DO] evolution breeding fee not settled (no child):", fee?.reason ?? "unarmed");
+      return;
+    }
+
+    // Paid + mined: persist the offspring, meter the daily budget, and best-effort anchor it on Arc.
+    entries.push(child);
+    this.lineage = entries;
+    await this.state.storage.put(KEY_LINEAGE, entries);
+    guard.global++;
+    guard.perAgent[plan.payerId] = (guard.perAgent[plan.payerId] ?? 0) + 1;
+    await this.state.storage.put(KEY_EVOLUTION, guard);
+
+    if (this.cfg.lineageAddress) {
+      const opCode = child.op === "genesis" ? 0 : child.op === "mutate" ? 1 : 2;
+      const tx = await economy.commitLineage({
+        genomeHash: child.genomeHash,
+        parentA: child.parents[0] ?? "",
+        parentB: child.parents[1] ?? "",
+        op: opCode as 0 | 1 | 2,
+        generation: child.generation,
+        breeder: plan.payerAddress,
+      });
+      if (tx) {
+        child.commitTx = tx;
+        await this.state.storage.put(KEY_LINEAGE, entries);
+      }
+    }
+
+    console.log(
+      `[DO] evolution tick#${tickIndex} ${plan.op} by #${plan.payerId} (${plan.payerAddress}) ` +
+        `fee=${ev.feeUsdc}USDC gen=${child.generation} child=${child.genomeHash.slice(0, 12)} ` +
+        `today=${guard.global}/${ev.globalDaily} tx=${fee.txHash.slice(0, 10)}`,
+    );
   }
 
   /**
@@ -660,6 +783,16 @@ export class FlyStateDO {
       }
     }
 
+    // AUTONOMOUS EVOLUTION — let the fittest agents found the next generation, self-funded from their OWN
+    //    wallets. Best-effort and gated behind the same real-money rails; never blocks the live tick.
+    if (economy) {
+      try {
+        await this.driveEvolution(economy, swarm.getTickIndex());
+      } catch (e) {
+        console.warn("[DO] evolution drive failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // 5) Persist.
     await this.persist(market, snapshot);
 
@@ -1004,6 +1137,12 @@ export class FlyStateDO {
 
     const generations = entries.reduce((m, e) => Math.max(m, e.generation), 0);
     const bred = entries.filter((e) => e.op !== "genesis").length;
+    // Autonomous-evolution status: whether the swarm is self-breeding, what each offspring costs the parent,
+    // the treasury that collects it, and how much of today's budget is used. breedsToday reflects the
+    // persisted per-day guard (0 on a fresh UTC day), so /lineage surfaces the live selection pressure.
+    const ev = this.cfg.evolution;
+    const guard = await this.ensureEvolutionGuard();
+    const todayKey = new Date().toISOString().slice(0, 10);
     return json({
       lineageAddress: this.cfg.lineageAddress,
       chainId: this.cfg.chainId,
@@ -1013,6 +1152,14 @@ export class FlyStateDO {
       generations,
       matching: total,
       returned: out.length,
+      evolution: {
+        enabled: ev.enabled && !!ev.treasury && this.cfg.economy.enabled,
+        feeUsdc: ev.feeUsdc,
+        treasury: ev.treasury,
+        breedsToday: guard.dayKey === todayKey ? guard.global : 0,
+        globalDailyMax: ev.globalDaily,
+        perAgentDailyMax: ev.perAgentDaily,
+      },
       entries: out,
     });
   }
