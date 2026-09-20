@@ -2,17 +2,20 @@
 //
 // Sharding is how murmur scales each brain past the single-isolate 128 MB ceiling: instead of one
 // FlyStateDO holding all 24 (or more) connectomes, the coordinator (state.ts + swarm.ts) fans the
-// HEAVY half of every tick out to N of these, each holding populationSize/shardCount flies with its own
-// memory budget, its own 30 s CPU allowance and its own SQLite. A shard does exactly three things:
+// HEAVY half of every tick out to N of these, each owning a contiguous slice of maxLivePopulation/
+// shardCount id slots with its own memory budget, its own 30 s CPU allowance and its own SQLite. Slots
+// below populationSize are the genesis flies (always present); slots at/above it stay EMPTY until the
+// coordinator hatches a bred offspring into them. A shard does exactly four things:
 //   · advance — drive + integrate its flies' spiking nets and return the COMPACT motor/sensory read-out
 //               (a fixed handful of floats per fly, independent of neuron count) to the coordinator;
+//   · hatch   — build a bred offspring's brain from the genome the coordinator ships and add it to the slice;
 //   · persist — write its own brains to its own storage, once per cron (on the coordinator's commit);
 //   · serve  — the per-fly neural inspector reads (/snapshot, /fly) routed here by the owning shard.
 //
 // Shards are reachable ONLY from the coordinator via the FLY_SHARD binding — the public Worker fetch
 // never routes here — so they are internal by construction and need no auth gate or CORS of their own.
 
-import { FlyBrain, type MarketPulse, type StimulusEvent } from "@fly/fly-brain";
+import { FlyBrain, genomeToConnectomeOptions, type Genome, type MarketPulse, type StimulusEvent } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice } from "./config.js";
 import {
@@ -24,7 +27,9 @@ import {
 } from "./population.js";
 import { neuralSnapshotOf } from "./swarm.js";
 
-/** This shard's own brains, persisted separately from the coordinator and from every other shard. */
+/** This shard's own brains, persisted separately from the coordinator and from every other shard. The KEY
+ *  is stable across schema bumps (renaming it would orphan live shards' state); the payload's `version`
+ *  field tracks the schema — v1 genesis-only, v2 adds a hatched fly's genome inside vitals. */
 const KEY_SHARD_POPULATION = "shardPopulation:v1";
 
 export class FlyShardDO {
@@ -46,9 +51,10 @@ export class FlyShardDO {
     this.shardIndex = m ? Number(m[1]) : 0;
   }
 
-  /** The half-open [start, end) range of global fly ids this shard owns. */
+  /** The half-open [start, end) range of global fly id SLOTS this shard owns (derived from the stable
+   *  growth ceiling, so an id's shard never changes as offspring hatch — no brain ever migrates). */
   private slice(): { start: number; end: number } {
-    return shardSlice(this.cfg.populationSize, this.cfg.shardCount, this.shardIndex);
+    return shardSlice(this.cfg.maxLivePopulation, this.cfg.shardCount, this.shardIndex);
   }
 
   /**
@@ -59,31 +65,45 @@ export class FlyShardDO {
   private async ensureFlies(): Promise<AdvanceableFly[]> {
     if (this.flies) return this.flies;
     const { start, end } = this.slice();
-    const archived = await this.loadArchivedBrains();
+    const archived = await this.loadArchived();
     const flies: AdvanceableFly[] = [];
     for (let id = start; id < end; id++) {
-      const seed = this.cfg.populationSeeds[id];
-      const opts = { seed, ...this.cfg.brainOpts };
-      const brain = archived?.has(id)
-        ? FlyBrain.deserialize(archived.get(id)!, opts)
-        : new FlyBrain(opts);
-      const vitals: FlyVitals = { id, seed, temperament: flyTemperament(seed) };
-      flies.push({ id, brain, vitals });
+      const rec = archived?.get(id);
+      if (id < this.cfg.populationSize) {
+        // GENESIS slot: reproducible from (seed, shared brainOpts); restore archived electrical state if any.
+        const seed = this.cfg.populationSeeds[id];
+        const opts = { seed, ...this.cfg.brainOpts };
+        const brain = rec ? FlyBrain.deserialize(rec.brain, opts) : new FlyBrain(opts);
+        const vitals: FlyVitals = { id, seed, temperament: flyTemperament(seed) };
+        flies.push({ id, brain, vitals });
+      } else if (rec?.genome) {
+        // HATCHED slot: present only once a /hatch landed here and persisted the genome; rebuild from it
+        // (NOT the genesis sizing) so a restored bred brain matches its archived electrical state.
+        const genome = rec.genome;
+        const opts = genomeToConnectomeOptions(genome);
+        const brain = rec.brain ? FlyBrain.deserialize(rec.brain, opts) : new FlyBrain(opts);
+        const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
+        flies.push({ id, brain, vitals });
+      }
+      // else: an empty growth slot (id >= populationSize with no hatched genome yet) holds no fly.
     }
     this.flies = flies;
     return this.flies;
   }
 
-  /** id → archived brain JSON for this shard, or null when there is nothing stored / it is unreadable. */
-  private async loadArchivedBrains(): Promise<Map<number, string> | null> {
+  /** id → {brain JSON, genome?} archived for this shard, or null when nothing is stored / it is unreadable.
+   *  Reads both the v1 payload (genesis-only, no genome) and the v2 payload (adds a hatched fly's genome). */
+  private async loadArchived(): Promise<Map<number, { brain: string; genome?: Genome }> | null> {
     const stored = await this.state.storage.get<string>(KEY_SHARD_POPULATION);
     if (!stored) return null;
     try {
       const parsed = JSON.parse(stored);
-      const map = new Map<number, string>();
+      const map = new Map<number, { brain: string; genome?: Genome }>();
       for (const f of parsed?.flies ?? []) {
         const id = Number(f?.vitals?.id);
-        if (Number.isFinite(id) && typeof f?.brain === "string") map.set(id, f.brain);
+        if (Number.isFinite(id) && typeof f?.brain === "string") {
+          map.set(id, { brain: f.brain, ...(f?.vitals?.genome ? { genome: f.vitals.genome as Genome } : {}) });
+        }
       }
       return map.size > 0 ? map : null;
     } catch (e) {
@@ -92,11 +112,12 @@ export class FlyShardDO {
     }
   }
 
-  /** Write this shard's brains to its own storage — splitting the once-per-cron persistence cost N ways. */
+  /** Write this shard's brains to its own storage — splitting the once-per-cron persistence cost N ways.
+   *  vitals carries a hatched fly's genome, so the payload is self-describing (v2) and rebuilds on reload. */
   private async persistFlies(): Promise<void> {
     if (!this.flies) return;
     const payload = JSON.stringify({
-      version: 1,
+      version: 2,   // v2 adds a hatched fly's genome inside vitals (v1 was genesis-only); reader tolerates v1
       shardIndex: this.shardIndex,
       flies: this.flies.map((f) => ({ vitals: f.vitals, brain: f.brain.serialize() })),
     });
@@ -110,6 +131,7 @@ export class FlyShardDO {
     const path = url.pathname;
     try {
       if (req.method === "POST" && path === "/advance") return await this.advance(req);
+      if (req.method === "POST" && path === "/hatch") return await this.hatch(req);
       if (req.method === "GET" && path === "/snapshot") return await this.snapshot(url);
       if (req.method === "GET" && path === "/fly") return await this.fly(url);
       if (req.method === "POST" && path === "/reset") return await this.reset();
@@ -137,6 +159,31 @@ export class FlyShardDO {
     const readOuts: FlyReadOut[] = advanceFlies(flies, body.pulse, body.stimuli ?? [], body.simSteps);
     if (body.persist) await this.persistFlies();
     return json({ shardIndex: this.shardIndex, readOuts });
+  }
+
+  /**
+   * Hatch a bred offspring into this shard: build its brain from the genome the coordinator ships, add it
+   * to this slice and persist it so it survives an eviction. Idempotent (a repeat /hatch for an id already
+   * here is a no-op). The id MUST fall in this shard's slice — the coordinator routes it here via
+   * shardOf(maxLivePopulation, …), so a mismatch is a routing bug and is refused.
+   */
+  private async hatch(req: Request): Promise<Response> {
+    const body = (await req.json()) as { id: number; genome: Genome };
+    const id = Number(body?.id);
+    const genome = body?.genome;
+    const { start, end } = this.slice();
+    if (!Number.isInteger(id) || id < start || id >= end || !genome) {
+      return json({ error: `id ${id} not owned by shard ${this.shardIndex} [${start},${end})` }, 400);
+    }
+    const flies = await this.ensureFlies();
+    if (flies.some((f) => f.id === id)) return json({ ok: true, id, already: true });
+    const opts = genomeToConnectomeOptions(genome);
+    const brain = new FlyBrain(opts);
+    const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
+    flies.push({ id, brain, vitals });
+    flies.sort((a, b) => a.id - b.id);   // keep the slice ascending (the coordinator re-orders by id anyway)
+    await this.persistFlies();
+    return json({ ok: true, id, shardIndex: this.shardIndex });
   }
 
   /** Full neural snapshot of one fly in this shard (for the coordinator's GET /snapshot?flyId=). */

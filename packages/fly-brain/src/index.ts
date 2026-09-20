@@ -45,6 +45,11 @@ export {
   mutateGenome,
   crossoverGenome,
   buildFromGenome,
+  genomeToConnectomeOptions,
   specFromGenome,
+  estimateConnectomeSize,
+  hatchBudgetFromGenesis,
+  genomeWithinBudget,
   type Genome,
+  type HatchBudget,
 } from "./genome.js";

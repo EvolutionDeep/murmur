@@ -695,6 +695,17 @@ function drawFly(f, acc, alpha, now) {
   ctx.beginPath(); ctx.ellipse(0, 0, size * 1.5, size * 0.82, 0, 0, TAU); ctx.fill();
   ctx.restore();
 
+  // bred-offspring marker: a thin accent ring around any live fly hatched PAST the fixed genesis cohort
+  // (id >= populationSize). Genesis flies are the permanent founding 24; a ring means "this individual was
+  // bred on-chain and bootstrapped into the live swarm by a parent's own realised profit". Never fires
+  // while the live population equals genesis (no growth configured), so the default scene is unchanged.
+  const genesisN = topology && topology.populationSize;
+  if (genesisN != null && f.id >= genesisN) {
+    ctx.strokeStyle = rgba(acc, 0.5 * alpha);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, size * 2.6 + 2, 0, TAU); ctx.stroke();
+  }
+
   // selection ring
   if (f.id === selectedId) {
     ctx.strokeStyle = rgba(acc, 0.85 * alpha);
@@ -2666,7 +2677,13 @@ function renderDist(states, size) {
     const b = $("dist-legend").querySelector(`b[data-k="${s}"]`);
     if (b) b.textContent = c;
   }
-  $("size").textContent = size != null ? size : "–";
+  // "live N/cap": the current live trading population over its hard growth ceiling. Shown ONLY once growth
+  // is actually configured (cap > genesis); while the ceiling equals the founding cohort the count renders
+  // exactly as before, and before the read-only topology arrives it degrades to just N.
+  const cap = topology && topology.maxLivePopulation;
+  const genesis = topology && topology.populationSize;
+  const growing = cap != null && genesis != null && cap > genesis;
+  $("size").textContent = size != null ? (growing ? `${size}/${cap}` : size) : "–";
 }
 
 // ================= about panel — the project note in four languages =================

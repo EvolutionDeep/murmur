@@ -37,6 +37,7 @@ export interface Env {
   TICKS_PER_CRON?: string;          // simulation sub-ticks per cron (default 6)
   SIM_STEPS_PER_TICK?: string;      // LIF integration steps per sub-tick (default 500)
   SHARD_COUNT?: string;             // swarm shards across N Durable Objects (default 1 = single DO; needs the FLY_SHARD binding)
+  EVOLUTION_MAX_LIVE_POPULATION?: string; // live-population growth ceiling (default = POPULATION_SIZE = no growth). ALSO the STABLE basis for shard slices, so raising it MUST be paired with SHARD_COUNT = ceil(cap/2) to keep 2 flies/shard (no brain ever migrates as the population grows).
 
   // --- Visitor stimulus (optional "poke the swarm" secondary input) ---
   STIMULUS_COOLDOWN_SEC?: string;   // one injection per visitor per N seconds (default 30)
@@ -134,6 +135,8 @@ export interface Env {
   EVOLUTION_PER_AGENT_DAILY?: string;   // max offspring one agent may fund per UTC day (default 1)
   EVOLUTION_GLOBAL_DAILY?: string;      // max offspring bred per UTC day across the swarm (default 4)
   EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
+  EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
+  EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
 
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
@@ -166,6 +169,13 @@ export interface RuntimeConfig {
   simStepsPerTick: number;
   /** Durable Objects the swarm is sharded across (1 = the single FlyStateDO, today's behaviour). */
   shardCount: number;
+  /**
+   * Live-population growth ceiling (>= populationSize). The manifest/genesis population stays fixed at
+   * populationSize; hatched offspring grow the LIVE trading population up to this cap. ALSO the STABLE
+   * basis for shard slices (shardSlice/shardOf/fliesPerShard derive from THIS, not the current live
+   * count), so an id's owning shard never changes as the population grows — no brain ever migrates.
+   */
+  maxLivePopulation: number;
 
   // Stimulus
   stimulusCooldownSec: number;
@@ -259,6 +269,8 @@ export interface RuntimeConfig {
     perAgentDaily: number;    // max offspring one agent may fund per UTC day
     globalDaily: number;      // max offspring bred per UTC day across the swarm
     crossBias: number;        // 0..1 — P(cross top-2) when ≥2 eligible, else mutate top-1
+    hatchLive: boolean;       // hatch bred offspring into LIVE trading flies (grow to maxLivePopulation) vs lineage-only
+    hatchSeedUsdc: number;    // parent→child bootstrap USDC transferred to the offspring's own wallet on hatch
     treasury: string | null;  // revenue address collecting each fee; null ⇒ step skipped entirely
   };
   
@@ -304,6 +316,32 @@ export function loadConfig(env: Env): RuntimeConfig {
     (populationSeedBase + i * 7919) >>> 0,
   );
 
+  // Live-population growth ceiling (>= populationSize). ALSO the STABLE basis for shard slices, so the
+  // shard count must cover it at <=2 flies/shard to keep every brain within the DO memory + 2 MB value limits.
+  const maxLivePopulation = clampInt(
+    Number(env.EVOLUTION_MAX_LIVE_POPULATION || String(populationSize)),
+    populationSize,
+    256,
+  );
+  // Shards are capped at the growth ceiling (one shard per fly is the finest useful split) and at 64 (a
+  // sane ceiling on fan-out round-trips per cron). 1 ⇒ the single FlyStateDO, unchanged.
+  const shardCount = clampInt(Number(env.SHARD_COUNT || "1"), 1, Math.min(64, maxLivePopulation));
+
+  // HATCH GUARD: hatching grows the live population into slots the shards must ALREADY cover at <=2
+  // flies/shard (the DO 128 MB heap + 2 MB value ceiling). If SHARD_COUNT wasn't raised to match the cap,
+  // flies/shard would exceed 2 and a shard could OOM / overflow — so refuse to hatch (breeding stays
+  // lineage-only, exactly today's behaviour) rather than risk a live fly that can't be safely hosted.
+  const hatchLiveRequested = (env.EVOLUTION_HATCH_LIVE ?? "false").toLowerCase() === "true";
+  const fliesPerShardAtCap = fliesPerShard(maxLivePopulation, shardCount);
+  const hatchLive = hatchLiveRequested && fliesPerShardAtCap <= 2;
+  if (hatchLiveRequested && !hatchLive) {
+    console.error(
+      `[config] EVOLUTION_HATCH_LIVE ignored: need SHARD_COUNT >= ceil(cap/2) so flies/shard <= 2 ` +
+        `(have cap=${maxLivePopulation}, shards=${shardCount}, flies/shard=${fliesPerShardAtCap}). ` +
+        `Breeding stays lineage-only.`,
+    );
+  }
+
   return {
     chainId,
     rpcUrl:
@@ -323,9 +361,8 @@ export function loadConfig(env: Env): RuntimeConfig {
     populationSeeds,
     ticksPerCron: clampInt(Number(env.TICKS_PER_CRON || "6"), 1, 60),
     simStepsPerTick: Math.max(1, Number(env.SIM_STEPS_PER_TICK || "500")),
-    // Shards are capped at the population size (one shard per fly is the finest useful split) and at
-    // 64 (a sane ceiling on fan-out round-trips per cron). 1 ⇒ the single FlyStateDO, unchanged.
-    shardCount: clampInt(Number(env.SHARD_COUNT || "1"), 1, Math.min(64, populationSize)),
+    shardCount,
+    maxLivePopulation,
 
     stimulusCooldownSec: Number(env.STIMULUS_COOLDOWN_SEC || "30"),
     frontendOrigin: env.FRONTEND_ORIGIN || "*",
@@ -411,6 +448,8 @@ export function loadConfig(env: Env): RuntimeConfig {
       perAgentDaily: clampInt(Number(env.EVOLUTION_PER_AGENT_DAILY ?? "1"), 0, 1000),
       globalDaily: clampInt(Number(env.EVOLUTION_GLOBAL_DAILY ?? "4"), 0, 1000),
       crossBias: clamp(Number(env.EVOLUTION_CROSS_BIAS ?? "0.5"), 0, 1),
+      hatchLive,
+      hatchSeedUsdc: clamp(Number(env.EVOLUTION_HATCH_SEED_USDC ?? "0.002"), 0.000001, 100),
     },
 
     brainOpts: {
@@ -436,8 +475,13 @@ export function clampInt(x: number, lo: number, hi: number): number {
 /**
  * Deterministic shard layout — a contiguous, ascending slice of fly ids. Both the coordinator (to fan
  * out + route per-fly reads) and each FlyShardDO (to know which flies it owns) derive the SAME slice
- * from (populationSize, shardCount), so no shard map ever needs to be stored or shipped.
+ * from (size, shardCount), so no shard map ever needs to be stored or shipped.
  * Flies per shard = ceil(size / shardCount); the last shard may hold fewer (or none if evenly divided).
+ *
+ * IMPORTANT: callers pass the STABLE growth ceiling `maxLivePopulation` as `size`, NOT the current live
+ * count. Deriving slices from a fixed ceiling means an id's owning shard never changes as offspring hatch
+ * (ids fill pre-assigned slots), so no persisted brain ever migrates between shards. Slots above the
+ * current live count simply stay empty until a hatch lands there.
  */
 export function fliesPerShard(populationSize: number, shardCount: number): number {
   return Math.max(1, Math.ceil(populationSize / Math.max(1, shardCount)));

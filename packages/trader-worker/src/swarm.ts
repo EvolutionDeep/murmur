@@ -17,6 +17,7 @@
 import {
   MotorDecoder,
   type FlyBehavior,
+  type Genome,
   type MarketPulse,
   type MotorOutput,
   type StimulusEvent,
@@ -38,6 +39,7 @@ import {
 /** Coordinator-side storage keys owned by the swarm layer. */
 export const KEY_POPULATION = "population:v3";   // LocalSwarm: the whole single-DO Population.serialize()
 export const KEY_COORDINATOR = "coordinator:v1"; // ShardedSwarm: the {tickIndex, vitality} counter (brains live in shards)
+export const KEY_ROSTER = "coordinatorRoster:v1"; // ShardedSwarm: hatched offspring (id + seed + genome) beyond the config-derived genesis roster — NOT derivable from config, so persisted
 
 /** The full neural read-out of one fly, for GET /snapshot (the generative inspector view). */
 export interface FlyNeuralSnapshot {
@@ -87,6 +89,12 @@ export interface SwarmBackend {
   snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null>;
   /** Motor + identity + last behaviour of one fly; null if unknown. */
   flyDetail(flyId: number): Promise<FlyDetail | null>;
+  /**
+   * Hatch a bred offspring (genome) into the LIVE population at `id` (>= populationSize), persisting it
+   * into `storage` so it survives an eviction. Idempotent; returns false if the fly could NOT be created
+   * (e.g. a shard rejected the id), so the caller knows the live population did not grow.
+   */
+  hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean>;
   /** Persist coordinator-owned swarm state into `storage` (brains persist in shards when sharded). */
   persist(storage: DurableObjectStorage): Promise<void>;
   /** Reset to a fresh founding swarm (fresh brains everywhere; shards reset too when sharded). */
@@ -176,6 +184,14 @@ export class LocalSwarm implements SwarmBackend {
     };
   }
 
+  async hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean> {
+    if (id < this.cfg.populationSize || id >= this.cfg.maxLivePopulation) return false;
+    const inst = this.population.spawnFromGenome(genome, id);
+    if (!inst) return true;                       // already live — idempotent success
+    await storage.put(KEY_POPULATION, this.population.serialize());
+    return true;
+  }
+
   async persist(storage: DurableObjectStorage): Promise<void> {
     await storage.put(KEY_POPULATION, this.population.serialize());
   }
@@ -190,11 +206,16 @@ export class LocalSwarm implements SwarmBackend {
  * The sharded swarm: the coordinator holds only a tiny per-fly ROSTER (id + temperament + an ephemeral
  * decoder carrying hysteresis — decoders are NOT persisted, exactly as in the single-DO Population) and
  * fans the HEAVY advance out to `shardCount` FlyShardDO isolates in parallel each sub-tick. Shards own
- * and persist their own brains; the coordinator persists just the {tickIndex, vitality} counter.
+ * and persist their own brains; the coordinator persists the {tickIndex, vitality} counter plus the list
+ * of hatched offspring (which, unlike genesis, are not derivable from config).
  */
 export class ShardedSwarm implements SwarmBackend {
   readonly sharded = true;
   private roster: ReduceRosterEntry[];
+  /** Hatched offspring (id >= populationSize) added to the live population. NOT derivable from config
+   *  (unlike genesis), so persisted to KEY_ROSTER and recovered in load(); the reduce roster is rebuilt
+   *  from it. Each entry keeps the genome so a shard that lost its state could be re-seeded if needed. */
+  private bred: Array<{ id: number; seed: number; genome: Genome }> = [];
   private stubs: DurableObjectStub[];
   private tickIndex = 0;
   private vitality = 0.5;
@@ -204,7 +225,8 @@ export class ShardedSwarm implements SwarmBackend {
   constructor(private cfg: RuntimeConfig, private env: Env) {
     const ns = env.FLY_SHARD;
     if (!ns) throw new Error("ShardedSwarm requires the FLY_SHARD Durable Object binding");
-    // Roster is fully derivable from config — no brains here, just identity + a fresh decoder per fly.
+    // GENESIS roster is fully derivable from config — no brains here, just identity + a fresh decoder per
+    // fly. load() then appends any HATCHED offspring recovered from KEY_ROSTER (not derivable from config).
     this.roster = cfg.populationSeeds.slice(0, cfg.populationSize).map((seed, id) => ({
       id,
       temperament: flyTemperament(seed),
@@ -239,6 +261,18 @@ export class ShardedSwarm implements SwarmBackend {
           /* no usable legacy counter — start fresh at 0 */
         }
       }
+    }
+    // Recover any hatched offspring into the live roster (genesis is already there from the constructor).
+    const bred = await storage.get<Array<{ id: number; seed: number; genome: Genome }>>(KEY_ROSTER);
+    if (Array.isArray(bred)) {
+      for (const b of bred) {
+        if (!b || !Number.isInteger(b.id) || b.id < cfg.populationSize || b.id >= cfg.maxLivePopulation || !b.genome) continue;
+        if (swarm.roster.some((r) => r.id === b.id)) continue;
+        const seed = Number.isFinite(b.seed) ? b.seed : b.genome.seed;
+        swarm.bred.push({ id: b.id, seed, genome: b.genome });
+        swarm.roster.push({ id: b.id, temperament: flyTemperament(seed), decoder: swarm.makeDecoder() });
+      }
+      swarm.roster.sort((x, y) => x.id - y.id);
     }
     return swarm;
   }
@@ -298,29 +332,62 @@ export class ShardedSwarm implements SwarmBackend {
   }
 
   async snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null> {
-    const stub = this.stubs[shardOf(this.cfg.populationSize, this.cfg.shardCount, flyId)];
+    const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, flyId)];
     const r = await stub.fetch(new Request(`https://shard.internal/snapshot?flyId=${flyId}`));
     return r.ok ? ((await r.json()) as FlyNeuralSnapshot) : null;
   }
 
   async flyDetail(flyId: number): Promise<FlyDetail | null> {
-    const stub = this.stubs[shardOf(this.cfg.populationSize, this.cfg.shardCount, flyId)];
+    const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, flyId)];
     const r = await stub.fetch(new Request(`https://shard.internal/fly?flyId=${flyId}`));
     if (!r.ok) return null;
     const d = (await r.json()) as { vitals: FlyVitals; motor: MotorOutput[]; t: number; step: number };
     return { vitals: d.vitals, motor: d.motor, t: d.t, step: d.step, behavior: this.lastBehavior.get(flyId) ?? null };
   }
 
+  async hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean> {
+    // Only growth-slot ids hatch; genesis ids are config-owned. Refuse past the hard cap (belt-and-suspenders
+    // — the caller checks the live count first, but never grow beyond maxLivePopulation).
+    if (id < this.cfg.populationSize || id >= this.cfg.maxLivePopulation) return false;
+    if (this.roster.some((r) => r.id === id)) return true;        // already live — idempotent success
+    // Ship the genome to the shard that owns this id (derived from the STABLE cap, so it never moves); the
+    // shard builds + persists the brain. Only grow the roster once the shard confirms it hosts the fly.
+    const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, id)];
+    if (!stub) return false;
+    const r = await stub.fetch(
+      new Request("https://shard.internal/hatch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, genome }),
+      }),
+    );
+    if (!r.ok) return false;
+    this.bred.push({ id, seed: genome.seed, genome });
+    this.roster.push({ id, temperament: flyTemperament(genome.seed), decoder: this.makeDecoder() });
+    this.roster.sort((a, b) => a.id - b.id);
+    await storage.put(KEY_ROSTER, this.bred);   // persist immediately so an eviction can't drop the new live fly
+    return true;
+  }
+
   async persist(storage: DurableObjectStorage): Promise<void> {
-    // Brains already persisted inside the shards on the commit sub-tick; only the counter lives here.
+    // Brains already persisted inside the shards on the commit sub-tick; the counter AND the hatched-offspring
+    // roster (not derivable from config) live here.
     await storage.put(KEY_COORDINATOR, { tickIndex: this.tickIndex, vitality: this.vitality });
+    await storage.put(KEY_ROSTER, this.bred);
   }
 
   async reset(storage: DurableObjectStorage): Promise<void> {
     this.tickIndex = 0;
     this.vitality = 0.5;
     this.lastBehavior.clear();
-    for (const entry of this.roster) entry.decoder = this.makeDecoder();
+    // Reset returns the swarm to its FOUNDING state: drop every hatched offspring (the shards wipe theirs
+    // too) and rebuild the genesis-only roster from config, then persist the now-empty bred list.
+    this.bred = [];
+    this.roster = this.cfg.populationSeeds.slice(0, this.cfg.populationSize).map((seed, id) => ({
+      id,
+      temperament: flyTemperament(seed),
+      decoder: this.makeDecoder(),
+    }));
     await Promise.all(
       this.stubs.map((stub) => stub.fetch(new Request("https://shard.internal/reset", { method: "POST" }))),
     );

@@ -28,6 +28,7 @@
 //   lastCron           number
 
 import type { StimulusEvent } from "@fly/fly-brain";
+import { genomeWithinBudget, hatchBudgetFromGenesis } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
 import { netReceiptHash } from "./provenance.js";
@@ -388,6 +389,52 @@ export class FlyStateDO {
         child.commitTx = tx;
         await this.state.storage.put(KEY_LINEAGE, entries);
       }
+    }
+
+    // ── OPTIONAL HATCH: grow the LIVE trading population from the bred offspring (default inert) ──────────
+    // A strict post-suffix to the breed above: the child is ALREADY persisted + anchored, so anything here
+    // failing only means "lineage recorded, no new live fly" — it never blocks the tick and never refunds the
+    // breeding fee (reproduction already happened). Parent-funded: the child's opening balance is a bounded
+    // real-USDC bootstrap from the payer's OWN wallet, and the child only goes live once that transfer is MINED
+    // (so it can never come online with a balance that did not truly land, and the treasury never mints).
+    // Bounded by the hard live cap and a per-genome memory budget so a shard can never OOM or bust its 2 MB row.
+    try {
+      const swarm = this.swarm;
+      if (ev.hatchLive && swarm) {
+        if (swarm.size() >= this.cfg.maxLivePopulation) {
+          console.log(`[DO] evolution: live cap ${this.cfg.maxLivePopulation} reached — lineage kept, no hatch`);
+        } else if (!genomeWithinBudget(child.genome, hatchBudgetFromGenesis(this.cfg.brainOpts))) {
+          console.log(
+            `[DO] evolution: genome over memory budget — lineage kept, no hatch (child=${child.genomeHash.slice(0, 12)})`,
+          );
+        } else {
+          // Genesis ids are 0..populationSize-1 and hatched ids are contiguous above them (no retirement/id
+          // recycling), so the next free live id is the current size, floored at populationSize.
+          const childId = Math.max(this.cfg.populationSize, swarm.size());
+          const seed = await economy.fundOffspring(
+            plan.payerId, childId, economy.deriveAddress(childId), ev.hatchSeedUsdc, tickIndex,
+          );
+          if (!seed?.valid) {
+            console.warn(`[DO] evolution: offspring bootstrap not settled — no hatch:`, seed?.reason ?? "unarmed");
+          } else {
+            const ok = await swarm.hatchLiveFly(childId, child.genome, this.state.storage);
+            if (ok) {
+              console.log(
+                `[DO] evolution hatched #${childId} gen=${child.generation} funded by #${plan.payerId} ` +
+                  `${ev.hatchSeedUsdc}USDC tx=${seed.txHash.slice(0, 10)} live=${swarm.size()}/${this.cfg.maxLivePopulation}`,
+              );
+            } else {
+              // Funds landed but the live fly could not be created (cap/route). Extremely rare — both were
+              // checked before paying. Log loudly so the funded-but-absent child can be reconciled manually.
+              console.error(
+                `[DO] evolution: bootstrap MINED for #${childId} but hatchLiveFly failed — child wallet funded, no live fly`,
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[DO] evolution hatch failed (lineage kept, tick continues):", (e as Error).message);
     }
 
     console.log(
@@ -1017,17 +1064,21 @@ export class FlyStateDO {
     sharded: boolean;
     shardCount: number;
     populationSize: number;
+    maxLivePopulation: number;
     fliesPerShard: number;
     shards: { index: number; start: number; end: number }[];
   } {
-    const size = this.cfg.populationSize;
+    const genesis = this.cfg.populationSize;
+    const cap = this.cfg.maxLivePopulation;
     const shardCount = this.sharding ? this.cfg.shardCount : 1;
     const shards: { index: number; start: number; end: number }[] = [];
     for (let k = 0; k < shardCount; k++) {
-      const { start, end } = shardSlice(size, shardCount, k);
+      // Slice by the STABLE cap (maxLivePopulation), exactly as shard.ts/swarm.ts route, so the displayed
+      // isolate ranges match reality once the live population grows past genesis (cap > populationSize).
+      const { start, end } = shardSlice(cap, shardCount, k);
       if (end > start) shards.push({ index: k, start, end });
     }
-    return { sharded: this.sharding, shardCount, populationSize: size, fliesPerShard: fliesPerShard(size, shardCount), shards };
+    return { sharded: this.sharding, shardCount, populationSize: genesis, maxLivePopulation: cap, fliesPerShard: fliesPerShard(cap, shardCount), shards };
   }
 
   /** Full agent-economy snapshot: every wallet, the recent settlement ledger and aggregate totals. */

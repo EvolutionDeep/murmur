@@ -152,9 +152,9 @@ export function crossoverGenome(a: Genome, b: Genome, rngSeed: number): Genome {
   };
 }
 
-/** Rebuild the exact connectome a genome describes (deterministic). */
-export function buildFromGenome(g: Genome): Connectome {
-  return buildConnectome({
+/** The ConnectomeOptions a genome describes — what FlyBrain / buildConnectome consume to rebuild it. */
+export function genomeToConnectomeOptions(g: Genome): ConnectomeOptions {
+  return {
     seed: g.seed,
     nSensory: g.nSensory,
     nInterL1: g.nInterL1,
@@ -162,10 +162,113 @@ export function buildFromGenome(g: Genome): Connectome {
     nModulatory: g.nModulatory,
     nMotorPerChannel: g.nMotorPerChannel,
     density: g.density,
-  });
+  };
+}
+
+/** Rebuild the exact connectome a genome describes (deterministic). */
+export function buildFromGenome(g: Genome): Connectome {
+  return buildConnectome(genomeToConnectomeOptions(g));
 }
 
 /** The quantised, ULP-safe structural spec of the brain a genome describes (the replayable identity). */
 export function specFromGenome(g: Genome): ConnectomeStructuralSpec {
   return connectomeStructuralSpec(buildFromGenome(g));
+}
+
+// ---------- resource envelope: screen a genome for LIVE-hatch safety WITHOUT building it ----------
+//
+// A bred genome may be heavier than genesis (mutate grows a layer ±15%, density drifts up), so before one
+// is hatched into a live trading fly we estimate the connectome it WOULD build and refuse it if it is too
+// big — building it first is exactly what could OOM the isolate. Two independent Durable Object limits
+// bind, so the estimate returns both counts:
+//   · neurons  → serialized size (FlyBrain.serialize stores ~6 per-neuron float arrays; ∝ neurons), bounded
+//                by the 2 MB per-value limit (a shard persists 2 brains in one value);
+//   · synapses → retained heap (buildConnectome keeps a full Synapse[] object array; ∝ density), bounded by
+//                the 128 MB isolate heap (2 flies/shard).
+
+/** MOTOR_CHANNELS.length in connectome.ts — mirrored so the estimator stays dependency-free. */
+const MOTOR_CHANNEL_COUNT = 5;
+/** SENSORY_CHANNELS.length — a sensory neuron's channel is (i % this). */
+const SENSORY_CHANNEL_COUNT = 10;
+/** Index of gustatory_richness in SENSORY_CHANNELS (drives the fixed proboscis reflex fan). */
+const GUSTATORY_INDEX = 4;
+/** Index of stimulus_threat in SENSORY_CHANNELS (drives the threat→modulatory wiring). */
+const THREAT_INDEX = 7;
+
+/** How many i in [0,n) satisfy (i % mod) === r — the neuron count of one sensory channel. */
+function channelCount(n: number, r: number, mod: number): number {
+  if (n <= r) return 0;
+  return Math.floor((n - r - 1) / mod) + 1;
+}
+
+/**
+ * Closed-form estimate of the connectome a genome builds — {neurons, synapses} — WITHOUT building it.
+ * Mirrors buildConnectome's exact fan-in arithmetic (the same fixed fans for the leg/wing/proboscis
+ * reflexes, the same max(1, floor(fromSize*density)) fans for the layered projections, and expected
+ * counts for the probabilistic modulatory/threat wiring), so it tracks the real graph closely and rounds
+ * UP to stay conservative (a slightly-over estimate only means a borderline genome stays lineage-only).
+ */
+export function estimateConnectomeSize(g: Genome): { neurons: number; synapses: number } {
+  const nSens = Math.max(0, Math.floor(g.nSensory));
+  const nL1 = Math.max(0, Math.floor(g.nInterL1));
+  const nL2 = Math.max(0, Math.floor(g.nInterL2));
+  const nMod = Math.max(0, Math.floor(g.nModulatory));
+  const nMotorPer = Math.max(0, Math.floor(g.nMotorPerChannel));
+  const d = Math.max(0, g.density);
+
+  const l2Half = Math.floor(nL2 / 2);
+  const l2Right = nL2 - l2Half;
+  const neurons = nSens + nL1 + nL2 + nMod + MOTOR_CHANNEL_COUNT * nMotorPer;
+
+  // Same fan-in rule the builder's connect() uses.
+  const fan = (fromSize: number, dens: number): number => Math.max(1, Math.floor(fromSize * dens));
+
+  let syn = 0;
+  syn += nL1 * fan(nSens, d * 1.5);          // sensory → Inter L1
+  syn += nL2 * fan(nL1, d * 1.2);            // Inter L1 → Inter L2
+  syn += l2Right * fan(l2Half, d * 0.8);     // L2 left → right (mutual inhibition)
+  syn += l2Half * fan(l2Right, d * 0.8);     // L2 right → left
+  syn += l2Half * fan(l2Half, d * 0.3);      // L2 left → left (same-side excitation)
+  syn += l2Right * fan(l2Right, d * 0.3);    // L2 right → right
+  syn += nMotorPer * 40;                     // L2 left → leg_left (fixed fan 40)
+  syn += nMotorPer * 40;                     // L2 right → leg_right (fixed fan 40)
+  syn += 2 * nMotorPer * 30;                 // L2 → wing + abdomen (fixed fan 30)
+  const gus = channelCount(nSens, GUSTATORY_INDEX, SENSORY_CHANNEL_COUNT);
+  syn += nMotorPer * Math.max(1, Math.min(gus, 6)); // gustatory → proboscis (fixed fan ≤6)
+  syn += Math.ceil(0.05 * neurons);          // modulatory ↔ whole brain (p=0.05 per neuron)
+  syn += nMod * fan(nSens + nL1, d * 0.4);   // sensory+L1 → modulatory
+  const threat = channelCount(nSens, THREAT_INDEX, SENSORY_CHANNEL_COUNT);
+  syn += Math.ceil(threat * nMod * 0.25);    // stimulus_threat → modulatory (p=0.25)
+
+  return { neurons, synapses: syn };
+}
+
+/** A resource envelope a genome must fit to be hatched into a LIVE fly (see estimateConnectomeSize). */
+export interface HatchBudget {
+  maxNeurons: number;
+  maxSynapses: number;
+}
+
+/**
+ * Derive the hatch budget from the GENESIS connectome sizing (the worker's brainOpts) times safety
+ * factors, so the envelope auto-calibrates to whatever production actually runs instead of hardcoding
+ * neuron/synapse counts. Genesis is proven to fit 2 flies/shard within BOTH DO limits, and the factors
+ * leave real evolutionary headroom while staying well inside them: 1.2× neurons keeps 2 serialized
+ * brains under the 2 MB value limit; 2.0× synapses keeps 2 retained connectomes well under 128 MB.
+ */
+export function hatchBudgetFromGenesis(
+  genesisOpts: ConnectomeOptions = {},
+  factors: { neurons: number; synapses: number } = { neurons: 1.2, synapses: 2.0 },
+): HatchBudget {
+  const g = estimateConnectomeSize(genomeFromOptions(genesisOpts));
+  return {
+    maxNeurons: Math.ceil(g.neurons * factors.neurons),
+    maxSynapses: Math.ceil(g.synapses * factors.synapses),
+  };
+}
+
+/** True when a genome's estimated connectome fits the budget (both the serialization and heap limits). */
+export function genomeWithinBudget(g: Genome, budget: HatchBudget): boolean {
+  const s = estimateConnectomeSize(g);
+  return s.neurons <= budget.maxNeurons && s.synapses <= budget.maxSynapses;
 }

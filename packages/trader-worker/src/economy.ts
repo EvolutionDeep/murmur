@@ -297,6 +297,17 @@ export class AgentEconomy {
   }
 
   /**
+   * Read-only address derivation for an ARBITRARY agent id — genesis (id < populationSize) OR a hatched
+   * offspring (id >= populationSize). Onchain this resolves through the injected HD path, so a new live id
+   * naturally gets a genuine, distinct wallet address under the same mnemonic (the treasury never mints);
+   * simulated mode returns the deterministic pseudo-address. driveEvolution uses this to compute where a
+   * parent-funded bootstrap should land before the child is a live fly.
+   */
+  deriveAddress(id: number): string {
+    return this.addressOf(id);
+  }
+
+  /**
    * Make sure an agent wallet exists for every fly in the reading set (idempotent). In SIMULATED mode a
    * new agent is credited initialBalance from the protocol treasury; existing agents keep their balance.
    * In ONCHAIN mode initialBalance is only the seed of the internal DISPLAY mirror — the real spendable
@@ -900,6 +911,97 @@ export class AgentEconomy {
     this.recent.unshift(settled);
     if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
     return settled;
+  }
+
+  /**
+   * AUTONOMOUS EVOLUTION — bootstrap a newly HATCHED offspring by moving a bounded amount of real USDC
+   * from the breeding parent's OWN wallet to the child's fresh address, over the SAME x402/EIP-3009 rails
+   * and the SAME guardrails as payBreedingFee. This is what lets a live offspring start trading: its opening
+   * balance is the parent's realized profit — never minted, never treasury-subsidized. The only differences
+   * from the breeding fee are the destination (the child wallet, not the treasury), the resource/description
+   * tag, and that driveEvolution calls it AFTER the lineage commit, best-effort, only when the live
+   * population has room and the genome is within the memory budget.
+   *
+   * Returns the Settlement (valid=true only once MINED), or null when evolution is not armed here. Refuses
+   * BEFORE signing when a daily cap is hit (a capped hatch costs no gas); shadow/failed settles move
+   * nothing, so a child is never brought online with a balance that did not truly land.
+   */
+  async fundOffspring(
+    payerId: number,
+    childId: number,
+    childAddress: string,
+    amountUsdc: number,
+    tickIndex: number,
+  ): Promise<Settlement | null> {
+    if (!this.cfg.enabled) return null;
+    const onchain = this.facilitator.mode === "onchain";
+    // Real-money master rail: never move USDC for a hatch when the kill switch is off.
+    if (onchain && !this.cfg.realSpendEnabled) return null;
+
+    const idx = this.indexOfId.get(payerId);
+    if (idx == null) return null;
+    const payer = this.agents[idx];
+    const amount = String(usdcToAtomic(amountUsdc));
+    const resource = `evolution:hatch:${payer.id}\u2192${childId}`;
+    const base = {
+      tick: tickIndex, ts: Date.now(), good: "attestation" as GoodKind, resource,
+      fromId: payer.id, toId: childId, from: payer.address, to: childAddress,
+      amount, simulated: !onchain,
+    } as const;
+
+    // Daily real-spend caps — ONCHAIN ONLY. Refuse BEFORE signing/broadcasting so a capped hatch costs no gas.
+    if (onchain) {
+      const capReason = this.spendCapReason(payer.id, amount);
+      if (capReason) return { ...base, txHash: "0x", valid: false, reason: capReason };
+    }
+
+    // Unique EIP-3009 nonce, sharing evoNonceSeq with payBreedingFee so a hatch can never collide with a
+    // breeding-fee nonce (a reuse would revert as AuthorizationUsed).
+    const nonce =
+      "0x" +
+      (BigInt(Date.now()) * 1_000_000n + BigInt(this.evoNonceSeq++)).toString(16).padStart(64, "0");
+    const reqs: PaymentRequirements = {
+      scheme: SCHEME_EXACT,
+      network: this.cfg.network,
+      maxAmountRequired: amount,
+      resource,
+      description: "autonomous evolution offspring bootstrap (parent-funded, real USDC to the child wallet)",
+      mimeType: "application/json",
+      payTo: childAddress,
+      maxTimeoutSeconds: 60,
+      asset: this.facilitator.asset,
+      extra: { evolution: true, payerId: payer.id, childId },
+    };
+    const payload = buildPaymentPayload({
+      reqs, from: payer.address, value: amount, nonce, nowSec: Math.floor(Date.now() / 1000),
+    });
+
+    const verified = await this.facilitator.verify(payload, reqs);
+    if (!verified.valid) {
+      return { ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" };
+    }
+    const receipt = await this.facilitator.settle(payload, reqs);
+    // Shadow dry-run: proved the signed transfer WOULD succeed but broadcast nothing ⇒ no real value moved.
+    if (receipt.shadow) {
+      return { ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" };
+    }
+    if (!receipt.success) {
+      return { ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" };
+    }
+
+    // MINED: the child truly holds the funds now. Debit the parent's mirror, meter the caps, count volume.
+    payer.balance = subAtomic(payer.balance, amount);
+    payer.paid = addAtomic(payer.paid, amount);
+    payer.deals++;
+    payer.lastTick = tickIndex;
+    if (onchain) this.recordSpend(payer.id, amount);
+    this.volumeAtomic = addAtomic(this.volumeAtomic, amount);
+    this.count++;
+
+    const hatched: Settlement = { ...base, txHash: receipt.txHash, valid: true };
+    this.recent.unshift(hatched);
+    if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    return hatched;
   }
 
   /** Top up any agent below the solvency floor from the simulated treasury (conserves liveness). */

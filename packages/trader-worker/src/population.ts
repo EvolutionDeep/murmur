@@ -1,10 +1,11 @@
 // Population — a swarm of fruit-fly brains that FEEL the Arc market and react, both collectively
 // and individually. Nothing here trades, holds a wallet or touches a private key.
 //
-// This is a PURELY REACTIVE population: a fixed set of flies, each an independent connectome grown
-// from its own seed (its "temperament"). There is NO breeding, NO lineage, NO generations and NO
-// retirement — those belonged to the old project and are gone. The population simply persists and
-// reacts. Per tick:
+// This is a PURELY REACTIVE population: a set of flies, each an independent connectome grown from its
+// own seed (its "temperament"). It does NOT breed, age or retire on its own — but it CAN GROW: the
+// evolution layer (state.ts driveEvolution) may hatch a bred offspring into a new live fly via
+// spawnFromGenome, expanding the population from the fixed genesis 24 toward maxLivePopulation. That
+// growth is driven entirely from outside; the population itself only persists and reacts. Per tick:
 //   1. Every fly receives the SAME market pulse (temperature + its facets) through its sensory
 //      channels, plus its own stable internal arousal ("temperament") so individuals keep a tempo.
 //   2. Every fly advances its spiking network independently for `simSteps` ms.
@@ -34,6 +35,8 @@ import {
   type FlyBehavior,
   type BehaviorState,
   type ConnectomeOptions,
+  type Genome,
+  genomeToConnectomeOptions,
 } from "@fly/fly-brain";
 import type { RuntimeConfig } from "./config.js";
 import type { Regime } from "./market.js";
@@ -44,6 +47,13 @@ export interface FlyVitals {
   seed: number;
   /** Stable per-fly internal arousal 0..1 (drawn from the seed → individual tempo). */
   temperament: number;
+  /**
+   * Present ONLY on a hatched offspring (id >= populationSize): the bred genome its brain was built from.
+   * Genesis flies have none — their brain is reproducible from (seed, brainOpts) alone. Persisted so a
+   * restored population rebuilds a bred brain from its genome (not the genesis sizing), and served so the
+   * inspector can show an offspring's heritable identity.
+   */
+  genome?: Genome;
 }
 
 export interface FlyInstance {
@@ -159,9 +169,13 @@ export class Population {
     if (restored) {
       for (let i = 0; i < restored.flies.length; i++) {
         const vitals = restored.flies[i];
+        // A hatched offspring rebuilds from its OWN genome; a genesis fly from (seed, shared brainOpts).
+        const opts = vitals.genome
+          ? genomeToConnectomeOptions(vitals.genome)
+          : { seed: vitals.seed, ...this.brainOpts };
         const brain = restored.brains[i]
-          ? FlyBrain.deserialize(restored.brains[i], { seed: vitals.seed, ...this.brainOpts })
-          : new FlyBrain({ seed: vitals.seed, ...this.brainOpts });
+          ? FlyBrain.deserialize(restored.brains[i], opts)
+          : new FlyBrain(opts);
         this.flies.push({ id: vitals.id, brain, decoder: this.makeDecoder(), vitals });
       }
       this.tickIndex = restored.tickIndex;
@@ -185,6 +199,20 @@ export class Population {
   private spawnFly(seed: number, id: number): FlyInstance {
     const brain = new FlyBrain({ seed, ...this.brainOpts });
     const vitals: FlyVitals = { id, seed, temperament: this.temperamentOf(seed) };
+    const inst: FlyInstance = { id, brain, decoder: this.makeDecoder(), vitals };
+    this.flies.push(inst);
+    return inst;
+  }
+
+  /**
+   * Hatch a BRED offspring into a live fly: build its brain from its OWN genome (not the genesis sizing)
+   * and append it at the caller-assigned id (>= populationSize). Idempotent — a duplicate id is ignored.
+   * This is how the live trading population grows past the fixed genesis 24 toward maxLivePopulation.
+   */
+  spawnFromGenome(genome: Genome, id: number): FlyInstance | null {
+    if (this.flies.some((f) => f.id === id)) return null;
+    const brain = new FlyBrain(genomeToConnectomeOptions(genome));
+    const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
     const inst: FlyInstance = { id, brain, decoder: this.makeDecoder(), vitals };
     this.flies.push(inst);
     return inst;
@@ -240,7 +268,9 @@ export class Population {
   /** Serialise for persistence into the Durable Object. */
   serialize(): string {
     return JSON.stringify({
-      version: 4,   // v4 = pure reactive population (v1–v3 carried lineage/generations — dropped)
+      // v5 = reactive population that MAY carry hatched offspring (vitals.genome); v4 was genesis-only
+      // (v1–v3 carried the old lineage/generations — dropped). vitals already includes genome when present.
+      version: 5,
       tickIndex: this.tickIndex,
       vitality: this.vitality,
       flies: this.flies.map((f) => ({ vitals: f.vitals, brain: f.brain.serialize() })),
@@ -250,13 +280,15 @@ export class Population {
   static deserialize(data: string, cfg: RuntimeConfig): Population {
     const parsed = JSON.parse(data);
     const version = parsed?.version;
-    // v4 is native; v3 is tolerated by stripping the old lineage fields (id/seed/temperament survive).
-    if (version === 4 || version === 3) {
+    // v5 is native (may carry hatched offspring genomes); v4 is genesis-only; v3 is tolerated by stripping
+    // the old lineage fields (id/seed/temperament survive). A v5 fly with no genome rebuilds as genesis.
+    if (version === 5 || version === 4 || version === 3) {
       return new Population(cfg, {
         flies: parsed.flies.map((x: any) => ({
           id: Number(x.vitals.id),
           seed: Number(x.vitals.seed),
           temperament: Number(x.vitals.temperament ?? 0.5),
+          ...(x.vitals.genome ? { genome: x.vitals.genome as Genome } : {}),
         })),
         brains: parsed.flies.map((x: any) => x.brain),
         tickIndex: Number(parsed.tickIndex ?? 0),
