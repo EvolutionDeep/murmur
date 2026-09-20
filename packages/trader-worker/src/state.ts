@@ -67,6 +67,7 @@ import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
+import { Chronicler, type ChronicleEntry, type ChronicleContext } from "./chronicler.js";
 
 const KEY_METER = "marketMeter:v1";
 const KEY_MARKET = "market:v1";
@@ -81,6 +82,11 @@ const KEY_LINEAGE = "lineage:v1";
 const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
+/** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage. */
+const KEY_CHRONICLER = "chronicler:v1";
+const KEY_ANNALS = "annals:v1";
+/** How many recent chronicle entries to keep hot in the DO (and serve from /annals) — bounded, DO-safe. */
+const ANNALS_CAP = 300;
 
 /** Lifetime stats for the paid x402 "Arc Pulse" signal product (persisted across evictions). */
 interface PulseSales {
@@ -131,6 +137,11 @@ export class FlyStateDO {
   private cronRunning = false;
   /** Set once the D1 archival table has been ensured this DO lifetime (avoids re-running DDL per cron). */
   private d1SchemaReady = false;
+  /** The deterministic historian (era/record trackers) + its hot recent-chronicle buffer, lazily loaded. */
+  private chronicler: Chronicler | null = null;
+  private annals: ChronicleEntry[] = [];
+  /** Set once the D1 chronicle table has been ensured this DO lifetime. */
+  private d1ChronicleReady = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -695,6 +706,113 @@ export class FlyStateDO {
     }
   }
 
+  // ---------- the chronicle (a deterministic historian over the same read-out the economy uses) ----------
+
+  /**
+   * Lazily rebuild the historian + its recent-chronicle buffer after an eviction. If the DO buffer is empty
+   * but D1 has rows (a cold isolate), backfill the last ANNALS_CAP so /annals is never blank mid-history.
+   */
+  private async ensureChronicler(): Promise<Chronicler> {
+    if (this.chronicler) return this.chronicler;
+    const c = new Chronicler();
+    const stored = await this.state.storage.get<any>(KEY_CHRONICLER);
+    if (stored) c.restore(stored);
+    const buf = await this.state.storage.get<ChronicleEntry[]>(KEY_ANNALS);
+    this.annals = Array.isArray(buf) ? buf : [];
+    if (this.annals.length === 0 && this.env.DB) {
+      try {
+        const db = this.env.DB;
+        await this.ensureD1Chronicle(db);
+        const r = await db
+          .prepare(`SELECT seq, tick, ts, kind, era, era_name, severity, actors, text, metrics FROM chronicle ORDER BY seq DESC LIMIT ?`)
+          .bind(ANNALS_CAP).all();
+        this.annals = (r.results ?? []).map(parseChronicleRow).reverse();
+      } catch (e) {
+        console.warn("[DO] chronicle backfill failed (non-fatal):", (e as Error).message);
+      }
+    }
+    this.chronicler = c;
+    return c;
+  }
+
+  /** Lazy DDL for the append-only chronicle table (mirrored in schema.sql; belt-and-braces like ticks). */
+  private async ensureD1Chronicle(db: D1Database): Promise<void> {
+    if (this.d1ChronicleReady) return;
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS chronicle (
+         seq INTEGER PRIMARY KEY, tick INTEGER NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL,
+         era INTEGER NOT NULL, era_name TEXT NOT NULL, severity INTEGER NOT NULL,
+         actors TEXT NOT NULL, text TEXT NOT NULL, metrics TEXT )`,
+    ).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_chronicle_ts ON chronicle (ts)`).run();
+    this.d1ChronicleReady = true;
+  }
+
+  /** Persist newly-detected entries to D1 (append-only, best-effort — a D1 failure never blocks the tick). */
+  private async writeChronicle(entries: ChronicleEntry[]): Promise<void> {
+    const db = this.env.DB;
+    if (!db) return;
+    try {
+      await this.ensureD1Chronicle(db);
+      await db.batch(entries.map((e) =>
+        db.prepare(
+          `INSERT OR REPLACE INTO chronicle (seq, tick, ts, kind, era, era_name, severity, actors, text, metrics)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(e.seq, e.tick, e.ts, e.kind, e.era, e.eraName, e.severity, JSON.stringify(e.actors), e.text, JSON.stringify(e.metrics)),
+      ));
+    } catch (e) {
+      console.warn("[DO] chronicle D1 write failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * Run the historian once per cron. PURE READ-OUT: it observes the collective + ethogram + lifetime economy
+   * totals and appends any detected history. It never touches a brain, drive, wallet or settlement — so the
+   * on-chain manifest and the money path are untouched. Best-effort persistence; a failure can't stop the tick.
+   */
+  private async observeChronicle(
+    tick: number,
+    snapshot: PopulationSnapshot | null,
+    temperature: number,
+    regime: Regime,
+  ): Promise<void> {
+    try {
+      const c = await this.ensureChronicler();
+      const col = snapshot?.collective;
+      const totals = this.lastEconomy?.totals ?? null;
+      const ctx: ChronicleContext = {
+        tick,
+        ts: Date.now(),
+        temperature,
+        regime,
+        size: col?.size ?? 0,
+        states: (col?.states ?? {}) as Record<string, number>,
+        faps: (col?.faps ?? {}) as Record<string, number>,
+        valence: col?.valence ?? 0,
+        arousal: col?.arousal ?? 0,
+        cohesion: col?.cohesion ?? 0,
+        rest: col?.rest ?? 0,
+        settlements: totals?.count ?? 0,
+        volumeUsdc: totals?.volumeUsdc ?? 0,
+        gini: totals?.gini ?? 0,
+        richestId: totals?.richestId ?? null,
+        poorestId: totals?.poorestId ?? null,
+        liveAgents: totals?.liveAgents ?? col?.size ?? 0,
+        meanBalanceUsdc: totals?.meanBalanceUsdc ?? 0,
+      };
+      const entries = c.observe(ctx);
+      if (entries.length) {
+        this.annals.push(...entries);
+        if (this.annals.length > ANNALS_CAP) this.annals = this.annals.slice(-ANNALS_CAP);
+        await this.writeChronicle(entries);
+      }
+      await this.state.storage.put(KEY_CHRONICLER, c.snapshot());
+      if (entries.length) await this.state.storage.put(KEY_ANNALS, this.annals);
+    } catch (e) {
+      console.warn("[DO] chronicle observe failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   // ---------- HTTP routing ----------
 
   async fetch(req: Request): Promise<Response> {
@@ -719,6 +837,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/lineage/verify") return await this.getLineageVerify(url);
       if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
+      if (req.method === "GET" && path === "/annals") return await this.getAnnals(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -912,6 +1031,11 @@ export class FlyStateDO {
       snapshot,
       this.lastEconomy?.totals ?? null,
     );
+
+    // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
+    //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
+    //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
+    await this.observeChronicle(swarm.getTickIndex(), snapshot, temperature, regime);
 
     console.log(
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
@@ -1727,6 +1851,38 @@ export class FlyStateDO {
     }
   }
 
+  /**
+   * GET /annals — the chronicle the deterministic historian has been writing. Serves the hot ring buffer
+   * (last ANNALS_CAP entries, always available even when D1 is unbound), plus era metadata for the header.
+   * Query params:
+   *   limit  — max rows to return (default 120, capped 500)
+   *   order  — "asc" for oldest-first (default "desc", newest-first)
+   *   since  — only entries with seq > this cursor (for a live ticker that appends without duplicates)
+   */
+  private async getAnnals(url: URL): Promise<Response> {
+    await this.ensureChronicler();
+    const rawLimit = Number(url.searchParams.get("limit") ?? "120");
+    const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 120));
+    const asc = url.searchParams.get("order") === "asc";
+    const sinceRaw = url.searchParams.get("since");
+    const since = sinceRaw != null && Number.isFinite(Number(sinceRaw)) ? Number(sinceRaw) : null;
+    let rows = this.annals.slice();
+    if (since != null) rows = rows.filter((e) => e.seq > since);
+    rows.sort((a, b) => (asc ? a.seq - b.seq : b.seq - a.seq));
+    rows = rows.slice(0, limit);
+    const info = this.chronicler!.eraInfo();
+    return json({
+      enabled: true,
+      era: info.era,
+      eraName: info.eraName,
+      eraRegime: info.eraRegime,
+      seq: info.seq,
+      order: asc ? "asc" : "desc",
+      count: rows.length,
+      entries: rows,
+    });
+  }
+
   private async getMarket() {
     const meter = await this.ensureMeter();
     const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
@@ -1882,7 +2038,27 @@ function parseHistoryRow(r: any) {
     volumeUsdc: r?.volume_usdc ?? null,
     gini: r?.gini ?? null,
     topState: r?.top_state ?? null,
-    topStates,
+        topStates,
+  };
+}
+
+/** Shape a raw D1 `chronicle` row back into a ChronicleEntry (JSON-parse actors + metrics). */
+function parseChronicleRow(r: any): ChronicleEntry {
+  let actors: number[] = [];
+  let metrics: Record<string, number> = {};
+  try { actors = Array.isArray(JSON.parse(r?.actors ?? "[]")) ? JSON.parse(r.actors) : []; } catch { actors = []; }
+  try { metrics = r?.metrics ? JSON.parse(r.metrics) : {}; } catch { metrics = {}; }
+  return {
+    seq: Number(r?.seq ?? 0),
+    tick: Number(r?.tick ?? 0),
+    ts: Number(r?.ts ?? 0),
+    kind: String(r?.kind ?? "ERA_OPEN") as ChronicleEntry["kind"],
+    era: Number(r?.era ?? 1),
+    eraName: String(r?.era_name ?? ""),
+    severity: (Number(r?.severity ?? 1) || 1) as 1 | 2 | 3,
+    actors,
+    text: String(r?.text ?? ""),
+    metrics,
   };
 }
 

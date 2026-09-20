@@ -892,6 +892,50 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/annals": {
+      get: {
+        tags: ["swarm"],
+        operationId: "getAnnals",
+        summary: "The chronicle: narrative timeline of history-making moments",
+        description: "A deterministic historian reads the same collective + ethogram + lifetime-economy signal the UI does and, when a threshold is crossed (era dawns/shifts, first settlement, milestone, panic, storm, great huddle, feast, birth, wealth record, leadership change), renders ONE template sentence and appends it to the ordered chronicle. No LLM, no RNG, pure read-out — this does not touch brains, wallets or the manifest hash. Served from the DO's hot ring buffer (last 300); D1 is cold archive.",
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 120, minimum: 1, maximum: 500 }, description: "Max entries to return." },
+          { name: "order", in: "query", required: false, schema: { type: "string", enum: ["asc", "desc"], default: "desc" }, description: "Sort order by seq." },
+          { name: "since", in: "query", required: false, schema: { type: "integer" }, description: "Only entries with seq > this cursor (for a live ticker)." },
+        ],
+        ...ok(
+          obj({
+            enabled: { type: "boolean" },
+            era: { type: "integer", description: "Current era index (1-based Roman)." },
+            eraName: { type: "string", description: "Evocative name of the current era." },
+            eraRegime: { type: "string", enum: ["HOT", "CALM", "COLD"] },
+            seq: { type: "integer", description: "Highest seq assigned so far (monotonic ordinal across the whole history)." },
+            order: { type: "string", enum: ["asc", "desc"] },
+            count: { type: "integer" },
+            entries: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                properties: {
+                  seq: { type: "integer" },
+                  tick: { type: "integer" },
+                  ts: { type: "integer" },
+                  kind: { type: "string", enum: ["ERA_OPEN", "ERA_SHIFT", "FIRST_TRADE", "MILESTONE", "BIRTH", "PANIC", "STORM", "HUDDLE", "FEAST", "RECORD_CONC", "LEAD_CHANGE"] },
+                  era: { type: "integer" },
+                  eraName: { type: "string" },
+                  severity: { type: "integer", minimum: 1, maximum: 3 },
+                  actors: { type: "array", items: { type: "integer" } },
+                  text: { type: "string" },
+                  metrics: { type: "object", additionalProperties: { type: "number" } },
+                },
+              },
+            },
+          }, ["entries"]),
+          "Chronicle entries plus current-era metadata.",
+        ).response,
+      },
+    },
     "/snapshot": {
       get: {
         tags: ["swarm"],

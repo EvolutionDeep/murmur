@@ -540,6 +540,28 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
 }
 .hist-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 
+/* --- "chronicle" toggle (in the temperature panel, under swarm history) --- */
+.chron-btn {
+  margin-top: 6px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  background: transparent; border: 1px solid var(--hair); color: var(--muted);
+  border-radius: 3px;
+  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  position: relative;
+}
+.chron-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.chron-btn.has-news { border-color: rgba(var(--accent-rgb), 0.55); color: var(--ink); }
+.chron-btn.has-news::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); transform: translateY(-50%);
+  box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); animation: chron-pulse 2.4s ease-out infinite;
+}
+@keyframes chron-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+}
+
 /* --- "neural proofs" toggle (in the economy panel, under the wallets toggle) --- */
 .proofs-btn {
   margin-top: 6px; width: 100%;
@@ -667,6 +689,52 @@ body.lineage-open .panel-pop, body.lineage-open .panel-about { opacity: 0.1; poi
 }
 .drawer.open { transform: translateX(0); pointer-events: auto; }
 body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.chron-open .panel-pop, body.chron-open .panel-about { opacity: 0.1; pointer-events: none; }
+
+/* --- the chronicle drawer (the deterministic historian's narrative timeline) --- */
+.chron-era {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; margin: 0 0 12px;
+  border: 1px solid var(--hair); border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.04);
+}
+.chron-era-badge {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--accent); padding: 2px 6px; border: 1px solid rgba(var(--accent-rgb), 0.4); border-radius: 2px;
+}
+.chron-era-name { font-family: var(--display); font-size: 18px; font-weight: 400; color: var(--ink); font-style: italic; }
+.chron-era-regime { margin-left: auto; font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+
+.chron-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.chron-empty { padding: 24px 8px; text-align: center; font-size: 11px; color: var(--muted); font-style: italic; opacity: 0.7; }
+.chron-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 10px; border-left: 2px solid rgba(var(--ink-rgb), 0.15);
+  background: rgba(var(--ink-rgb), 0.015); border-radius: 0 3px 3px 0;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.chron-item:hover { background: rgba(var(--accent-rgb), 0.05); }
+.chron-item.sev-2 { border-left-color: rgba(var(--accent-rgb), 0.4); }
+.chron-item.sev-3 { border-left-color: var(--accent); background: rgba(var(--accent-rgb), 0.05); }
+.chron-icon { flex: none; width: 20px; text-align: center; font-size: 13px; line-height: 1.4; color: var(--accent); opacity: 0.85; }
+.chron-item.sev-1 .chron-icon { opacity: 0.5; }
+.chron-main { flex: 1; min-width: 0; }
+.chron-line { font-family: var(--display); font-size: 14.5px; line-height: 1.5; color: var(--ink); letter-spacing: 0.005em; }
+.chron-item.sev-3 .chron-line { font-style: italic; }
+.chron-meta { margin-top: 3px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); opacity: 0.72; }
+
+/* kind-specific icon colouring to make the timeline scannable without adding clutter */
+.chron-item.kind-era_open    .chron-icon,
+.chron-item.kind-era_shift   .chron-icon { color: var(--accent); }
+.chron-item.kind-first_trade .chron-icon,
+.chron-item.kind-milestone   .chron-icon { color: var(--ink); }
+.chron-item.kind-panic       .chron-icon,
+.chron-item.kind-storm       .chron-icon { color: #b1401f; }
+.chron-item.kind-huddle      .chron-icon { color: #3c628f; }
+.chron-item.kind-feast       .chron-icon,
+.chron-item.kind-birth       .chron-icon { color: #4f7a3a; }
+.chron-item.kind-record_conc .chron-icon,
+.chron-item.kind-lead_change .chron-icon { color: #8a6a1c; }
 .drawer-head {
   display: flex; align-items: baseline; gap: 8px;
   padding: calc(var(--pad) * 0.85) var(--pad); border-bottom: 1px solid var(--hair);

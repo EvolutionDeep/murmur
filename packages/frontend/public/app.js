@@ -312,6 +312,19 @@ const HIST_POLL_MS = 30000;   // the archive advances ~1×/min, so a 30s poll is
 // how many netted settlements actually reached the chain — a live read-out of the gas-amortisation upgrade.
 const netting = { folded: 0, settled: 0 };
 
+// ================= the chronicle (the deterministic historian's narrative timeline) =================
+// A pure read-out runs once per cron inside the DO: it watches the collective mood, the ethogram FAP
+// distribution and the lifetime economy totals, and when a threshold is crossed (era shifts, first on-chain
+// settlement, panic, great huddle, wealth record, leadership change, …) renders ONE template sentence and
+// appends it to an ordered chronicle. Zero LLM, zero RNG, zero wallet/brain side-effects. /annals serves
+// the last 300 entries from a hot ring buffer; D1 is the cold archive.
+let chronRows = [];           // newest-first: {seq,tick,ts,kind,era,eraName,severity,actors[],text,metrics}
+let chronMeta = null;         // {era, eraName, eraRegime, seq}
+let chronEnabled = false;
+let chronOpen = false;
+let chronSeenSeq = 0;         // highest seq the ticker has already shown — only newer entries animate in
+const CHRON_POLL_MS = 25000;  // chronicle advances rarely (threshold events); 25s is plenty responsive
+
 // flow field + ambient ink motes
 let flowTime = 0;
 let motes = [];
@@ -1343,6 +1356,7 @@ function openWallets() {
   walletsOpen = true;
   if (brainOpen) closeBrain();
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
@@ -1522,6 +1536,120 @@ function closeHistory() {
 
 function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); }
 
+// ================= the chronicle drawer (right side) =================
+// Poll /annals — the deterministic historian's timeline. When drawer is closed we still refresh chronRows so
+// the "chronicle →" button can badge the newest severity-3 entry (era shift, first trade, panic, storm…).
+async function pollChron() {
+  try {
+    const r = await getJSON("/annals?order=desc&limit=200", 6000);
+    if (r && r.enabled) {
+      chronEnabled = true;
+      chronRows = Array.isArray(r.entries) ? r.entries.slice() : [];   // already desc by seq
+      chronMeta = { era: r.era, eraName: r.eraName, eraRegime: r.eraRegime, seq: r.seq };
+      if (chronOpen) renderChron(); else renderChronBadge();
+    } else {
+      chronEnabled = false;
+    }
+  } catch { /* best-effort: the chronicle is a nicety, never block the scene */ }
+}
+
+function renderChronBadge() {
+  const b = $("chron-btn");
+  if (!b) return;
+  if (!chronEnabled || !chronRows.length) { b.classList.remove("has-news"); b.title = "no history-making moment yet — the historian waits for thresholds"; return; }
+  const top = chronRows[0];
+  b.title = top.text;
+  b.classList.toggle("has-news", top.severity >= 3);
+}
+
+function chronTimeAgo(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60); if (m < 60) return m + "m";
+  const h = Math.floor(m / 60); if (h < 48) return h + "h";
+  return Math.floor(h / 24) + "d";
+}
+
+const CHRON_ICONS = {
+  ERA_OPEN: "✦", ERA_SHIFT: "✧", FIRST_TRADE: "⚡", MILESTONE: "◆",
+  BIRTH: "✿", PANIC: "⚡", STORM: "☀", HUDDLE: "❄", FEAST: "✿",
+  RECORD_CONC: "⚖", LEAD_CHANGE: "♛",
+};
+
+function renderChron() {
+  const list = $("chron-list");
+  if (!list) return;
+  // Header (era badge + name + regime).
+  const badge = $("chron-era-badge"); const name = $("chron-era-name"); const reg = $("chron-era-regime");
+  const sub = $("chron-sub"); const foot = $("chron-foot");
+  if (chronMeta) {
+    const roman = (n) => {
+      if (!n || n <= 0) return String(n ?? "");
+      const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+      let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
+    };
+    if (badge) badge.textContent = "era " + roman(chronMeta.era).toLowerCase();
+    if (name) name.textContent = chronMeta.eraName || "—";
+    if (reg)  reg.textContent = (chronMeta.eraRegime || "").toLowerCase();
+    if (sub)  sub.textContent = chronRows.length ? `${chronRows.length} entries · seq ${chronMeta.seq}` : "awaiting first entry…";
+  } else if (sub) sub.textContent = "chronicle offline";
+  if (!chronRows.length) {
+    list.innerHTML = `<li class="chron-empty">the historian is watching. it will write when a threshold is crossed — an era shift, the first settlement, a panic, a record.</li>`;
+    if (foot) foot.textContent = "no entries yet · pure read-out · thresholds pending";
+    return;
+  }
+  const html = chronRows.map((e) => {
+    const icon = CHRON_ICONS[e.kind] || "·";
+    const ago = e.ts ? chronTimeAgo(e.ts) : "";
+    const actors = Array.isArray(e.actors) && e.actors.length ? ` · #${e.actors.join(" #")}` : "";
+    const sev = e.severity || 1;
+    return `<li class="chron-item sev-${sev} kind-${(e.kind || "").toLowerCase()}">
+      <span class="chron-icon" aria-hidden="true">${icon}</span>
+      <div class="chron-main">
+        <div class="chron-line">${escapeHtml(e.text || "")}</div>
+        <div class="chron-meta">tick ${e.tick ?? "–"} · ${ago} · ${e.kind}${actors}</div>
+      </div>
+    </li>`;
+  }).join("");
+  list.innerHTML = html;
+  if (foot) foot.textContent = `${chronRows.length} recent entries · newest first · D1 archive is complete`;
+  // Track the highest seq we've rendered, so a future ticker can diff against this.
+  if (chronRows.length) chronSeenSeq = Math.max(chronSeenSeq, chronRows[0].seq || 0);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+function openChron() {
+  chronOpen = true;
+  if (brainOpen) closeBrain();
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
+  const d = $("chron");
+  if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("chron-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderChron();
+  pollChron();
+}
+
+function closeChron() {
+  chronOpen = false;
+  document.body.classList.remove("chron-open");
+  const d = $("chron");
+  if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!chronOpen) d.hidden = true; }, 420);
+}
+
+function toggleChron() { if (chronOpen) closeChron(); else openChron(); }
+
 // ================= neural provenance ("the neurons did this, not a human / not an LLM") =================
 // Every real on-chain net transfer carries, as its EIP-3009 nonce, the sha256 of a receipt bundling the
 // frozen neural drives of every trade folded into it. This drawer publishes those receipts and lets a
@@ -1602,6 +1730,7 @@ function openProofs() {
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
@@ -1829,6 +1958,7 @@ function openBrain() {
   brainOpen = true;
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
@@ -2003,6 +2133,7 @@ function openLineage() {
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
@@ -2248,6 +2379,7 @@ function openPulse() {
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
@@ -2490,6 +2622,7 @@ function openPredict() {
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (arenaOpen) closeArena();
@@ -2952,6 +3085,7 @@ const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["co
 function select(id) {
   if (walletsOpen) closeWallets();   // selecting a fly (from canvas or roster) hands the right side to the inspector
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   selectedId = id;
@@ -3366,6 +3500,8 @@ function bindUI() {
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
+  const cb = $("chron-btn"); if (cb) cb.addEventListener("click", toggleChron);
+  const cc = $("chron-close"); if (cc) cc.addEventListener("click", closeChron);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
   const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);
@@ -3427,7 +3563,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (chronOpen) closeChron(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -3484,6 +3620,7 @@ function openArena() {
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
+  if (chronOpen) closeChron();
   if (proofsOpen) closeProofs();
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
@@ -4036,6 +4173,8 @@ function boot() {
   setInterval(poll, POLL_MS);
   pollHistory();                              // seed the ribbon + since-launch summary from D1 on load
   setInterval(pollHistory, HIST_POLL_MS);     // the archive advances ~1×/min; a slow poll keeps it fresh
+  pollChron();                                // seed the historian's timeline so the badge is live on load
+  setInterval(pollChron, CHRON_POLL_MS);      // chronicle advances on threshold events; 25s keeps it fresh
   requestAnimationFrame(loop);
 }
 boot();

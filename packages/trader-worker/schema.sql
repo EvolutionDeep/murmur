@@ -24,6 +24,28 @@ CREATE TABLE IF NOT EXISTS ticks (
 CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (ts);
 
 -- ============================================================================================
+-- The chronicle (a deterministic historian's narrative timeline). Written once per detected event
+-- by FlyStateDO.observeChronicle → writeChronicle, best-effort (a D1 failure never blocks the tick).
+-- Served at GET /annals from the DO's hot ring buffer (last 300 entries) with D1 as cold archive.
+-- PURE READ-OUT: the historian never mutates a brain, wallet or settlement — the manifestHash and
+-- on-chain footprint are unchanged by anything written here. `seq` is the DO-monotonic ordinal.
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS chronicle (
+  seq       INTEGER PRIMARY KEY,        -- DO-monotonic ordinal across the whole history
+  tick      INTEGER NOT NULL,           -- population tickIndex when this was detected
+  ts        INTEGER NOT NULL,           -- unix ms of detection
+  kind      TEXT    NOT NULL,           -- ERA_OPEN|ERA_SHIFT|FIRST_TRADE|MILESTONE|BIRTH|PANIC|STORM|HUDDLE|FEAST|RECORD_CONC|LEAD_CHANGE
+  era       INTEGER NOT NULL,           -- era index at time of writing
+  era_name  TEXT    NOT NULL,           -- evocative name of that era ("the Long Frost", …)
+  severity  INTEGER NOT NULL,           -- 1 minor | 2 notable | 3 chapter-defining
+  actors    TEXT    NOT NULL,           -- JSON number[] of implicated fly ids (may be [])
+  text      TEXT    NOT NULL,           -- the rendered narrative line (template, no LLM)
+  metrics   TEXT                        -- JSON object of the raw numbers behind the sentence
+);
+CREATE INDEX IF NOT EXISTS idx_chronicle_ts ON chronicle (ts);
+
+-- ============================================================================================
 -- Community governance page (off-chain, token-gated forum + weighted voting). Served at
 -- muros.live/community; the /community* API is handled in the Worker's fetch (see src/community.ts)
 -- and stores here. These tables are created lazily in code (ensureCommunitySchema) AND mirrored here
