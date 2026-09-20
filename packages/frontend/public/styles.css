@@ -431,6 +431,25 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
 }
 .econ-foot.live { color: var(--accent); opacity: 0.9; }
 
+/* stale / offline: the panel is showing non-live (local synthetic) data — say so honestly in warm rust */
+.econ-mode.is-stale {
+  color: #9c3b2e; border-color: rgba(156, 59, 46, 0.5); background: rgba(156, 59, 46, 0.08);
+  font-weight: 500;
+}
+.econ-foot.stale { color: #9c3b2e; opacity: 0.9; }
+
+/* ============ cron heartbeat watchdog banner ============ */
+.cron-warn {
+  position: fixed; top: calc(var(--pad) + 40px); left: 50%; transform: translateX(-50%);
+  z-index: 30; pointer-events: none; max-width: 90vw;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; text-align: center;
+  color: #f2eee6; background: rgba(156, 59, 46, 0.92);
+  border: 1px solid #9c3b2e; border-radius: 3px;
+  padding: 5px 12px; box-shadow: 0 4px 16px rgba(26, 26, 24, 0.18);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+.cron-warn[hidden] { display: none; }
+
 /* --- "all agent wallets" toggle (in the economy panel) --- */
 .wallets-btn {
   margin-top: 10px; width: 100%;

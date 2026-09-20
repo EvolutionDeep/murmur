@@ -38,7 +38,7 @@ const API =
   "https://api.muros.live";                 // Worker API on the project's own zone (not *.workers.dev)
 if (params.get("api")) localStorage.setItem("murmur-api", API);
 
-const POLL_MS = 4000;
+const POLL_MS = 6000;   // main loop: /population + /state; the on-chain tick is ~60s, so 6s is ample
 const FETCH_TIMEOUT_MS = 3500;   // abort a hung request well before the browser would
 const OFFLINE_BACKOFF_MS = 20000; // circuit-breaker window: run local-only, no probing
 const TAU = Math.PI * 2;
@@ -135,6 +135,8 @@ let collective = null;          // latest CollectiveState
 let selectedId = null;
 let offline = false;
 let offlineUntil = 0;           // circuit-breaker: skip network probes until this timestamp
+let cronHeartbeatMs = 0;        // last /state lastCron (epoch ms) — the DO cron's heartbeat, for the watchdog
+const CRON_STALE_MS = 180000;   // cron fires ~every 60s; 3 min without a fresh heartbeat ⇒ likely stalled
 let pollInFlight = false;       // never let two polls overlap
 let cachedRect = null;          // cached canvas rect — avoid a reflow on every pointer event
 let tempTarget = 0.5, tempSmoothed = 0.5;
@@ -307,7 +309,7 @@ let histRows = [];            // ascending by tick: {tick, ts, temperature, regi
 let histSummary = null;       // {ticks, firstTick, lastTick, firstTs, lastTs, settlements, volumeUsdc}
 let histEnabled = false;      // false until /history reports a bound D1
 let historyOpen = false;      // right-side "swarm history" drawer
-const HIST_POLL_MS = 30000;   // the archive advances ~1×/min, so a 30s poll is plenty
+const HIST_POLL_MS = 60000;   // the archive advances ~1×/min, so a 60s poll matches its true cadence
 // Client-side netting surfacing (this session): how many per-trade placeholders we saw fold into nets, and
 // how many netted settlements actually reached the chain — a live read-out of the gas-amortisation upgrade.
 const netting = { folded: 0, settled: 0 };
@@ -323,7 +325,7 @@ let chronMeta = null;         // {era, eraName, eraRegime, seq}
 let chronEnabled = false;
 let chronOpen = false;
 let chronSeenSeq = 0;         // highest seq the ticker has already shown — only newer entries animate in
-const CHRON_POLL_MS = 25000;  // chronicle advances rarely (threshold events); 25s is plenty responsive
+const CHRON_POLL_MS = 45000;  // chronicle advances rarely (threshold events); 45s is plenty responsive
 
 // flow field + ambient ink motes
 let flowTime = 0;
@@ -1202,12 +1204,16 @@ function updateEconHud(t) {
 function updateEconMode() {
   const em = $("econ-mode");
   if (!em) return;
-  if (econMode === "onchain") {
+  em.classList.remove("is-live", "is-stale");
+  if (offline) {
+    // The API is down and the panel is showing the local synthetic mirror — never pass it off as real.
+    em.textContent = "⚠ 加载中 · 数据不准确";
+    em.classList.add("is-stale");
+  } else if (econMode === "onchain") {
     em.innerHTML = '<span class="live-dot"></span>live · on-chain';
     em.classList.add("is-live");
   } else {
     em.textContent = econMode + " x402";
-    em.classList.remove("is-live");
   }
 }
 
@@ -1216,12 +1222,17 @@ function updateEconMode() {
 function updateEconFoot() {
   const f = $("econ-foot");
   if (!f) return;
-  if (econMode === "onchain") {
+  if (offline) {
+    f.textContent = "⚠ 连接中断 · 以下为本地演示数据，非实时真实结算";
+    f.classList.remove("live");
+    f.classList.add("stale");
+  } else if (econMode === "onchain") {
     f.textContent = "live · settled on Arc mainnet · click any hash to verify on-chain";
+    f.classList.remove("stale");
     f.classList.add("live");
   } else {
     f.textContent = "keyless · simulated — no real funds move";
-    f.classList.remove("live");
+    f.classList.remove("live", "stale");
   }
 }
 
@@ -1399,7 +1410,7 @@ function updateNetNote() {
 // plus a since-launch summary. Everything degrades to "awaiting archive…" when D1 is unbound.
 async function pollHistory() {
   try {
-    const h = await getJSON("/history?order=desc&limit=1200", 6000);
+    const h = await getJSON("/history?order=desc&limit=700", 6000);
     if (h && h.enabled) {
       histEnabled = true;
       histRows = Array.isArray(h.rows) ? h.rows.slice().reverse() : [];   // desc → ascending for charts
@@ -1669,7 +1680,7 @@ const CHRON_ = {
   eraMinRun: 6,
   eraMinAge: 8,
   templates: {
-    ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds open their eyes on the Arc market and begin, for the first time, to feel the price.",
+    ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds tend the swarm on the Arc market, and the chronicle opens.",
     ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
     FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
     MILESTONE: "Milestone — the ledger records its {settlements~kth} verifiable exchange. {settlements} settlements, {volumeUsdc} USDC moved.",
@@ -3048,14 +3059,17 @@ async function poll() {
     applyState(st);
     // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
-    getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
+    // Only fetched while the drawer is actually open (it self-fetches on open too) — the canvas body
+    // scale is driven by /population balances, so the roster is not needed on every poll for viewers.
+    if (walletsOpen) getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
   } catch (e) {
     if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
-    offlineTick();
+    offlineTick();                                    // local synthetic mirror + the offline econ badge
+    updateCronWatchdog();                             // hide the stale-heartbeat bar (offline badge covers it)
   } finally {
     pollInFlight = false;
   }
@@ -3109,6 +3123,26 @@ function applyState(st) {
     updateEconMode();
     updateEconFoot();
     if (walletsOpen) renderWallets();   // a mode change flips the roster's explorer links + subtitle
+  }
+  // Record the DO cron's heartbeat and let the watchdog judge its freshness (online path only —
+  // when offline the catch() hides the bar, since the offline badge already speaks).
+  if (typeof st.lastCron === "number") cronHeartbeatMs = st.lastCron;
+  updateCronWatchdog();
+}
+
+/** The cron watchdog: the DO cron writes lastCron every ~60s. If the API is up but the heartbeat has
+ *  gone stale, the whole swarm has likely frozen — surface it instead of showing a still image as live. */
+function updateCronWatchdog() {
+  const el = $("cron-warn");
+  if (!el) return;
+  if (offline || !cronHeartbeatMs) { el.hidden = true; return; }
+  const ageMs = Date.now() - cronHeartbeatMs;
+  if (ageMs > CRON_STALE_MS) {
+    const mins = Math.max(1, Math.round(ageMs / 60000));
+    el.textContent = `⚠ 史官休眠 · 已约 ${mins} 分钟未更新（cron 可能停摆，数据非实时）`;
+    el.hidden = false;
+  } else {
+    el.hidden = true;
   }
 }
 

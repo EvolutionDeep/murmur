@@ -83,11 +83,12 @@ const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
 /** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage.
- *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash); the version bump discards the
- *  pre-chain blob so the historian restarts its chain cleanly (a deterministic history, so it re-writes the
- *  same founding lines — now hash-linked — on the next cron). */
-const KEY_CHRONICLER = "chronicler:v2";
-const KEY_ANNALS = "annals:v2";
+ *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash).
+ *  v3: the historian now seeds a mature restart silently (no false "first trade"/milestone re-announcements)
+ *  and ERA_OPEN reads honestly for a mid-history start; the version bump + a one-time D1 chronicle wipe clear
+ *  the v2 migration's founding-line artifacts so the tamper-proof chain restarts clean from the present. */
+const KEY_CHRONICLER = "chronicler:v3";
+const KEY_ANNALS = "annals:v3";
 /** How many recent chronicle entries to keep hot in the DO (and serve from /annals) — bounded, DO-safe. */
 const ANNALS_CAP = 300;
 

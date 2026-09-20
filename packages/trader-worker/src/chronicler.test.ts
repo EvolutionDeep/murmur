@@ -79,6 +79,18 @@ test("FIRST_TRADE fires exactly once, on the transition from zero to non-zero se
   assert.ok(!kinds(b).includes("FIRST_TRADE"), "FIRST_TRADE must not repeat");
 });
 
+test("a fresh historian meeting a MATURE swarm seeds silently — no false 'first trade' / milestone", async () => {
+  // The v2→v3 restart case: the DO's historian state was cleared but the economy already has 22k settlements.
+  // It must open the record honestly and NOT re-announce a first trade / milestone it did not witness.
+  const c = new Chronicler();
+  const out = await c.observe(ctx({ tick: 22064, settlements: 22033, volumeUsdc: 39.65, size: 32, gini: 0.285 }));
+  assert.deepEqual(kinds(out), ["ERA_OPEN"], "only the honest opening line; the already-happened past stays quiet");
+  assert.match(out[0].text, /chronicle opens/, "the opening is framed as the record beginning, not a genesis");
+  const more = await c.observe(ctx({ tick: 22065, settlements: 22040, volumeUsdc: 39.7, size: 32, gini: 0.285 }));
+  assert.ok(!kinds(more).includes("FIRST_TRADE"), "first-trade tracker was seeded, so it never fires falsely");
+  assert.ok(!kinds(more).includes("MILESTONE"), "milestone tracker seeded to 22; nothing until 23000");
+});
+
 test("MILESTONE fires when lifetime settlements cross a 1000x multiple", async () => {
   const c = new Chronicler();
   await c.observe(ctx({ tick: 1 }));

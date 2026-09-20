@@ -47,6 +47,10 @@
     </div>
   </header>
 
+  <!-- cron heartbeat watchdog: when the DO cron stalls (lastCron grows stale) this bar surfaces so a
+       frozen feed is never mistaken for a live one. Hidden until the client sees a stale heartbeat. -->
+  <div class="cron-warn" id="cron-warn" role="alert" hidden>⚠ 史官休眠 · 数据可能已停摆</div>
+
   <!-- ============ agent economy (top-left): the x402 swarm ledger ============ -->
   <section class="panel panel-econ">
     <div class="panel-title">
@@ -328,6 +332,6 @@
 
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=29" type="module"></script>
+  <script src="./app.js?v=30" type="module"></script>
 </body>
 </html>

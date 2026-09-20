@@ -130,7 +130,7 @@ const ERA_MIN_AGE = 8;
 /** The narrative templates. `{key}` inserts tokens[key]; `{key~roman}` / `{key~kth}` / `{key~lower}` apply a
  *  tiny, fully-deterministic formatter (see renderToken). This exact map is shipped to the browser verbatim. */
 export const TEMPLATES: Record<ChronicleKind, string> = {
-  ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds open their eyes on the Arc market and begin, for the first time, to feel the price.",
+  ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds tend the swarm on the Arc market, and the chronicle opens.",
   ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
   FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
   MILESTONE: "Milestone — the ledger records its {settlements~kth} verifiable exchange. {settlements} settlements, {volumeUsdc} USDC moved.",
@@ -257,6 +257,13 @@ export class Chronicler {
       s.maxSize = ctx.size;
       s.maxGini = ctx.gini;
       s.leaderId = ctx.richestId;
+      // A FRESH historian meeting an ALREADY-MATURE swarm is a restart / re-install, not a genesis: it
+      // did not witness the first trade or the milestones already passed, so seed those trackers and stay
+      // silent about them. The (reworded) ERA_OPEN still opens the new record honestly at the current era.
+      if (ctx.settlements > 0) {
+        s.firstTradeDone = true;
+        s.lastMilestone = Math.floor(ctx.settlements / 1000);
+      }
       out.push(await this.emit(ctx, "ERA_OPEN", 3, [],
         { era: s.era, eraName: s.eraName, size: ctx.size, temperature: round(ctx.temperature) },
         { size: ctx.size, temperature: round(ctx.temperature) }));
