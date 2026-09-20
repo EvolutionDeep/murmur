@@ -29,6 +29,11 @@ function cfg(over: Partial<EconomyConfig> = {}): EconomyConfig {
     realSpendEnabled: false,
     dailyCapUsdc: 0,
     perAgentDailyCapUsdc: 0,
+    maxDealUsdc: 0,
+    netMinBroadcastUsdc: 0,
+    netFlushTicks: 0,
+    populationSize: 24,
+    hatchSeedUsdc: 0.002,
     ...over,
   };
 }

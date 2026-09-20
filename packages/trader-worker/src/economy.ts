@@ -202,6 +202,11 @@ export interface EconomyConfig {
   //     net, far less often, so real gas is amortised over more value instead of one tx per micropay. ---
   netMinBroadcastUsdc: number;     // min |net| per pair before it is broadcast (below ⇒ dust carries forward)
   netFlushTicks: number;           // force-flush any nonzero pending net at least every N sub-ticks (0 = never)
+  // --- live-population GROWTH: a HATCHED offspring (id >= populationSize) opens its DISPLAY mirror at the
+  //     REAL bootstrap its parent funded it with (hatchSeedUsdc), not the genesis initialBalance — otherwise
+  //     the frontend would show a newborn as fake-rich (wrong wallet number AND wrong wealth-ramp size/colour).
+  populationSize: number;          // fixed genesis cohort size; ids >= this are hatched offspring
+  hatchSeedUsdc: number;           // real USDC a parent funds each hatched child's wallet with (its opening mirror)
 }
 
 /**
@@ -313,15 +318,22 @@ export class AgentEconomy {
    * In ONCHAIN mode initialBalance is only the seed of the internal DISPLAY mirror — the real spendable
    * balance is whatever USDC the operator actually funded that HD address with, and the facilitator
    * re-reads it on-chain before every transfer (the mirror never authorises a real spend).
+   *
+   * A HATCHED offspring (id >= populationSize) opens its mirror at the REAL bootstrap its parent funded it
+   * with (hatchSeedUsdc), NOT the genesis initialBalance — so a newborn shows as the poor fly it actually is
+   * (correct wallet number AND correct wealth-ramp size/colour) instead of a fake-rich 6 USDC it can't spend.
    */
   private ensureAgents(readings: FlyReading[]): void {
     for (const r of readings) {
       if (this.indexOfId.has(r.id)) continue;
       const idx = this.agents.length;
+      // Genesis ids open at initialBalance; hatched offspring (id >= populationSize) open at their real
+      // parent-funded bootstrap so the display mirror matches the on-chain balance the facilitator enforces.
+      const openingUsdc = r.id < this.cfg.populationSize ? this.cfg.initialBalanceUsdc : this.cfg.hatchSeedUsdc;
       this.agents.push({
         id: r.id,
         address: this.addressOf(r.id),
-        balance: usdcToAtomic(this.cfg.initialBalanceUsdc),
+        balance: usdcToAtomic(openingUsdc),
         paid: "0",
         earned: "0",
         deals: 0,

@@ -105,7 +105,8 @@ function simCfg(over: Partial<EconomyConfig> = {}): EconomyConfig {
     enabled: true, network: "arc", initialBalanceUsdc: 6, basePriceUsdc: 0.002,
     solvencyFloorUsdc: 0.5, maxDealsPerTick: 24, facilitatorMode: "simulated",
     seedBase: 42, realSpendEnabled: false, dailyCapUsdc: 0, perAgentDailyCapUsdc: 0,
-    maxDealUsdc: 0, netMinBroadcastUsdc: 0, netFlushTicks: 0, ...over,
+    maxDealUsdc: 0, netMinBroadcastUsdc: 0, netFlushTicks: 0,
+    populationSize: 24, hatchSeedUsdc: 0.002, ...over,
   };
 }
 

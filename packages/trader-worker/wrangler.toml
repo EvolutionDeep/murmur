@@ -217,7 +217,7 @@ EVOLUTION_TREASURY = "0x307D8a9333Bd3e4FCe93FfAC6468eB7478423a0d"   # revenue ad
 EVOLUTION_FEE_USDC = "0.002"                  # breeding fee per offspring (USDC), paid by the parent from its own wallet (~1 base good)
 EVOLUTION_MAX_PER_CRON = "1"                  # max offspring bred per cron tick (bounds CPU + spend); 0 = disabled
 EVOLUTION_PER_AGENT_DAILY = "1"               # max offspring ONE agent may fund per UTC day; 0 = no per-agent limit
-EVOLUTION_GLOBAL_DAILY = "4"                  # max offspring bred per UTC day across the whole swarm; 0 = no global limit
+EVOLUTION_GLOBAL_DAILY = "12"                 # max offspring bred per UTC day across the whole swarm (raised 4→12 so the live population can grow toward the cap 48); 0 = no global limit
 EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, P(cross the top two) else mutate the champion
 
 # ----- Live-population GROWTH (Phase C — hatch bred offspring into REAL trading flies) -----

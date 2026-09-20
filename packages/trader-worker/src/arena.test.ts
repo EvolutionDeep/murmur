@@ -52,6 +52,8 @@ function econCfg(over: Partial<EconomyConfig> = {}): EconomyConfig {
     maxDealUsdc: 0.05,
     netMinBroadcastUsdc: 0.004,
     netFlushTicks: 30,
+    populationSize: 24,
+    hatchSeedUsdc: 0.002,
     ...over,
   };
 }

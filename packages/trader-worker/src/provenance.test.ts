@@ -96,6 +96,8 @@ function cfg(over: Partial<EconomyConfig> = {}): EconomyConfig {
     maxDealUsdc: 1,
     netMinBroadcastUsdc: 0,   // broadcast every nonzero net immediately (no dust waiting)
     netFlushTicks: 0,
+    populationSize: 24,
+    hatchSeedUsdc: 0.002,
     ...over,
   };
 }

@@ -197,6 +197,10 @@ export class FlyStateDO {
       maxDealUsdc: this.cfg.economy.maxDealUsdc,
       netMinBroadcastUsdc: this.cfg.economy.netMinBroadcastUsdc,
       netFlushTicks: this.cfg.economy.netFlushTicks,
+      // A hatched offspring (id >= populationSize) opens its display mirror at its real parent-funded
+      // bootstrap, not the genesis initialBalance, so the frontend shows a newborn's true (tiny) wallet.
+      populationSize: this.cfg.populationSize,
+      hatchSeedUsdc: this.cfg.evolution.hatchSeedUsdc,
     };
   }
 
