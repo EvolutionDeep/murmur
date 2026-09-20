@@ -171,7 +171,7 @@ export class Chronicler {
       if (th > s.lastMilestone) {
         s.lastMilestone = th;
         out.push(this.emit(ctx, "MILESTONE", 2, [],
-          `Milestone — the ledger records its ${romanUnit(th * 1000)}th verifiable exchange. ${ctx.settlements} settlements, ${round(ctx.volumeUsdc)} USDC moved.`,
+          `Milestone — the ledger records its ${romanUnit(th * 1000)} verifiable exchange. ${ctx.settlements} settlements, ${round(ctx.volumeUsdc)} USDC moved.`,
           { settlements: ctx.settlements, volumeUsdc: round(ctx.volumeUsdc) }));
       }
     }
@@ -297,10 +297,11 @@ function round(x: number): number { return Math.round(clamp100(x) * 1000) / 1000
 function clamp100(x: number): number { return Number.isFinite(x) ? Math.max(-1e9, Math.min(1e9, x)) : 0; }
 
 function romanUnit(n: number): string {
-  // friendly count words for big numbers ("one thousandth", "twenty thousandth")
+  // friendly ordinal words for milestone counts ("one thousandth", "twenty thousandth", …).
+  // The caller treats this as a complete ordinal — it MUST already end in "th".
   const k = Math.round(n / 1000);
   const words = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "twenty"];
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
   const w = words[k] ?? String(k);
-  return k <= 1 ? "one thousandth" : `${w} thousandth`;
+  return `${w} thousandth`;
 }
