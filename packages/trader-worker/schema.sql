@@ -72,3 +72,20 @@ CREATE TABLE IF NOT EXISTS community_votes (
   sig         TEXT    NOT NULL,             -- EIP-712 Vote signature (a re-vote replaces the row)
   PRIMARY KEY (proposal_id, voter)
 );
+
+-- Append-only vote-event log. community_votes keeps ONLY each voter's current ballot (INSERT OR REPLACE), which
+-- is enough for the live tally but erases history. This table records EVERY vote and re-vote as an immutable event
+-- so GET /community/timeline can rebuild the point-in-time cumulative curve and the per-proposal tally graph —
+-- i.e. a late, large swing by a whale is visible on the chart instead of silently overwriting the outcome.
+-- recorded_at is server time (stable ordering); ts is the client-signed time. sig UNIQUE ⇒ replay-safe.
+CREATE TABLE IF NOT EXISTS community_vote_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_id INTEGER NOT NULL,
+  voter       TEXT    NOT NULL,             -- lowercased 0x…40 voter
+  choice      INTEGER NOT NULL,             -- 0 against | 1 for | 2 abstain
+  weight      TEXT    NOT NULL,             -- MURMUR balanceOf(voter) at that vote (raw decimal string)
+  ts          INTEGER NOT NULL,             -- client-signed unix ms
+  recorded_at INTEGER NOT NULL,             -- server unix ms when the worker accepted the vote
+  sig         TEXT    NOT NULL UNIQUE       -- EIP-712 Vote signature (a re-vote re-signs with a fresh ts)
+);
+CREATE INDEX IF NOT EXISTS idx_community_vote_events_proposal ON community_vote_events (proposal_id, recorded_at);

@@ -330,6 +330,58 @@ const COMMUNITY_GATE = {
   },
 } as const;
 
+const COMMUNITY_TIMELINE_POINT = {
+  type: "object",
+  description:
+    "One point on a proposal's cumulative tally curve: the weighted For/Against/Abstain totals immediately AFTER the accompanying vote event. Rebuilt from the append-only event log, so it stays correct across re-votes. `event.isLeadChange` flags every flip of the leading option — a late whale swing shows up as a sharp, flagged step rather than a silent overwrite.",
+  additionalProperties: false,
+  properties: {
+    ts: { type: "integer", description: "Client-signed unix ms of the vote that produced this point." },
+    recordedAt: { type: "integer", description: "Server unix ms when the worker accepted it (stable ordering)." },
+    for: { type: "string", description: "Cumulative weight FOR after this event (raw 18dp)." },
+    against: { type: "string", description: "Cumulative weight AGAINST (raw)." },
+    abstain: { type: "string", description: "Cumulative weight ABSTAIN (raw)." },
+    total: { type: "string", description: "for + against + abstain (raw)." },
+    forFmt: { type: "string" },
+    againstFmt: { type: "string" },
+    abstainFmt: { type: "string" },
+    voters: { type: "integer", description: "Distinct voters whose ballot is live at this point." },
+    leader: { type: "string", enum: ["for", "against", "abstain", "none"], description: "Leading option at this point." },
+    event: {
+      type: "object",
+      additionalProperties: false,
+      description: "The vote that produced this point.",
+      properties: {
+        voter: { type: "string", description: "Lowercased 0x… voter." },
+        choice: { type: "integer", enum: [0, 1, 2], description: "0 against · 1 for · 2 abstain." },
+        weight: { type: "string", description: "That voter's balanceOf at vote time (raw)." },
+        weightFmt: { type: "string" },
+        ts: { type: "integer" },
+        recordedAt: { type: "integer" },
+        isRevote: { type: "boolean", description: "True when this replaced the voter's earlier ballot." },
+        isLeadChange: { type: "boolean", description: "True when the leading option flipped at this point." },
+      },
+    },
+  },
+} as const;
+
+const COMMUNITY_TIMELINE = {
+  type: "object",
+  description:
+    "A proposal's full voting history as a point-in-time cumulative curve — the data behind the per-proposal tally graph. `tally` is the authoritative current tally (one live ballot per voter); `series` is the ordered curve rebuilt from every vote and re-vote, so how the result evolved (including any last-hour swing) is fully transparent.",
+  additionalProperties: false,
+  properties: {
+    proposalId: { type: "integer" },
+    start: { type: "integer", description: "Proposal creation unix ms." },
+    deadline: { type: "integer", description: "Voting closes at this unix ms." },
+    now: { type: "integer" },
+    open: { type: "boolean", description: "now < deadline." },
+    tally: COMMUNITY_TALLY,
+    series: { type: "array", items: COMMUNITY_TIMELINE_POINT, description: "Cumulative tally after each vote event, oldest first." },
+    eventCount: { type: "integer", description: "Number of vote events (== series length)." },
+  },
+} as const;
+
 function ok(schema: unknown, description: string) {
   return {
     response: {
@@ -1034,6 +1086,17 @@ export const OPENAPI_SPEC = {
         ...ok({ $ref: "#/components/schemas/CommunityGate" }, "The gate check.").response,
       },
     },
+    "/community/timeline": {
+      get: {
+        tags: ["community"],
+        operationId: "getCommunityTimeline",
+        summary: "A proposal's vote timeline + cumulative tally curve",
+        description:
+          "Free + keyless. Rebuilds the point-in-time weighted tally from the append-only vote-event log: every vote and re-vote with its voter, choice, weight and timestamp, plus the cumulative For/Against/Abstain curve and an explicit flag whenever the leading option flips. This is the data behind each proposal's tally graph — it makes a late, large swing by a whale visible instead of silent. `tally` is the authoritative current total; `series` is the ordered curve.",
+        parameters: [{ name: "id", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "The proposal id.", example: 1 }],
+        ...ok({ $ref: "#/components/schemas/CommunityTimeline" }, "The vote timeline + cumulative curve.").response,
+      },
+    },
     "/community/post": {
       post: {
         tags: ["community"],
@@ -1064,7 +1127,7 @@ export const OPENAPI_SPEC = {
         operationId: "postCommunityVote",
         summary: "Sign to vote (weighted by your balance)",
         description:
-          "Requires an EIP-712 **Vote** signature over `{author, proposalId, choice, ts}` AND `balanceOf(author) ≥ speak-min`, while the proposal is still open (`now ≤ deadline`). Your weight is your `balanceOf` at vote time. One vote per (proposal, voter) — re-voting replaces your previous choice (latest wins). `choice`: 0 against, 1 for, 2 abstain.",
+          "Requires an EIP-712 **Vote** signature over `{author, proposalId, choice, ts}` AND `balanceOf(author) ≥ speak-min`, while the proposal is still open (`now ≤ deadline`). Your weight is your `balanceOf` at vote time. One vote per (proposal, voter) — re-voting replaces your previous choice (latest wins). `choice`: 0 against, 1 for, 2 abstain. Every vote and re-vote is ALSO recorded as an immutable event, so `GET /community/timeline?id=` can show exactly how the tally evolved — a late swing can't hide.",
         requestBody: {
           required: true,
           content: {
@@ -1099,6 +1162,7 @@ export const OPENAPI_SPEC = {
       CommunityProposal: COMMUNITY_PROPOSAL,
       CommunityTally: COMMUNITY_TALLY,
       CommunityGate: COMMUNITY_GATE,
+      CommunityTimeline: COMMUNITY_TIMELINE,
     },
   },
 } as const;

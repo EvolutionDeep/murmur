@@ -149,6 +149,33 @@
     .reply .r-meta { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
     .reply .r-body { white-space: pre-wrap; word-break: break-word; color: rgba(var(--ink-rgb), 0.85); }
 
+    /* ---- tally graph (per-proposal vote timeline) ---- */
+    .chart-wrap { margin-top: 16px; border-top: 1px solid var(--hair-soft); padding-top: 14px; }
+    .chart-head { font-size: 11.5px; color: var(--muted); letter-spacing: 0.03em; margin-bottom: 10px; }
+    .chart-head b { color: var(--ink); font-weight: 500; }
+    .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .chart-svg .grid { stroke: var(--hair-soft); stroke-width: 1; }
+    .chart-svg .axis { fill: var(--muted); font-size: 9px; font-family: var(--mono); }
+    .chart-svg .line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+    .chart-svg .line.for { stroke: var(--for); }
+    .chart-svg .line.against { stroke: var(--against); }
+    .chart-svg .line.abstain { stroke: var(--abstain); }
+    .chart-svg .flip { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+    .chart-svg .flipdot { fill: var(--accent); }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+    .chart-legend .dash { display: inline-block; width: 14px; height: 0; border-top: 1px dashed var(--accent); vertical-align: middle; margin-right: 5px; }
+    .swing { margin-top: 12px; font-size: 12px; line-height: 1.5; padding: 10px 13px; border-radius: 10px; border: 1px solid rgba(180,85,60,0.35); background: rgba(180,85,60,0.07); color: var(--against); }
+    .swing b { font-weight: 500; color: var(--ink); }
+    .chart-events { margin-top: 12px; }
+    .ev { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; font-size: 11px; color: var(--muted); padding: 6px 0; border-bottom: 1px solid var(--hair-soft); }
+    .ev:last-child { border-bottom: none; }
+    .ev .who { color: var(--ink); }
+    .ev .ch { font-weight: 500; }
+    .ev .ch.for { color: var(--for); } .ev .ch.against { color: var(--against); } .ev .ch.abstain { color: var(--abstain); }
+    .ev .wt { color: var(--accent); }
+    .ev .flagml { font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--hair); color: var(--muted); }
+    .ev .flagml.flip { color: var(--accent); border-color: rgba(154,140,110,0.5); }
+
     /* ---- feed ---- */
     .post { border-bottom: 1px solid var(--hair-soft); padding: 14px 0; }
     .post:first-child { border-top: 1px solid var(--hair-soft); }
@@ -265,6 +292,6 @@
     <span style="margin-left:auto">voice = MURMUR balance · tallies off-chain · non-custodial</span>
   </footer>
 
-  <script type="module" src="./community.js?v=1"></script>
+  <script type="module" src="./community.js?v=2"></script>
 </body>
 </html>

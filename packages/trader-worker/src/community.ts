@@ -34,6 +34,8 @@ export const TS_WINDOW_SEC = 300;
 /** Max rows a single read endpoint returns. */
 export const MAX_LIMIT = 100;
 export const DEFAULT_LIMIT = 25;
+/** Max vote events a single proposal timeline returns (bounds the graph payload). */
+export const MAX_TIMELINE_EVENTS = 1000;
 
 /** EIP-712 domain (chainId is added at runtime from cfg so mainnet/testnet both work). */
 export const DOMAIN_NAME = "murmur community";
@@ -163,6 +165,108 @@ export function tallyJson(t: Tally) {
   };
 }
 
+export interface TimelineEvent {
+  voter: string;
+  choice: 0 | 1 | 2;
+  weight: string; // raw 18dp
+  weightFmt: string;
+  ts: number; // client-signed unix ms
+  recordedAt: number; // server unix ms (stable ordering)
+  isRevote: boolean; // this voter already had a live vote on the proposal
+  isLeadChange: boolean; // the leading option changed at this point
+}
+
+export interface TimelinePoint {
+  ts: number;
+  recordedAt: number;
+  for: string;
+  against: string;
+  abstain: string;
+  total: string;
+  forFmt: string;
+  againstFmt: string;
+  abstainFmt: string;
+  voters: number;
+  leader: "for" | "against" | "abstain" | "none";
+  event: TimelineEvent;
+}
+
+/**
+ * Rebuild the point-in-time weighted tally from the append-only vote-event log. Events are applied in
+ * server-record order; a re-vote first REMOVES that voter's previous (choice, weight) before adding the new
+ * one, so the cumulative curve stays correct across vote changes. Each returned point is the tally immediately
+ * AFTER that event — this is what the per-proposal graph plots, and `isLeadChange` marks every flip of the
+ * leading option, so a late, large swing (a whale landing in the final hour) is glaring rather than buried.
+ */
+export function buildTimeline(
+  events: Array<{ voter: string; choice: number; weight: string; ts: number; recorded_at: number }>,
+): TimelinePoint[] {
+  const ordered = [...events].sort((a, b) => a.recorded_at - b.recorded_at || a.ts - b.ts);
+  const current = new Map<string, { choice: number; weight: bigint }>();
+  const toW = (s: string): bigint => {
+    try {
+      return BigInt(s);
+    } catch {
+      return 0n;
+    }
+  };
+  let against = 0n;
+  let forVotes = 0n;
+  let abstain = 0n;
+  const apply = (choice: number, weight: bigint, sign: 1n | -1n) => {
+    const d = sign * weight;
+    if (choice === CHOICE.against) against += d;
+    else if (choice === CHOICE.for) forVotes += d;
+    else if (choice === CHOICE.abstain) abstain += d;
+  };
+  const leaderOf = (): "for" | "against" | "abstain" | "none" => {
+    let best: "for" | "against" | "abstain" | "none" = "none";
+    let bv = 0n;
+    if (forVotes > bv) { bv = forVotes; best = "for"; }
+    if (against > bv) { bv = against; best = "against"; }
+    if (abstain > bv) { bv = abstain; best = "abstain"; }
+    return best;
+  };
+  let prevLeader = leaderOf();
+  const out: TimelinePoint[] = [];
+  for (const e of ordered) {
+    const weight = toW(e.weight);
+    const prev = current.get(e.voter);
+    const isRevote = prev != null;
+    if (prev) apply(prev.choice, prev.weight, -1n);
+    apply(e.choice, weight, 1n);
+    current.set(e.voter, { choice: e.choice, weight });
+    const leader = leaderOf();
+    const isLeadChange = leader !== prevLeader;
+    prevLeader = leader;
+    const choice = (e.choice === 1 || e.choice === 2 ? e.choice : 0) as 0 | 1 | 2;
+    out.push({
+      ts: e.ts,
+      recordedAt: e.recorded_at,
+      for: forVotes.toString(),
+      against: against.toString(),
+      abstain: abstain.toString(),
+      total: (forVotes + against + abstain).toString(),
+      forFmt: formatUnits(forVotes, 18),
+      againstFmt: formatUnits(against, 18),
+      abstainFmt: formatUnits(abstain, 18),
+      voters: current.size,
+      leader,
+      event: {
+        voter: e.voter,
+        choice,
+        weight: e.weight,
+        weightFmt: safeFmt(e.weight),
+        ts: e.ts,
+        recordedAt: e.recorded_at,
+        isRevote,
+        isLeadChange,
+      },
+    });
+  }
+  return out;
+}
+
 export type VerifyOk = { ok: true; signer: Address };
 export type VerifyErr = { ok: false; status: number; code: CommunityErrorCode; reason: string };
 
@@ -252,6 +356,21 @@ export async function ensureCommunitySchema(db: D1Database): Promise<void> {
          PRIMARY KEY (proposal_id, voter)
        )`,
     ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS community_vote_events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         proposal_id INTEGER NOT NULL,
+         voter TEXT NOT NULL,
+         choice INTEGER NOT NULL,
+         weight TEXT NOT NULL,
+         ts INTEGER NOT NULL,
+         recorded_at INTEGER NOT NULL,
+         sig TEXT NOT NULL UNIQUE
+       )`,
+    ),
+    db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_community_vote_events_proposal ON community_vote_events (proposal_id, recorded_at)`,
+    ),
   ]);
   schemaReady = true;
 }
@@ -284,6 +403,13 @@ interface VoteRow {
   proposal_id: number;
   choice: number;
   weight: string;
+}
+interface VoteEventRow {
+  voter: string;
+  choice: number;
+  weight: string;
+  ts: number;
+  recorded_at: number;
 }
 
 /** Serialise a post row for the API (raw + human balance). */
@@ -408,6 +534,7 @@ export async function handleCommunity(ctx: CommunityHandlerContext): Promise<Res
       if (seg === "proposals") return await getProposals(db, url);
       if (seg === "proposal") return await getProposal(db, url);
       if (seg === "gate") return await getGate(db, cfg, url);
+      if (seg === "timeline") return await getTimeline(db, url);
       return jsonError("not_found", `no such community endpoint: GET /community/${seg}`, 404);
     }
 
@@ -450,6 +577,7 @@ function communityIndex(c: RuntimeConfig["community"]) {
       "GET  /community/proposals?limit=&status= proposals + weighted tallies (status=open|closed)",
       "GET  /community/proposal?id=               one proposal + tally + its replies",
       "GET  /community/gate?address=              live MURMUR balance + canSpeak/canPropose",
+      "GET  /community/timeline?id=               per-proposal vote timeline + cumulative tally graph",
       "POST /community/post                       {author, body, proposalId?, ts, sig}",
       "POST /community/proposal                   {author, title, body, ts, sig}",
       "POST /community/vote                       {author, proposalId, choice, ts, sig}",
@@ -586,6 +714,37 @@ async function getGate(_db: D1Database, cfg: RuntimeConfig, url: URL): Promise<R
     speakMinFmt: formatUnits(c.speakMinRaw, 18),
     proposeMinFmt: formatUnits(c.proposeMinRaw, 18),
     token: c.token,
+  });
+}
+
+// ---- GET /community/timeline?id= ----
+async function getTimeline(db: D1Database, url: URL): Promise<Response> {
+  const id = Number(url.searchParams.get("id"));
+  if (!Number.isFinite(id) || id <= 0) return jsonError("bad_request", "id must be a positive integer", 400);
+  const prop = await db
+    .prepare(`SELECT id, ts, deadline FROM community_proposals WHERE id = ?`)
+    .bind(id)
+    .first<{ id: number; ts: number; deadline: number }>();
+  if (!prop) return jsonError("not_found", `proposal ${id} not found`, 404);
+  const { results } = await db
+    .prepare(
+      `SELECT voter, choice, weight, ts, recorded_at FROM community_vote_events
+       WHERE proposal_id = ? ORDER BY recorded_at ASC, ts ASC LIMIT ?`,
+    )
+    .bind(id, MAX_TIMELINE_EVENTS)
+    .all<VoteEventRow>();
+  const series = buildTimeline((results ?? []) as VoteEventRow[]);
+  return json({
+    proposalId: id,
+    start: prop.ts,
+    deadline: prop.deadline,
+    now: Date.now(),
+    open: Date.now() < prop.deadline,
+    // `tally` is the authoritative current tally (from community_votes, one row per voter);
+    // `series` is the point-in-time curve rebuilt from the append-only event log (they agree at the tail).
+    tally: tallyJson(await tallyForProposal(db, id)),
+    series,
+    eventCount: series.length,
   });
 }
 
@@ -785,6 +944,15 @@ async function postVote(db: D1Database, cfg: RuntimeConfig, request: Request): P
       `INSERT OR REPLACE INTO community_votes (proposal_id, voter, choice, weight, ts, sig) VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .bind(proposalId, author, choice, bal.toString(), ts, str(b.sig))
+    .run();
+  // Append-only event log ⇒ the per-proposal tally graph can show the FULL history (including re-votes), so a
+  // late, large swing is visible rather than silent. UNIQUE(sig) keeps this replay-safe (a re-vote re-signs with
+  // a fresh ts, so it is a distinct event, never a duplicate of the original).
+  await db
+    .prepare(
+      `INSERT INTO community_vote_events (proposal_id, voter, choice, weight, ts, recorded_at, sig) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(proposalId, author, choice, bal.toString(), ts, Date.now(), str(b.sig))
     .run();
   const tally = tallyJson(await tallyForProposal(db, proposalId));
   return json({ ok: true, proposalId, choice, weight: bal.toString(), weightFmt: formatUnits(bal, 18), tally });

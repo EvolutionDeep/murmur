@@ -26,6 +26,7 @@ import {
   tallyVotes,
   tallyJson,
   verifyCommunitySignature,
+  buildTimeline,
   TS_WINDOW_SEC,
 } from "./community.js";
 
@@ -238,4 +239,86 @@ test("a malformed signature is a 400 and an unrecoverable one is a 401", async (
 
   const garbage = await verifyCommunitySignature({ chainId: CHAIN, primaryType: "Post", message, signature: "0x" + "11".repeat(65), claimedAuthor: acct.address });
   assert.equal(garbage.ok, false);
+});
+
+// ============================== vote timeline (append-only, point-in-time) ==============================
+// This is the transparency layer that answers the "a late whale can swing the tally" critique: every vote AND
+// re-vote is an immutable event, and buildTimeline rebuilds the cumulative curve so a last-hour swing is visible.
+
+const W = (n: bigint) => (n * 10n ** 18n).toString(); // n whole MURMUR → raw 18dp string
+const VA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const VB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const VC = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+test("buildTimeline is empty for no events", () => {
+  assert.deepEqual(buildTimeline([]), []);
+});
+
+test("buildTimeline accumulates point-in-time across distinct voters", () => {
+  const series = buildTimeline([
+    { voter: VA, choice: 1, weight: W(10n), ts: 1000, recorded_at: 1000 }, // for 10
+    { voter: VB, choice: 0, weight: W(4n), ts: 2000, recorded_at: 2000 },   // against 4
+    { voter: VC, choice: 1, weight: W(6n), ts: 3000, recorded_at: 3000 },   // for +6 = 16
+  ]);
+  assert.equal(series.length, 3);
+  assert.equal(series[0].for, W(10n));
+  assert.equal(series[0].against, "0");
+  assert.equal(series[1].against, W(4n));
+  assert.equal(series[2].for, W(16n));
+  assert.equal(series[2].total, W(20n));
+  assert.equal(series[2].voters, 3);
+  assert.equal(series[2].leader, "for");
+});
+
+test("a re-vote removes the old weight before adding the new (isRevote, voters unchanged, never double-counted)", () => {
+  const series = buildTimeline([
+    { voter: VA, choice: 1, weight: W(10n), ts: 1000, recorded_at: 1000 }, // for 10
+    { voter: VA, choice: 0, weight: W(10n), ts: 5000, recorded_at: 5000 }, // A flips to against 10
+  ]);
+  assert.equal(series[1].event.isRevote, true);
+  assert.equal(series[1].for, "0");        // the old FOR weight is removed
+  assert.equal(series[1].against, W(10n)); // the new AGAINST weight is added
+  assert.equal(series[1].voters, 1);       // still one distinct voter
+  assert.equal(series[1].total, W(10n));   // total never double-counts A
+});
+
+test("buildTimeline flags every lead change (the whale-swing signal)", () => {
+  const series = buildTimeline([
+    { voter: VA, choice: 1, weight: W(5n), ts: 1000, recorded_at: 1000 },   // for 5  → leader for (from none)
+    { voter: VB, choice: 0, weight: W(3n), ts: 2000, recorded_at: 2000 },   // against 3 → still for
+    { voter: VC, choice: 0, weight: W(50n), ts: 3000, recorded_at: 3000 },  // against 53 → flips to against (WHALE)
+  ]);
+  assert.equal(series[0].event.isLeadChange, true); // none → for
+  assert.equal(series[0].leader, "for");
+  assert.equal(series[1].event.isLeadChange, false); // still for
+  assert.equal(series[1].leader, "for");
+  assert.equal(series[2].event.isLeadChange, true); // for → against
+  assert.equal(series[2].leader, "against");
+});
+
+test("buildTimeline orders by recorded_at even if the input array is shuffled", () => {
+  const series = buildTimeline([
+    { voter: VB, choice: 0, weight: W(2n), ts: 20, recorded_at: 2000 },
+    { voter: VA, choice: 1, weight: W(1n), ts: 10, recorded_at: 1000 },
+  ]);
+  assert.equal(series[0].event.voter, VA); // recorded_at 1000 sorts first
+  assert.equal(series[1].event.voter, VB);
+});
+
+test("the timeline tail equals the authoritative dedup-by-voter tally (community_votes)", () => {
+  const series = buildTimeline([
+    { voter: VA, choice: 1, weight: W(10n), ts: 1000, recorded_at: 1000 },
+    { voter: VB, choice: 1, weight: W(5n), ts: 2000, recorded_at: 2000 },
+    { voter: VA, choice: 0, weight: W(10n), ts: 3000, recorded_at: 3000 }, // A re-votes against
+  ]);
+  const last = series[series.length - 1];
+  // community_votes would hold exactly: A = against 10, B = for 5.
+  const authoritative = tallyVotes([
+    { choice: 0, weight: W(10n) },
+    { choice: 1, weight: W(5n) },
+  ]);
+  assert.equal(last.against, authoritative.against.toString());
+  assert.equal(last.for, authoritative.forVotes.toString());
+  assert.equal(last.voters, authoritative.voters);
+  assert.equal(last.total, authoritative.total.toString());
 });

@@ -398,8 +398,10 @@ function proposalCard(p) {
       ${tallyBar(p.tally || {})}
       <div class="vote-row">
         ${voteRow}
+        <button class="vbtn" data-chart="${p.id}" type="button">tally graph</button>
         <button class="vbtn" data-reply="${p.id}" type="button">reply</button>
       </div>
+      <div class="chart hidden" data-chartbox="${p.id}"></div>
       <div class="replies hidden" data-replies="${p.id}"></div>
     </div>`;
 }
@@ -418,6 +420,9 @@ function renderProposals(list, _now) {
   });
   host.querySelectorAll(".vbtn[data-reply]").forEach((b) => {
     b.addEventListener("click", () => toggleReplies(Number(b.dataset.reply)));
+  });
+  host.querySelectorAll(".vbtn[data-chart]").forEach((b) => {
+    b.addEventListener("click", () => toggleChart(Number(b.dataset.chart)));
   });
 }
 
@@ -450,6 +455,161 @@ async function loadReplies(id) {
   } catch (e) {
     box.innerHTML = `<p class="err">could not load replies: ${esc(e.message)}</p>`;
   }
+}
+
+// ============================== tally graph (per-proposal vote timeline) ==============================
+//
+// The graph is the transparency answer to "a late whale can swing the tally": every vote and re-vote is an
+// append-only event, and we draw the cumulative For/Against/Abstain weight over the voting window as a
+// step-after curve. Lead flips get a dashed marker, and a flip in the final quarter of the window is called
+// out explicitly, so a last-hour whale move is visible to everyone instead of silently overwriting the result.
+
+/** Compact a number for axis labels (1.2M, 340K, …). */
+function compactNum(n) {
+  n = Number(n);
+  if (!isFinite(n)) return "0";
+  const a = Math.abs(n);
+  const r = (v, s) => v.toFixed(1).replace(/\.0$/, "") + s;
+  if (a >= 1e9) return r(n / 1e9, "B");
+  if (a >= 1e6) return r(n / 1e6, "M");
+  if (a >= 1e3) return r(n / 1e3, "K");
+  return a > 0 && a < 10 ? n.toFixed(1).replace(/\.0$/, "") : String(Math.round(n));
+}
+
+/** UTC "M/D HH:MM" for axis + event timestamps. */
+function fmtDate(ms) {
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return "";
+  const p = (x) => String(x).padStart(2, "0");
+  return `${d.getUTCMonth() + 1}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+const choiceLabel = (c) => (Number(c) === 1 ? "for" : Number(c) === 0 ? "against" : "abstain");
+
+async function toggleChart(id) {
+  const box = document.querySelector(`[data-chartbox="${id}"]`);
+  if (!box) return;
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.innerHTML = '<p class="loading">loading tally graph…</p>';
+  try {
+    const tl = await apiGet("/community/timeline?id=" + id);
+    box.innerHTML = `<div class="chart-wrap">${renderTallyGraph(tl)}</div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="err">could not load the tally graph: ${esc(e.message)}</p>`;
+  }
+}
+
+/** Build the SVG step chart + legend + late-swing callout + recent-event list from a /community/timeline payload. */
+function renderTallyGraph(tl) {
+  const series = Array.isArray(tl.series) ? tl.series : [];
+  if (!series.length) {
+    return `<div class="chart-head">no votes yet — the curve appears the moment the first ballot lands.</div>`;
+  }
+
+  const W = 680, H = 210, padL = 46, padR = 14, padT = 14, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  // X domain: the proposal window, expanded to include any event timestamps that fall outside it.
+  let tMin = Number(tl.start), tMax = Number(tl.deadline);
+  for (const p of series) {
+    const t = Number(p.recordedAt);
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+  }
+  if (!(tMax > tMin)) tMax = tMin + 1;
+  const span = tMax - tMin;
+  const x = (t) => padL + ((Number(t) - tMin) / span) * plotW;
+
+  // Y domain: highest cumulative weight, with headroom so the top line isn't flush with the frame.
+  let vMax = 0;
+  for (const p of series) vMax = Math.max(vMax, Number(p.forFmt || 0), Number(p.againstFmt || 0), Number(p.abstainFmt || 0));
+  vMax = vMax > 0 ? vMax * 1.12 : 1;
+  const y = (v) => padT + plotH - (Number(v) / vMax) * plotH;
+
+  // step-after: hold the previous cumulative value up to the event time, then jump to the new value.
+  const stepPath = (key) => {
+    let d = `M ${x(tMin).toFixed(1)} ${y(0).toFixed(1)}`, prev = 0;
+    for (const p of series) {
+      const xi = x(p.recordedAt).toFixed(1), v = Number(p[key] || 0);
+      d += ` L ${xi} ${y(prev).toFixed(1)} L ${xi} ${y(v).toFixed(1)}`;
+      prev = v;
+    }
+    return d + ` L ${x(tMax).toFixed(1)} ${y(prev).toFixed(1)}`;
+  };
+
+  let grid = "";
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const val = (vMax / ticks) * i, yy = y(val);
+    grid += `<line class="grid" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W - padR}" y2="${yy.toFixed(1)}" />`;
+    grid += `<text class="axis" x="${padL - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end">${esc(compactNum(val))}</text>`;
+  }
+
+  // Lead-flip markers: the whale-swing signal, drawn as dashed verticals so they read on any line.
+  let flips = "";
+  for (const p of series) {
+    if (p.event && p.event.isLeadChange) {
+      const xi = x(p.recordedAt).toFixed(1);
+      flips += `<line class="flip" x1="${xi}" y1="${padT}" x2="${xi}" y2="${(padT + plotH).toFixed(1)}" />`;
+      flips += `<circle class="flipdot" cx="${xi}" cy="${padT}" r="2.2" />`;
+    }
+  }
+
+  const svg = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative MURMUR-weighted tally across the voting window">`
+    + grid
+    + `<path class="line abstain" d="${stepPath("abstainFmt")}" />`
+    + `<path class="line against" d="${stepPath("againstFmt")}" />`
+    + `<path class="line for" d="${stepPath("forFmt")}" />`
+    + flips
+    + `<text class="axis" x="${padL}" y="${H - 8}" text-anchor="start">opens ${esc(fmtDate(tl.start))}</text>`
+    + `<text class="axis" x="${W - padR}" y="${H - 8}" text-anchor="end">closes ${esc(fmtDate(tl.deadline))}</text>`
+    + `</svg>`;
+
+  const legend = `<div class="chart-legend">`
+    + `<span><i class="swatch" style="background:var(--for)"></i>for</span>`
+    + `<span><i class="swatch" style="background:var(--against)"></i>against</span>`
+    + `<span><i class="swatch" style="background:var(--abstain)"></i>abstain</span>`
+    + `<span><i class="dash"></i>lead-flip</span>`
+    + `</div>`;
+
+  // Late swing: a lead-flip in the final quarter of the window — exactly the whale scenario the curve exposes.
+  const lateCut = tMin + span * 0.75;
+  let swing = null;
+  for (const p of series) {
+    if (p.event && p.event.isLeadChange && Number(p.recordedAt) >= lateCut) {
+      if (!swing || Number(p.event.weightFmt || 0) > Number(swing.event.weightFmt || 0)) swing = p;
+    }
+  }
+  let swingBox = "";
+  if (swing) {
+    const before = Math.max(0, Number(tl.deadline) - Number(swing.recordedAt));
+    const whenTxt = before >= 3600000 ? Math.max(1, Math.round(before / 3600000)) + "h" : Math.max(1, Math.round(before / 60000)) + "m";
+    swingBox = `<div class="swing"><b>late swing</b> — ${esc(shortAddr(swing.event.voter))} cast `
+      + `${esc(trimNum(swing.event.weightFmt, 0))} MURMUR <b>${esc(choiceLabel(swing.event.choice))}</b> about ${esc(whenTxt)} before close, `
+      + `flipping the lead to <b>${esc(swing.leader)}</b>. Every vote is on the public curve, so nobody can hide it.</div>`;
+  }
+
+  const last = series[series.length - 1];
+  const voters = (tl.tally && tl.tally.voters != null) ? tl.tally.voters : last.voters;
+  const head = `<div class="chart-head">append-only vote timeline · <b>${series.length}</b> event${series.length === 1 ? "" : "s"} · `
+    + `<b>${esc(voters)}</b> voter${Number(voters) === 1 ? "" : "s"} · cumulative weighted tally, point-in-time correct across re-votes</div>`;
+
+  const evRows = series.slice(-8).reverse().map((p) => {
+    const e = p.event || {};
+    const cl = choiceLabel(e.choice);
+    const flags = (e.isRevote ? `<span class="flagml">re-vote</span>` : "")
+      + (e.isLeadChange ? `<span class="flagml flip">lead-flip</span>` : "");
+    return `<div class="ev">`
+      + `<span class="who">${esc(shortAddr(e.voter))}</span>`
+      + `<span class="ch ${esc(cl)}">${esc(cl)}</span>`
+      + `<span class="wt">${esc(trimNum(e.weightFmt, 0))} MURMUR</span>`
+      + `<span>${esc(fmtDate(e.recordedAt))} UTC</span>`
+      + flags
+      + `</div>`;
+  }).join("");
+
+  return head + svg + legend + swingBox + `<div class="chart-events">${evRows}</div>`;
 }
 
 // ============================== gate render ==============================
