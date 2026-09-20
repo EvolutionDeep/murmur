@@ -315,3 +315,63 @@ test("CHRONICLE_VERSION is exported as a positive integer (entry-shape contract)
   assert.equal(typeof CHRONICLE_VERSION, "number");
   assert.ok(CHRONICLE_VERSION >= 1);
 });
+
+// ---------- SOCIAL chronicles: feuds, alliances, betrayals, reputations ----------
+
+const social = {
+  topFeud: { a: 3, b: 7, score: -0.72 },
+  topAlliance: { a: 5, b: 2, score: 0.64, trades: 12 },
+  betrayal: { tick: 42, buyerId: 3, sellerId: 7, amountUsdc: 0.05 },
+  deadbeat: { id: 3, kept: 4, broken: 9, score: -0.4 },
+};
+
+test("social signals emit BETRAYAL/FEUD/ALLIANCE/REPUTATION once each, straight from templates", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 50, settlements: 10, social }));
+  const k = kinds(out);
+  for (const want of ["BETRAYAL", "FEUD", "ALLIANCE", "REPUTATION"]) {
+    assert.ok(k.includes(want), `${want} announced`);
+  }
+  const text = (want: string) => out.find((e) => e.kind === want)!.text;
+  assert.match(text("FEUD"), /Fly #3 will not trade with fly #7/);
+  assert.match(text("BETRAYAL"), /grudge book/);
+  assert.match(text("ALLIANCE"), /Fly #5 and fly #2 have settled 12 dealings/);
+  assert.match(text("REPUTATION"), /fly #3 is known for 9 defaults against 4 kept settlements/);
+  // every social sentence re-derives from its public template — the no-LLM contract extends to romances
+  for (const e of out.filter((x) => ["FEUD", "ALLIANCE", "BETRAYAL", "REPUTATION"].includes(x.kind))) {
+    assert.equal(renderTemplate(e.kind, e.tokens), e.text);
+  }
+});
+
+test("an unchanged relationship landscape never repeats (a standing feud is announced once)", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  await c.observe(ctx({ tick: 50, settlements: 10, social }));
+  // same feud, same alliance, same betrayal tick, same deadbeat — far past every cooldown, still silent.
+  const again = await c.observe(ctx({ tick: 400, settlements: 12, social }));
+  assert.deepEqual(kinds(again), [], "no relationship has CHANGED ⇒ the historian stays quiet");
+  // a NEW betrayal (different grudge-book tick) is news again once its cooldown has passed.
+  const third = await c.observe(ctx({ tick: 401, settlements: 13, social: { ...social, betrayal: { ...social.betrayal, tick: 399 } } }));
+  assert.deepEqual(kinds(third), ["BETRAYAL"], "only the fresh betrayal fires; the standing feud does not re-ignite");
+});
+
+test("contexts without social signals behave exactly as before (older callers unaffected)", async () => {
+  const c = new Chronicler();
+  const first = await c.observe(ctx({ tick: 1 }));
+  assert.deepEqual(kinds(first), ["ERA_OPEN"]);
+  const second = await c.observe(ctx({ tick: 2, settlements: 5, volumeUsdc: 0.1 }));
+  assert.deepEqual(kinds(second), ["FIRST_TRADE"]);
+});
+
+test("a full social history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 50, settlements: 10, social }),
+    ctx({ tick: 61, settlements: 11, social: { ...social, topFeud: { a: 8, b: 1, score: -0.9 } } }),
+  ]);
+  assert.ok(all.some((e) => e.kind === "FEUD" && e.actors.includes(8)), "the NEW feud (changed landscape) fires");
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over social entries intact: ${v.reason} @${v.brokenAt}`);
+});

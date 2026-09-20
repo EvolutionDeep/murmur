@@ -294,6 +294,7 @@ let payEdges = [];                                    // { fromId, toId, amount,
 const seenSettlements = new Set();
 const SEEN_CAP = 400;                                 // bounded: trim oldest half when exceeded
 let econAgents = [];                                  // full roster from /economy: {id, address, balance, paid, earned, deals, sales}
+let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]} — who owes whom a grudge
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
@@ -1136,6 +1137,7 @@ function applyEconomy(econ) {
   }
   refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
+  if (econ.social) { econSocial = econ.social; if (walletsOpen) renderSocialSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -1328,6 +1330,7 @@ function renderWallets() {
   if (!host) return;
   const list = rosterSource().slice().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   const live = econMode === "onchain";
+  const repOf = new Map(((econSocial && econSocial.rep) || []).map((r) => [r.id, r]));
   host.textContent = "";
   for (const ag of list) {
     const row = document.createElement("div");
@@ -1339,6 +1342,16 @@ function renderWallets() {
     const idEl = document.createElement("span"); idEl.className = "wr-id"; idEl.textContent = "#" + ag.id;
     const balEl = document.createElement("span"); balEl.className = "wr-bal";
     balEl.innerHTML = `${atomicToUsdc(ag.balance || "0").toFixed(4)} <em>usdc</em>`;
+    // Reputation badge: the fly's NAME, earned from settled history (kept promises vs defaults).
+    const rp = repOf.get(Number(ag.id));
+    if (rp && (rp.score <= -0.15 || rp.score >= 0.15)) {
+      const badge = document.createElement("span");
+      const dead = rp.score <= -0.15;
+      badge.className = "wr-rep " + (dead ? "dead" : "good");
+      badge.textContent = dead ? "☠ deadbeat" : "★ honour";
+      badge.title = `reputation ${rp.score.toFixed(2)} · ${rp.kept} settlements kept · ${rp.broken} defaulted`;
+      balEl.append(" ", badge);
+    }
     const addrEl = document.createElement("span"); addrEl.className = "wr-addr";
     addrEl.textContent = isRealAddr(ag.address) ? shortHash(ag.address) : (ag.address || "–");
     row.append(idEl, balEl, addrEl);
@@ -1361,6 +1374,41 @@ function renderWallets() {
   }
   const sub = $("wallets-sub");
   if (sub) sub.textContent = live ? `${list.length} wallets · live on Arc mainnet` : `${list.length} wallets · ${econMode}`;
+  renderSocialSection();
+}
+
+// ================= social memory section (inside the wallets drawer) =================
+// The ledger of relationships: who trusts whom, who shuns whom, and the grudge book. Pure read-out of
+// the economy's persisted bonds — the same memory that steers counterparty choice on-chain-adjacent.
+function renderSocialSection() {
+  const host = $("wallets-social");
+  if (!host) return;
+  const s = econSocial;
+  if (!s || ((!s.bonds || !s.bonds.length) && (!s.grudges || !s.grudges.length))) { host.hidden = true; return; }
+  host.hidden = false;
+  const body = $("wallets-social-body");
+  if (!body) return;
+  body.textContent = "";
+  for (const b of (s.bonds || []).slice(0, 8)) {
+    const row = document.createElement("div");
+    const shun = b.score <= -0.6;
+    row.className = "wsoc-row " + (b.score < 0 ? (shun ? "shun" : "grudge") : "trust");
+    const mark = shun ? "⚔ shuns" : b.score < 0 ? "☄ grudge" : "❖ trust";
+    row.textContent = `#${b.a} ${mark} #${b.b} · ${b.score > 0 ? "+" : ""}${b.score.toFixed(2)}${b.trades ? ` · ${b.trades} deals` : ""}`;
+    body.appendChild(row);
+  }
+  const gr = (s.grudges || []).slice(0, 6);
+  if (gr.length) {
+    const head = document.createElement("div");
+    head.className = "wsoc-head-grudge"; head.textContent = "grudge book";
+    body.appendChild(head);
+    for (const g of gr) {
+      const row = document.createElement("div");
+      row.className = "wsoc-row grudge-entry";
+      row.textContent = `#${g.buyerId} defaulted on #${g.sellerId} · ${(Number(g.amount) / 1e6).toFixed(4)} USDC · t${g.tick}`;
+      body.appendChild(row);
+    }
+  }
 }
 
 function openWallets() {
@@ -1378,8 +1426,13 @@ function openWallets() {
   document.body.classList.add("wallets-open");
   requestAnimationFrame(() => w.classList.add("open"));
   renderWallets();
+  renderSocialSection();
   // pull a fresh roster immediately so the drawer is never stale on first open
-  getJSON("/economy").then((e) => { if (e && Array.isArray(e.agents)) applyEconAgents(e.agents); }).catch(() => {});
+  getJSON("/economy").then((e) => {
+    if (!e) return;
+    if (Array.isArray(e.agents)) applyEconAgents(e.agents);
+    if (e.social) { econSocial = e.social; renderSocialSection(); renderWallets(); }
+  }).catch(() => {});
 }
 
 function closeWallets() {
@@ -1586,6 +1639,7 @@ const CHRON_ICONS = {
   ERA_OPEN: "✦", ERA_SHIFT: "✧", FIRST_TRADE: "⚡", MILESTONE: "◆",
   BIRTH: "✿", PANIC: "⚡", STORM: "☀", HUDDLE: "❄", FEAST: "✿",
   RECORD_CONC: "⚖", LEAD_CHANGE: "♛",
+  FEUD: "⚔", ALLIANCE: "❖", BETRAYAL: "✕", REPUTATION: "☠",
 };
 
 function renderChron() {
@@ -1691,13 +1745,17 @@ const CHRON_ = {
     FEAST: "A feeding frenzy — {feed} flies extend their proboscides at once as the market suddenly smells of sugar.",
     RECORD_CONC: "Wealth gathers like never before — the gini climbs to {gini}, the sharpest inequality the swarm has known.",
     LEAD_CHANGE: "Fly #{newLeader} overtakes fly #{oldLeader} at the head of the ledger — the richest purse changes hands.",
+    FEUD: "Fly #{a} will not trade with fly #{b} — the old score still smoulders (bond {bond}). A grudge has become market law.",
+    ALLIANCE: "Fly #{a} and fly #{b} have settled {trades} dealings in good faith — the swarm's steadiest partnership (bond {bond}).",
+    BETRAYAL: "Fly #{buyer} defaults on a {amountUsdc} USDC debt to fly #{seller} — the name is entered in the grudge book.",
+    REPUTATION: "Word across the market: fly #{id} is known for {broken} defaults against {kept} kept settlements — the purse is public, so is the name.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12 },
 };
 
 function chronRoman(n) {

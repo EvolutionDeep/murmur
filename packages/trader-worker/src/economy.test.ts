@@ -187,3 +187,111 @@ test("the snapshot exposes a per-agent wallet roster for the frontend", async ()
   const addrs = new Set(snap.agents.map((a) => a.address));
   assert.equal(addrs.size, 24, "no two flies share a wallet");
 });
+
+// ---------- SOCIAL MEMORY: bonds, reputation, the grudge book (economic layer only) ----------
+
+test("settled deals accumulate positive directed bonds and lift both reputations", async () => {
+  const econ = new AgentEconomy(cfg());
+  for (let t = 0; t < 6; t++) await econ.step(population("AGITATE"), collective(0.9), t);
+  const s = econ.socialReadout();
+  assert.ok(s.bonds.length > 0, "a past formed between traders");
+  assert.ok(s.bonds.every((b) => b.score > 0 && b.trades >= 1), "settled-only history is trust, positive");
+  assert.ok(s.rep.some((r) => r.score > 0 && r.kept >= 1), "keep-makers earn a positive name");
+  assert.equal(s.grudges.length, 0, "nothing stiffed in this prosperous round");
+});
+
+test("a stiffed buyer enters the grudge book: directed grudge for the seller, infamy for the buyer", async () => {
+  // Wallets too small for any price, and the treasury floor disabled ⇒ insufficient-funds declines.
+  const econ = new AgentEconomy(cfg({ initialBalanceUsdc: 0.000002, solvencyFloorUsdc: 0, basePriceUsdc: 0.05 }));
+  const settled = await econ.step(population("AGITATE"), collective(0.9), 1);
+  const stiff = settled.find((x) => !x.valid && x.reason === "insufficient-funds");
+  assert.ok(stiff, "the buyer promised what it could not pay");
+
+  const s = econ.socialReadout();
+  assert.ok(s.grudges.length > 0, "the betrayal is written in the book");
+  const g = s.grudges[0];
+  assert.equal(g.reason, "insufficient-funds");
+  const feud = s.bonds.find((b) => b.a === g.sellerId && b.b === g.buyerId && b.score < 0);
+  assert.ok(feud, "the stiffed seller remembers the grudge (directed, not mutual)");
+  // The innocent side of the ledger: the seller holds NO negative bond back at the level of trust…
+  assert.ok(!s.bonds.some((b) => b.a === g.buyerId && b.b === g.sellerId && b.score < 0),
+    "the buyer has no grudge — it was the one who defaulted");
+  // …and the defaulting side's NAME is what sinks (the readout is capped, so check SOME marked fly).
+  assert.ok(s.rep.some((r) => r.score < 0 && r.broken >= 1), "deadbeats are marked in the open");
+  const sig = econ.socialSignals();
+  assert.ok(sig.deadbeat && sig.deadbeat.score < 0 && sig.deadbeat.broken >= 1, "the worst name is a stiffing buyer");
+});
+
+test("a deep grudge is a hard refusal — until long silence decays it (the swarm forgets)", async () => {
+  const two = [reading(0, "AGITATE"), reading(1, "AGITATE")];
+  const base = new AgentEconomy(cfg());
+  await base.step(two, collective(0.9), 0);            // open both wallets
+  const p = JSON.parse(base.serialize());
+  // #0 carries a maximal grudge against #1 (its ONLY possible counterparty in a 2-fly world).
+  p.social = {
+    mem: [
+      { id: 0, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 1, score: -1, trades: 0, lastTick: 0 }] },
+      { id: 1, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [] },
+    ],
+    grudges: [],
+  };
+  const econ = new AgentEconomy(cfg(), JSON.stringify(p));
+
+  for (let t = 1; t <= 3; t++) {
+    const made = await econ.step(two, collective(0.9), t);
+    assert.ok(!made.some((x) => x.valid && x.fromId === 0), `tick ${t}: #0 never buys from the fly it despises`);
+  }
+  // Ten bond half-lives of silence later the wound has faded to ~0.001 — trade resumes on its own.
+  let resumed = false;
+  for (let t = 300001; t <= 300020 && !resumed; t++) {
+    resumed = (await econ.step(two, collective(0.9), t)).some((x) => x.valid && x.fromId === 0);
+  }
+  assert.ok(resumed, "after a long silence the grudge decays below the blacklist line and #0 trades again");
+});
+
+test("social memory round-trips through serialize; an OLD payload (no social) restores with an empty past", async () => {
+  const a = new AgentEconomy(cfg());
+  for (let t = 0; t < 6; t++) await a.step(population("AGITATE"), collective(0.9), t);
+
+  const b = new AgentEconomy(cfg(), a.serialize());
+  assert.deepEqual(b.socialReadout(), a.socialReadout(), "the past survives a DO eviction intact");
+
+  const p = JSON.parse(a.serialize());
+  delete p.social;                                     // simulate a pre-social-memory blob
+  const c = new AgentEconomy(cfg(), JSON.stringify(p));
+  assert.equal(c.socialReadout().bonds.length, 0, "no social field ⇒ no past, nobody is blacklisted");
+  assert.equal(c.snapshot().agents.length, a.snapshot().agents.length, "the LEDGER still restores (version untouched)");
+  assert.equal(c.snapshot().totals.count, a.snapshot().totals.count, "lifetime settlements survived");
+});
+
+test("social memory is BOUNDED: top-K bonds per fly, capped grudge book (DO-safe)", async () => {
+  const econ = new AgentEconomy(cfg({ initialBalanceUsdc: 0.000002, solvencyFloorUsdc: 0, basePriceUsdc: 0.05 }));
+  for (let t = 0; t < 60; t++) await econ.step(population("AGITATE"), collective(0.85 + 0.1 * Math.sin(t)), t);
+  const p = JSON.parse(econ.serialize());
+  for (const m of p.social.mem) {
+    assert.ok(m.bonds.length <= 8, `agent ${m.id} keeps at most its top-K bonds`);
+  }
+  assert.ok(p.social.grudges.length <= 24, "the grudge book is a capped ring");
+  assert.ok(econ.serialize().length < 200_000, "the whole economy blob stays far below DO limits");
+});
+
+test("social state is deterministic: identical input sequences ⇒ identical accumulated past", async () => {
+  const run = async () => {
+    const econ = new AgentEconomy(cfg());
+    for (let t = 0; t < 15; t++) await econ.step(population("AGITATE"), collective(0.8), t);
+    return JSON.stringify(JSON.parse(econ.serialize()).social);
+  };
+  assert.equal(await run(), await run(), "same drives + same ticks ⇒ same bonds, rep and grudges");
+});
+
+test("social signals for the historian name the live feud, alliance, betrayal and deadbeat", async () => {
+  // Two poor flies repeatedly stiff each other (roles alternate) — a blood-feud with a written history.
+  const two = [reading(0, "AGITATE"), reading(1, "AGITATE")];
+  const econ = new AgentEconomy(cfg({ initialBalanceUsdc: 0.000002, solvencyFloorUsdc: 0, basePriceUsdc: 0.05 }));
+  for (let t = 1; t <= 10; t++) await econ.step(two, collective(0.9), t);
+  const sig = econ.socialSignals();
+  assert.ok(sig.betrayal, "the newest grudge-book entry surfaces");
+  assert.ok(sig.deadbeat && sig.deadbeat.broken >= 1, "the worst live reputation surfaces");
+  assert.ok(sig.topFeud && sig.topFeud.score <= -0.6, "a blacklist-deep directed bond surfaces as the live feud");
+  assert.equal(sig.topAlliance, null, "no alliance yet — nothing was ever settled in good faith");
+});

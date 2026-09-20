@@ -129,6 +129,48 @@ export interface PendingNet {
   proofs: NeuralConstituent[]; // neural provenance per folded trade (hashed into the on-chain nonce)
 }
 
+/**
+ * SOCIAL MEMORY (economic layer ONLY — the iron law holds: neurons → intent stays one-way, nothing
+ * here feeds the connectome; it only changes WHICH counterparty an agent turns to inside the pool the
+ * neural drives already defined). Every fly accumulates long-lived memory of past dealings:
+ *   • a directed BOND per counterpart (trust ↔ grudge, −1..1), kept top-K per agent so DO storage is bounded;
+ *   • a REPUTATION scalar built from settled history (kept promises vs defaults);
+ *   • a GRUDGE BOOK: a capped ring of the betrayals (stiffed deals) the whole swarm has witnessed.
+ * Bonds and reputation DECAY toward zero with time/silence (the swarm forgets old wounds and old favours
+ * alike) — but a deep enough grudge still re-triggers a refusal until it heals past the blacklist line.
+ */
+export interface SocialBond {
+  other: number;      // counterpart agent id
+  score: number;      // effective-at-last-touch bond, −1 (grudge) .. +1 (old partner)
+  trades: number;     // settled dealings behind this bond (relationship weight)
+  lastTick: number;   // sub-tick of the last touch (drives the exponential forgetting)
+}
+
+/** One agent's whole social memory: reputation + its directed bonds. */
+export interface AgentSocial {
+  rep: number;        // −1 (deadbeat) .. +1 (honourable), decays with silence
+  repTick: number;    // last reputation touch (-1 = never)
+  kept: number;       // lifetime settled deals (promises kept)
+  broken: number;     // lifetime defaults (stiffed / failed payments)
+  bonds: SocialBond[];
+}
+
+/** One entry of the grudge book: a witnessed default between two named flies. */
+export interface GrudgeRecord {
+  tick: number;
+  buyerId: number;    // the one who could not pay
+  sellerId: number;   // the one who was stiffed
+  amount: string;     // atomic USDC that was demanded
+  reason: string;     // the decline reason (e.g. insufficient-funds)
+}
+
+/** The read-out of social memory for the frontend / the historian (bounded, never feeds back). */
+export interface SocialReadout {
+  rep: { id: number; score: number; kept: number; broken: number }[];   // notable names, |score| desc
+  bonds: { a: number; b: number; score: number; trades: number }[];     // strongest directed bonds, |score| desc
+  grudges: GrudgeRecord[];                                              // newest first (the grudge book)
+}
+
 /** Per-agent read-out for the frontend. */
 export interface AgentReading {
   id: number;
@@ -179,6 +221,8 @@ export interface EconomySnapshot {
   agents: AgentReading[];
   /** Settlements produced on the most recent tick — the frontend draws these as payment edges. */
   lastTick: Settlement[];
+  /** Bounded social-memory read-out: reputations, strongest bonds, the grudge book. Pure read-out. */
+  social: SocialReadout;
   /** A rolling window of recent settlements for the ledger HUD. */
   recent: Settlement[];
   totals: EconomyTotals;
@@ -228,6 +272,19 @@ export interface EconomyDeps {
 
 const KEY_VERSION = "economy:v1";
 const RECENT_CAP = 48;
+// --- social-memory tuning (all deterministic; sizes are hard caps so DO storage stays bounded) ---
+const BOND_TOP_K = 8;                    // directed bonds remembered per agent (top-K by |score|/trades)
+const BOND_HALF_LIFE = 30000;            // sub-ticks until an untouched bond fades to half (~28h)
+const REP_HALF_LIFE = 60000;             // reputation forgets slower than a single bond (~56h)
+const GRUDGE_CAP = 24;                   // grudge book ring size
+const BOND_TRADE_STEP = 0.08;            // trust earned per settled deal
+const BOND_BETRAY_STEP = 0.55;           // grudge taken by the stiffed seller
+const REP_KEEP_STEP = 0.05;              // reputation for paying/delivering as promised
+const REP_BETRAY_STEP = 0.35;            // reputation lost when defaulting (simulated stiff)
+const REP_FAIL_STEP = 0.1;               // reputation lost on an onchain failed net (lighter: could be rails)
+const BOND_BLACKLIST = -0.6;             // bond at or below this ⇒ flat-out refusal ("never trade with #N")
+const ALLIANCE_MIN_TRADES = 8;           // a partnership is only chronicle-worthy once seasoned
+const PICK_CANDIDATES = 5;               // pool size re-weighted inside the neural span
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
 
@@ -268,6 +325,14 @@ export class AgentEconomy {
   private proofChainHead = "";
   /** Optional best-effort IPFS pinner for receipt bodies (absent ⇒ no pinning). Injected via deps. */
   private pinner?: ReceiptPinner;
+  /**
+   * SOCIAL MEMORY (economic layer only). Directed per-agent bonds + reputation, keyed by agent id, and the
+   * capped grudge book. Persisted with the economy; NEVER read by the neural layer — it only re-weights
+   * counterparty choice inside the pool the neurons already picked. Bounded: top-K bonds per agent, ring of
+   * grudges, one scalar rep per agent.
+   */
+  private social = new Map<number, AgentSocial>();
+  private grudges: GrudgeRecord[] = [];
 
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
@@ -555,10 +620,18 @@ export class AgentEconomy {
           reqs, from: debtor.address, value: amountStr, nonce, nowSec: Math.floor(Date.now() / 1000),
         });
         const verified = await this.facilitator.verify(payload, reqs);
-        if (!verified.valid) { out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break; }
+        if (!verified.valid) {
+          // A net that fails verification on-chain dents the debtor's reputation (light: rails can fail
+          // for non-moral reasons, so this is a smudge, not a grudge — the book stays for true stiffs).
+          this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
+        }
         const receipt = await this.facilitator.settle(payload, reqs);
         if (receipt.shadow) { out.push({ ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" }); break; }
-        if (!receipt.success) { out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break; }
+        if (!receipt.success) {
+          this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break;
+        }
         // Mined: commit this chunk on the internal ledger, meter the daily caps, count real volume.
         debtor.balance = subAtomic(debtor.balance, amountStr);
         debtor.paid = addAtomic(debtor.paid, amountStr);
@@ -571,6 +644,8 @@ export class AgentEconomy {
         this.recordSpend(debtor.id, amountStr);
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
+        // The mined net IS the settled history reputation is made of: both sides keep the promise.
+        this.rememberTrade(debtor.id, creditor.id, tickIndex);
         if (primaryHash === "0x") primaryHash = receipt.txHash;
         // Mirror this receipt onto our own NeuralReceiptRegistry so the hash-chain head lives ON-CHAIN,
         // not just in DO storage. BEST-EFFORT: prevHead is the chain head BEFORE this receipt (exactly
@@ -715,7 +790,11 @@ export class AgentEconomy {
   /**
    * Choose the seller index from cohesion (near/far) + turnBias (left/right half). Maps the fly's
    * spatial social drive onto an economic counterparty: a cohesive fly trades with a close neighbour,
-   * an explorer reaches across the swarm.
+   * an explorer reaches across the swarm. SOCIAL MEMORY then acts ONLY INSIDE the pool the neurons
+   * offered: candidates are re-weighted by remembered bond + reputation, and a fly with a deep grudge
+   * (bond ≤ BOND_BLACKLIST) is refused outright — "never trade with #3". If every candidate in the span
+   * is refused, the buyer simply holds this tick (a retaliatory supply cut). Neurons still decide IF to
+   * buy, WHAT to buy, how FAR to reach and WHICH side — the connectome is never touched (one-way law).
    */
   private pickCounterparty(r: FlyReading, buyerI: number, n: number, tick: number): number {
     const others = n - 1;
@@ -723,13 +802,179 @@ export class AgentEconomy {
     const coh = clamp01(r.cohesion);
     // Low cohesion (explorer) → large reach; high cohesion → small, neighbourly offset.
     const span = Math.max(1, Math.round(1 + (1 - coh) * (others - 1)));
-    const h = Math.floor(hash01(tick, r.id, 0x85ebca6b) * span);
-    const offset = 1 + (h % span);
     const dir = r.turnBias >= 0 ? 1 : -1;
-    let sellerI = (buyerI + dir * offset) % n;
-    if (sellerI < 0) sellerI += n;
-    if (sellerI === buyerI) sellerI = (sellerI + 1) % n;
-    return sellerI;
+    // Deterministic sample of the neural span (salt-chained per candidate slot) → de-duplicated pool.
+    const pool: number[] = [];
+    const seen = new Set<number>([buyerI]);
+    for (let j = 0; j < Math.min(PICK_CANDIDATES, span); j++) {
+      const off = 1 + Math.floor(hash01(tick, r.id, (0x85ebca6b ^ Math.imul(j + 1, 0x9e3779b1)) >>> 0) * span);
+      let idx = (buyerI + dir * off) % n;
+      if (idx < 0) idx += n;
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      pool.push(idx);
+    }
+    if (pool.length === 0) return -1;
+    // Weight each candidate by the buyer's directed bond + the candidate's market reputation.
+    // With NO social memory at all every weight is 1 ⇒ the roulette degenerates to a uniform
+    // pick inside the span, so a fresh swarm behaves neutrally until a past accumulates.
+    const picks: number[] = [];
+    const weights: number[] = [];
+    let total = 0;
+    for (const idx of pool) {
+      const cand = this.agents[idx];
+      if (!cand) continue;
+      const bond = this.effectiveBond(r.id, cand.id, tick);
+      if (bond <= BOND_BLACKLIST) continue;   // the grudge vetoes; the neurons never notice
+      const rep = this.effectiveRep(cand.id, tick);
+      const w = Math.max(0.05, 1 + 0.6 * bond + 0.4 * rep);
+      picks.push(idx);
+      weights.push(w);
+      total += w;
+    }
+    if (picks.length === 0) return -1;   // every candidate in the span is shunned: hold back this tick
+    // Deterministic weighted roulette (same persisted past + same tick ⇒ same choice, DO-safe replay).
+    let spin = hash01(tick, r.id, 0x2545f491) * total;
+    for (let k = 0; k < picks.length; k++) {
+      spin -= weights[k];
+      if (spin <= 0) return picks[k];
+    }
+    return picks[picks.length - 1];
+  }
+
+  // ---------- social memory (economic layer only; a pure read-out of settled history) ----------
+
+  /** Exponential forgetting: an untouched value halves every halfLife sub-ticks of silence. */
+  private static fade(value: number, lastTick: number, tick: number, halfLife: number): number {
+    if (lastTick < 0 || tick <= lastTick || halfLife <= 0) return value;
+    return value * Math.pow(0.5, (tick - lastTick) / halfLife);
+  }
+
+  private static clampSigned(x: number): number { return x < -1 ? -1 : x > 1 ? 1 : x; }
+
+  /** Fetch (creating on first touch) one agent's social-memory record. */
+  private memOf(id: number): AgentSocial {
+    let m = this.social.get(id);
+    if (!m) { m = { rep: 0, repTick: -1, kept: 0, broken: 0, bonds: [] }; this.social.set(id, m); }
+    return m;
+  }
+
+  /** The bond `id` currently holds toward `other` at `tick` (−1 grudge .. +1 old partner; 0 = no past). */
+  private effectiveBond(id: number, other: number, tick: number): number {
+    const b = this.social.get(id)?.bonds.find((x) => x.other === other);
+    return b ? AgentEconomy.clampSigned(AgentEconomy.fade(b.score, b.lastTick, tick, BOND_HALF_LIFE)) : 0;
+  }
+
+  /** The reputation `id` currently carries at `tick` (decays with silence — forgotten either way). */
+  private effectiveRep(id: number, tick: number): number {
+    const m = this.social.get(id);
+    return m ? AgentEconomy.clampSigned(AgentEconomy.fade(m.rep, m.repTick, tick, REP_HALF_LIFE)) : 0;
+  }
+
+  /** Move one DIRECTED bond by delta (decayed to now first), season it, and prune to the top-K. */
+  private touchBond(a: number, b: number, delta: number, traded: boolean, tick: number): void {
+    const m = this.memOf(a);
+    let bond = m.bonds.find((x) => x.other === b);
+    if (!bond) { bond = { other: b, score: 0, trades: 0, lastTick: tick }; m.bonds.push(bond); }
+    bond.score = AgentEconomy.clampSigned(AgentEconomy.fade(bond.score, bond.lastTick, tick, BOND_HALF_LIFE) + delta);
+    if (traded) bond.trades++;
+    bond.lastTick = tick;
+    if (m.bonds.length > BOND_TOP_K) {
+      // Keep the K most salient memories (strongest bond, then most seasoned); the rest are forgotten.
+      m.bonds.sort((x, y) => Math.abs(y.score) - Math.abs(x.score) || y.trades - x.trades || x.other - y.other);
+      m.bonds.length = BOND_TOP_K;
+    }
+  }
+
+  /** Move one agent's reputation scalar (decayed to now, then nudged by delta). */
+  private bumpRep(id: number, delta: number, tick: number): void {
+    const m = this.memOf(id);
+    m.rep = AgentEconomy.clampSigned(AgentEconomy.fade(m.rep, m.repTick, tick, REP_HALF_LIFE) + delta);
+    m.repTick = tick;
+  }
+
+  /** A settled deal is a promise kept on both sides: mutual trust accrues, both names rise. */
+  private rememberTrade(buyerId: number, sellerId: number, tick: number): void {
+    this.touchBond(buyerId, sellerId, BOND_TRADE_STEP, true, tick);
+    this.touchBond(sellerId, buyerId, BOND_TRADE_STEP, true, tick);
+    this.memOf(buyerId).kept++;
+    this.memOf(sellerId).kept++;
+    this.bumpRep(buyerId, REP_KEEP_STEP, tick);
+    this.bumpRep(sellerId, REP_KEEP_STEP, tick);
+  }
+
+  /**
+   * A stiffed payment (buyer promised what it could not pay): the SELLER holds the grudge (directed),
+   * the buyer's name takes a hard hit, and the grudge book records the betrayal for the historian.
+   */
+  private rememberBetrayal(buyerId: number, sellerId: number, amount: string, tick: number, reason: string): void {
+    this.touchBond(sellerId, buyerId, -BOND_BETRAY_STEP, false, tick);
+    this.memOf(buyerId).broken++;
+    this.bumpRep(buyerId, -REP_BETRAY_STEP, tick);
+    this.grudges.unshift({ tick, buyerId, sellerId, amount, reason });
+    if (this.grudges.length > GRUDGE_CAP) this.grudges.length = GRUDGE_CAP;
+  }
+
+  /** A failed on-chain payment attempt: a light smudge on the debtor's name, not a grudge (rails falter). */
+  private rememberFailedPayment(debtorId: number, creditorId: number, tick: number): void {
+    this.touchBond(creditorId, debtorId, -BOND_TRADE_STEP, false, tick);
+    this.memOf(debtorId).broken++;
+    this.bumpRep(debtorId, -REP_FAIL_STEP, tick);
+  }
+
+  /** Bounded social read-out for the frontend (notable names, strongest bonds, the grudge book). */
+  socialReadout(): SocialReadout {
+    const tick = this.tickIndex;
+    const rep: SocialReadout["rep"] = [];
+    const bonds: SocialReadout["bonds"] = [];
+    for (const [id, m] of Array.from(this.social.entries()).sort((x, y) => x[0] - y[0])) {
+      const score = AgentEconomy.clampSigned(AgentEconomy.fade(m.rep, m.repTick, tick, REP_HALF_LIFE));
+      if (Math.abs(score) >= 0.02 || m.broken > 0) {
+        rep.push({ id, score: Math.round(score * 1000) / 1000, kept: m.kept, broken: m.broken });
+      }
+      for (const b of m.bonds) {
+        const s = AgentEconomy.clampSigned(AgentEconomy.fade(b.score, b.lastTick, tick, BOND_HALF_LIFE));
+        if (Math.abs(s) >= 0.02) bonds.push({ a: id, b: b.other, score: Math.round(s * 1000) / 1000, trades: b.trades });
+      }
+    }
+    rep.sort((x, y) => Math.abs(y.score) - Math.abs(x.score) || x.id - y.id);
+    bonds.sort((x, y) => Math.abs(y.score) - Math.abs(x.score) || y.trades - x.trades || x.a - y.a || x.b - y.b);
+    return { rep: rep.slice(0, 16), bonds: bonds.slice(0, 24), grudges: this.grudges.slice(0, GRUDGE_CAP) };
+  }
+
+  /**
+   * The historian's social signals: the sharpest live feud and seasoned alliance, the newest grudge-book
+   * entry, and the worst-known deadbeat. Derived from the SAME persisted memory the economy acts on, so
+   * the chronicle narrates real relationships — and still only READS OUT, never feeds back.
+   */
+  socialSignals(): {
+    topFeud: { a: number; b: number; score: number } | null;
+    topAlliance: { a: number; b: number; score: number; trades: number } | null;
+    betrayal: { tick: number; buyerId: number; sellerId: number; amountUsdc: number } | null;
+    deadbeat: { id: number; kept: number; broken: number; score: number } | null;
+  } {
+    const tick = this.tickIndex;
+    let topFeud: { a: number; b: number; score: number } | null = null;
+    let topAlliance: { a: number; b: number; score: number; trades: number } | null = null;
+    let deadbeat: { id: number; kept: number; broken: number; score: number } | null = null;
+    for (const [id, m] of Array.from(this.social.entries()).sort((x, y) => x[0] - y[0])) {
+      const rs = AgentEconomy.clampSigned(AgentEconomy.fade(m.rep, m.repTick, tick, REP_HALF_LIFE));
+      if (m.broken > 0 && rs <= -0.2 && (!deadbeat || rs < deadbeat.score)) {
+        deadbeat = { id, kept: m.kept, broken: m.broken, score: Math.round(rs * 1000) / 1000 };
+      }
+      for (const b of m.bonds) {
+        const s = AgentEconomy.clampSigned(AgentEconomy.fade(b.score, b.lastTick, tick, BOND_HALF_LIFE));
+        if (s <= BOND_BLACKLIST && (!topFeud || s < topFeud.score)) topFeud = { a: id, b: b.other, score: Math.round(s * 1000) / 1000 };
+        if (b.trades >= ALLIANCE_MIN_TRADES && s >= 0.3 && (!topAlliance || s > topAlliance.score)) {
+          topAlliance = { a: id, b: b.other, score: Math.round(s * 1000) / 1000, trades: b.trades };
+        }
+      }
+    }
+    const g = this.grudges[0];
+    const betrayal = g
+      ? { tick: g.tick, buyerId: g.buyerId, sellerId: g.sellerId, amountUsdc: Math.round(atomicToUsdc(g.amount) * 10000) / 10000 }
+      : null;
+    return { topFeud, topAlliance, betrayal, deadbeat };
   }
 
   /** Price of one unit of `good` this tick, in atomic USDC (min 1): base × market heat × arousal × good mult. */
@@ -789,6 +1034,9 @@ export class AgentEconomy {
     // facilitator re-reads the REAL on-chain balance right before signing and is the sole authority (a
     // display mirror that has drifted must never block — or worse, authorise — a real transfer).
     if (!onchain && !gteAtomic(buyer.balance, amount)) {
+      // The buyer promised a payment it could not make — the seller remembers the stiff, the market
+      // marks the buyer down, and the grudge book records the betrayal for the historian to tell.
+      this.rememberBetrayal(buyer.id, seller.id, amount, tick, "insufficient-funds");
       return { ...base, txHash: "0x", valid: false, reason: "insufficient-funds" };
     }
 
@@ -824,6 +1072,9 @@ export class AgentEconomy {
     seller.earned = addAtomic(seller.earned, amount);
     seller.sales++;
     seller.lastTick = tick;
+    // A settled deal is a promise kept on BOTH sides — mutual trust accrues (social memory, read-only
+    // for everything above: this never touches the ledger maths, only tomorrow's counterparty choice).
+    this.rememberTrade(buyer.id, seller.id, tick);
 
     // Meter real spend against the daily caps — ONCHAIN ONLY (simulated has no real budget to meter).
     if (onchain) this.recordSpend(buyer.id, amount);
@@ -1096,6 +1347,7 @@ export class AgentEconomy {
         paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
       })),
       lastTick: this.lastTick,
+      social: this.socialReadout(),
       recent: this.recent,
       totals: {
         volumeAtomic: this.volumeAtomic,
@@ -1111,11 +1363,11 @@ export class AgentEconomy {
   }
 
   /** A compact summary folded into /population so the frontend gets edges + totals in one poll. */
-  summary(): { lastTick: Settlement[]; totals: EconomyTotals; balances: Record<number, string> } {
+  summary(): { lastTick: Settlement[]; totals: EconomyTotals; balances: Record<number, string>; social: SocialReadout } {
     const snap = this.snapshot();
     const balances: Record<number, string> = {};
     for (const a of this.agents) balances[a.id] = a.balance;
-    return { lastTick: snap.lastTick, totals: snap.totals, balances };
+    return { lastTick: snap.lastTick, totals: snap.totals, balances, social: snap.social };
   }
 
   getAgent(id: number): AgentState | undefined {
@@ -1145,6 +1397,14 @@ export class AgentEconomy {
       flushSeq: this.flushSeq,
       proofs: this.proofs,
       proofChainHead: this.proofChainHead,
+      // SOCIAL MEMORY. Additive on purpose: KEY_VERSION stays "economy:v1" (a version bump would make
+      // applySerialized discard the WHOLE ledger). An older payload simply has no `social` ⇒ empty memory.
+      social: {
+        mem: Array.from(this.social.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, m]) => ({ id, rep: m.rep, repTick: m.repTick, kept: m.kept, broken: m.broken, bonds: m.bonds })),
+        grudges: this.grudges,
+      },
     });
   }
 
@@ -1190,6 +1450,47 @@ export class AgentEconomy {
     this.flushSeq = Number(p.flushSeq ?? 0);
     this.proofs = Array.isArray(p.proofs) ? p.proofs : [];
     this.proofChainHead = typeof p.proofChainHead === "string" ? p.proofChainHead : "";
+    // Restore social memory (absent in older payloads ⇒ everyone starts with no past; fields sanitised
+    // defensively and re-clamped to the caps so a corrupted blob can never blow up DO storage).
+    this.social = new Map();
+    this.grudges = [];
+    const soc = p.social;
+    if (soc && typeof soc === "object") {
+      if (Array.isArray(soc.mem)) {
+        for (const e of soc.mem) {
+          if (!e || typeof e !== "object") continue;
+          const id = Number(e.id);
+          if (!Number.isFinite(id)) continue;
+          const bonds = Array.isArray(e.bonds) ? e.bonds : [];
+          this.social.set(id, {
+            rep: Number(e.rep ?? 0) || 0,
+            repTick: Number(e.repTick ?? -1),
+            kept: Math.max(0, Number(e.kept ?? 0) || 0),
+            broken: Math.max(0, Number(e.broken ?? 0) || 0),
+            bonds: bonds.slice(0, BOND_TOP_K)
+              .filter((b: Record<string, unknown>) => b && typeof b === "object")
+              .map((b: Record<string, unknown>) => ({
+                other: Number(b.other ?? 0) || 0,
+                score: AgentEconomy.clampSigned(Number(b.score ?? 0) || 0),
+                trades: Math.max(0, Number(b.trades ?? 0) || 0),
+                lastTick: Number(b.lastTick ?? 0),
+              })),
+          });
+        }
+      }
+      if (Array.isArray(soc.grudges)) {
+        this.grudges = soc.grudges
+          .filter((g: Record<string, unknown>) => g && typeof g === "object")
+          .slice(0, GRUDGE_CAP)
+          .map((g: Record<string, unknown>) => ({
+            tick: Number(g.tick ?? 0) || 0,
+            buyerId: Number(g.buyerId ?? 0) || 0,
+            sellerId: Number(g.sellerId ?? 0) || 0,
+            amount: String(g.amount ?? "0"),
+            reason: String(g.reason ?? ""),
+          }));
+      }
+    }
   }
 
   // ---------- neural provenance ----------

@@ -812,6 +812,9 @@ export class FlyStateDO {
         poorestId: totals?.poorestId ?? null,
         liveAgents: totals?.liveAgents ?? col?.size ?? 0,
         meanBalanceUsdc: totals?.meanBalanceUsdc ?? 0,
+        // SOCIAL signals come from the economy's OWN persisted bonds/reputations (pure read-out — the
+        // historian narrates relationships, it never creates or feeds them).
+        social: this.economy?.socialSignals() ?? null,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {

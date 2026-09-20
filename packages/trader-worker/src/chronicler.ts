@@ -46,7 +46,11 @@ export type ChronicleKind =
   | "HUDDLE"
   | "FEAST"
   | "RECORD_CONC"
-  | "LEAD_CHANGE";
+  | "LEAD_CHANGE"
+  | "FEUD"
+  | "ALLIANCE"
+  | "BETRAYAL"
+  | "REPUTATION";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -62,6 +66,15 @@ export interface ChronicleEntry {
   tokens: Record<string, string | number>;  // the EXACT substitution values the template was filled with
   prevHash: string;                 // hash of the previous entry (GENESIS_HASH for the first)
   hash: string;                     // sha256(canonical({...core, prevHash})) — binds this entry to the chain
+}
+
+/** The social-memory read-out the historian narrates (computed by the ECONOMY layer from its persisted
+ *  bonds/reputation/grudge book; the historian only turns it into words — pure read-out, no feedback). */
+export interface ChronicleSocial {
+  topFeud: { a: number; b: number; score: number } | null;        // live blacklist-deep grudge
+  topAlliance: { a: number; b: number; score: number; trades: number } | null;  // seasoned partnership
+  betrayal: { tick: number; buyerId: number; sellerId: number; amountUsdc: number } | null; // newest grudge-book entry
+  deadbeat: { id: number; kept: number; broken: number; score: number } | null;  // worst live reputation
 }
 
 /** The per-cron facts the historian reads. Primitives + loose records so it stays decoupled from the
@@ -85,6 +98,8 @@ export interface ChronicleContext {
   poorestId: number | null;
   liveAgents: number;
   meanBalanceUsdc: number;
+  /** SOCIAL read-out (optional for replay-compat: older callers simply narrate no relationships). */
+  social?: ChronicleSocial | null;
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -103,6 +118,12 @@ interface ChroniclerState {
   maxGini: number;                  // all-time concentration high
   leaderId: number | null;          // last known richest agent
   lastKindTick: Record<string, number>;
+  // --- relationship trackers: fire a social entry only when the RELATIONSHIP landscape changed, so a
+  //     standing feud is announced once, not re-declared every cron (the anti-stutter rule) ---
+  lastFeudKey: string | null;       // "a>b" of the last announced feud
+  lastAllianceKey: string | null;   // "a>b" of the last announced alliance
+  lastBetrayalTick: number;         // grudge-book tick already told
+  lastDeadbeatId: number | null;    // last named deadbeat
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -121,6 +142,7 @@ const ERA_NAMES: Record<ChronicleContext["regime"], string[]> = {
 // Minimum crons before the same kind may repeat, so the chronicle stays a chronicle, not a stutter.
 const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3,
+  FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -141,6 +163,10 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   FEAST: "A feeding frenzy — {feed} flies extend their proboscides at once as the market suddenly smells of sugar.",
   RECORD_CONC: "Wealth gathers like never before — the gini climbs to {gini}, the sharpest inequality the swarm has known.",
   LEAD_CHANGE: "Fly #{newLeader} overtakes fly #{oldLeader} at the head of the ledger — the richest purse changes hands.",
+  FEUD: "Fly #{a} will not trade with fly #{b} — the old score still smoulders (bond {bond}). A grudge has become market law.",
+  ALLIANCE: "Fly #{a} and fly #{b} have settled {trades} dealings in good faith — the swarm's steadiest partnership (bond {bond}).",
+  BETRAYAL: "Fly #{buyer} defaults on a {amountUsdc} USDC debt to fly #{seller} — the name is entered in the grudge book.",
+  REPUTATION: "Word across the market: fly #{id} is known for {broken} defaults against {kept} kept settlements — the purse is public, so is the name.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -361,6 +387,43 @@ export class Chronicler {
         { feed, size: ctx.size, valence: round(ctx.valence) }));
     }
 
+    // --- SOCIAL MEMORY: feuds, partnerships, betrayals, reputations. Every signal is computed by the
+    //     ECONOMY layer from its persisted bonds (a pure read-out of settled history — nothing here
+    //     influences any decision). Trackers + cooldowns make each RELATIONSHIP a one-time chapter. ---
+    const soc = ctx.social;
+    if (soc) {
+      if (soc.betrayal && soc.betrayal.tick !== s.lastBetrayalTick && this.ready("BETRAYAL", ctx)) {
+        s.lastBetrayalTick = soc.betrayal.tick;
+        out.push(await this.emit(ctx, "BETRAYAL", 2, [soc.betrayal.buyerId, soc.betrayal.sellerId],
+          { buyer: soc.betrayal.buyerId, seller: soc.betrayal.sellerId, amountUsdc: soc.betrayal.amountUsdc },
+          { amountUsdc: soc.betrayal.amountUsdc }));
+      }
+      if (soc.topFeud) {
+        const key = `${soc.topFeud.a}>${soc.topFeud.b}`;
+        if (key !== s.lastFeudKey && this.ready("FEUD", ctx)) {
+          s.lastFeudKey = key;
+          out.push(await this.emit(ctx, "FEUD", 2, [soc.topFeud.a, soc.topFeud.b],
+            { a: soc.topFeud.a, b: soc.topFeud.b, bond: soc.topFeud.score },
+            { bond: soc.topFeud.score }));
+        }
+      }
+      if (soc.topAlliance) {
+        const key = `${soc.topAlliance.a}>${soc.topAlliance.b}`;
+        if (key !== s.lastAllianceKey && this.ready("ALLIANCE", ctx)) {
+          s.lastAllianceKey = key;
+          out.push(await this.emit(ctx, "ALLIANCE", 2, [soc.topAlliance.a, soc.topAlliance.b],
+            { a: soc.topAlliance.a, b: soc.topAlliance.b, trades: soc.topAlliance.trades, bond: soc.topAlliance.score },
+            { trades: soc.topAlliance.trades, bond: soc.topAlliance.score }));
+        }
+      }
+      if (soc.deadbeat && soc.deadbeat.id !== s.lastDeadbeatId && this.ready("REPUTATION", ctx)) {
+        s.lastDeadbeatId = soc.deadbeat.id;
+        out.push(await this.emit(ctx, "REPUTATION", 1, [soc.deadbeat.id],
+          { id: soc.deadbeat.id, kept: soc.deadbeat.kept, broken: soc.deadbeat.broken },
+          { score: soc.deadbeat.score, kept: soc.deadbeat.kept, broken: soc.deadbeat.broken }));
+      }
+    }
+
     return out;
   }
 
@@ -424,6 +487,7 @@ function freshState(): ChroniclerState {
     inited: false, seq: 0, era: 1, eraName: "the Awakening", eraRegime: "COLD",
     eraStartTick: 0, prevRegime: null, regimeRun: 0, firstTradeDone: false,
     lastMilestone: 0, maxSize: 0, maxGini: 0, leaderId: null, lastKindTick: {},
+    lastFeudKey: null, lastAllianceKey: null, lastBetrayalTick: 0, lastDeadbeatId: null,
     headHash: GENESIS_HASH,
   };
 }
