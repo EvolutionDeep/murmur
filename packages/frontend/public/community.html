@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#f2eee6" />
+  <title>murmur — community governance</title>
+  <meta name="description" content="The murmur community: a token-gated governance forum for MURMUR holders. Browse freely; connect a wallet to speak, propose and vote in weighted, off-chain governance on Arc. No LLM, real holders, real weight." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #f2eee6;
+      --ink: #1a1a18;
+      --ink-rgb: 26, 26, 24;
+      --accent: #9a8c6e;
+      --hair: rgba(26, 26, 24, 0.14);
+      --hair-soft: rgba(26, 26, 24, 0.07);
+      --muted: rgba(26, 26, 24, 0.55);
+      --for: #4f7d5a;
+      --against: #b4553c;
+      --abstain: #8b8577;
+      --display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--paper); color: var(--ink);
+      font-family: var(--mono); font-size: 14px; line-height: 1.6;
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    }
+    ::selection { background: rgba(154, 140, 110, 0.24); }
+    a { color: inherit; }
+    button { font-family: inherit; cursor: pointer; }
+
+    .grain {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.04;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px clamp(16px, 4vw, 40px);
+      background: rgba(242, 238, 230, 0.9);
+      border-bottom: 1px solid var(--hair);
+      backdrop-filter: saturate(1.1) blur(2px);
+    }
+    .wordmark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
+    .wordmark .mark { fill: var(--accent); transform: translateY(3px); }
+    .wordmark .name { font-family: var(--display); font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+    .toplinks { display: flex; align-items: center; gap: 16px; font-size: 12px; }
+    .toplinks a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .2s, border-color .2s; }
+    .toplinks a:hover { color: var(--ink); border-color: var(--hair); }
+    .wallet-btn {
+      font-size: 12px; letter-spacing: 0.03em; padding: 7px 14px; color: var(--paper);
+      background: var(--ink); border: 1px solid var(--ink); border-radius: 999px; transition: opacity .2s;
+    }
+    .wallet-btn:hover { opacity: 0.85; }
+    .wallet-btn.connected { background: transparent; color: var(--ink); }
+
+    .wrap { position: relative; z-index: 1; max-width: 860px; margin: 0 auto; padding: clamp(28px, 6vw, 60px) clamp(16px, 4vw, 40px) 40px; }
+
+    .hero h1 { font-family: var(--display); font-size: clamp(30px, 6vw, 46px); font-weight: 400; line-height: 1.08; letter-spacing: -0.01em; }
+    .hero h1 em { font-style: italic; color: var(--accent); }
+    .hero .lede { margin-top: 16px; max-width: 64ch; color: rgba(var(--ink-rgb), 0.8); font-size: 14.5px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .badge {
+      font-size: 11px; letter-spacing: 0.04em; padding: 5px 11px; border: 1px solid var(--hair);
+      border-radius: 999px; color: rgba(var(--ink-rgb), 0.72); background: rgba(255,255,255,0.25);
+    }
+    .badge b { color: var(--ink); font-weight: 500; }
+
+    section { margin-top: clamp(30px, 6vw, 46px); }
+    h2 { font-family: var(--display); font-size: 21px; font-weight: 400; letter-spacing: -0.01em; display: flex; align-items: baseline; gap: 10px; }
+    h2 .n { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.08em; }
+    .sec-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; max-width: 66ch; }
+
+    /* ---- wallet / gate panel ---- */
+    .gate {
+      border: 1px solid var(--hair); border-radius: 14px; padding: 18px 20px; background: rgba(255,255,255,0.32);
+      display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;
+    }
+    .gate .bal { font-family: var(--display); font-size: 26px; font-weight: 400; }
+    .gate .bal small { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 6px; }
+    .gate .perms { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair); color: var(--muted); }
+    .pill.yes { color: var(--for); border-color: rgba(79,125,90,0.4); background: rgba(79,125,90,0.08); }
+    .pill.no { color: var(--against); border-color: rgba(180,85,60,0.35); background: rgba(180,85,60,0.07); }
+    .gate .addr { font-size: 12px; color: var(--muted); }
+
+    /* ---- composer ---- */
+    .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+    .tab { font-size: 12px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--hair); background: transparent; color: var(--muted); }
+    .tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    textarea, input[type=text] {
+      width: 100%; font-family: var(--mono); font-size: 13.5px; color: var(--ink);
+      background: rgba(255,255,255,0.5); border: 1px solid var(--hair); border-radius: 10px; padding: 12px 14px; resize: vertical;
+    }
+    textarea:focus, input[type=text]:focus { outline: none; border-color: var(--accent); }
+    textarea { min-height: 88px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+    .hint { font-size: 11.5px; color: var(--muted); }
+    .btn {
+      font-size: 12.5px; letter-spacing: 0.03em; padding: 9px 18px; color: var(--paper);
+      background: var(--ink); border: 1px solid var(--ink); border-radius: 999px; transition: opacity .2s;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .status { font-size: 12px; margin-top: 10px; min-height: 18px; }
+    .status.bad { color: var(--against); }
+    .status.good { color: var(--for); }
+    .hidden { display: none !important; }
+
+    /* ---- proposals ---- */
+    .filter { display: flex; gap: 8px; margin: 12px 0 18px; }
+    .card { border: 1px solid var(--hair); border-radius: 14px; padding: 18px 20px; background: rgba(255,255,255,0.28); margin-bottom: 14px; }
+    .card .p-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .card h3 { font-family: var(--display); font-size: 18px; font-weight: 400; line-height: 1.25; }
+    .card .p-meta { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+    .card .p-body { margin-top: 12px; font-size: 13px; color: rgba(var(--ink-rgb), 0.85); white-space: pre-wrap; word-break: break-word; }
+    .tagstate { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--hair); white-space: nowrap; }
+    .tagstate.open { color: var(--for); border-color: rgba(79,125,90,0.4); }
+    .tagstate.closed { color: var(--muted); }
+
+    .tally { margin-top: 16px; }
+    .tally .bar { display: flex; height: 9px; border-radius: 999px; overflow: hidden; background: var(--hair-soft); }
+    .tally .bar i { display: block; height: 100%; }
+    .tally .bar i.for { background: var(--for); }
+    .tally .bar i.against { background: var(--against); }
+    .tally .bar i.abstain { background: var(--abstain); }
+    .tally .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 9px; font-size: 11.5px; color: var(--muted); }
+    .tally .legend b { color: var(--ink); font-weight: 500; }
+    .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+    .vote-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .vbtn { font-size: 12px; padding: 7px 15px; border-radius: 999px; border: 1px solid var(--hair); background: transparent; color: var(--ink); transition: all .15s; }
+    .vbtn:hover:not(:disabled) { border-color: var(--ink); }
+    .vbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .vbtn.for:hover:not(:disabled) { color: var(--for); border-color: var(--for); }
+    .vbtn.against:hover:not(:disabled) { color: var(--against); border-color: var(--against); }
+
+    .replies { margin-top: 16px; border-top: 1px solid var(--hair-soft); padding-top: 14px; }
+    .reply { padding: 10px 0; border-bottom: 1px solid var(--hair-soft); font-size: 12.5px; }
+    .reply:last-child { border-bottom: none; }
+    .reply .r-meta { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+    .reply .r-body { white-space: pre-wrap; word-break: break-word; color: rgba(var(--ink-rgb), 0.85); }
+
+    /* ---- feed ---- */
+    .post { border-bottom: 1px solid var(--hair-soft); padding: 14px 0; }
+    .post:first-child { border-top: 1px solid var(--hair-soft); }
+    .post .p-meta { display: flex; align-items: baseline; gap: 10px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+    .post .who { color: var(--ink); font-weight: 500; }
+    .post .wt { color: var(--accent); }
+    .post .p-text { margin-top: 6px; font-size: 13px; color: rgba(var(--ink-rgb), 0.88); white-space: pre-wrap; word-break: break-word; }
+    .more { margin-top: 16px; font-size: 12px; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--hair); background: transparent; color: var(--muted); }
+    .more:hover { color: var(--ink); border-color: var(--ink); }
+    .empty, .loading { color: var(--muted); font-size: 13px; padding: 14px 0; }
+    .err { color: var(--against); font-size: 13px; }
+
+    footer { position: relative; z-index: 1; max-width: 860px; margin: 40px auto 0; padding: 24px clamp(16px,4vw,40px) 60px; border-top: 1px solid var(--hair); display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    footer a { text-decoration: none; border-bottom: 1px solid transparent; }
+    footer a:hover { color: var(--ink); border-color: var(--hair); }
+  </style>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="wordmark" href="/">
+      <svg class="mark" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+        <circle cx="12" cy="14" r="3.1" /><circle cx="20.5" cy="11.5" r="2.3" /><circle cx="17.5" cy="21" r="1.9" />
+      </svg>
+      <span class="name">murmur</span>
+    </a>
+    <nav class="toplinks">
+      <a href="/">← the swarm</a>
+      <a href="/developers">api</a>
+      <button id="connect-btn" class="wallet-btn" type="button">connect wallet</button>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <section class="hero">
+      <h1>community <em>governance</em></h1>
+      <p class="lede">
+        A token-gated forum for MURMUR holders. Browse freely — no wallet, no key. To speak, propose or vote,
+        connect a wallet and hold MURMUR: your voice is weighted by your balance, checked on-chain at the moment
+        you act. Proposals are tallied off-chain; nothing here ever touches your funds.
+      </p>
+      <div class="badges" id="badges"></div>
+    </section>
+
+    <!-- wallet / gate -->
+    <section>
+      <div class="gate" id="gate">
+        <div>
+          <div class="addr" id="gate-addr">not connected</div>
+          <div class="bal" id="gate-bal">—<small>MURMUR</small></div>
+        </div>
+        <div class="perms">
+          <span class="pill" id="pill-speak">speak · —</span>
+          <span class="pill" id="pill-propose">propose · —</span>
+        </div>
+      </div>
+      <p class="sec-note" id="gate-note">Connect a wallet on Arc to see your balance and what you can do.</p>
+    </section>
+
+    <!-- composer -->
+    <section>
+      <h2><span class="n">01</span>Contribute</h2>
+      <p class="sec-note">Every action is an EIP-712 signature from your wallet — gasless, and verified server-side against your on-chain MURMUR balance.</p>
+      <div class="tabs" style="margin-top:14px">
+        <button class="tab active" id="tab-speak" type="button">speak</button>
+        <button class="tab" id="tab-propose" type="button">propose</button>
+      </div>
+
+      <form id="speak-form">
+        <textarea id="speak-body" maxlength="4000" placeholder="Say something to the plaza… (requires ≥ speak-min MURMUR)"></textarea>
+        <div class="row">
+          <span class="hint" id="speak-count">0 / 4000</span>
+          <button class="btn" id="speak-submit" type="submit" disabled>sign &amp; post</button>
+        </div>
+      </form>
+
+      <form id="propose-form" class="hidden">
+        <input type="text" id="propose-title" maxlength="200" placeholder="Proposal title… (requires ≥ propose-min MURMUR)" />
+        <textarea id="propose-body" maxlength="4000" style="margin-top:10px" placeholder="What are you proposing?"></textarea>
+        <div class="row">
+          <span class="hint">opens a voting window once submitted</span>
+          <button class="btn" id="propose-submit" type="submit" disabled>sign &amp; propose</button>
+        </div>
+      </form>
+
+      <div class="status" id="compose-status"></div>
+    </section>
+
+    <!-- proposals -->
+    <section>
+      <h2><span class="n">02</span>Proposals</h2>
+      <div class="filter" id="prop-filter">
+        <button class="tab active" data-status="" type="button">all</button>
+        <button class="tab" data-status="open" type="button">open</button>
+        <button class="tab" data-status="closed" type="button">closed</button>
+      </div>
+      <div id="proposals"><p class="loading">loading proposals…</p></div>
+    </section>
+
+    <!-- plaza feed -->
+    <section>
+      <h2><span class="n">03</span>The plaza</h2>
+      <div id="feed"><p class="loading">loading the plaza…</p></div>
+      <button class="more hidden" id="more-feed" type="button">load more</button>
+    </section>
+  </div>
+
+  <footer>
+    <a href="/">the swarm</a>
+    <a href="/developers">api</a>
+    <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+    <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
+    <span style="margin-left:auto">voice = MURMUR balance · tallies off-chain · non-custodial</span>
+  </footer>
+
+  <script type="module" src="./community.js?v=1"></script>
+</body>
+</html>

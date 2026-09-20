@@ -6,6 +6,8 @@
 // the onchain facilitator is armed with a mnemonic secret, WRITES real EIP-3009 USDC transfers between
 // the agents. With no mnemonic it runs a keyless simulated ledger and moves nothing (see state.ts).
 
+import { parseUnits } from "viem";
+
 export interface Env {
   // Durable Object binding (population + market state) — the coordinator singleton.
   FLY_STATE: DurableObjectNamespace;
@@ -138,6 +140,19 @@ export interface Env {
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
 
+  // --- Community governance page (off-chain, token-gated forum + weighted voting; D1-backed) ---
+  //     A standalone /community page: anyone may browse, but posting / proposing / voting requires a wallet
+  //     EIP-712 signature AND a SERVER-SIDE balanceOf(author) check against the MURMUR token — the front-end
+  //     gate is UX only, never a security boundary. Read-only on-chain (balanceOf) + D1 writes; it NEVER signs
+  //     a transfer or touches the treasury, so its risk surface is far below the settlement layer. ALL inert
+  //     unless COMMUNITY_ENABLED="true".
+  COMMUNITY_ENABLED?: string;               // "true"/"false" (default false) — serve the /community* endpoints
+  COMMUNITY_TOKEN?: string;                 // MURMUR ERC-20 the gate is denominated in (0x…40; default = ARENA_TOKEN)
+  COMMUNITY_SPEAK_MIN?: string;             // min MURMUR balance to post / reply / vote (human units, default 50000)
+  COMMUNITY_PROPOSE_MIN?: string;           // min MURMUR balance to open a proposal (human units, default 1000000)
+  COMMUNITY_PROPOSAL_WINDOW_HOURS?: string; // hours a proposal stays open for voting (default 72)
+  COMMUNITY_POST_COOLDOWN_SEC?: string;     // anti-spam: seconds between posts by one address (default 60)
+
   // --- connectome sizing (optional; omitted ⇒ buildConnectome defaults) ---
   BRAIN_N_SENSORY?: string;
   BRAIN_N_INTER_L1?: string;
@@ -261,6 +276,17 @@ export interface RuntimeConfig {
     staleGraceSec: number;      // seconds past deadline before an unresolved round is refundable by anyone
   };
 
+  // Community governance page (off-chain token-gated forum + weighted voting; D1-backed, read-only on-chain)
+  community: {
+    enabled: boolean;
+    token: string | null;       // MURMUR ERC-20 the gate is denominated in (defaults to arena.token)
+    speakMinRaw: bigint;        // min balance (raw, 18dp) to post / reply / vote
+    proposeMinRaw: bigint;      // min balance (raw, 18dp) to open a proposal
+    windowMs: number;           // how long a proposal stays open for voting (ms)
+    cooldownSec: number;        // anti-spam: min seconds between posts by one address
+    chainId: number;            // EIP-712 domain chainId (== the configured Arc chain)
+  };
+
   // Autonomous evolution (profitable agents self-fund breeding from their own wallets)
   evolution: {
     enabled: boolean;
@@ -303,6 +329,20 @@ function posFrac(v: string | undefined): number | undefined {
 function parseCircleMode(v: string | undefined): "off" | "external" | "all" {
   const s = (v ?? "").trim().toLowerCase();
   return s === "external" || s === "all" ? s : "off";
+}
+
+/**
+ * Parse a human token amount (e.g. "50000") into raw bigint units at `decimals`; falls back to `def` on any
+ * absent/invalid input so a malformed env var can never crash config load or silently zero a gate.
+ */
+function parseRawUnits(v: string | undefined, decimals: number, def: bigint): bigint {
+  const s = (v ?? "").trim();
+  if (!s) return def;
+  try {
+    return parseUnits(s, decimals);
+  } catch {
+    return def;
+  }
 }
 
 export function loadConfig(env: Env): RuntimeConfig {
@@ -435,6 +475,19 @@ export function loadConfig(env: Env): RuntimeConfig {
       // Default to the swarm's flat band so both markets resolve the same temperature move identically.
       flatBand: clamp(Number(env.ARENA_FLAT_BAND ?? env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
       staleGraceSec: clampInt(Number(env.ARENA_STALE_GRACE_SEC ?? "259200"), 3600, 30 * 86400),
+    },
+
+    community: {
+      // OFF by default and inert until COMMUNITY_ENABLED="true". Read-only on-chain (balanceOf) + D1 writes —
+      // it never signs a transfer or touches the treasury, so its risk surface is far below the settlement layer.
+      enabled: (env.COMMUNITY_ENABLED ?? "false").toLowerCase() === "true",
+      // Default to the arena's MURMUR token so the gate is denominated in the project's own ERC-20.
+      token: (env.COMMUNITY_TOKEN ?? "").trim() || (env.ARENA_TOKEN ?? "").trim() || null,
+      speakMinRaw: parseRawUnits(env.COMMUNITY_SPEAK_MIN, 18, 50_000n * 10n ** 18n),
+      proposeMinRaw: parseRawUnits(env.COMMUNITY_PROPOSE_MIN, 18, 1_000_000n * 10n ** 18n),
+      windowMs: clampInt(Number(env.COMMUNITY_PROPOSAL_WINDOW_HOURS ?? "72"), 1, 24 * 30) * 3_600_000,
+      cooldownSec: clampInt(Number(env.COMMUNITY_POST_COOLDOWN_SEC ?? "60"), 0, 86400),
+      chainId,
     },
 
     evolution: {

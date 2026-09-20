@@ -257,6 +257,79 @@ const LINEAGE_ENTRY = {
   },
 } as const;
 
+const COMMUNITY_TALLY = {
+  type: "object",
+  description:
+    "Weighted vote tally for a proposal. `for`/`against`/`abstain`/`total` are exact MURMUR base-unit integer strings (18 decimals); the `*Fmt` fields are human-readable. Each voter's weight is their balanceOf at vote time.",
+  additionalProperties: false,
+  properties: {
+    for: { type: "string", description: "Total weight FOR (raw 18dp integer string)." },
+    against: { type: "string", description: "Total weight AGAINST (raw)." },
+    abstain: { type: "string", description: "Total weight ABSTAIN (raw)." },
+    total: { type: "string", description: "Sum of all weight (raw)." },
+    voters: { type: "integer", description: "Distinct voters (one vote per address per proposal)." },
+    forFmt: { type: "string", description: "Human-readable MURMUR." },
+    againstFmt: { type: "string" },
+    abstainFmt: { type: "string" },
+    totalFmt: { type: "string" },
+  },
+} as const;
+
+const COMMUNITY_POST = {
+  type: "object",
+  description:
+    "A plaza post (proposalId null) or a proposal reply (proposalId set). `authorBal` is the poster's MURMUR balanceOf snapshot taken at post time, so the feed shows weight without a live chain read per row.",
+  additionalProperties: false,
+  properties: {
+    id: { type: "integer" },
+    author: { type: "string", description: "Lowercased 0x… address (== the recovered EIP-712 signer)." },
+    body: { type: "string" },
+    proposalId: { type: ["integer", "null"], description: "null = plaza post; else the proposal this replies to." },
+    authorBal: { type: "string", description: "MURMUR balance at post time (raw 18dp integer string)." },
+    authorBalFmt: { type: "string", description: "Human-readable MURMUR." },
+    ts: { type: "integer", description: "Client-signed unix ms (validated within ±300s of server time)." },
+    sig: { type: "string", description: "The EIP-712 Post signature (UNIQUE ⇒ replay guard)." },
+  },
+} as const;
+
+const COMMUNITY_PROPOSAL = {
+  type: "object",
+  description:
+    "A governance proposal + its live weighted tally. Open while now < deadline; voting closes at the deadline but replies continue afterward.",
+  additionalProperties: false,
+  properties: {
+    id: { type: "integer" },
+    author: { type: "string", description: "Lowercased 0x… proposer (held ≥ propose-min at creation)." },
+    title: { type: "string" },
+    body: { type: "string" },
+    authorBal: { type: "string", description: "MURMUR balance at creation (raw 18dp integer string)." },
+    authorBalFmt: { type: "string" },
+    deadline: { type: "integer", description: "Unix ms after which voting closes." },
+    ts: { type: "integer", description: "Unix ms created." },
+    open: { type: "boolean", description: "now < deadline." },
+    tally: COMMUNITY_TALLY,
+  },
+} as const;
+
+const COMMUNITY_GATE = {
+  type: "object",
+  description:
+    "A live, server-side MURMUR balanceOf read for one address + what it unlocks. The front-end gate is UX only; the server re-runs this exact check on every gated write, so a client can never forge eligibility.",
+  additionalProperties: false,
+  properties: {
+    address: { type: "string" },
+    balance: { type: "string", description: "Raw 18dp integer string." },
+    balanceFmt: { type: "string", description: "Human-readable MURMUR." },
+    canSpeak: { type: "boolean", description: "balance ≥ speak-min (post / reply / vote)." },
+    canPropose: { type: "boolean", description: "balance ≥ propose-min (open a proposal)." },
+    speakMin: { type: "string" },
+    proposeMin: { type: "string" },
+    speakMinFmt: { type: "string" },
+    proposeMinFmt: { type: "string" },
+    token: { type: ["string", "null"], description: "The MURMUR ERC-20 the gate reads (0x…); null when unconfigured." },
+  },
+} as const;
+
 function ok(schema: unknown, description: string) {
   return {
     response: {
@@ -325,6 +398,7 @@ export const OPENAPI_SPEC = {
     { name: "lineage", description: "The connectome breeding market: tradeable, breedable brains with on-chain ancestry." },
     { name: "predictions", description: "The on-chain prediction market + human-vs-swarm arena." },
     { name: "signal", description: "The x402 paid Arc-activity signal (the one non-free endpoint)." },
+    { name: "community", description: "Token-gated governance forum for MURMUR holders: browse free; sign to speak / propose / vote." },
   ],
   paths: {
     "/": {
@@ -871,6 +945,143 @@ export const OPENAPI_SPEC = {
         },
       },
     },
+    "/community/feed": {
+      get: {
+        tags: ["community"],
+        operationId: "getCommunityFeed",
+        summary: "The plaza: token-gated posts (newest first)",
+        description: "Free + keyless. Top-level plaza posts (not proposal replies), newest first, each carrying the poster's MURMUR balance snapshot. Cursor-paginate with `before` (a post id taken from `nextBefore`).",
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 25, minimum: 1, maximum: 100 }, description: "Max posts to return." },
+          { name: "before", in: "query", required: false, schema: { type: "integer" }, description: "Return posts with id < this value (cursor from nextBefore)." },
+        ],
+        ...ok(
+          obj({
+            posts: { type: "array", items: { $ref: "#/components/schemas/CommunityPost" } },
+            nextBefore: { type: ["integer", "null"], description: "Cursor for the next page; null when exhausted." },
+            limit: { type: "integer" },
+          }, ["posts"]),
+          "The plaza feed.",
+        ).response,
+      },
+    },
+    "/community/proposals": {
+      get: {
+        tags: ["community"],
+        operationId: "getCommunityProposals",
+        summary: "Proposals + their weighted tallies",
+        description: "Free + keyless. Governance proposals (newest first), each with its live MURMUR-weighted tally and open/closed state. Optionally filter by voting status.",
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 25, minimum: 1, maximum: 100 }, description: "Max proposals to return." },
+          { name: "status", in: "query", required: false, schema: { type: "string", enum: ["open", "closed"] }, description: "Filter by voting state (omit for all)." },
+        ],
+        ...ok(
+          obj({
+            proposals: { type: "array", items: { $ref: "#/components/schemas/CommunityProposal" } },
+            now: { type: "integer", description: "Server unix ms (compare against each deadline)." },
+            limit: { type: "integer" },
+          }, ["proposals"]),
+          "Proposals with tallies.",
+        ).response,
+      },
+    },
+    "/community/proposal": {
+      get: {
+        tags: ["community"],
+        operationId: "getCommunityProposal",
+        summary: "One proposal + tally + its replies",
+        description: "Free + keyless. A single proposal with its live tally and the full reply thread beneath it.",
+        parameters: [{ name: "id", in: "query", required: true, schema: { type: "integer", minimum: 1 }, description: "The proposal id.", example: 1 }],
+        ...ok(
+          obj({
+            proposal: { $ref: "#/components/schemas/CommunityProposal" },
+            replies: { type: "array", items: { $ref: "#/components/schemas/CommunityPost" } },
+            now: { type: "integer" },
+          }, ["proposal"]),
+          "Proposal detail + replies.",
+        ).response,
+      },
+      post: {
+        tags: ["community"],
+        operationId: "postCommunityProposal",
+        summary: "Sign to open a proposal",
+        description:
+          "Requires an EIP-712 **Propose** signature over `{author, title, body, ts}` AND `balanceOf(author) ≥ propose-min` (1M MURMUR by default). The voting deadline is set to `now + the configured window`. Same replay (409), threshold (403) and signature (401) rules as `/community/post`.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: obj({
+                author: { type: "string", description: "The signer's 0x… address." },
+                title: { type: "string", description: "≤ 200 chars." },
+                body: { type: "string", description: "≤ 4000 chars." },
+                ts: { type: "integer", description: "Unix ms, signed in the message." },
+                sig: { type: "string", description: "The EIP-712 Propose signature (0x…)." },
+              }, ["author", "title", "ts", "sig"]),
+            },
+          },
+        },
+        ...ok(obj({ ok: { type: "boolean" }, id: { type: "integer" }, deadline: { type: "integer" }, authorBal: { type: "string" }, authorBalFmt: { type: "string" } }, ["ok", "id", "deadline"]), "Proposal opened.").response,
+      },
+    },
+    "/community/gate": {
+      get: {
+        tags: ["community"],
+        operationId: "getCommunityGate",
+        summary: "A live MURMUR balance read + what it unlocks",
+        description: "Free + keyless. Reads `balanceOf(address)` on-chain and reports canSpeak / canPropose against the configured thresholds. This is the SAME authoritative check the server applies to every gated write; the front-end uses it only for UX, never as a security boundary.",
+        parameters: [{ name: "address", in: "query", required: true, schema: { type: "string" }, description: "The 0x… address to check.", example: "0x8faae5592b9acc27a79fca745c6b872adf514a5d" }],
+        ...ok({ $ref: "#/components/schemas/CommunityGate" }, "The gate check.").response,
+      },
+    },
+    "/community/post": {
+      post: {
+        tags: ["community"],
+        operationId: "postCommunityPost",
+        summary: "Sign to speak (a plaza post or a proposal reply)",
+        description:
+          "Requires an EIP-712 **Post** signature (domain `murmur community` v1, chainId 5042) over `{author, body, proposalId, ts}` AND a server-side `balanceOf(author) ≥ speak-min`. `proposalId` 0/absent = a plaza post; >0 = a reply under that proposal. `ts` must be within ±300s of server time; `sig` is UNIQUE so an exact replay is rejected (409). Below threshold ⇒ 403; bad/mismatched signature ⇒ 401. The worker never trusts a client-supplied balance.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: obj({
+                author: { type: "string", description: "The signer's 0x… address (must equal the recovered signer)." },
+                body: { type: "string", description: "Post text (≤ 4000 chars)." },
+                proposalId: { type: "integer", description: "0/absent = plaza post; else the proposal to reply to." },
+                ts: { type: "integer", description: "Unix ms, signed in the message." },
+                sig: { type: "string", description: "The EIP-712 Post signature (0x…)." },
+              }, ["author", "body", "ts", "sig"]),
+            },
+          },
+        },
+        ...ok(obj({ ok: { type: "boolean" }, id: { type: "integer" }, authorBal: { type: "string" }, authorBalFmt: { type: "string" } }, ["ok", "id"]), "Post recorded.").response,
+      },
+    },
+    "/community/vote": {
+      post: {
+        tags: ["community"],
+        operationId: "postCommunityVote",
+        summary: "Sign to vote (weighted by your balance)",
+        description:
+          "Requires an EIP-712 **Vote** signature over `{author, proposalId, choice, ts}` AND `balanceOf(author) ≥ speak-min`, while the proposal is still open (`now ≤ deadline`). Your weight is your `balanceOf` at vote time. One vote per (proposal, voter) — re-voting replaces your previous choice (latest wins). `choice`: 0 against, 1 for, 2 abstain.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: obj({
+                author: { type: "string", description: "The signer's 0x… address." },
+                proposalId: { type: "integer", minimum: 1 },
+                choice: { type: "integer", enum: [0, 1, 2], description: "0 against · 1 for · 2 abstain." },
+                ts: { type: "integer", description: "Unix ms, signed in the message." },
+                sig: { type: "string", description: "The EIP-712 Vote signature (0x…)." },
+              }, ["author", "proposalId", "choice", "ts", "sig"]),
+            },
+          },
+        },
+        ...ok(obj({ ok: { type: "boolean" }, proposalId: { type: "integer" }, choice: { type: "integer" }, weight: { type: "string" }, weightFmt: { type: "string" }, tally: { $ref: "#/components/schemas/CommunityTally" } }, ["ok"]), "Vote recorded + the updated tally.").response,
+      },
+    },
   },
   components: {
     schemas: {
@@ -884,6 +1095,10 @@ export const OPENAPI_SPEC = {
       BrainManifest: BRAIN_MANIFEST,
       Genome: GENOME,
       LineageEntry: LINEAGE_ENTRY,
+      CommunityPost: COMMUNITY_POST,
+      CommunityProposal: COMMUNITY_PROPOSAL,
+      CommunityTally: COMMUNITY_TALLY,
+      CommunityGate: COMMUNITY_GATE,
     },
   },
 } as const;

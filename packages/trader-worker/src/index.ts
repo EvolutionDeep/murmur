@@ -1,8 +1,9 @@
 // Cloudflare Worker entry — forwards HTTP requests to the Durable Object and handles Cron.
 
-import type { Env } from "./config.js";
+import { loadConfig, type Env } from "./config.js";
 import { FlyStateDO } from "./state.js";
 import { OPENAPI_SPEC } from "./openapi.js";
+import { handleCommunity } from "./community.js";
 
 // FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
 // swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
@@ -64,7 +65,7 @@ export default {
           apiVersion: "v1",
           openapi: "/openapi.json",
           docs: "https://muros.live/developers",
-          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "d1-history-archive", "brain-manifest-provenance", "connectome-breeding-lineage", "public-api-openapi"],
+          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "community-governance", "d1-history-archive", "brain-manifest-provenance", "connectome-breeding-lineage", "public-api-openapi"],
           endpoints: [
             "GET  /openapi.json (this API's OpenAPI 3.1 contract — free, no key, CORS-enabled; human docs at muros.live/developers)",
             "GET  /state",
@@ -82,6 +83,7 @@ export default {
             "GET  /lineage/:hash (one bred brain: genome body + parents/children + re-derived structural spec + on-chain commit)",
             "GET  /lineage/verify?hash=0x… (recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL)",
             "GET  /arena        (human-vs-swarm MURMUR arena: live book + parimutuel odds + you-vs-the-swarm hit rate)",
+            "GET  /community  (token-gated governance forum: browse free; post/propose/vote need a MURMUR-holding wallet signature — see /community for the sub-endpoints)",
             "GET  /history      (D1 long-term archive: one row per cron — temperature/regime/deals/volume/gini/topStates)",
             "GET  /stimuli",
             "GET  /snapshot?flyId=N   (full neural state of one fly + its agent wallet)",
@@ -94,6 +96,17 @@ export default {
         }),
         { headers: { "Content-Type": "application/json", ...corsHeaders(origin) } },
       );
+    }
+
+    // Community governance page API — handled in the Worker (never a DO round-trip): it is orthogonal to the
+    // tick/swarm and only reads the chain (balanceOf) + writes D1, so it must NOT contend for the swarm DO's
+    // single-threaded input queue. Inert (501) unless cfg.community.enabled; CORS re-applied like the DO path.
+    if (path === "/community" || path.startsWith("/community/")) {
+      const cfg = loadConfig(env);
+      const communityResp = await handleCommunity({ path, url, request, env, cfg });
+      const communityHeaders = new Headers(communityResp.headers);
+      for (const [k, v] of Object.entries(corsHeaders(origin))) communityHeaders.set(k, v);
+      return new Response(communityResp.body, { status: communityResp.status, headers: communityHeaders });
     }
 
     // Forward every other request to the DO (with the /v1 prefix already stripped)

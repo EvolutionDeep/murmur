@@ -22,3 +22,53 @@ CREATE TABLE IF NOT EXISTS ticks (
 
 -- Time-range scans for the frontend history curve and research export.
 CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (ts);
+
+-- ============================================================================================
+-- Community governance page (off-chain, token-gated forum + weighted voting). Served at
+-- muros.live/community; the /community* API is handled in the Worker's fetch (see src/community.ts)
+-- and stores here. These tables are created lazily in code (ensureCommunitySchema) AND mirrored here
+-- so `wrangler d1 execute murmur-db --remote --file=./schema.sql` provisions them up-front. The feature
+-- is READ-ONLY on-chain (a balanceOf gate) and never moves funds.
+-- ============================================================================================
+
+-- Plaza posts + proposal replies. proposal_id IS NULL ⇒ a top-level plaza post; non-null ⇒ a reply under
+-- that proposal. author_bal is the poster's MURMUR balanceOf snapshot at post time (raw 18dp decimal
+-- string) so the feed can display weight without a live chain read per row. sig is UNIQUE ⇒ an exact
+-- EIP-712 replay of the same action is rejected as a duplicate (idempotent).
+CREATE TABLE IF NOT EXISTS community_posts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  author      TEXT    NOT NULL,             -- lowercased 0x…40 poster address (== the recovered signer)
+  body        TEXT    NOT NULL,             -- post/reply text (<= 4000 chars)
+  proposal_id INTEGER,                      -- NULL = plaza post; else the proposal this replies to
+  author_bal  TEXT    NOT NULL,             -- MURMUR balanceOf(author) at post time (raw decimal string)
+  ts          INTEGER NOT NULL,             -- client-signed unix ms (validated within ±300s of server time)
+  sig         TEXT    NOT NULL UNIQUE       -- EIP-712 Post signature (replay guard)
+);
+CREATE INDEX IF NOT EXISTS idx_community_posts_ts ON community_posts (ts);
+CREATE INDEX IF NOT EXISTS idx_community_posts_proposal ON community_posts (proposal_id);
+
+-- Proposals. deadline = ts-created + COMMUNITY_PROPOSAL_WINDOW_HOURS; open while now < deadline. sig UNIQUE.
+CREATE TABLE IF NOT EXISTS community_proposals (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  author     TEXT    NOT NULL,              -- lowercased 0x…40 proposer (must hold >= COMMUNITY_PROPOSE_MIN)
+  title      TEXT    NOT NULL,              -- <= 200 chars
+  body       TEXT    NOT NULL,              -- <= 4000 chars
+  author_bal TEXT    NOT NULL,              -- MURMUR balanceOf(author) at creation (raw decimal string)
+  deadline   INTEGER NOT NULL,              -- unix ms after which voting closes
+  ts         INTEGER NOT NULL,              -- client-signed unix ms
+  sig        TEXT    NOT NULL UNIQUE        -- EIP-712 Propose signature (replay guard)
+);
+CREATE INDEX IF NOT EXISTS idx_community_proposals_ts ON community_proposals (ts);
+
+-- Weighted votes. PK (proposal_id, voter) ⇒ one voter per proposal; INSERT OR REPLACE lets a holder change
+-- their vote (latest wins). choice 0=against / 1=for / 2=abstain; weight = MURMUR balanceOf(voter) at vote
+-- time (raw decimal string). Tallies are aggregated in JS with BigInt (D1 has no bigint SUM).
+CREATE TABLE IF NOT EXISTS community_votes (
+  proposal_id INTEGER NOT NULL,
+  voter       TEXT    NOT NULL,             -- lowercased 0x…40 voter (must hold >= COMMUNITY_SPEAK_MIN)
+  choice      INTEGER NOT NULL,             -- 0 against | 1 for | 2 abstain
+  weight      TEXT    NOT NULL,             -- MURMUR balanceOf(voter) at vote time (raw decimal string)
+  ts          INTEGER NOT NULL,             -- client-signed unix ms
+  sig         TEXT    NOT NULL,             -- EIP-712 Vote signature (a re-vote replaces the row)
+  PRIMARY KEY (proposal_id, voter)
+);

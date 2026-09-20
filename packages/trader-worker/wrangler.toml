@@ -192,6 +192,22 @@ ARENA_FLAT_BAND = "0.008"                     # |Δtemperature| ≤ this ⇒ FLA
 ARENA_STALE_GRACE_SEC = "259200"              # 3 days past a round's deadline before anyone may expire it for a refund
 
 
+# ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
+# A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
+# fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /
+# voting requires an EIP-712 wallet signature AND a SERVER-SIDE balanceOf(author) read of MURMUR — the front-end
+# gate is UX only, never a security boundary. Content is stored in the SAME murmur-db D1 (binding DB) as the tick
+# archive; the tables are created lazily (CREATE TABLE IF NOT EXISTS) and mirrored in schema.sql. This feature is
+# READ-ONLY on-chain (balanceOf) and NEVER signs a transfer or touches the treasury, so its risk surface is far
+# below the settlement layer. Denominated in MURMUR (COMMUNITY_TOKEN defaults to ARENA_TOKEN above — no new secret).
+# Set COMMUNITY_ENABLED = "false" to make every /community* route return 501 instantly.
+COMMUNITY_ENABLED = "true"                    # LIVE: serve the /community* endpoints + the muros.live/community page
+COMMUNITY_SPEAK_MIN = "50000"                 # min MURMUR balance (human units) to post / reply / vote (raw = 5e22)
+COMMUNITY_PROPOSE_MIN = "1000000"             # min MURMUR balance (human units) to open a proposal (raw = 1e24)
+COMMUNITY_PROPOSAL_WINDOW_HOURS = "72"        # hours a proposal stays open for voting (clamped 1..720)
+COMMUNITY_POST_COOLDOWN_SEC = "60"            # anti-spam: min seconds between posts by one address (0 = no cooldown)
+
+
 # ===== AUTONOMOUS EVOLUTION (ONCHAIN — the swarm self-funds its own next generation) =====
 # Each cron the FITTEST agents (highest realized PnL, netUsdc > 0) may autonomously breed a new connectome
 # into the on-chain breeding market (mutate the champion, or cross the top two) — and pay the breeding fee
