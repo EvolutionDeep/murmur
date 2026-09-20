@@ -534,28 +534,6 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 }
 .hist-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
 
-/* --- "chronicle" toggle (in the temperature panel, under swarm history) --- */
-.chron-btn {
-  margin-top: 6px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  background: transparent; border: 1px solid var(--hair); color: var(--muted);
-  border-radius: 3px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  position: relative;
-}
-.chron-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
-.chron-btn.has-news { border-color: rgba(var(--accent-rgb), 0.55); color: var(--ink); }
-.chron-btn.has-news::after {
-  content: ""; position: absolute; right: 10px; top: 50%; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); transform: translateY(-50%);
-  box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); animation: chron-pulse 2.4s ease-out infinite;
-}
-@keyframes chron-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); }
-  70%  { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
-  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
-}
-
 /* --- "neural proofs" toggle (in the economy panel, under the wallets toggle) --- */
 .proofs-btn {
   margin-top: 6px; width: 100%;
@@ -683,9 +661,35 @@ body.lineage-open .panel-pop { opacity: 0.1; pointer-events: none; }
 }
 .drawer.open { transform: translateX(0); pointer-events: auto; }
 body.history-open .panel-pop { opacity: 0.1; pointer-events: none; }
-body.chron-open .panel-pop { opacity: 0.1; pointer-events: none; }
+/* the chronicle panel recedes behind any full-height drawer or the inspector */
+body.wallets-open .panel-chron, body.ins-open .panel-chron, body.brain-open .panel-chron,
+body.lineage-open .panel-chron, body.history-open .panel-chron, body.proofs-open .panel-chron,
+body.pulse-open .panel-chron, body.predict-open .panel-chron, body.arena-open .panel-chron { opacity: 0.1; pointer-events: none; }
 
-/* --- the chronicle drawer (the deterministic historian's narrative timeline) --- */
+/* ============ the chronicle panel (bottom-right, under population) ============
+   The permanent home of the historian: era badge, "prove no LLM" verdict, the narrative timeline
+   and the ledger of relationships (bonds / reputation / grudges). Inheritor of the about slot. */
+.panel-chron {
+  right: var(--pad); bottom: var(--pad); width: clamp(232px, 26vw, 300px);
+  max-height: min(58vh, 560px);
+  display: flex; flex-direction: column;
+}
+.chron-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.chron-head .panel-title { margin-bottom: 0; }
+.chron-sub { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); text-align: right; }
+.panel-chron .chron-era { margin: 0 0 8px; padding: 7px 9px; gap: 6px; flex: none; }
+.panel-chron .chron-era-name { font-size: 14px; }
+.panel-chron .chron-verify-bar { margin: 0 0 8px; flex: none; }
+.panel-chron .chron-prove { font-size: 8.5px; padding: 6px 8px; }
+.panel-chron .chron-verify { margin: 0 0 8px; flex: none; }
+.panel-chron .chron-list { flex: 1; min-height: 40px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 7px; }
+.panel-chron .chron-item { padding: 6px 8px; gap: 7px; }
+.panel-chron .chron-icon { width: 15px; font-size: 11.5px; }
+.panel-chron .chron-line { font-size: 11.5px; }
+.panel-chron .wallets-social { flex: none; max-height: 36%; margin: 0; padding-top: 10px; }
+.panel-chron .chron-foot { flex: none; margin-top: 8px; font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; color: var(--muted); opacity: 0.6; text-align: center; }
+
+/* --- the chronicle's shared innards (also used inside the panel) --- */
 .chron-era {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   padding: 10px 12px; margin: 0 0 12px;
@@ -1180,7 +1184,7 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
        min-height:601px so the stacked fallback below is unaffected. --- */
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 900px) {
   .econ-feed { display: none; }
-  .panel-econ, .panel-temp, .panel-pop {
+  .panel-econ, .panel-temp, .panel-pop, .panel-chron {
     max-height: 42vh; overflow-y: auto; scrollbar-width: thin;
   }
 }
@@ -1222,7 +1226,7 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   body { height: auto; min-height: 100%; overflow: visible; }
 
   /* the field / grain / vignette / topbar stay fixed — they're the backdrop */
-  .panel-econ, .panel-temp, .panel-pop {
+  .panel-econ, .panel-temp, .panel-pop, .panel-chron {
     position: relative; left: auto; right: auto; top: auto; bottom: auto;
     width: auto; max-width: min(92vw, 460px);
     margin: 0 auto 12px;
