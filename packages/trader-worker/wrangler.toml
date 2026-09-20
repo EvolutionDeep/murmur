@@ -76,6 +76,23 @@ ECONOMY_SOLVENCY_FLOOR = "0.5"                # simulated treasury tops an agent
 ECONOMY_MAX_DEALS = "10"                   # per-CRON settlement budget, spread across the 6 sub-ticks — 5× the old 2/cron rate
 ECONOMY_FACILITATOR = "onchain"             # "simulated" (keyless ledger) | "onchain" (real EIP-3009; needs the block below)
 
+# ===== Culture ⑤ + institutions ⑥ layers (all pure read-outs / economic-side; the connectome never notices) =====
+# CULTURE: feeding-cohort FAP-creed contagion (TTLed fashions + house traditions as breakwaters) overriding
+# only the decoded read-out line (fap/role) before snapshot + economy see it. INSTITUTIONS: deterministic
+# per-tick aggregate limit books (deals CROSS the book, mark tapes persist), sticky professions read off
+# fap history, and IOU credit with runs — credit is SIMULATED-LEDGER ONLY (onchain, the facilitator is the
+# sole balance authority, so a stiffed real payment stays a stiff). Both default TRUE; either "false"
+# restores the layer below it byte-for-byte (culture off ⇒ today's readings; institutions off ⇒ the
+# fixed-formula, jobless, debtless economy).
+CULTURE_ENABLED = "true"                      # ⑤ meme contagion + traditions on/off
+INSTITUTIONS_ENABLED = "true"                 # ⑥ books + professions + credit (one integrated switch)
+CREDIT_CAP_BASE_USDC = "0.05"                 # base IOU line per fly; traders ×2, reputation up to ×3 more (0 ⇒ credit off, books stay)
+IOU_RATE_PER_10TICK = "0.002"                 # interest per 10 sub-ticks on live IOUs (0.2%); accrual capped at 50% of principal
+# EPOCHS ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/
+# DYNASTIC, or on a governance-injected miracle/cataclysm (food/threat ≥ 0.75) — always a pure read-out, it
+# names an age and never feeds back. "false" leaves only today's slow regime-driven era logic.
+EPOCHS_ENABLED = "true"                       # ⑦ shock epochs + governance-injected cataclysms on/off
+
 # ===== Real-money (ONCHAIN) settlement — LIVE: ECONOMY_SHADOW = "false" broadcasts every netted transfer as a
 #       real EIP-3009 USDC tx on Arc mainnet (bounded by the caps + kill switch below). The onchain path + HD
 #       keys are fully wired; set ECONOMY_SHADOW = "true" to sign + eth_call-simulate without broadcasting. To

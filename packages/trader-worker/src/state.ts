@@ -56,9 +56,10 @@ import {
   type StimulusVoteResult,
   type StoredStimulus,
 } from "./stimulus.js";
-import type { PopulationSnapshot } from "./population.js";
+import type { FlyReading, PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement, type LeaderRow } from "./economy.js";
+import { CultureMembrane } from "./culture.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
@@ -67,7 +68,7 @@ import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
-import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext } from "./chronicler.js";
+import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext, type ShockKind } from "./chronicler.js";
 
 const KEY_METER = "marketMeter:v1";
 const KEY_MARKET = "market:v1";
@@ -75,6 +76,9 @@ const KEY_LAST_SNAPSHOT = "lastSnapshot:v1";
 const KEY_PREV_TEMP = "prevTemperature";
 const KEY_STIMULI = "stimuli";
 const KEY_ECONOMY = "economy:v1";
+/** Culture membrane (adopted FAP creeds + TTLs) — its OWN key: culture is a read-out overlay, so a
+ *  corrupt/absent blob only loses fashions, never ledger state. Bounded (≤64 records), DO-safe. */
+const KEY_CULTURE = "culture:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
@@ -124,6 +128,8 @@ export class FlyStateDO {
   private swarm: SwarmBackend | null = null;
   private meter: MarketMeter | null = null;
   private economy: AgentEconomy | null = null;
+  /** The Lamarckian culture membrane — null while CULTURE_ENABLED=false (byte-for-byte inert). */
+  private culture: CultureMembrane | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
@@ -148,6 +154,10 @@ export class FlyStateDO {
   private d1ChronicleReady = false;
   /** Cached sha256 of the historian's deterministic rule-set (a pure function of the source tables). */
   private chroniclerRulesHash: string | null = null;
+  /** ⑦ EPOCHS — a governance-injected shock awaiting the next historian read (a passed miracle/cataclysm of
+   *  intensity ≥ 0.75). In-memory only, exactly like pendingStimuli: lost on eviction, best-effort, never
+   *  feeds a decision — it only names an era on the next cron. Null when no shock is queued. */
+  private pendingGovernanceShock: { kind: ShockKind; actor?: number } | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -221,6 +231,13 @@ export class FlyStateDO {
       // DYNASTY: houses + mortality ride the economy's own ledger (never the connectome); the master
       // switch is DYNASTY_ENABLED (default ON). Absent/false ⇒ every dynasty hook below is inert.
       dynasty: { enabled: this.cfg.dynasty.enabled },
+      // INSTITUTIONS: limit books + professions + IOU credit are one integrated switch
+      // INSTITUTIONS_ENABLED (default ON). Absent/false ⇒ fixed-formula economy byte-for-byte.
+      institutions: {
+        enabled: this.cfg.institutions.enabled,
+        creditCapBaseUsdc: this.cfg.institutions.creditCapBaseUsdc,
+        iouRatePer10: this.cfg.institutions.iouRatePer10,
+      },
     };
   }
 
@@ -229,6 +246,20 @@ export class FlyStateDO {
     const stored = await this.state.storage.get<string>(KEY_ECONOMY);
     this.economy = this.makeEconomy(stored ?? undefined);
     return this.economy;
+  }
+
+  /**
+   * Lazily load the culture membrane (null while the switch is off — every hook below then no-ops).
+   * A corrupt stored blob restores an EMPTY membrane (fashions are forgotten, the ledger is untouched),
+   * so culture can never poison any other layer's state.
+   */
+  private async ensureCulture(): Promise<CultureMembrane | null> {
+    if (!this.cfg.culture.enabled) return null;
+    if (this.culture) return this.culture;
+    const stored = await this.state.storage.get<string>(KEY_CULTURE);
+    this.culture = new CultureMembrane({ enabled: true });
+    if (stored) this.culture.restore(stored);
+    return this.culture;
   }
 
   /** Runtime prediction-market config derived from the loaded RuntimeConfig + chain network tag. */
@@ -332,7 +363,7 @@ export class FlyStateDO {
    * the offspring BEFORE any payment (a no-op mutation or duplicate genome is refused for free), and only a
    * MINED fee persists the child. Best-effort throughout — any failure is logged and never blocks the tick.
    */
-  private async driveEvolution(economy: AgentEconomy, tickIndex: number): Promise<void> {
+  private async driveEvolution(economy: AgentEconomy, tickIndex: number, flies: readonly FlyReading[] | null): Promise<void> {
     const ev = this.cfg.evolution;
     if (!ev.enabled || !ev.treasury || !this.cfg.economy.enabled) return;
     if (economy.facilitatorMode !== "onchain") return;                                  // no parent keys
@@ -446,7 +477,9 @@ export class FlyStateDO {
               // DYNASTY: the live child enters the kinship ledger — it is born into its parent's house, or
               // this very hatch FLAGS a new one (name + sigil fold from the child's genome hash). Pure
               // ledger bookkeeping inside the hatch block's existing try/catch: it can never un-hatch a fly.
-              economy.noteHatch(plan.payerId, childId, child.genomeHash);
+              // CULTURE: the founder's creed AT FOUNDING (the parent's current belief, culture-overridden
+              // readings included — tradition is Lamarckian by design) becomes the house's old way.
+              economy.noteHatch(plan.payerId, childId, child.genomeHash, flies?.find((f) => f.id === plan.payerId)?.fap);
               console.log(
                 `[DO] evolution hatched #${childId} gen=${child.generation} funded by #${plan.payerId} ` +
                   `${ev.hatchSeedUsdc}USDC tx=${seed.txHash.slice(0, 10)} live=${swarm.size()}/${this.cfg.maxLivePopulation}`,
@@ -637,6 +670,7 @@ export class FlyStateDO {
     if (this.swarm) await this.swarm.persist(this.state.storage);
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
+    if (this.culture) await this.state.storage.put(KEY_CULTURE, this.culture.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
@@ -727,7 +761,7 @@ export class FlyStateDO {
    */
   private async ensureChronicler(): Promise<Chronicler> {
     if (this.chronicler) return this.chronicler;
-    const c = new Chronicler();
+    const c = new Chronicler(this.cfg.epochs.enabled);
     const stored = await this.state.storage.get<any>(KEY_CHRONICLER);
     if (stored) c.restore(stored);
     const buf = await this.state.storage.get<ChronicleEntry[]>(KEY_ANNALS);
@@ -795,11 +829,41 @@ export class FlyStateDO {
     snapshot: PopulationSnapshot | null,
     temperature: number,
     regime: Regime,
+    pulse: { richness: number },
   ): Promise<void> {
     try {
       const c = await this.ensureChronicler();
       const col = snapshot?.collective;
       const totals = this.lastEconomy?.totals ?? null;
+      const epochsOn = this.cfg.epochs.enabled;
+      // The governance shock is consumed once, only while epochs are ON — otherwise it dies with the cron.
+      const governanceShock = epochsOn ? this.pendingGovernanceShock : null;
+      this.pendingGovernanceShock = null;
+      // ⑤ CULTURE + ⑥ INSTITUTIONS chronicle read-outs, folded in ONLY while the matching switch is ON.
+      // Off ⇒ the field stays null ⇒ the historian's culture/market detectors never speak ⇒ byte-for-byte
+      // the pre-layer chronicle. Both are pure reads of state already computed elsewhere (never feed back).
+      const cultureOn = this.cfg.culture.enabled;
+      const cul = cultureOn && this.culture && snapshot ? this.culture.signals(snapshot.flies) : null;
+      const culture = cul
+        ? {
+            trend: cul.trend ? { fap: cul.trend.fap, adherents: cul.trend.adherents, share: cul.trend.share } : null,
+            tradition: cul.tradition
+              ? { houseId: cul.tradition.houseId, name: cul.tradition.name, sigil: cul.tradition.sigil, fap: cul.tradition.fap, streak: cul.tradition.streak }
+              : null,
+          }
+        : null;
+      const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
+      const market = mr
+        ? {
+            marks: Object.fromEntries(Object.entries(mr.marks).map(([g, tape]) => [g, tape.length ? Number(tape[tape.length - 1]) / 1e6 : 0])),
+            openIous: mr.openIous,
+            topIou: mr.topIou,
+            run: mr.run,
+            badRate: mr.badRate,
+            creditors: mr.classes.creditors,
+            creditorNetShare: mr.creditorNetShare,
+          }
+        : null;
       const ctx: ChronicleContext = {
         tick,
         ts: Date.now(),
@@ -825,6 +889,13 @@ export class FlyStateDO {
         // DYNASTY signals likewise: foundings, a house holding the swarm's capital, and the newest grave
         // — all read from the economy's persisted kinship ledger. The historian only writes the epitaph.
         dynasty: this.economy?.dynastySignals() ?? null,
+        // ⑦ EPOCHS: the shock detectors' extra read-outs. Folded in ONLY while epochs are ON — OFF these
+        // stay undefined ⇒ the detectors never fire and era logic is byte-for-byte today's regime drift.
+        richness: epochsOn ? pulse.richness : null,
+        deathsRecent: epochsOn && this.economy ? this.economy.recentDeaths(tick, 30) : null,
+        governanceShock,
+        culture,
+        market,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -945,6 +1016,9 @@ export class FlyStateDO {
     const subSteps = Math.max(1, Math.floor(this.cfg.simStepsPerTick / subTicks));
     let snapshot: PopulationSnapshot | null = null;
     const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    // CULTURE — the Lamarckian overlay between the brain's decode and every consumer (snapshot,
+    // economy, prediction). Null while CULTURE_ENABLED=false ⇒ byte-for-byte today's behaviour.
+    const culture = await this.ensureCulture();
     // Per-CRON settlement budget (previously spent in a single step; now spread across the sub-ticks).
     let econBudget = this.cfg.economy.maxDealsPerTick;
     const cronSettlements: Settlement[] = [];
@@ -974,6 +1048,14 @@ export class FlyStateDO {
       // commit on the final sub-tick so a sharded swarm persists its shards' brains once per cron
       // (LocalSwarm ignores the flag — FlyStateDO.persist() writes its single population blob below).
       snapshot = await swarm.step(pulse, regime, st === 0 ? stimuli : [], subSteps, st === subTicks - 1);
+      // 4a-culture) Fashion moves at feeding speed: ONE contact round per cron (the st===0 cohort of
+      // feeders/huddlers catches creeds, TTLs burn), then the creed override re-applies to EVERY
+      // sub-tick's readings BEFORE the snapshot or the economy sees them. Only fap/role on the read-out
+      // line are rewritten — bouts, fingerprints and the connectome never notice (same layer as computeBands).
+      if (culture && snapshot) {
+        if (st === 0) culture.contagion(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null);
+        culture.apply(snapshot.flies);
+      }
       // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
       //     of the neural layer — it never feeds back into the connectome.
       if (economy && snapshot && econBudget > 0) {
@@ -1048,7 +1130,7 @@ export class FlyStateDO {
     //    wallets. Best-effort and gated behind the same real-money rails; never blocks the live tick.
     if (economy) {
       try {
-        await this.driveEvolution(economy, swarm.getTickIndex());
+        await this.driveEvolution(economy, swarm.getTickIndex(), snapshot?.flies ?? null);
       } catch (e) {
         console.warn("[DO] evolution drive failed (non-fatal):", (e as Error).message);
       }
@@ -1070,7 +1152,7 @@ export class FlyStateDO {
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
-    await this.observeChronicle(swarm.getTickIndex(), snapshot, temperature, regime);
+    await this.observeChronicle(swarm.getTickIndex(), snapshot, temperature, regime, pulse);
 
     console.log(
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
@@ -1213,6 +1295,12 @@ export class FlyStateDO {
     await this.ensureSwarm();
     const snap = await this.loadSnapshot();
     const economy = this.cfg.economy.enabled ? (await this.ensureEconomy()).summary() : null;
+    // ⑤ Carry the culture read-out on the same hot feed that already drives the chronicle panel's dynasty
+    // block, so "the commons in custom" tracks every cron whether or not the drawer is open (open⇒latest).
+    if (economy) {
+      const culture = await this.cultureReadout();
+      if (culture) (economy as { culture?: unknown }).culture = culture;
+    }
     return json({ snapshot: snap, economy, topology: this.topology() });
   }
 
@@ -1247,7 +1335,33 @@ export class FlyStateDO {
   /** Full agent-economy snapshot: every wallet, the recent settlement ledger and aggregate totals. */
   private async getEconomy() {
     const economy = await this.ensureEconomy();
-    return json(economy.snapshot());
+    const snap = economy.snapshot();
+    // ⑤ CULTURE folded into the same read-out the wallets drawer already draws — a pure read of the
+    // membrane. Switch-off ⇒ cultureReadout() null ⇒ key absent ⇒ byte-for-byte the pre-culture /economy.
+    const culture = await this.cultureReadout();
+    return json(culture ? { ...snap, culture } : snap);
+  }
+
+  /**
+   * ⑤ The live culture read-out (the dominant fashion + any house holding its old way), computed from the
+   * last population snapshot. Returns null while the CULTURE switch is off or no snapshot exists yet —
+   * callers then ship NO culture key, so every consumer stays byte-identical to the pre-culture build.
+   */
+  private async cultureReadout(): Promise<{
+    trend: { fap: string; adherents: number; share: number } | null;
+    tradition: { houseId: number; name: string; sigil: string; fap: string; streak: number } | null;
+  } | null> {
+    const cul = await this.ensureCulture();
+    if (!cul) return null;
+    const snap = await this.loadSnapshot();
+    if (!snap) return null;
+    const sig = cul.signals(snap.flies);
+    return {
+      trend: sig.trend ? { fap: String(sig.trend.fap), adherents: sig.trend.adherents, share: sig.trend.share } : null,
+      tradition: sig.tradition
+        ? { houseId: sig.tradition.houseId, name: sig.tradition.name, sigil: sig.tradition.sigil, fap: String(sig.tradition.fap), streak: sig.tradition.streak }
+        : null,
+    };
   }
 
   /**
@@ -1912,6 +2026,8 @@ export class FlyStateDO {
       era: info.era,
       eraName: info.eraName,
       eraRegime: info.eraRegime,
+      eraShock: info.eraShock,            // ⑦ which shock forced the CURRENT era (null ⇒ a calm regime age)
+      eraShockWilled: info.eraShockWilled, // was it governance-injected ("willed by the commons")?
       seq: info.seq,
       headHash: info.headHash,
       chroniclerHash: await this.getChroniclerRulesHash(),
@@ -2063,6 +2179,14 @@ export class FlyStateDO {
       from: result.accepted.voter,
     });
 
+    // ⑦ EPOCHS — a decisive miracle or cataclysm (food/threat, intensity ≥ 0.75) is a SHOCK the commons
+    // WILLED: queue it for the historian, which force-opens a new epoch through the SAME entry the fly-side
+    // detector uses, only source-labelled. Pure read-out — it names an age, it never touches a neuron/wallet.
+    if (this.cfg.epochs.enabled && (result.accepted.type === "food" || result.accepted.type === "threat") &&
+        result.accepted.effectiveIntensity >= 0.75) {
+      this.pendingGovernanceShock = { kind: result.accepted.type === "food" ? "BOOM" : "PLAGERA" };
+    }
+
     const stored: StoredStimulus = {
       ts: Date.now(),
       type: result.accepted.type,
@@ -2116,6 +2240,7 @@ export class FlyStateDO {
       this.cfg.marketGain,
     );
     this.economy = this.makeEconomy();
+    this.culture = null;   // a reset swallows the fashions too: culture starts from innate readings
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -2124,6 +2249,7 @@ export class FlyStateDO {
     await this.state.storage.put(KEY_PREV_TEMP, 0.5);
     await this.state.storage.delete(KEY_LAST_SNAPSHOT);
     await this.state.storage.delete(KEY_MARKET);
+    await this.state.storage.delete(KEY_CULTURE);
     return json({ ok: true });
   }
 }

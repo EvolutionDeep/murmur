@@ -140,6 +140,11 @@ export interface Env {
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
   DYNASTY_ENABLED?: string;             // "true"/"false" (default TRUE) — dynasty layer: houses (inherited names + sigils + tithe treasury) and mortality (penury / old-age / plague deaths with estate inheritance). Economic-ledger ONLY — it never touches the connectome, the shards or the live population; false restores the pre-dynasty economy byte-for-byte.
+  CULTURE_ENABLED?: string;             // "true"/"false" (default TRUE) — Lamarckian culture layer: feeding-cohort FAP-creed contagion with bounded TTL, house traditions as breakwaters. Overrides the decoded READ-OUT line only (fap/role), before the snapshot + economy ever see it — the connectome, genomes and manifests never notice; false restores today's readings byte-for-byte.
+  INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
+    EPOCHS_ENABLED?: string;              // "true"/"false" (default TRUE) — epochs layer ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/DYNASTIC, or on a governance-injected miracle/cataclysm. PURE READ-OUT of existing state (never feeds back); false leaves only the slow regime-driven era logic of today.
+  CREDIT_CAP_BASE_USDC?: string;        // base IOU credit line per fly, USDC (default 0.05; traders double it, reputation scales up to 3×). SIMULATED LEDGER ONLY — onchain balances have no offline credit. Bounded 0..1000 (0 ⇒ credit off, books stay).
+  IOU_RATE_PER_10TICK?: string;         // interest charged per 10 sub-ticks on live IOUs (default 0.002, i.e. 0.2% per 10 ticks; cap 0.2). Interest accrues to at most 50% of principal before a note is delinquent.
 
   // --- Community governance page (off-chain, token-gated forum + weighted voting; D1-backed) ---
   //     A standalone /community page: anyone may browse, but posting / proposing / voting requires a wallet
@@ -305,6 +310,26 @@ export interface RuntimeConfig {
   // swarm's liveness is population dynamics' alone, so this switch cannot change the population)
   dynasty: {
     enabled: boolean;         // master switch (default ON): house names/sigils/tithe + mortality/inheritance
+  };
+
+  // Culture (Lamarckian layer above the genome: contagion of FAP creeds in the feeding cohort, house
+  // traditions as breakwaters). Pure read-out-line override — never the brain, never the ledger.
+  culture: {
+    enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+  };
+
+  // Institutions (layer ⑥: limit-book price discovery, professions, IOU credit, classes) — one
+  // integrated switch for the whole economic-institution complex, so OFF is provably the old economy.
+  institutions: {
+    enabled: boolean;         // master switch (default ON): false ⇒ fixed-formula pricing, no jobs, no credit
+    creditCapBaseUsdc: number; // base IOU line per fly (USDC); traders ×2, reputation up to ×3 more
+    iouRatePer10: number;      // interest per 10 sub-ticks on live IOUs
+  };
+
+  // Epochs (layer ⑦): the historian's shock detector + governance-injected miracles/cataclysms. Pure
+  // read-out of state already computed elsewhere; OFF leaves only today's slow regime-driven era logic.
+  epochs: {
+    enabled: boolean;         // master switch (default ON): false ⇒ the shock detectors never receive their signals
   };
   
   // connectome sizing (ts-lif)
@@ -517,6 +542,31 @@ export function loadConfig(env: Env): RuntimeConfig {
       // only MOVES money between wallets already in it and never mints, so there is nothing to gate behind
       // real money. Set DYNASTY_ENABLED=false to restore the pre-dynasty economy byte-for-byte.
       enabled: (env.DYNASTY_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+
+    culture: {
+      // ON by default: culture moves no money and touches no neuron — it only lets the swarm's decoded
+      // readings catch fashions — so there is nothing riskier to gate than the ethogram read-out itself.
+      // Set CULTURE_ENABLED=false to restore today's readings byte-for-byte.
+      enabled: (env.CULTURE_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+
+    institutions: {
+      // ON by default: the book only re-prices deals the two flies already agreed to make, credit only
+      // DEFERS settlement of money that later moves through the exact same x402 rails, and professions
+      // scale economic intent — never a neuron. INSTITUTIONS_ENABLED=false ⇒ the pre-institution
+      // fixed-formula economy byte-for-byte (the OFF path is also the permanent fallback).
+      enabled: (env.INSTITUTIONS_ENABLED ?? "true").toLowerCase() !== "false",
+      creditCapBaseUsdc: clamp(Number(env.CREDIT_CAP_BASE_USDC ?? "0.05"), 0, 1000),
+      iouRatePer10: clamp(Number(env.IOU_RATE_PER_10TICK ?? "0.002"), 0, 0.2),
+    },
+
+    epochs: {
+      // ON by default: the epoch detectors only NAME an age from state already on screen (a volume record,
+      // a run of thin pulse-richness, a wave of burials, a house's grip) or from a passed governance vote.
+      // EPOCHS_ENABLED=false ⇒ state.ts stops folding those signals into the historian, so era behaviour is
+      // byte-for-byte today's slow regime drift.
+      enabled: (env.EPOCHS_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     brainOpts: {

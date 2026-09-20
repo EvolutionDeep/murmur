@@ -38,6 +38,8 @@ export const GENESIS_HASH = "0".repeat(64);
 export type ChronicleKind =
   | "ERA_OPEN"
   | "ERA_SHIFT"
+  | "EPOCH_OPEN"
+  | "EPOCH_CLOSE"
   | "FIRST_TRADE"
   | "MILESTONE"
   | "BIRTH"
@@ -53,7 +55,14 @@ export type ChronicleKind =
   | "REPUTATION"
   | "HOUSE_FOUNDED"
   | "DYNASTY"
-  | "ELEGY";
+  | "ELEGY"
+  // ⑤ culture + ⑥ institutions narrative kinds (landscape detectors off the culture/market read-outs):
+  | "TREND"
+  | "TRADITION"
+  | "MARKET_SHIFT"
+  | "CREDIT"
+  | "RUN"
+  | "CLASS";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -62,7 +71,7 @@ export interface ChronicleEntry {
   kind: ChronicleKind;
   era: number;                      // era index when this happened
   eraName: string;                  // evocative name of that era
-  severity: 1 | 2 | 3;              // visual weight (3 = chapter-defining)
+  severity: 1 | 2 | 3 | 4 | 5;            // visual weight (3 = chapter-defining, 5 = a new epoch dawns)
   actors: number[];                 // implicated fly ids (may be empty)
   text: string;                     // the rendered narrative line == renderTemplate(kind, tokens)
   metrics: Record<string, number>;  // the raw numbers behind the sentence (for the UI / audit)
@@ -113,6 +122,36 @@ export interface ChronicleContext {
   social?: ChronicleSocial | null;
   /** DYNASTY read-out (optional for replay-compat: older callers simply narrate no houses or deaths). */
   dynasty?: ChronicleDynasty | null;
+  /** ⑦ EPOCHS — the pulse's signal-food richness (0..1); a sustained drought is a FAMINE shock era. Absent ⇒ no famine detector. */
+  richness?: number | null;
+  /** ⑦ EPOCHS — burials within the recent tick window (the economy counts its own graves); ≥3 is a PLAGERA. */
+  deathsRecent?: number | null;
+  /** ⑦ EPOCHS — a governance-injected shock (a passed miracle/cataclysm of intensity ≥0.75): the SAME
+   *  era-forcing entry as the spontaneous detector, only source-labelled "willed by the commons". */
+  governanceShock?: { kind: ShockKind; actor?: number } | null;
+  /** ⑤ CULTURE read-out (culture.ts signals): a sweeping fashion or a house holding its old way. Absent ⇒
+   *  no TREND/TRADITION (byte-for-byte: CULTURE_ENABLED=false never folds these into the context). */
+  culture?: ChronicleCulture | null;
+  /** ⑥ INSTITUTIONS read-out (economy marketReadout): the tape, the credit, the classes. Absent ⇒ no
+   *  MARKET_SHIFT/CREDIT/RUN/CLASS (INSTITUTIONS_ENABLED=false keeps them out of the context). */
+  market?: ChronicleMarket | null;
+}
+
+/** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
+export interface ChronicleCulture {
+  trend: { fap: string; adherents: number; share: number } | null;
+  tradition: { houseId: number; name: string; sigil: string; fap: string; streak: number } | null;
+}
+
+/** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
+export interface ChronicleMarket {
+  marks: Record<string, number>;   // latest mark per good, in USDC
+  openIous: number;
+  topIou: { debtor: number; creditor: number; amountUsdc: number } | null;
+  run: boolean;
+  badRate: number;
+  creditors: number;               // creditor-class headcount
+  creditorNetShare: number;        // creditors' share of the swarm's positive net worth, 0..1
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -142,6 +181,25 @@ interface ChroniclerState {
   lastHouseKey: string | null;      // houseId of the last announced founding
   lastDynastyKey: string | null;    // "id>gen" of the last announced dominance
   lastDeathTick: number;            // grave tick already told
+  // --- ⑦ EPOCH shock detectors: monotonic per-cron running stats (a one-cron volume delta, a famine
+  //     run) + the last forced epoch, so the detector is stateless-friendly and cooldown-honest ---
+  cronSeen: number;                 // crons observed since genesis (the epoch clock)
+  lastShockCron: number;            // cronSeen of the last forced epoch (SHOCK_COOLDOWN anchor)
+  prevVolume: number;               // last cron's lifetime volume (to take a one-cron delta)
+  maxCronVolume: number;            // largest single-cron volume increment ever (a BOOM beats it)
+  prevGini: number;                 // last cron's gini (a BOOM also needs it rising)
+  famineRun: number;                // consecutive crons of richness < FAMINE_RICHNESS
+  eraStartCron: number;             // cronSeen when the current era dawned (the CLOSE line's span)
+  eraShock: ShockKind | null;       // the shock that forced the CURRENT era (null ⇒ a calm regime age)
+  eraShockWilled: boolean;          // was that shock governance-injected ("willed by the commons")?
+  // --- ⑤⑥ culture/institution trackers: landscape detectors that announce a fashion, a held tradition, a
+  //     price break, a first credit, a run and a class ONCE each (per key / per transition), never a stutter ---
+  lastTrendFap: string | null;      // the FAP of the last announced TREND (a new majority creed is news)
+  lastTraditionKey: string | null;  // "houseId>creed" of the last announced TRADITION
+  lastMarks: Record<string, number>;// last cron's mark per good (a MARKET_SHIFT is a one-cron move off this)
+  lastCreditCount: number;          // openIous seen last cron (an increase is a fresh issuance)
+  lastRunActive: boolean;           // was a RUN live last cron? (RUN is told on the false→true edge)
+  classAnnounced: boolean;          // the creditor CLASS has been counted once — history, not a per-cron census
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -157,11 +215,39 @@ const ERA_NAMES: Record<ChronicleContext["regime"], string[]> = {
   COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
 };
 
+// ⑦ EPOCHS — a SHOCK is an age forced open by an event, not by a slow regime drift. The kind picks the
+// era's name; every threshold below is a pure read-out of state the historian already sees (or of a new
+// optional context facet the caller folds in). No detector here feeds back — it only names the moment.
+export type ShockKind = "FAMINE" | "PLAGERA" | "BOOM" | "GREAT_HUDDLE" | "DYNASTIC";
+const SHOCK_NAMES: Record<ShockKind, string> = {
+  FAMINE: "the Famine",          // signal-food drought: pulse richness flatlined for a long run
+  PLAGERA: "the Rot",            // burials come in waves (a dynasty dying off)
+  BOOM: "the Gilding",           // a one-cron volume record while wealth still concentrates
+  GREAT_HUDDLE: "the Long Cold", // the freeze will not lift
+  DYNASTIC: "the Yoke of Houses", // one house grips >30% of the swarm's capital
+};
+// Crons between forced epochs, so a shock cannot spam the calendar (anti epoch-inflation).
+const SHOCK_COOLDOWN = 200;
+const FAMINE_CRONS = 45;         // consecutive crons of richness < FAMINE_RICHNESS
+const FAMINE_RICHNESS = 0.18;
+const PLAGERA_DEATHS = 3;        // burials within the recent window (state.ts folds the 30-tick count in)
+const GREAT_HUDDLE_CRONS = 120;  // a COLD regime HELD this long is less a weather than an age
+const DYNASTIC_SHARE = 0.30;     // one house's capital share that dawns a dynastic epoch
+
+// ⑤⑥ narrative detectors — thresholds on the culture/market read-outs. These shape WHEN a line is written,
+// not its text (the browser re-derives sentences from templates + tokens only), so they are NOT part of the
+// hashed rule-set; a landscape detector, exactly like the social/dynasty ones.
+const MARKET_SHIFT_PCT = 0.25;   // a good's mark moving ≥25% in ONE cron is a MARKET_SHIFT
+const CREDIT_MIN_USDC = 0.01;    // only a note of real consequence is announced as the swarm's first CREDIT
+const CLASS_SHARE = 0.15;        // creditors gripping >15% of net capital is a CLASS in history
+
 // Minimum crons before the same kind may repeat, so the chronicle stays a chronicle, not a stutter.
 const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3,
   FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12,
   HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1,
+  EPOCH_OPEN: 200, EPOCH_CLOSE: 200,
+  TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -173,6 +259,8 @@ const ERA_MIN_AGE = 8;
 export const TEMPLATES: Record<ChronicleKind, string> = {
   ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds tend the swarm on the Arc market, and the chronicle opens.",
   ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
+  EPOCH_CLOSE: "And so closes Era {era~roman} · {eraName} — its {span} crons fold into the record, an age cut short by upheaval.",
+  EPOCH_OPEN: "Era {era~roman} · {eraName} — {sign} falls upon the swarm{willed}. A new age, compelled by shock.",
   FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
   MILESTONE: "Milestone — the ledger records its {settlements~kth} verifiable exchange. {settlements} settlements, {volumeUsdc} USDC moved.",
   BIRTH: "A new generation hatches into the live swarm — it now numbers {size} minds, a record for the species.",
@@ -189,6 +277,12 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   HOUSE_FOUNDED: "Fly #{founder} founds the House of {name} — its sigil {sigil} rises as fly #{child} takes the name. A lineage begins in the ledger.",
   DYNASTY: "The House of {name} holds {share} of all the swarm's capital at generation {gen} — ledgers bend before an old name.",
   ELEGY: "Fly #{id} of {house} falls to {cause} — {deals} dealings, age {age}. An estate of {estateUsdc} USDC passes to {heirs}. The name endures.",
+  TREND: "A custom sweeps the swarm — {adherents} flies take to {fap} at once, one mood carrying {share} of the market.",
+  TRADITION: "The House of {name} keeps the old way — {fap}, held by its kindred for {streak} crons against the passing fashion.",
+  MARKET_SHIFT: "The tape lurches — {good} moves {pct} in a single breath to {mark} USDC; the market's mind has changed.",
+  CREDIT: "A promise joins the ledger — fly #{debtor} owes fly #{creditor} {amountUsdc} USDC; trade now runs on trust as well as coin.",
+  RUN: "Dread turns due all at once — a run on the swarm's credit: {creditors} creditors call, {badRate} of the paper is overdue, the spreads double.",
+  CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -242,6 +336,13 @@ export function chroniclerRulesHash(): Promise<string> {
     cooldown: COOLDOWN,
     eraMinRun: ERA_MIN_RUN,
     eraMinAge: ERA_MIN_AGE,
+    shockNames: SHOCK_NAMES,
+    shockCooldown: SHOCK_COOLDOWN,
+    famineCrons: FAMINE_CRONS,
+    famineRichness: FAMINE_RICHNESS,
+    plageraDeaths: PLAGERA_DEATHS,
+    greatHuddleCrons: GREAT_HUDDLE_CRONS,
+    dynasticShare: DYNASTIC_SHARE,
   });
 }
 
@@ -286,6 +387,10 @@ function clamp01(x: number): number { return Math.min(1, Math.max(0, x)); }
 
 export class Chronicler {
   private s: ChroniclerState = freshState();
+  /** ⑦ EPOCHS kill-switch. FALSE ⇒ the whole shock detector is inert (not even its running stats fold),
+   *  so era behaviour is byte-for-byte today's slow regime drift. Defaults TRUE for standalone/replay use. */
+  private readonly epochsOn: boolean;
+  constructor(epochsEnabled = true) { this.epochsOn = epochsEnabled; }
 
   /** Feed one cron's read-out; returns zero or more newly-detected chronicle entries (oldest→newest).
    *  Async because each emitted line is folded into the SHA-256 chain. */
@@ -312,6 +417,14 @@ export class Chronicler {
         s.firstTradeDone = true;
         s.lastMilestone = Math.floor(ctx.settlements / 1000);
       }
+      // Seed the ⑦ EPOCH detectors from the CURRENT state too: a re-install meeting an already-trading
+      // swarm must not read the WHOLE pre-existing volume/gini as a single-cron record and cry "BOOM".
+      // Baselines start at what is on the tape now, so the first forced epoch can only come from a genuine
+      // one-cron delta observed AFTER this opening line.
+      s.prevVolume = ctx.volumeUsdc;
+      s.prevGini = ctx.gini;
+      s.cronSeen = 1;
+      s.eraStartCron = 1;
       out.push(await this.emit(ctx, "ERA_OPEN", 3, [],
         { era: s.era, eraName: s.eraName, size: ctx.size, temperature: round(ctx.temperature) },
         { size: ctx.size, temperature: round(ctx.temperature) }));
@@ -319,19 +432,32 @@ export class Chronicler {
       // --- era bookkeeping: a regime must HOLD to be remembered as an age ---
       if (ctx.regime === s.prevRegime) s.regimeRun += 1;
       else { s.regimeRun = 1; s.prevRegime = ctx.regime; }
+      s.cronSeen += 1;
 
-      const eraAge = ctx.tick - s.eraStartTick;
-      if (ctx.regime !== s.eraRegime && s.regimeRun >= ERA_MIN_RUN && eraAge >= ERA_MIN_AGE) {
-        s.era += 1;
-        s.eraRegime = ctx.regime;
-        s.eraStartTick = ctx.tick;
-        const pool = ERA_NAMES[ctx.regime];
-        const pick = pool[(s.era - 1) % pool.length];
-        // avoid ever repeating the exact same title back-to-back
-        s.eraName = pick === s.eraName ? pool[s.era % pool.length] : pick;
-        out.push(await this.emit(ctx, "ERA_SHIFT", 3, [],
-          { era: s.era, eraName: s.eraName, regime: ctx.regime, temperature: round(ctx.temperature) },
-          { era: s.era, temperature: round(ctx.temperature) }));
+      // ⑦ EPOCHS: a SHOCK outranks a slow regime drift. Both the fly-side (spontaneous) and the human-side
+      // (governance-injected) paths resolve to ONE kind and go through ONE forcing entry (applyShock) — no
+      // second implementation. A governance shock simply overrides the detected kind and carries a source tag.
+      // With epochs OFF, neither detector runs (no stats even fold), so the era falls straight to today's drift.
+      const spontaneous = this.epochsOn ? this.pickShock(ctx) : null;
+      const shock = this.epochsOn ? (ctx.governanceShock?.kind ?? spontaneous) : null;
+      if (shock && s.cronSeen - s.lastShockCron >= SHOCK_COOLDOWN) {
+        await this.applyShock(ctx, shock, !!ctx.governanceShock, out);
+      } else {
+        const eraAge = ctx.tick - s.eraStartTick;
+        if (ctx.regime !== s.eraRegime && s.regimeRun >= ERA_MIN_RUN && eraAge >= ERA_MIN_AGE) {
+          s.era += 1;
+          s.eraRegime = ctx.regime;
+          s.eraStartTick = ctx.tick;
+          s.eraStartCron = s.cronSeen;
+          s.eraShock = null; s.eraShockWilled = false;   // a calm regime age — no shock forced this era
+          const pool = ERA_NAMES[ctx.regime];
+          const pick = pool[(s.era - 1) % pool.length];
+          // avoid ever repeating the exact same title back-to-back
+          s.eraName = pick === s.eraName ? pool[s.era % pool.length] : pick;
+          out.push(await this.emit(ctx, "ERA_SHIFT", 3, [],
+            { era: s.era, eraName: s.eraName, regime: ctx.regime, temperature: round(ctx.temperature) },
+            { era: s.era, temperature: round(ctx.temperature) }));
+        }
       }
     }
 
@@ -484,7 +610,128 @@ export class Chronicler {
       }
     }
 
+    // --- ⑤ CULTURE: a fashion sweeping the swarm, and a house holding its old way against it. Both are pure
+    //     read-outs of the culture membrane's OWN signals; when CULTURE_ENABLED=false state.ts folds no
+    //     `culture` into the context, so this whole block is inert and the chronicle stays byte-for-byte older. ---
+    const cul = ctx.culture;
+    if (cul) {
+      if (cul.trend && cul.trend.fap !== s.lastTrendFap && this.ready("TREND", ctx)) {
+        s.lastTrendFap = cul.trend.fap;
+        out.push(await this.emit(ctx, "TREND", 2, [],
+          { fap: cul.trend.fap, adherents: cul.trend.adherents, share: `${Math.round(cul.trend.share * 100)}%` },
+          { adherents: cul.trend.adherents, share: cul.trend.share }));
+      }
+      if (cul.tradition) {
+        const key = `${cul.tradition.houseId}>${cul.tradition.fap}`;
+        if (key !== s.lastTraditionKey && this.ready("TRADITION", ctx)) {
+          s.lastTraditionKey = key;
+          out.push(await this.emit(ctx, "TRADITION", 2, [],
+            { name: cul.tradition.name, sigil: cul.tradition.sigil, fap: cul.tradition.fap, streak: cul.tradition.streak },
+            { houseId: cul.tradition.houseId, streak: cul.tradition.streak }));
+        }
+      }
+    }
+
+    // --- ⑥ INSTITUTIONS: the market's own drama — a price break on the tape, a first consequential promise,
+    //     a run on credit, a class gripping the swarm's net capital — all read from the economy's market
+    //     read-out. INSTITUTIONS_ENABLED=false ⇒ no `market` in the context ⇒ this block never speaks. ---
+    const mkt = ctx.market;
+    if (mkt) {
+      // MARKET_SHIFT: a good's mark moving ≥25% off LAST cron's mark (the first cron a mark is seen only primes).
+      for (const good of Object.keys(mkt.marks).sort()) {
+        const cur = mkt.marks[good];
+        const prev = s.lastMarks[good];
+        if (prev != null && prev > 0 && Math.abs(cur / prev - 1) >= MARKET_SHIFT_PCT && this.ready("MARKET_SHIFT", ctx)) {
+          const pct = Math.round((cur / prev - 1) * 100);
+          out.push(await this.emit(ctx, "MARKET_SHIFT", 3, [],
+            { good, pct: `${pct > 0 ? "+" : ""}${pct}%`, mark: Math.round(cur * 1e6) / 1e6 },
+            { pct, mark: cur }));
+          break;
+        }
+      }
+      s.lastMarks = { ...mkt.marks };
+
+      // CREDIT: the open-IOU count grew (a fresh issuance) and the largest note carries real weight.
+      const issued = mkt.openIous > s.lastCreditCount;
+      s.lastCreditCount = mkt.openIous;
+      if (issued && mkt.topIou && mkt.topIou.amountUsdc >= CREDIT_MIN_USDC && this.ready("CREDIT", ctx)) {
+        out.push(await this.emit(ctx, "CREDIT", 2, [mkt.topIou.debtor, mkt.topIou.creditor],
+          { debtor: mkt.topIou.debtor, creditor: mkt.topIou.creditor, amountUsdc: mkt.topIou.amountUsdc },
+          { amountUsdc: mkt.topIou.amountUsdc, openIous: mkt.openIous }));
+      }
+
+      // RUN: told on the false→true edge of a live credit panic (severity 4 — the economy's loudest event).
+      if (mkt.run && !s.lastRunActive && this.ready("RUN", ctx)) {
+        out.push(await this.emit(ctx, "RUN", 4, [],
+          { creditors: mkt.creditors, badRate: `${Math.round(mkt.badRate * 100)}%` },
+          { creditors: mkt.creditors, badRate: mkt.badRate }));
+      }
+      s.lastRunActive = mkt.run;
+
+      // CLASS: once the creditor purse grips >15% of net capital — a chapter, never a per-cron census.
+      if (!s.classAnnounced && mkt.creditorNetShare >= CLASS_SHARE && this.ready("CLASS", ctx)) {
+        s.classAnnounced = true;
+        out.push(await this.emit(ctx, "CLASS", 3, [],
+          { creditorShare: `${Math.round(mkt.creditorNetShare * 100)}%` },
+          { creditorNetShare: mkt.creditorNetShare }));
+      }
+    }
+
     return out;
+  }
+
+  /**
+   * The fly-side (spontaneous) SHOCK detector — a PURE read-out of the state one cron offers, with a few
+   * monotonic running stats folded in (a one-cron volume delta needs the previous cron's volume). Always
+   * updates those stats so a delta stays one-cron wide even on crons that force nothing. Returns the kind
+   * in a fixed priority order, or null. This is the ONLY spontaneous detector; governance reuses applyShock.
+   */
+  private pickShock(ctx: ChronicleContext): ShockKind | null {
+    const s = this.s;
+    const dVol = Math.max(0, ctx.volumeUsdc - s.prevVolume);
+    const volumeRecord = dVol > s.maxCronVolume;
+    const giniUp = ctx.gini > s.prevGini;
+    s.prevVolume = ctx.volumeUsdc;
+    s.prevGini = ctx.gini;
+    if (dVol > s.maxCronVolume) s.maxCronVolume = dVol;
+    if (ctx.richness != null && ctx.richness < FAMINE_RICHNESS) s.famineRun += 1; else s.famineRun = 0;
+
+    if (s.famineRun >= FAMINE_CRONS) return "FAMINE";
+    if ((ctx.deathsRecent ?? 0) >= PLAGERA_DEATHS) return "PLAGERA";
+    if (volumeRecord && dVol > 0 && giniUp) return "BOOM";
+    if (ctx.regime === "COLD" && s.regimeRun >= GREAT_HUDDLE_CRONS) return "GREAT_HUDDLE";
+    if ((ctx.dynasty?.dominance?.capitalShare ?? 0) >= DYNASTIC_SHARE) return "DYNASTIC";
+    return null;
+  }
+
+  /**
+   * Force a new epoch: close the outgoing era with a retrospective line, then dawn a shock era named for
+   * the kind. After this, era behaviour reverts to the ordinary regime logic (the shock just jumped the
+   * clock ahead). SHOCK_COOLDOWN crons must pass before another may dawn. Shared by BOTH the spontaneous
+   * detector and the governance-injection path — one implementation, differing only in the source tag.
+   */
+  private async applyShock(
+    ctx: ChronicleContext, kind: ShockKind, willed: boolean, out: ChronicleEntry[],
+  ): Promise<void> {
+    const s = this.s;
+    const span = s.cronSeen - s.eraStartCron;
+    out.push(await this.emit(ctx, "EPOCH_CLOSE", 3, [],
+      { era: s.era, eraName: s.eraName, span },
+      { closedEra: s.era, span }));
+    s.era += 1;
+    s.eraRegime = ctx.regime;          // keep the felt regime; only the NAME/cause is forced
+    s.eraStartTick = ctx.tick;
+    s.eraStartCron = s.cronSeen;
+    s.eraName = SHOCK_NAMES[kind];
+    s.eraShock = kind;
+    s.eraShockWilled = willed;
+    s.lastShockCron = s.cronSeen;
+    s.regimeRun = 1;                   // the epoch clock restarts under the new age
+    s.prevRegime = ctx.regime;
+    const actor = ctx.governanceShock?.actor;
+    out.push(await this.emit(ctx, "EPOCH_OPEN", 5, actor != null ? [actor] : [],
+      { era: s.era, eraName: s.eraName, sign: kind, willed: willed ? ", willed by the commons" : "" },
+      { era: s.era, willed: willed ? 1 : 0 }));
   }
 
   /** Can this kind fire now (cooldown respected)? Records nothing; the caller marks it via emit. */
@@ -499,7 +746,7 @@ export class Chronicler {
   private async emit(
     ctx: ChronicleContext,
     kind: ChronicleKind,
-    severity: 1 | 2 | 3,
+    severity: 1 | 2 | 3 | 4 | 5,
     actors: number[],
     tokens: Record<string, string | number>,
     metrics: Record<string, number>,
@@ -529,8 +776,14 @@ export class Chronicler {
   }
 
   /** The current age + chain head, for the UI header and the verifier. */
-  eraInfo(): { era: number; eraName: string; eraRegime: ChronicleContext["regime"]; seq: number; headHash: string } {
-    return { era: this.s.era, eraName: this.s.eraName, eraRegime: this.s.eraRegime, seq: this.s.seq, headHash: this.s.headHash };
+  eraInfo(): {
+    era: number; eraName: string; eraRegime: ChronicleContext["regime"]; seq: number; headHash: string;
+    eraShock: ShockKind | null; eraShockWilled: boolean;
+  } {
+    return {
+      era: this.s.era, eraName: this.s.eraName, eraRegime: this.s.eraRegime, seq: this.s.seq, headHash: this.s.headHash,
+      eraShock: this.s.eraShock, eraShockWilled: this.s.eraShockWilled,
+    };
   }
 
   snapshot(): ChroniclerState { return JSON.parse(JSON.stringify(this.s)); }
@@ -549,6 +802,9 @@ function freshState(): ChroniclerState {
     lastMilestone: 0, maxSize: 0, maxGini: 0, leaderId: null, lastKindTick: {},
     lastFeudKey: null, lastAllianceKey: null, lastBetrayalTick: 0, lastDeadbeatId: null,
     lastHouseKey: null, lastDynastyKey: null, lastDeathTick: 0,
+    cronSeen: 0, lastShockCron: -1000, prevVolume: 0, maxCronVolume: 0, prevGini: 0, famineRun: 0,
+    eraStartCron: 0, eraShock: null, eraShockWilled: false,
+    lastTrendFap: null, lastTraditionKey: null, lastMarks: {}, lastCreditCount: 0, lastRunActive: false, classAnnounced: false,
     headHash: GENESIS_HASH,
   };
 }

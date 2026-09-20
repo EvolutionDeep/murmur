@@ -457,3 +457,261 @@ test("dynasty signals name the founding, the dominant house and the newest grave
   assert.equal(sig.death?.id, 4, "the newest grave is the house founder");
   assert.equal(sig.death?.houseName, f!.name, "the epitaph names the house");
 });
+
+// CULTURE HOOKS into the dynasty ledger: the founder's creed AT FOUNDING freezes as the house
+// tradition (additive HouseRecord field), houseOf() is the read-only banner the CultureMembrane asks
+// for, and the round-trip must survive eviction — while a pre-culture payload stays exactly itself.
+
+test("culture hooks: the founding creed becomes the house tradition; houseOf reads the banner", async () => {
+  const a = new AgentEconomy(cfg({ dynasty: {} }));
+  await a.step(population("AGITATE"), collective(0.8), 100);
+  const f = a.noteHatch(3, 24, HASH_A, "FORAGE");
+  assert.ok(f?.founded);
+  a.noteHatch(5, 25, HASH_B);                          // a second house, founded WITHOUT a creed
+  assert.deepEqual(a.houseOf(3), { id: 3, name: f!.name, sigil: f!.sigil, tradition: "FORAGE" }, "founder bears his frozen creed");
+  assert.deepEqual(a.houseOf(24)!, a.houseOf(3)!, "the heir is born under the same banner");
+  assert.equal(a.houseOf(5)!.tradition, null, "a house founded without a seed has no tradition (not an error)");
+  assert.equal(a.houseOf(9), null, "a commoner carries no banner");
+  assert.equal(a.dynastyReadout().houses.find((h) => h.id === 3)!.tradition, "FORAGE", "the read-out surfaces it");
+
+  // Round-trip: the additive field survives eviction; strip it and the OLD payload still restores clean.
+  const b = new AgentEconomy(cfg({ dynasty: {} }), a.serialize());
+  assert.deepEqual(b.dynastyReadout(), a.dynastyReadout(), "traditions ride the dynasty blob");
+  const p = JSON.parse(a.serialize());
+  for (const h of p.dynasty.houses) delete h.tradition;
+  const c = new AgentEconomy(cfg({ dynasty: {} }), JSON.stringify(p));
+  assert.equal(c.houseOf(3)!.tradition, null, "a pre-culture house record restores with NO tradition key");
+  assert.ok(!("tradition" in (c as unknown as { houses: Map<number, object> }).houses.get(3)!), "never tradition:undefined — old blobs round-trip byte-identically");
+
+  // Junk seeds are refused, not stored: tradition can only ever be a FAP-shaped token.
+  const d = new AgentEconomy(cfg({ dynasty: {} }));
+  await d.step(population("AGITATE"), collective(0.8), 100);
+  d.noteHatch(3, 24, HASH_A, "i shall dominate the commons");
+  assert.equal(d.houseOf(3)!.tradition, null, "a non-FAP-shaped fapSeed is dropped at the gate");
+});
+
+// INSTITUTIONS ⑥-A hooks into the economy: the deal price becomes a BOOK CROSSING, while the OFF
+// path is provably the old economy to the atomic dust — and ON is as deterministic as everything else.
+test("institutions: OFF ⇒ the old fixed formula byte-for-byte; ON ⇒ every deal crosses the limit book", async () => {
+  const off = new AgentEconomy(cfg());
+  const offDeals = await off.step(population("AGITATE"), collective(0.8), 7);
+  assert.ok(offDeals.length > 0, "an AGITATE swarm at T=0.8 trades");
+  assert.equal(off.marketSnapshot(), null, "the OFF economy does not even expose books");
+  const expected = String(Math.max(1, Math.round(0.002 * (0.5 + 0.8) * (0.6 + 0.6 * 0.9) * 1.25 * 1e6)));
+  assert.equal(offDeals[0].good, "momentum", "AGITATE buys momentum");
+  assert.equal(offDeals[0].amount, expected, "OFF prices match the old formula atom-for-atom");
+
+  const offExplicit = new AgentEconomy(cfg({ institutions: { enabled: false } }));
+  const off2 = await offExplicit.step(population("AGITATE"), collective(0.8), 7);
+  assert.deepEqual(
+    off2.map((s) => `${s.fromId}>${s.toId}:${s.amount}`),
+    offDeals.map((s) => `${s.fromId}>${s.toId}:${s.amount}`),
+    "enabled:false ≡ absent: the old economy byte-for-byte",
+  );
+
+  const on = new AgentEconomy(cfg({ institutions: { enabled: true } }));
+  const onDeals = await on.step(population("AGITATE"), collective(0.8), 7);
+  assert.ok(onDeals.length > 0, "ON settles too");
+  // One calm, even herd: every seller reluctant (rung +20% around center .002×1.3×1.25), nobody
+  // sweeps — so the tape prints the book, not the formula.
+  assert.equal(onDeals[0].amount, String(Math.round(0.002 * 1.3 * 1.25 * 1e6 * 1.2)), "ON prices come from crossing the ladder");
+  assert.notEqual(onDeals[0].amount, expected, "and those prices DIFFER from the formula — discovery is live");
+  const twin = await new AgentEconomy(cfg({ institutions: { enabled: true } })).step(population("AGITATE"), collective(0.8), 7);
+  assert.deepEqual(twin.map((s) => s.amount), onDeals.map((s) => s.amount), "ON is deterministic too: twins print identical tapes");
+  const ms = on.marketSnapshot()!;
+  assert.equal(ms.marks.momentum.length, 1, "the tape holds exactly this tick's marks so far");
+  assert.ok(ms.books.every((bk) => bk.bids.length === 4 && bk.asks.length === 4), "bounded 4×2 rungs per good");
+});
+
+// INSTITUTIONS ⑥-B: sticky professions, the IOU life-cycle (issue → repay → default) and the class
+// read-out. The conservation law is the headline: a repayment moves wallets, a default seizes
+// whatever is left and grudges the rest — and at no point does money appear from nowhere.
+test("institutions: professions are sticky identities — a trade change takes sustained hysteresis", async () => {
+  const econ = new AgentEconomy(cfg({ institutions: { enabled: true } }));
+  const one = [reading(0, "EXPLORE"), reading(1, "EXPLORE")];
+  await econ.step(one, collective(0.5), 1);
+  const rowOf = (id: number) => econ.snapshot().agents.find((a) => a.id === id)!;
+  assert.equal(rowOf(0).profession, "forager", "a FORAGE history opens the ledger as a forager");
+
+  // The fly RETIRES (literally): the old trade must be held off for the full hysteresis window.
+  const resting = [reading(0, "REST", { fap: "REST", arousal: 0.05 }), reading(1, "REST", { fap: "REST", arousal: 0.05 })];
+  let changed = -1;
+  for (let t = 2; t <= 200 && changed < 0; t++) {
+    await econ.step(resting, collective(0.5), t);
+    if (rowOf(0).profession !== "forager") changed = t;
+  }
+  assert.ok(changed >= 13, `the switch cannot come before the hysteresis window (got tick ${changed})`);
+  assert.equal(rowOf(0).profession, "brooder", "and when it comes, it is to the new mode of the tally");
+  assert.equal(resting[0].fap, "REST", "the readings themselves were never touched — one-way law intact");
+
+  // OFF: no identity is ever recorded — keys absent, the old wallet row verbatim.
+  const off = new AgentEconomy(cfg());
+  await off.step(one, collective(0.5), 1);
+  const offRow = off.snapshot().agents.find((a) => a.id === 0)!;
+  assert.ok(!("profession" in offRow) && !("debtAtomic" in offRow), "OFF ⇒ no profession/debt keys at all");
+  assert.equal(off.snapshot().market, undefined, "OFF exposes no market read-out");
+});
+
+test("institutions: an IOU is issued in place of a stiff, repaid from real income, and defaulted to a grudge", async () => {
+  // A poor swarm priced above every wallet, credit line drawn to hold EXACTLY ONE promise per fly: the
+  // first overpromise is a signature, the next one across the same line is the OLD honest stiff.
+  const cLine = { institutions: { enabled: true, creditCapBaseUsdc: 0.02 }, initialBalanceUsdc: 0.007, solvencyFloorUsdc: 0, basePriceUsdc: 0.01 };
+  const frozen = { ...cLine, maxDealsPerTick: 0 };   // phase 2/3 freeze the trade loop: ONLY debt service moves money
+  const econ = new AgentEconomy(cfg(cLine));
+  const poor = population("AGITATE");
+  const settled = await econ.step(poor, collective(0.8), 1);
+  const iou = settled.find((s) => s.reason === "iou-pending");
+  assert.ok(iou, "a forager too thin of purse but good of name signs a promise instead of stiffing");
+  assert.equal(iou!.amount, "19500", "the note bears the book-crossed price (momentum center 16250 swept to its 1.2× rung)");
+  assert.equal(iou!.valid, false, "it is a promise, not a settlement");
+  const buyer = econ.getAgent(iou!.fromId)!;
+  // Per-agent balances have moved between OTHER pairs (real deals settled), so conservation is
+  // checked on the whole ledger: wallet total + lifetime outflows == founding + lifetime inflows.
+  const snap1 = econ.snapshot();
+  const walletTotal = snap1.agents.reduce((s, x) => s + BigInt(x.balance), 0n);
+  const paidTotal = snap1.agents.reduce((s, x) => s + BigInt(x.paid), 0n);
+  const earnedTotal = snap1.agents.reduce((s, x) => s + BigInt(x.earned), 0n);
+  assert.equal(walletTotal + paidTotal, BigInt(usdcToAtomic(0.007)) * 24n + earnedTotal,
+    "issuing promises minted nothing — every outstanding promise is unpaid to the atomic");
+  assert.ok(!settled.some((s) => s.valid && s.fromId === buyer.id && s.amount === iou!.amount),
+    "the promised atomic appear in NO settled movement — the note is a promise, not a payment");
+  const rd1 = snap1.market!;
+  assert.ok(rd1.openIous >= 1 && BigInt(rd1.debtAtomic) > 0n, "the promises are on the book, debt counted in principal");
+  assert.ok(rd1.classes.creditors >= 1 && rd1.classes.debtors >= 1, "the class read-out already sees a moneyed side and a borrowing side");
+
+  // A credit line is not a bottomless one: next tick the borrowers already ~at their line cannot sign
+  // again — the second overpromise falls back to the plain, honest insufficient-funds stiff.
+  const settled2 = await econ.step(poor, collective(0.8), 2);
+  assert.ok(settled2.some((s) => s.reason === "insufficient-funds"),
+    "past the cap a stiff is still a stiff — the exhausted borrower is refused, not funded from thin air");
+
+  // ONCHAIN has no offline credit at all — and onchain without injected rails REFUSES to build, so
+  // the facilitator (the sole balance authority) can never be half-enabled around a IOU code path.
+  assert.throws(() => new AgentEconomy(cfg({ facilitatorMode: "onchain", institutions: { enabled: true } })),
+    "the onchain constructor demands injected rails: the credit branch is simulated-only by construction");
+
+  // Phase 2 — the ledger's own repayment rails, wallets FROZEN (maxDealsPerTick 0 ⇒ the ONLY money
+  // that moves is debt service): the quiet 30%-of-balance sweep bites the LARGEST (overdue) note
+  // PARTIALLY, and a partial payment KEEPS the note's original issue date (crumbs must not launder an
+  // overdue note into a fresh one). The once-per-cron recall is fenced off so the sweep runs alone.
+  const rp = new AgentEconomy(cfg(cLine));
+  await rp.step(poor, collective(0.8), 1);                 // open wallets + forager professions
+  const p2 = JSON.parse(rp.serialize());
+  p2.market.ious = [
+    { debtor: 0, creditor: 1, amountAtomic: "12000", issuedTick: -11000, ratePer10: 0 },  // overdue, largest → the sweep bites it
+    { debtor: 0, creditor: 2, amountAtomic: "3000", issuedTick: 1, ratePer10: 0 },         // fresh, left untouched
+  ];
+  p2.market.lastRecallTick = 2;                            // fence the recall: only the 30% sweep runs
+  const rp2 = new AgentEconomy(cfg(frozen), JSON.stringify(p2));
+  const d0 = rp2.getAgent(0)!, c1 = rp2.getAgent(1)!, c2 = rp2.getAgent(2)!;
+  d0.balance = "10000";
+  const net0 = BigInt(d0.balance) + BigInt(d0.paid) - BigInt(d0.earned);
+  const before1 = BigInt(c1.balance), before2 = BigInt(c2.balance);
+  const debtBefore = BigInt(rp2.snapshot().market!.debtAtomic);
+  const back = await rp2.step(poor, collective(0.8), 2);
+  const pays = back.filter((s) => s.valid && s.resource.startsWith("debt:"));
+  assert.ok(pays.length >= 1, "the creditor is paid out of the debtor's own pocket — never from thin air");
+  assert.equal(BigInt(d0.balance) + BigInt(d0.paid) - BigInt(d0.earned), net0,
+    "conservation: a frozen wallet's net position moved only by real transfers — nothing was minted");
+  assert.ok(BigInt(c1.balance) > before1 && BigInt(c2.balance) === before2,
+    "the swept creditor grew, the untouched one did not — the 30% went to the LARGEST debt");
+  const rd2 = rp2.snapshot().market!;
+  assert.ok(BigInt(rd2.debtAtomic) < debtBefore, "the book of debt shrank by real repayment, not by writing");
+  const live = JSON.parse(rp2.serialize()).market.ious as { debtor: number; issuedTick: number }[];
+  assert.ok(live.some((i) => i.debtor === 0 && i.issuedTick === -11000),
+    "a partially-paid overdue note KEEPS its issue date — the storm clock cannot be reset by crumbs");
+
+  // Phase 3 — default: a 25,000-tick-old note is a default, not a debt. Whatever the wallet holds is
+  // seized to the creditor; what cannot be paid is written in the grudge book (FEUD material).
+  const dd = new AgentEconomy(cfg(cLine));
+  await dd.step(poor, collective(0.8), 1);
+  dd.getAgent(0)!.balance = "9000";
+  const p4 = JSON.parse(dd.serialize());
+  p4.market.ious = [{ debtor: 0, creditor: 1, amountAtomic: "9000", issuedTick: -25000, ratePer10: 0.002 }];
+  const dd2 = new AgentEconomy(cfg(frozen), JSON.stringify(p4));
+  const b1 = BigInt(dd2.getAgent(1)!.balance);
+  await dd2.step(poor, collective(0.8), 2);
+  const g = dd2.socialReadout().grudges.find((x) => x.reason === "debt-default");
+  assert.ok(g, "the book of grudges records the broken promise for the historian's FEUD material");
+  assert.ok(BigInt(dd2.getAgent(1)!.balance) - b1 >= 9000n,
+    "the debtor's whole pocket was seized to the creditor — interest and all, never phantom compensation");
+  assert.ok(dd2.snapshot().market!.openIous === 0, "the aged note was written off the book, seized or not");
+
+  // Institutions OFF: the very same poor swarm goes straight back to plain insufficient-funds stiffs.
+  const off = new AgentEconomy(cfg({ initialBalanceUsdc: 0.007, solvencyFloorUsdc: 0, basePriceUsdc: 0.01 }));
+  const offSettled = await off.step(population("AGITATE"), collective(0.8), 1);
+  assert.ok(!offSettled.some((s) => s.reason === "iou-pending"), "no credit without the switch");
+  assert.ok(offSettled.some((s) => s.reason === "insufficient-funds"), "the old stiff path is untouched");
+});
+
+test("institutions: a RUN stampedes every creditor at once and doubles the panic in the spreads", async () => {
+  // maxDealsPerTick 0 keeps the fixture honest: the storm is measured on the SEEDED book, not diluted by
+  // a fresh wave of same-tick borrowing, so the overdue share is exactly what we put on the ledger.
+  const cfgRun = () => cfg({ institutions: { enabled: true, creditCapBaseUsdc: 0.02 }, initialBalanceUsdc: 0.007, solvencyFloorUsdc: 0, basePriceUsdc: 0.005, maxDealsPerTick: 0 });
+  // A DISPERSED herd of dread (half −0.9, half −0.1): mean −0.5 breaches the RUN line only once the
+  // bad paper is there to stampede against; dispersion 0.4 alone (calm control) is not yet a panic.
+  const terrified = population("AGITATE").map((r, i) => ({ ...r, valence: i % 2 ? -0.1 : -0.9 }));
+  const seed = new AgentEconomy(cfgRun());
+  await seed.step(terrified, collective(0.8), 0);      // open all 24 wallets so the restore has agents
+  const p = JSON.parse(seed.serialize());
+  p.market = {
+    profs: [{ id: 0, role: "trader", sinceTick: -99, streak: 99 }],
+    ious: [
+      { debtor: 0, creditor: 1, amountAtomic: "12000", issuedTick: -11000, ratePer10: 0 },     // overdue, largest → burned off first
+      { debtor: 0, creditor: 2, amountAtomic: "8000", issuedTick: 1, ratePer10: 0 },           // fresh → survives the storm
+    ],
+    marks: {}, lastRecallTick: -1000, runUntilTick: -1,
+  };
+  const run = new AgentEconomy(cfgRun(), JSON.stringify(p));
+  run.getAgent(0)!.balance = "15000";
+  assert.equal(run.snapshot().market!.run, false, "before the storm breaks: two notes, one bad, no RUN yet");
+  await run.step(terrified, collective(0.8), 1);       // tick 1: dread + 50% bad paper ⇒ the RUN is declared + recalls start
+  const boom = await run.step(terrified, collective(0.8), 2);   // tick 2: the storm still holds
+  const rd = run.snapshot().market!;
+  assert.equal(rd.run, true, "dread + overdue paper ⇒ the RUN is on");
+  assert.ok(rd.professions.trader >= 1, "restored professions ride the market blob");
+  // The ladder itself: step = 5% × (1 + 0.8×2) = 13% under the RUN vs 9% calm — a doubled panic premium.
+  const book = rd.books.find((bk) => bk.good === "momentum")!;
+  assert.equal(Number(book.asks[0].price), Math.round(8125 * 1.13), `RUN prints the doubled-slope ladder (got ${book.asks[0].price})`);
+  const debtMoves = boom.filter((s) => s.valid && s.resource.startsWith("debt:"));
+  assert.ok(debtMoves.length >= 1, "in a RUN the recall is immediate — no waiting for the quiet 30% sweep");
+  const d0 = run.getAgent(0)!;
+  assert.equal(BigInt(d0.balance) + BigInt(d0.paid), 15000n + BigInt(d0.earned),
+    "even the stampede conserves: every seized atomic left the debtor's own wallet");
+  const rdEnd = run.snapshot().market!;
+  assert.equal(rdEnd.badRate, 0, "the overdue paper was burned off the book by the storm — whatever survived is fresh");
+  assert.ok(rdEnd.openIous > 0, `the fresh note survives the stampede — a run burns bad paper, not good (${rdEnd.openIous} live)`);
+  // control: the SAME terrified-but-dispersed swarm without bad paper feels no RUN (dread needs debt).
+  const calm = new AgentEconomy(cfgRun());
+  await calm.step(terrified, collective(0.8), 1);
+  const calmBook = calm.snapshot().market!.books.find((bk) => bk.good === "momentum")!;
+  assert.equal(calm.snapshot().market!.run, false, "dread alone (no overdue debt) is not a run");
+  assert.equal(Number(calmBook.asks[0].price), Math.round(8125 * 1.09), "and the calm ladder keeps its single panic premium");
+});
+
+test("institutions: the market blob round-trips; an old payload restores the pure old economy", async () => {
+  const a = new AgentEconomy(cfg({ institutions: { enabled: true } }));
+  for (let t = 0; t < 4; t++) await a.step(population("EXPLORE"), collective(0.7), t);
+  const pa = JSON.parse(a.serialize());
+  assert.ok(pa.market, "ON writes the market block");
+  assert.equal(pa.market.profs.length, 24, "one sticky profession per fly, sorted by id");
+  assert.ok(a.serialize().length < 200_000, "the whole blob stays far below DO limits");
+
+  const b = new AgentEconomy(cfg({ institutions: { enabled: true } }), a.serialize());
+  assert.deepEqual(b.marketSnapshot()!.marks, a.marketSnapshot()!.marks, "mark tapes survive eviction");
+  assert.deepEqual(b.marketSnapshot()!.books, [], "orders never survive — the tick-live ladder is born empty and rebuilt per step");
+  assert.deepEqual(JSON.parse(b.serialize()).market, pa.market, "and re-serialize identically (profs/ious/tapes)");
+
+  // OFF after ON: nothing is written, nothing is read — the pre-institutions byte stream verbatim.
+  const off = new AgentEconomy(cfg({ institutions: { enabled: false } }), a.serialize());
+  assert.ok(!("market" in JSON.parse(off.serialize())), "OFF serializes NO market key");
+  assert.equal(off.marketSnapshot(), null);
+  assert.equal(off.snapshot().agents.find((x) => x.id === 0)!.profession, undefined, "no job, no debts read");
+
+  // An OLD payload (no market key at all): the plain economy restores with zero institutions state.
+  delete pa.market;
+  const c = new AgentEconomy(cfg({ institutions: { enabled: true } }), JSON.stringify(pa));
+  assert.equal(c.snapshot().market!.openIous, 0, "no market field ⇒ nobody ever borrowed");
+  assert.equal(c.snapshot().agents.find((x) => x.id === 0)!.profession, null, "or worked — the restored row reads jobless until re-read");
+  assert.equal(c.snapshot().totals.count, a.snapshot().totals.count, "the LEDGER still restores (KEY_VERSION untouched)");
+});

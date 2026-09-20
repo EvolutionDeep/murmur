@@ -51,6 +51,7 @@ import {
   type RegistryCommit,
   type ArenaRoundInfo,
 } from "./x402.js";
+import type { Fap } from "@fly/fly-brain";
 import type { FlyReading, CollectiveState } from "./population.js";
 import type { PredictFlow } from "./prediction.js";
 import {
@@ -66,6 +67,7 @@ import {
   type ProofRecord,
 } from "./provenance.js";
 import type { ReceiptPinner } from "./ipfs.js";
+import { MarketBooks, type GoodBookView } from "./books.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
 export type GoodKind = "signal" | "momentum" | "attestation" | "prediction";
@@ -207,6 +209,8 @@ export interface HouseRecord {
   earnedAtomic: string;       // lifetime gross member income tithed in (dynasty prestige key)
   members: number[];          // every fly ever inducted (capped; dead stay on the roster — a house is its graves too)
   gen: number;                // highest generation reached under this name
+  /** culture: the founder's creed FAP frozen at founding — the house's old way (absent ⇒ pre-culture house or unknown). */
+  tradition?: string;
 }
 
 /** One burial: cause, lifetime dealings, the estate and who took it. The chronicle's epitaph source. */
@@ -223,11 +227,88 @@ export interface GraveRecord {
 
 /** Bounded dynasty read-out for the frontend panel + the historian (pure read-out, never feeds back). */
 export interface DynastyReadout {
-  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number }[];
+  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null }[];
   graves: { id: number; tick: number; cause: string; deals: number; age: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
   living: number;
   dead: number;
 }
+
+/**
+ * INSTITUTIONS ② — professions, credit, classes (the social-structure half of layer ⑥).
+ * Sticky professions are an ECONOMIC read of recent behaviour (fap history): they tilt buy desire and
+ * deal size, never a neuron. IOUs are promises to settle LATER — issuing one moves no money at all
+ * (only repayment does, through the same ledger lines as any deal), so the no-minting law holds.
+ */
+export type Profession = "forager" | "mooder" | "trader" | "brooder";
+
+/** Sticky role: the fap mode of the recent past, hysteresis-locked (switching costs 12+ ticks and a draw). */
+export interface ProfessionRecord {
+  role: Profession;
+  sinceTick: number;   // when the current line of work was taken up
+  streak: number;      // ticks kept since then (the sticky in sticky professions)
+}
+
+/** One credit promise: `debtor` owes `creditor` atomic USDC (+ ratePer10 per 10 ticks, capped). */
+export interface IouRecord {
+  debtor: number;
+  creditor: number;
+  amountAtomic: string;   // principal, atomic USDC
+  issuedTick: number;
+  ratePer10: number;      // interest per 10 sub-ticks (0 ⇒ a favour, not a loan)
+}
+
+/** Four classes counted off balances, debts and flows — a READ-OUT, not a cage. */
+export interface ClassReadout {
+  creditors: number;    // holds at least one live IOU against them
+  debtors: number;      // owes at least one live IOU
+  producers: number;    // living, lifetime inflow exceeds outflow
+  speculators: number;  // recent-window buys were mostly prediction payouts
+}
+
+/** Bounded institutions read-out for /economy + the frontend (pure read-out, never feeds back). */
+export interface MarketReadout {
+  professions: Record<Profession, number>;
+  classes: ClassReadout;
+  openIous: number;
+  debtAtomic: string;      // total live principal outstanding
+  badRate: number;         // share of live IOUs older than IOU_OVERDUE_TICKS
+  run: boolean;            // a credit RUN is in progress (mass recall, wide spreads)
+  topIou: { debtor: number; creditor: number; amountUsdc: number } | null; // the largest live note (CREDIT signal)
+  creditorNetShare: number; // creditors' share of the swarm's positive net worth, 0..1 (CLASS signal)
+  marks: Record<string, string[]>;
+  books: GoodBookView[];
+}
+
+/** FAP → profession: what a fly keeps doing becomes what a fly keeps being (economic side only). */
+const FAP_PROFESSION: Record<Fap, Profession> = {
+  FEED: "forager", FORAGE: "forager",
+  GROOM: "mooder", HALT: "mooder", COURT: "mooder",
+  FLIGHT: "trader", RETREAT: "trader",
+  HUDDLE: "brooder", REST: "brooder",
+};
+const PROF_KEYS: Profession[] = ["forager", "mooder", "trader", "brooder"];
+// Profession tilts (economic intent only — the multiplicative core of buyProbability / dealAmount):
+// foragers buy signal greedily, traders pay through (and are worth a fatter rung), brooders hoard rest.
+const PROF_BUY: Record<Profession, number> = { forager: 1.25, trader: 1.1, mooder: 1.0, brooder: 0.75 };
+const PROF_DEAL: Record<Profession, number> = { forager: 1.0, trader: 1.05, mooder: 1.0, brooder: 0.9 };
+const PROF_WINDOW_DECAY = 0.98;   // tally decays toward zero: ≈50-tick effective window, no history array
+const PROF_SWITCH_TICKS = 12;     // a new mode must hold this long before the line of work can change
+const PROF_SWITCH_PCT = 0.5;      // …and still only takes a coin-flip to actually switch trades
+const PROF_SALT = 0x50ec;
+const IOU_CAP = 48;               // hard bound on live credit promises (DO storage)
+const IOU_PER_DEBTOR = 8;
+const IOU_RATE_PER_10 = 0.002;    // 2厘 per 10 ticks, overridable via config
+const IOU_INTEREST_CAP = 0.5;     // interest can never exceed 50% of principal
+const IOU_OVERDUE_TICKS = 10_000;
+const IOU_MAX_AGE = 20_000;       // older than this, it is a default, not a debt
+const CREDIT_CAP_BASE_USDC = 0.05;
+const CREDIT_ROLES: Profession[] = ["trader", "forager"];  // the classes trusted with tomorrow's money
+const DEBT_SWEEP_PCT = 0.3;       // a debtor quietly pays 30% of every balance it grows
+const RECALL_GAP_TICKS = 6;       // at most one creditor-led recall per cron
+const RUN_AVG_VALENCE = -0.45;    // swarm-wide dread level that starts a stampede to the exits
+const RUN_BAD_PCT = 0.15;         // …combined with this share of IOUs overdue
+const RUN_HOLD_TICKS = 6;         // a RUN lasts one cron's worth of sub-ticks
+const CREDIT_MAX_PAYS_PER_TICK = 8;
 
 /** Per-agent read-out for the frontend. */
 export interface AgentReading {
@@ -244,6 +325,10 @@ export interface AgentReading {
   /** dynasty: house name + sigil this fly bears (absent ⇒ commoner). */
   house?: string;
   sigil?: string;
+  /** institutions: sticky profession (absent ⇒ layer off; null ⇒ not yet working). */
+  profession?: Profession | null;
+  /** institutions: live IOU principal owed by this fly, atomic USDC (absent ⇒ layer off). */
+  debtAtomic?: string;
 }
 
 /**
@@ -288,6 +373,8 @@ export interface EconomySnapshot {
   social: SocialReadout;
   /** Bounded dynasty read-out: houses, graves, living/dead counts. Additive — pure read-out. */
   dynasty?: DynastyReadout;
+  /** Bounded institutions read-out: professions, classes, credit, mark tapes. Additive — pure read-out. */
+  market?: MarketReadout | null;
   /** A rolling window of recent settlements for the ledger HUD. */
   recent: Settlement[];
   totals: EconomyTotals;
@@ -318,6 +405,14 @@ export interface EconomyConfig {
   hatchSeedUsdc: number;           // real USDC a parent funds each hatched child's wallet with (its opening mirror)
   // --- DYNASTY (houses/inheritance/death): OPTIONAL — absent ⇒ the whole layer is inert, byte-for-byte ---
   dynasty?: DynastyConfig;
+  // --- INSTITUTIONS (limit books / professions / credit): OPTIONAL — absent ⇒ dealAmount stays on the
+  //     fixed formula byte-for-byte; ON ⇒ each deal crosses the tick's aggregate book (see books.ts),
+  //     flies take sticky professions, and the thin of purse trade on IOUs (simulated ledger only) ---
+  institutions?: {
+    enabled: boolean;
+    creditCapBaseUsdc?: number;   // base credit line (traders double it, reputation scales it)
+    iouRatePer10?: number;        // interest per 10 sub-ticks on live IOUs
+  };
 }
 
 /**
@@ -529,6 +624,16 @@ export class AgentEconomy {
     // Market-wide demand: a HOT chain means more agents want to buy, at higher prices.
     const demand = 0.3 + 0.7 * T;
 
+    // INSTITUTIONS: before the first buyer crosses, rebuild THIS tick's limit books from the very
+    // readings the loop is about to consume — depth, slope and spread become behavioural facts, and
+    // the deal price is where the buyer eats, not what a formula decrees. Inert while the switch is
+    // off: dealAmount then computes the original fixed formula byte-for-byte.
+    if (this.institutionsOn()) {
+      this.buildBooks(readings, T, tickIndex);
+      // Professions ride the same switch: identities read off fap history that tilt economic intent only.
+      this.stepProfessions(readings, tickIndex);
+    }
+
     for (let i = 0; i < n && made.length < budget; i++) {
       const r = readings[i];
       // A buried fly's ledger is closed: it neither buys (here) nor sells (pickCounterparty) nor
@@ -538,7 +643,9 @@ export class AgentEconomy {
       if (buyerIdx == null) continue;
 
       // --- decode economic intent from the neural drives ---
-      const want = this.buyProbability(r, T);
+      // PROF: a profession tilts the DESIRE to buy (economic side of the one-way street: behaviour made
+      // the trade, the trade tilts intent, the neuron never notices). null ⇒ plain pre-institutions maths.
+      const want = this.buyProbability(r, T, this.institutionsOn() ? this.profs.get(r.id)?.role ?? null : null);
       // Deterministic per-(tick,agent) draw so the flow is reproducible without persisted RNG state.
       const draw = hash01(tickIndex, r.id, 0x9e3779b9);
       if (draw > want * demand) continue;   // this agent holds this tick
@@ -563,6 +670,9 @@ export class AgentEconomy {
 
     // Keep every agent solvent so the piece never dies — SIMULATED ONLY. Onchain we must never mint: an
     // agent that runs dry simply stops buying until the operator refills its real wallet.
+    // INSTITUTIONS: the credit cycle runs FIRST — repayments and recalls move existing money only, so
+    // the treasury top-up still sees who genuinely fell below the floor after debts were settled.
+    if (this.institutionsOn()) made.push(...this.creditCycle(tickIndex, readings));
     if (!onchain) this.solvencyTopUp();
 
     this.lastTick = made;
@@ -601,7 +711,7 @@ export class AgentEconomy {
   ): Promise<Settlement> {
     const buyer = this.agents[buyerIdx];
     const seller = this.agents[sellerIdx];
-    const amount = this.dealAmount(r, T, good);
+    const amount = this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null);
     const lo = Math.min(buyer.id, seller.id);
     const hi = Math.max(buyer.id, seller.id);
     const key = `${lo}>${hi}`;
@@ -876,8 +986,12 @@ export class AgentEconomy {
     return out;
   }
 
-  /** buy probability 0..1 from state + arousal + wingbeat + rest. */
-  private buyProbability(r: FlyReading, T: number): number {
+  /**
+   * buy probability 0..1 from state + arousal + wingbeat + rest.
+   * PROF: when a sticky profession is supplied (INSTITUTIONS ON), it tilts the result — a forager
+   * chases signal, a brooder hoards its rest. null ⇒ the original formula, byte-for-byte (OFF path).
+   */
+  private buyProbability(r: FlyReading, T: number, role: Profession | null = null): number {
     const stateBase =
       r.state === "AGITATE" ? 0.9 :
       r.state === "EXPLORE" ? 0.7 :
@@ -885,7 +999,8 @@ export class AgentEconomy {
     const arousal = 0.5 + 0.5 * clamp01(r.arousal);
     const wing = 0.85 + 0.3 * clamp01(r.wingbeat);
     const rest = 1 - 0.6 * clamp01(r.rest);
-    return clamp01(stateBase * arousal * wing * rest * (0.6 + 0.4 * T));
+    const base = stateBase * arousal * wing * rest * (0.6 + 0.4 * T);
+    return clamp01(role ? base * PROF_BUY[role] : base);
   }
 
   /**
@@ -1078,6 +1193,378 @@ export class AgentEconomy {
     return { topFeud, topAlliance, betrayal, deadbeat };
   }
 
+  // ---------- institutions: limit books + price discovery (market plumbing only — money still moves EXCLUSIVELY through the x402/netting rails) ----------
+
+  /** The tick-live order books. Not persisted: orders die with the tick; only the mark tapes survive (⑥-B serializes them). */
+  private books = new MarketBooks();
+  /** Sticky professions per fly (economic identity read off fap history; professions NEVER touch neurons). */
+  private profs = new Map<number, ProfessionRecord>();
+  /** Exponentially-decayed fap tallies ≈ a 50-tick window (reconverges after boot; never serialized). */
+  private profTally = new Map<number, Record<Profession, number>>();
+  /** How many ticks each fly's off-mode candidate has been running (hysteresis counter). */
+  private profCand = new Map<number, { prof: Profession; streak: number }>();
+  /** Live credit promises (bounded: IOU_CAP; the head of the array is the newest). */
+  private ious: IouRecord[] = [];
+  private lastRecallTick = -1000;
+  private runUntilTick = -1;
+
+  /** INSTITUTIONS resolved: false/absent ⇒ the old fixed-formula pricing, byte-for-byte. */
+  private institutionsOn(): boolean {
+    return !!this.cfg.institutions && this.cfg.institutions.enabled !== false;
+  }
+
+  /** Rebuild all four goods' books around the formula center for THIS tick (bounded 4×2 rungs each). */
+  private buildBooks(readings: FlyReading[], T: number, tick: number): void {
+    // A credit RUN doubles the panic factor on top of the swarm's own dispersion: the herd stampeding
+    // to the exits widens every spread at once (books.build clamps the multiplier to ≥1).
+    const boost = tick <= this.runUntilTick ? 2 : 1;
+    for (const good of ["signal", "momentum", "attestation", "prediction"] as GoodKind[]) {
+      const center = Math.max(1, Math.round(this.cfg.basePriceUsdc * (0.5 + T) * GOOD_META[good].priceMult * 1e6));
+      this.books.build(good, center, readings, boost);
+    }
+  }
+
+  /**
+   * Update sticky professions from this tick's FAPs. Each fly keeps an exponentially-decayed tally of
+   * recent faps (≈50-tick window) — the mode of that tally is its line of work. A fly KEEPS its trade;
+   * changing takes PROF_SWITCH_TICKS of the new mode holding plus a deterministic coin-flip, so
+   * professions are identities, not moods. Read by buyProbability/dealAmount (economy side ONLY). Off
+   * ⇒ not even tallied: the OFF path stays byte-for-byte the pre-institutions economy.
+   */
+  private stepProfessions(readings: FlyReading[], tick: number): void {
+    for (const r of readings) {
+      const now = FAP_PROFESSION[r.fap];
+      let t = this.profTally.get(r.id);
+      if (!t) { t = { forager: 0, mooder: 0, trader: 0, brooder: 0 }; this.profTally.set(r.id, t); }
+      for (const p of PROF_KEYS) t[p] = t[p] * PROF_WINDOW_DECAY;
+      t[now] += 1;
+      let mode = PROF_KEYS[0];
+      for (const p of PROF_KEYS) if (t[p] > t[mode]) mode = p;   // fixed key order breaks ties deterministically
+      const cur = this.profs.get(r.id);
+      if (!cur) {
+        this.profs.set(r.id, { role: mode, sinceTick: tick, streak: 0 });
+        this.profCand.delete(r.id);
+        continue;
+      }
+      if (cur.role === mode) {
+        cur.streak++;
+        this.profCand.delete(r.id);
+        continue;
+      }
+      // Off-trade: the candidate must HOLD (hysteresis) and still win a coin-flip before the change.
+      const cand = this.profCand.get(r.id);
+      if (!cand || cand.prof !== mode) this.profCand.set(r.id, { prof: mode, streak: 1 });
+      else if (cand.streak < PROF_SWITCH_TICKS) this.profCand.set(r.id, { prof: mode, streak: cand.streak + 1 });
+      else if (hash01(tick, r.id, PROF_SALT) < PROF_SWITCH_PCT) {
+        this.profs.set(r.id, { role: mode, sinceTick: tick, streak: 0 });
+        this.profCand.delete(r.id);
+      }
+    }
+  }
+
+  /** Total live principal a fly owes (atomic string, "0" when debt-free). */
+  private debtAtomicOf(id: number): string {
+    let d = 0n;
+    for (const iou of this.ious) if (iou.debtor === id) d += BigInt(iou.amountAtomic);
+    return d.toString();
+  }
+
+  /**
+   * A fly's credit line, or null when it is not trusted with tomorrow's money: only traders (whose
+   * trade IS intermediation) and foragers (whose hunger repays) may borrow, never the disgraced,
+   * and the line scales with reputation. Null ⇒ every failed payment stays a plain betrayal, as ever.
+   */
+  private creditCapAtomic(id: number): string | null {
+    const role = this.profs.get(id)?.role;
+    if (!role || !CREDIT_ROLES.includes(role)) return null;
+    const rep = this.memOf(id).rep;
+    if (rep < 0) return null;
+    const base = (this.cfg.institutions?.creditCapBaseUsdc ?? CREDIT_CAP_BASE_USDC) * 1e6;
+    const cap = Math.round(base * (role === "trader" ? 2 : 1) * (1 + Math.min(2, rep)));
+    return cap > 0 ? String(cap) : null;
+  }
+
+  /** Principal + accrued interest of one IOU at `tick` (simple per-10-tick rate, interest capped at 50%). */
+  private owedAtomicOf(iou: IouRecord, tick: number): string {
+    const p = BigInt(iou.amountAtomic);
+    const periods = BigInt(Math.max(0, Math.floor((tick - iou.issuedTick) / 10)));
+    const rateBps = BigInt(Math.max(0, Math.round(iou.ratePer10 * 10000)));
+    let interest = (p * rateBps * periods) / 10000n;
+    const cap = (p * BigInt(Math.round(IOU_INTEREST_CAP * 1000))) / 1000n;
+    if (interest > cap) interest = cap;
+    return (p + interest).toString();
+  }
+
+  /**
+   * Issue a credit promise in place of a failed payment: the deal is NOT struck through the ledger
+   * (nothing is paid yet — the no-minting law), the seller simply holds an enriched promise and the
+   * buyer's debt grows. SIMULATED ONLY: on-chain the facilitator is the sole balance authority, so a
+   * stiffed real payment stays a stiffed real payment. Bounded per-debtor and globally.
+   */
+  private tryIssueIou(debtorId: number, creditorId: number, amount: string, tick: number): boolean {
+    if (this.facilitator.mode !== "simulated") return false;
+    const cap = this.creditCapAtomic(debtorId);
+    if (cap == null) return false;
+    let mine = 0;
+    let debt = 0n;
+    for (const iou of this.ious) {
+      if (iou.debtor === debtorId) { mine++; debt += BigInt(iou.amountAtomic); }
+    }
+    if (mine >= IOU_PER_DEBTOR || this.ious.length >= IOU_CAP) return false;
+    if (BigInt(cap) <= 0n || debt + BigInt(amount) > BigInt(cap)) return false;
+    this.ious.unshift({
+      debtor: debtorId, creditor: creditorId, amountAtomic: amount,
+      issuedTick: tick, ratePer10: this.cfg.institutions?.iouRatePer10 ?? IOU_RATE_PER_10,
+    });
+    return true;
+  }
+
+  /** The creditor a fly owes the most to (ties: first found — array order is deterministic). */
+  private largestCreditorOf(debtorId: number): number | null {
+    let best: number | null = null;
+    let bestAmt = 0n;
+    for (const iou of this.ious) {
+      if (iou.debtor !== debtorId) continue;
+      const a = BigInt(iou.amountAtomic);
+      if (best == null || a > bestAmt) { best = iou.creditor; bestAmt = a; }
+    }
+    return best;
+  }
+
+  /**
+   * The credit cycle, once per sub-tick (INSTITUTIONS ON only, simulated ledger only):
+   * ① RUN detection — dread plus overdue paper stampedes every creditor into a mass recall;
+   * ② defaults settle first (old or over-line debts are force-collected from what's there);
+   * ③ honest debtors sweep 30% of their balance to their largest creditor, and between RUNs one
+   *   creditor per cron may recall the oldest note. Every movement is a real ledger transfer on the
+   *   same rails as a trade — a repayment is money CHANGING HANDS, never money appearing.
+   */
+  private creditCycle(tick: number, readings: FlyReading[]): Settlement[] {
+    const out: Settlement[] = [];
+    if (!this.ious.length) return out;
+
+    // ① RUN: the swarm is uniformly miserable AND a fat share of paper is overdue → stampede.
+    let overdue = 0;
+    for (const iou of this.ious) if (tick - iou.issuedTick > IOU_OVERDUE_TICKS) overdue++;
+    if (readings.length) {
+      const avgV = readings.reduce((s, r) => s + r.valence, 0) / readings.length;
+      if (avgV < RUN_AVG_VALENCE && overdue / this.ious.length > RUN_BAD_PCT) {
+        this.runUntilTick = tick + RUN_HOLD_TICKS;
+      }
+    }
+
+    // ② Defaults first: aged-out or over-line debtors pay whatever their wallet actually holds.
+    for (const iou of [...this.ious]) {
+      const age = tick - iou.issuedTick;
+      const owed = this.owedAtomicOf(iou, tick);
+      const cap = this.creditCapAtomic(iou.debtor);
+      const overLine = cap != null && BigInt(this.debtAtomicOf(iou.debtor)) > BigInt(cap);
+      if (age <= IOU_MAX_AGE && !overLine) continue;
+      this.ious = this.ious.filter((x) => x !== iou);
+      const dIdx = this.indexOfId.get(iou.debtor);
+      const cIdx = this.indexOfId.get(iou.creditor);
+      if (dIdx == null || cIdx == null) continue;
+      const debtor = this.agents[dIdx];
+      const creditor = this.agents[cIdx];
+      const seized = (BigInt(debtor.balance) < BigInt(owed) ? BigInt(debtor.balance) : BigInt(owed)).toString();
+      if (BigInt(seized) > 0n) this.moveDebtMoney(debtor, creditor, seized, tick, out);
+      // The whole episode — seizure plus the written-off remainder — is a betrayal: the grudge book will
+      // tell FEUDS about it, and rememberBetrayal carries the heavy reputation hit (no trade credit here).
+      this.rememberBetrayal(iou.debtor, iou.creditor, owed, tick, "debt-default");
+    }
+    if (!this.ious.length) return out;
+
+    const running = tick <= this.runUntilTick;
+    let payments = 0;
+
+    // ③ Mass recall during a RUN: every debtor pays its largest creditor all it can, now.
+    if (running) {
+      for (const debtor of this.agents) {
+        if (this.dead.has(debtor.id)) continue;
+        const creditorId = this.largestCreditorOf(debtor.id);
+        if (creditorId == null) continue;
+        if (!this.payCreditor(debtor, creditorId, BigInt(debtor.balance), tick, out)) payments++;
+      }
+      return out;
+    }
+
+    // ④ Peace-time: one recall per cron (oldest note), plus every debtor's quiet 30% sweep.
+    const oldest = this.ious[this.ious.length - 1];
+    if (oldest && tick - this.lastRecallTick >= RECALL_GAP_TICKS) {
+      const dIdx = this.indexOfId.get(oldest.debtor);
+      if (dIdx != null) {
+        const want = BigInt(this.owedAtomicOf(oldest, tick));
+        if (this.payCreditor(this.agents[dIdx], oldest.creditor, want, tick, out)) this.lastRecallTick = tick;
+      }
+    }
+    for (const debtor of this.agents) {
+      if (payments >= CREDIT_MAX_PAYS_PER_TICK) break;
+      if (this.dead.has(debtor.id)) continue;
+      const creditorId = this.largestCreditorOf(debtor.id);
+      if (creditorId == null) continue;
+      const sweep = (BigInt(debtor.balance) * BigInt(Math.round(DEBT_SWEEP_PCT * 1000))) / 1000n;
+      const owed = BigInt(this.owedAtomicTo(debtor.id, creditorId, tick));
+      const want = sweep < owed ? sweep : owed;
+      if (want > 0n && this.payCreditor(debtor, creditorId, want, tick, out)) payments++;
+    }
+    return out;
+  }
+
+  /** What `debtor` owes `creditorId` (principal+interest) at `tick`, summed over their live notes. */
+  private owedAtomicTo(debtorId: number, creditorId: number, tick: number): string {
+    let sum = 0n;
+    for (const iou of this.ious) {
+      if (iou.debtor === debtorId && iou.creditor === creditorId) sum += BigInt(this.owedAtomicOf(iou, tick));
+    }
+    return sum.toString();
+  }
+
+  /**
+   * Move up to `want` atomic from debtor to creditor (never more than the wallet holds, never more
+   * than is owed), applying the payment oldest-note-first. Returns true if any money moved. The
+   * ledger lines are EXACTLY a settlement's (balance/paid/earned + house tithe + recent tape) —
+   * a repayment is indistinguishable from a trade in the money's eyes, which is the point.
+   */
+  private payCreditor(debtor: AgentState, creditorId: number, want: bigint, tick: number, out: Settlement[]): boolean {
+    // Cap at what is ACTUALLY owed to this creditor: a RUN hands over the whole balance, but a debtor
+    // never pays more than its debt (the surplus would be a gift, breaking the promises-are-not-gifts law).
+    const owed = BigInt(this.owedAtomicTo(debtor.id, creditorId, tick));
+    const due = want < owed ? want : owed;
+    const avail = BigInt(debtor.balance);
+    const pay = due < avail ? due : avail;
+    if (pay <= 0n) return false;
+    const cIdx = this.indexOfId.get(creditorId);
+    if (cIdx == null) return false;
+    const amount = pay.toString();
+    this.applyRepayment(debtor.id, creditorId, pay, tick);
+    this.moveDebtMoney(debtor, this.agents[cIdx], amount, tick, out);
+    return true;
+  }
+
+  /** The actual two-sided ledger movement of a debt payment (shared by repayment and default seizure). */
+  private moveDebtMoney(debtor: AgentState, creditor: AgentState, amount: string, tick: number, out: Settlement[]): void {
+    const resource = `debt:${creditor.id}`;
+    debtor.balance = subAtomic(debtor.balance, amount);
+    debtor.paid = addAtomic(debtor.paid, amount);
+    debtor.lastTick = tick;
+    creditor.balance = addAtomic(creditor.balance, amount);
+    creditor.earned = addAtomic(creditor.earned, amount);
+    creditor.lastTick = tick;
+    const rec: Settlement = {
+      tick, ts: Date.now(), good: "attestation", resource,
+      fromId: debtor.id, toId: creditor.id, from: debtor.address, to: creditor.address,
+      amount, txHash: pseudoTxHash(debtor.address, creditor.address, amount, resource),
+      valid: true, simulated: true,
+    };
+    this.recent.unshift(rec);
+    if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    this.volumeAtomic = addAtomic(this.volumeAtomic, amount);
+    this.count++;
+    this.titheHouse(creditor.id, amount);
+    out.push(rec);
+  }
+
+  /** Burn `pay` of `debtor`'s debt to `creditor`, oldest notes first (full cancel drops the note). */
+  private applyRepayment(debtorId: number, creditorId: number, pay: bigint, tick: number): void {
+    let left = pay;
+    // Oldest = tail of the array (new IOUs unshift to the head). Interest accrues per note.
+    for (let k = this.ious.length - 1; k >= 0 && left > 0n; k--) {
+      const iou = this.ious[k];
+      if (iou.debtor !== debtorId || iou.creditor !== creditorId) continue;
+      const owed = BigInt(this.owedAtomicOf(iou, tick));
+      if (left >= owed) {
+        left -= owed;
+        this.ious.splice(k, 1);
+      } else {
+        // Partial: rewrite the note as the remaining principal — the ORIGINAL issue date stands, so a
+        // half-paid overdue note is still overdue (re-basing it would let the storm be dodged by crumbs).
+        const remain = owed - left;
+        iou.amountAtomic = remain.toString();
+        left = 0n;
+      }
+    }
+  }
+
+  /** Mark tapes + this tick's book views for the snapshot/chronicle/frontend (pure read-out, null when off). */
+  marketSnapshot(): { books: GoodBookView[]; marks: Record<string, string[]> } | null {
+    if (!this.institutionsOn()) return null;
+    const marks: Record<string, string[]> = {};
+    for (const good of ["signal", "momentum", "attestation", "prediction"] as GoodKind[]) {
+      marks[good] = this.books.marksOf(good);
+    }
+    return { books: this.books.views(), marks };
+  }
+
+  /**
+   * The institutions read-out: who does what, who owes whom, and what the tape says. Classes are
+   * COUNTED off balances/notes/flows, never assigned — a read-out of the market, not a census law.
+   * (The historian and the frontend draw on this; nothing here feeds back into behaviour.)
+   */
+  private marketReadout(): MarketReadout | null {
+    const snap = this.marketSnapshot();
+    if (!snap) return null;
+    const professions: Record<Profession, number> = { forager: 0, mooder: 0, trader: 0, brooder: 0 };
+    for (const p of this.profs.values()) professions[p.role]++;
+    const creditors = new Set<number>();
+    const debtors = new Set<number>();
+    let debt = 0n;
+    let overdue = 0;
+    const debtByDebtor = new Map<number, bigint>();
+    let topIou: { debtor: number; creditor: number; amountUsdc: number } | null = null;
+    let topAtomic = 0n;
+    for (const iou of this.ious) {
+      creditors.add(iou.creditor);
+      debtors.add(iou.debtor);
+      const amt = BigInt(iou.amountAtomic);
+      debt += amt;
+      debtByDebtor.set(iou.debtor, (debtByDebtor.get(iou.debtor) ?? 0n) + amt);
+      if (amt > topAtomic) {
+        topAtomic = amt;
+        topIou = { debtor: iou.debtor, creditor: iou.creditor, amountUsdc: Number(amt) / 1e6 };
+      }
+      if (this.tickIndex - iou.issuedTick > IOU_OVERDUE_TICKS) overdue++;
+    }
+    let producers = 0;
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      if (BigInt(a.earned) > BigInt(a.paid) && BigInt(a.earned) > 0n) producers++;
+    }
+    // Speculators: of the flies active in the recent window, those whose flows were mostly prediction
+    // payouts (the herd that bets the tape instead of making it).
+    const spend = new Map<number, { all: number; predict: number }>();
+    for (const s of this.recent) {
+      if (!s.valid) continue;
+      const e = spend.get(s.fromId) ?? { all: 0, predict: 0 };
+      e.all++;
+      if (s.good === "prediction") e.predict++;
+      spend.set(s.fromId, e);
+    }
+    let speculators = 0;
+    for (const e of spend.values()) if (e.all >= 4 && e.predict * 2 > e.all) speculators++;
+    // Net-worth read-out for the CLASS chronicle: balance − outstanding principal, the creditors' share of
+    // the swarm's POSITIVE net worth. Counted off the ledger, never assigned — a read-out, nothing feeds back.
+    let totalNet = 0n;
+    let creditorNet = 0n;
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      const net = BigInt(a.balance) - (debtByDebtor.get(a.id) ?? 0n);
+      if (net > 0n) { totalNet += net; if (creditors.has(a.id)) creditorNet += net; }
+    }
+    const creditorNetShare = totalNet > 0n ? Number(creditorNet) / Number(totalNet) : 0;
+    return {
+      professions,
+      classes: { creditors: creditors.size, debtors: debtors.size, producers, speculators },
+      openIous: this.ious.length,
+      debtAtomic: debt.toString(),
+      badRate: this.ious.length ? overdue / this.ious.length : 0,
+      run: this.tickIndex <= this.runUntilTick,
+      topIou,
+      creditorNetShare,
+      marks: snap.marks,
+      books: snap.books,
+    };
+  }
+
   // ---------- dynasty: houses, death, inheritance (economic layer only; the neurons never notice) ----------
 
   /** Resolved dynasty config, or null when the layer is off (absent block or enabled:false ⇒ fully inert). */
@@ -1126,7 +1613,7 @@ export class AgentEconomy {
    * the layer is off or the founder kept commoner status (house roll full). Called by state.ts right after
    * a hatch went live — purely ledger-side, it can never affect the hatch itself.
    */
-  noteHatch(parentId: number, childId: number, genomeHash?: string):
+  noteHatch(parentId: number, childId: number, genomeHash?: string, fapSeed?: string):
     { houseId: number; name: string; sigil: string; childId: number; founded: boolean } | null {
     const d = this.dcfg();
     if (!d) return null;
@@ -1157,11 +1644,27 @@ export class AgentEconomy {
       earnedAtomic: "0",
       members: [parentId, childId],
       gen: child.gen,
+      // culture: the founder's creed AT FOUNDING becomes the house tradition — the Lamarckian old
+      // way the descendants may hold against later fashions. Validated FAP name or absent.
+      ...(fapSeed && /^[A-Z]{2,12}$/.test(fapSeed) ? { tradition: fapSeed } : {}),
     };
     this.houses.set(house.id, house);
     parent.house = house.id;
     child.house = house.id;
     return { houseId: house.id, name: house.name, sigil: house.sigil, childId, founded: true };
+  }
+
+  /**
+   * The house banner a fly bears — a pure ledger read for the culture layer (no dynasty gating: a
+   * named house stays named even if the switch is re-off; only ever reads). null ⇒ commoner.
+   * `tradition` is the founding creed the CultureMembrane raises as a breakwater against fashions.
+   */
+  houseOf(flyId: number): { id: number; name: string; sigil: string; tradition: string | null } | null {
+    const hid = this.kin.get(flyId)?.house;
+    if (hid == null) return null;
+    const h = this.houses.get(hid);
+    if (!h) return null;
+    return { id: h.id, name: h.name, sigil: h.sigil, tradition: h.tradition ?? null };
   }
 
   /**
@@ -1317,6 +1820,7 @@ export class AgentEconomy {
         members: h.members.length, live, deaths: h.members.length - live,
         treasuryUsdc: atomicToUsdc(h.treasury),
         earnedUsdc: atomicToUsdc(h.earnedAtomic),
+        tradition: h.tradition ?? null,
         capitalShare: pot > 0n
           ? Math.round((Number(memberBal + BigInt(h.treasury)) * 10000) / Number(pot)) / 10000
           : 0,
@@ -1367,12 +1871,37 @@ export class AgentEconomy {
     };
   }
 
-  /** Price of one unit of `good` this tick, in atomic USDC (min 1): base × market heat × arousal × good mult. */
-  private dealAmount(r: FlyReading, T: number, good: GoodKind): string {
+  /**
+   * How many burials fell within the recent tick window (the ⑦ PLAGERA epoch's read-out). A pure count
+   * over the bounded epitaph ring — the historian only turns "N dead in a moment" into an age's name.
+   */
+  recentDeaths(tick: number, windowTicks: number): number {
+    if (!this.dcfg()) return 0;
+    const since = tick - windowTicks;
+    let n = 0;
+    for (const g of this.graves) if (g.tick > since) n++; else break; // newest-first: stop at the first old grave
+    return n;
+  }
+
+  /**
+   * Price of one unit of `good` this tick, in atomic USDC (min 1).
+   * INSTITUTIONS ON: the price is where the buyer CROSSES the tick's limit book — the first ask rung
+   * with depth, walking UP the ladder as the herd drains it; a swept book prints beyond the top.
+   * OFF (or no book built this tick): the ORIGINAL fixed formula — base × market heat × arousal ×
+   * good mult — byte-for-byte, which is also the forever-fallback for the direct auctioneer path.
+   * PROF: the trade also tilts the ticket — a trader's crossing is worth 5% more to the venue, a
+   * brooder's pays 10% less. `role` is null unless INSTITUTIONS ON ⇒ OFF output unchanged.
+   */
+  private dealAmount(r: FlyReading, T: number, good: GoodKind, role: Profession | null = null): string {
     const meta = GOOD_META[good];
+    const tilt = role ? PROF_DEAL[role] : 1;
+    if (this.institutionsOn()) {
+      const crossed = this.books.eatAsk(good);
+      if (crossed) return String(Math.max(1, Math.round(Number(crossed) * tilt)));
+    }
     const priceUsdc =
       this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
-    return String(Math.max(1, Math.round(priceUsdc * 1e6)));
+    return String(Math.max(1, Math.round(priceUsdc * 1e6 * tilt)));
   }
 
   /** Run the full x402 flow between buyer and seller for one good; return the settlement record. */
@@ -1390,7 +1919,7 @@ export class AgentEconomy {
     const onchain = this.facilitator.mode === "onchain";
 
     // Price of this deal in atomic USDC (shared with the netting queue so queued and direct deals price alike).
-    const amount = this.dealAmount(r, T, good);
+    const amount = this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null);
 
     const resource = `${good}:${seller.id}`;
     const reqs: PaymentRequirements = {
@@ -1424,6 +1953,13 @@ export class AgentEconomy {
     // facilitator re-reads the REAL on-chain balance right before signing and is the sole authority (a
     // display mirror that has drifted must never block — or worse, authorise — a real transfer).
     if (!onchain && !gteAtomic(buyer.balance, amount)) {
+      // INSTITUTIONS: before the stiff becomes a betrayal, give tomorrow a chance to pay — a reputable
+      // trader/forager within its credit line signs an IOU instead (NO money moves now; the seller holds
+      // the promise, the ledger tape still shows the deal attempted). Credit off / line spent ⇒ the
+      // original betrayal path, byte-for-byte.
+      if (this.institutionsOn() && this.tryIssueIou(buyer.id, seller.id, amount, tick)) {
+        return { ...base, txHash: "0x", valid: false, reason: "iou-pending" };
+      }
       // The buyer promised a payment it could not make — the seller remembers the stiff, the market
       // marks the buyer down, and the grudge book records the betrayal for the historian to tell.
       this.rememberBetrayal(buyer.id, seller.id, amount, tick, "insufficient-funds");
@@ -1740,16 +2276,20 @@ export class AgentEconomy {
       agents: this.agents.map((a) => {
         const hId = this.kin.get(a.id)?.house;
         const house = hId != null ? this.houses.get(hId) : undefined;
+        const inst = this.institutionsOn();
         return {
           id: a.id, address: a.address, balance: a.balance, balanceUsdc: atomicToUsdc(a.balance),
           paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
           ...(this.dead.has(a.id) ? { dead: true } : {}),
           ...(house ? { house: house.name, sigil: house.sigil } : {}),
+          // institutions-additive: the wallet grows a line of work and a debt column — keys absent while off.
+          ...(inst ? { profession: this.profs.get(a.id)?.role ?? null, debtAtomic: this.debtAtomicOf(a.id) } : {}),
         };
       }),
       lastTick: this.lastTick,
       social: this.socialReadout(),
       dynasty: this.dynastyReadout(),
+      ...(this.institutionsOn() ? { market: this.marketReadout() } : {}),
       recent: this.recent,
       totals: {
         volumeAtomic: this.volumeAtomic,
@@ -1820,6 +2360,20 @@ export class AgentEconomy {
         graves: this.graves,
         dead: Array.from(this.dead).sort((x, y) => x - y),
       },
+      // INSTITUTIONS. Additive exactly like `dynasty` above — and, like the books themselves, the block
+      // is WRITTEN ONLY WHEN THE SWITCH IS ON: an OFF serialize is byte-identical to the pre-institutions
+      // blob. Orders never survive; the mark tapes, professions, and live IOUs do (all hard-capped).
+      ...(this.institutionsOn() ? {
+        market: {
+          profs: Array.from(this.profs.entries())
+            .sort((x, y) => x[0] - y[0])
+            .map(([id, p]) => ({ id, role: p.role, sinceTick: p.sinceTick, streak: p.streak })),
+          ious: this.ious,
+          marks: this.marketSnapshot()!.marks,
+          lastRecallTick: this.lastRecallTick,
+          runUntilTick: this.runUntilTick,
+        },
+      } : {}),
     });
   }
 
@@ -1945,6 +2499,9 @@ export class AgentEconomy {
             members: (Array.isArray(e.members) ? e.members : [])
               .slice(0, HOUSE_MEMBERS_CAP).map((m: unknown) => Number(m) || 0),
             gen: Math.max(0, Number(e.gen ?? 0) || 0),
+            // culture-additive: a pre-culture house record simply carries no tradition (key absent,
+            // never `tradition: undefined`, so a round-trip of an old payload stays byte-identical).
+            ...(typeof e.tradition === "string" && /^[A-Z]{2,12}$/.test(e.tradition) ? { tradition: e.tradition } : {}),
           });
         }
       }
@@ -1969,6 +2526,47 @@ export class AgentEconomy {
           if (Number.isFinite(id)) this.dead.add(id);
         }
       }
+    }
+    // Restore the institutions (absent in pre-institutions payloads ⇒ no trades taken, no debts owed,
+    // no tapes: the plain economy restores verbatim). Cleared first so a corrupt blob can't leak state
+    // across a restore; tallies/candidates are window-only and simply reconverge from live readings.
+    this.profs = new Map();
+    this.profTally = new Map();
+    this.profCand = new Map();
+    this.ious = [];
+    this.lastRecallTick = -1000;
+    this.runUntilTick = -1;
+    const mkt = p.market;
+    if (mkt && typeof mkt === "object") {
+      if (Array.isArray(mkt.profs)) {
+        for (const e of mkt.profs) {
+          if (!e || typeof e !== "object") continue;
+          const id = Number(e.id);
+          if (!Number.isFinite(id) || !PROF_KEYS.includes(e.role as Profession)) continue;
+          this.profs.set(id, {
+            role: e.role as Profession,
+            sinceTick: Number(e.sinceTick ?? 0) || 0,
+            streak: Math.max(0, Number(e.streak ?? 0) || 0),
+          });
+        }
+      }
+      if (Array.isArray(mkt.ious)) {
+        this.ious = mkt.ious
+          .filter((i: Record<string, unknown>) =>
+            i && typeof i === "object" && /^\d+$/.test(String(i.amountAtomic ?? "")) &&
+            Number.isFinite(Number(i.debtor)) && Number.isFinite(Number(i.creditor)))
+          .slice(0, IOU_CAP)
+          .map((i: Record<string, unknown>) => ({
+            debtor: Number(i.debtor),
+            creditor: Number(i.creditor),
+            amountAtomic: String(i.amountAtomic),
+            issuedTick: Number(i.issuedTick ?? 0) || 0,
+            ratePer10: Number.isFinite(Number(i.ratePer10)) ? Number(i.ratePer10) : IOU_RATE_PER_10,
+          }));
+      }
+      if (mkt.marks && typeof mkt.marks === "object") this.books.restoreMarks(mkt.marks);
+      this.lastRecallTick = Number(mkt.lastRecallTick ?? -1000);
+      this.runUntilTick = Number(mkt.runUntilTick ?? -1);
     }
   }
 

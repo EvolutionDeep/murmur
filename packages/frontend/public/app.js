@@ -295,6 +295,8 @@ const SEEN_CAP = 400;                                 // bounded: trim oldest ha
 let econAgents = [];                                  // full roster from /economy: {id, address, balance, paid, earned, deals, sales}
 let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]} — who owes whom a grudge
 let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dead} — names, treasuries, monuments
+let econMarket = null;      // ⑥ institutions read-out {marks, professions, classes, openIous, debt, run, …} — the tape
+let econCulture = null;     // ⑤ culture read-out {trend, tradition} — the passing fashion & the houses holding the old way
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -1139,6 +1141,7 @@ function applyEconomy(econ) {
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
   if (econ.social) { econSocial = econ.social; renderSocialSection(); }
   if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
+  if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -1326,6 +1329,11 @@ function rosterSource() {
   }));
 }
 
+// ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
+const PROF_ICON = { forager: "❍ forager", mooder: "❂ mooder", trader: "⇅ trader", brooder: "❄ brooder" };
+// The four goods the tape marks, in book order, for the price-line block.
+const MARKET_GOODS = ["signal", "momentum", "attestation", "prediction"];
+
 function renderWallets() {
   const host = $("wallets-list");
   if (!host) return;
@@ -1348,8 +1356,25 @@ function renderWallets() {
       nm.title = `of the House of ${ag.house} — name and sigil inherited; vault and monuments in the chronicle panel`;
       idEl.append(" ", nm);
     }
+    // ⑥ Institutions: the sticky profession a fly has fallen into (its line of work, economic side only).
+    if (ag.profession) {
+      const prof = document.createElement("span"); prof.className = "wr-prof " + ag.profession;
+      prof.textContent = PROF_ICON[ag.profession] || ag.profession;
+      prof.title = `by trade: ${ag.profession} — read off the last 50 ticks of behaviour; tilts only the market's intent, never the neurons`;
+      idEl.append(" ", prof);
+    }
     const balEl = document.createElement("span"); balEl.className = "wr-bal";
     balEl.innerHTML = `${atomicToUsdc(ag.balance || "0").toFixed(4)} <em>usdc</em>`;
+    // ⑥ Institutions: a debt column — the wallet's net worth is balance minus outstanding principal.
+    const debtAtomic = BigInt(ag.debtAtomic || "0");
+    if (debtAtomic > 0n) {
+      const debtUsdc = Number(debtAtomic) / 1e6;
+      const net = atomicToUsdc(ag.balance || "0") - debtUsdc;
+      const dv = document.createElement("span"); dv.className = "wr-debt";
+      dv.textContent = `⛁ ${debtUsdc.toFixed(4)} debt`;
+      dv.title = `owes ${debtUsdc.toFixed(4)} USDC across open notes — net worth ${net.toFixed(4)} USDC (balance − debt); settled from future receipts`
+      balEl.append(" ", dv);
+    }
     // Reputation badge: the fly's NAME, earned from settled history (kept promises vs defaults).
     const rp = repOf.get(Number(ag.id));
     if (rp && (rp.score <= -0.15 || rp.score >= 0.15)) {
@@ -1464,6 +1489,108 @@ function renderDynastySection() {
   }
 }
 
+// ================= institutions section (in the wallets drawer) =================
+// The tape: what the deterministic order-book marked each good at over the last crons, who does what for
+// a living, and the state of credit. Pure read-out of the economy's market block — nothing here feeds back
+// into behaviour; it is the market's own moods made visible. Degrades to hidden while institutions are off.
+function sparkline(values) {
+  // A tiny SVG polyline: values (USDC numbers) left→right, vertically fit to their own min..max.
+  const w = 104, h = 24, pad = 2;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "wmk-spark");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("width", w); svg.setAttribute("height", h);
+  svg.setAttribute("preserveAspectRatio", "none");
+  if (!values || values.length < 2) return svg;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = hi - lo || 1;
+  const step = (w - pad * 2) / (values.length - 1);
+  const pts = values.map((v, i) => `${(pad + i * step).toFixed(1)},${(h - pad - ((v - lo) / span) * (h - pad * 2)).toFixed(1)}`).join(" ");
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", pts);
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "currentColor");
+  line.setAttribute("stroke-width", "1.3");
+  svg.appendChild(line);
+  return svg;
+}
+
+function renderMarketSection() {
+  const host = $("wallets-market");
+  const body = $("wallets-market-body");
+  if (!host || !body) return;
+  const m = econMarket;
+  if (!m || !m.marks) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  // One row per good: a sparkline of its mark history, its latest mark, and the move across the tape.
+  for (const good of MARKET_GOODS) {
+    const tape = m.marks[good];
+    if (!Array.isArray(tape) || !tape.length) continue;
+    const usdc = tape.map((a) => Number(a) / 1e6);
+    const last = usdc[usdc.length - 1];
+    const first = usdc[0];
+    const chg = first > 0 ? (last / first - 1) : 0;
+    const row = document.createElement("div");
+    row.className = "wmk-row" + (chg >= 0 ? " up" : " down");
+    row.appendChild(sparkline(usdc));
+    const nm = document.createElement("span"); nm.className = "wmk-good"; nm.textContent = good;
+    const mk = document.createElement("span"); mk.className = "wmk-mark";
+    mk.textContent = `${last.toFixed(4)} usdc`;
+    const pc = document.createElement("span"); pc.className = "wmk-chg";
+    pc.textContent = `${chg >= 0 ? "+" : ""}${(chg * 100).toFixed(1)}%`;
+    row.append(nm, mk, pc);
+    row.title = `${good}: marked ${last.toFixed(4)} USDC, ${chg >= 0 ? "up" : "down"} ${(chg * 100).toFixed(1)}% across the last ${usdc.length} crons — the tape of a book the whole swarm's nerves drew`;
+    body.appendChild(row);
+  }
+  // A one-line ledger of credit and class beneath the tape.
+  const foot = document.createElement("div");
+  foot.className = "wmk-foot";
+  const cls = m.classes || {};
+  const bits = [];
+  const profs = m.professions || {};
+  bits.push(`${profs.trader || 0} trading · ${profs.forager || 0} foraging · ${profs.mooder || 0} mooding · ${profs.brooder || 0} brooding`);
+  bits.push(`${m.openIous || 0} open notes, ${(Number(m.debtAtomic || "0") / 1e6).toFixed(4)} USDC owed`);
+  if (cls.creditors || cls.debtors) bits.push(`${cls.creditors || 0} creditors / ${cls.debtors || 0} debtors`);
+  foot.textContent = bits.join(" · ");
+  if (m.run) {
+    const badge = document.createElement("span"); badge.className = "wmk-run"; badge.textContent = "⇊ a run";
+    badge.title = "a credit RUN is in progress — creditors are recalling at once, spreads have doubled";
+    foot.append(" ", badge);
+  }
+  body.appendChild(foot);
+}
+
+// ================= culture section (in the chronicle panel) =================
+// The commons in custom: the fashion sweeping the swarm and the house holding its old way against it. A
+// pure read-out of the culture membrane — beliefs decoded after the neurons, never written back to them.
+function renderCultureSection() {
+  const host = $("chron-culture");
+  const body = $("cult-body");
+  if (!host || !body) return;
+  const c = econCulture;
+  const trend = c && c.trend, trad = c && c.tradition;
+  if (!trend && !trad) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  if (trend) {
+    const row = document.createElement("div");
+    row.className = "cult-row cult-trend";
+    row.textContent = `≈ the fashion — ${trend.adherents} flies take to ${trend.fap} at once (${(trend.share * 100).toFixed(0)}% of the market)`;
+    row.title = "a custom is spreading: one mood carried fly to fly across the feeding table, a trend in the swarm's habits";
+    body.appendChild(row);
+  }
+  if (trad) {
+    const row = document.createElement("div");
+    row.className = "cult-row cult-trad";
+    row.textContent = `⚜ the House of ${trad.name} ${trad.sigil} keeps the old way — ${trad.fap}, held ${trad.streak} crons against the fashion`;
+    row.title = "a dynasty's founding custom, defended against the passing trend — the family as a breakwater for culture";
+    body.appendChild(row);
+  }
+}
+
 function openWallets() {
   walletsOpen = true;
   if (brainOpen) closeBrain();
@@ -1480,12 +1607,15 @@ function openWallets() {
   requestAnimationFrame(() => w.classList.add("open"));
   renderWallets();
   renderSocialSection();
+  renderMarketSection();
   // pull a fresh roster immediately so the drawer is never stale on first open
   getJSON("/economy").then((e) => {
     if (!e) return;
     if (Array.isArray(e.agents)) applyEconAgents(e.agents);
     if (e.social) { econSocial = e.social; renderSocialSection(); renderWallets(); }
     if (e.dynasty) { econDynasty = e.dynasty; renderDynastySection(); renderWallets(); }
+    if (e.market) { econMarket = e.market; renderMarketSection(); }
+    if (e.culture) { econCulture = e.culture; renderCultureSection(); }
   }).catch(() => {});
 }
 
@@ -1691,6 +1821,7 @@ async function pollChron() {
       chronEnabled = true;
       chronRows = Array.isArray(r.entries) ? r.entries.slice() : [];   // already desc by seq
       chronMeta = { era: r.era, eraName: r.eraName, eraRegime: r.eraRegime, seq: r.seq,
+        eraShock: r.eraShock || null, eraShockWilled: !!r.eraShockWilled,
         headHash: r.headHash || null, chroniclerHash: r.chroniclerHash || null, version: r.version || null };
       renderChron();
       if (chronVerifyState) renderChronVerdict();
@@ -1715,6 +1846,8 @@ const CHRON_ICONS = {
   RECORD_CONC: "⚖", LEAD_CHANGE: "♛",
   FEUD: "⚔", ALLIANCE: "❖", BETRAYAL: "✕", REPUTATION: "☠",
   HOUSE_FOUNDED: "⌂", DYNASTY: "♜", ELEGY: "†",
+  EPOCH_OPEN: "✷", EPOCH_CLOSE: "✥", TREND: "≈", TRADITION: "⚜",
+  MARKET_SHIFT: "↕", CREDIT: "⛁", RUN: "⇊", CLASS: "☰",
 };
 
 function renderChron() {
@@ -1728,6 +1861,7 @@ function renderChron() {
   }
   // Header (era badge + name + regime).
   const badge = $("chron-era-badge"); const name = $("chron-era-name"); const reg = $("chron-era-regime");
+  const shock = $("chron-era-shock");
   const sub = $("chron-sub"); const foot = $("chron-foot");
   if (chronMeta) {
     const roman = (n) => {
@@ -1738,6 +1872,19 @@ function renderChron() {
     if (badge) badge.textContent = "era " + roman(chronMeta.era).toLowerCase();
     if (name) name.textContent = chronMeta.eraName || "—";
     if (reg)  reg.textContent = (chronMeta.eraRegime || "").toLowerCase();
+    // ⑦ EPOCHS: if this era was forced open by a shock, badge the shock's name (⚖ when the commons willed it).
+    if (shock) {
+      const kind = chronMeta.eraShock;
+      if (kind) {
+        shock.hidden = false;
+        shock.textContent = `✷ ${CHRON_.shockNames[kind] || kind}${chronMeta.eraShockWilled ? " ⚖" : ""}`;
+        shock.title = chronMeta.eraShockWilled
+          ? `a shock era — "${kind}" was willed upon the swarm by the commons (a governance stimulus)`
+          : `a shock era — "${kind}" fell upon the swarm of its own accord; the age was forced open by upheaval, not drift`;
+      } else {
+        shock.hidden = true; shock.textContent = "";
+      }
+    }
     if (sub)  sub.textContent = chronRows.length ? `${chronRows.length} entries · seq ${chronMeta.seq}` : "awaiting first entry…";
   } else if (sub) sub.textContent = "chronicle offline";
   if (!chronRows.length) {
@@ -1804,13 +1951,30 @@ const CHRON_ = {
     HOUSE_FOUNDED: "Fly #{founder} founds the House of {name} — its sigil {sigil} rises as fly #{child} takes the name. A lineage begins in the ledger.",
     DYNASTY: "The House of {name} holds {share} of all the swarm's capital at generation {gen} — ledgers bend before an old name.",
     ELEGY: "Fly #{id} of {house} falls to {cause} — {deals} dealings, age {age}. An estate of {estateUsdc} USDC passes to {heirs}. The name endures.",
+    EPOCH_CLOSE: "And so closes Era {era~roman} · {eraName} — its {span} crons fold into the record, an age cut short by upheaval.",
+    EPOCH_OPEN: "Era {era~roman} · {eraName} — {sign} falls upon the swarm{willed}. A new age, compelled by shock.",
+    TREND: "A custom sweeps the swarm — {adherents} flies take to {fap} at once, one mood carrying {share} of the market.",
+    TRADITION: "The House of {name} keeps the old way — {fap}, held by its kindred for {streak} crons against the passing fashion.",
+    MARKET_SHIFT: "The tape lurches — {good} moves {pct} in a single breath to {mark} USDC; the market's mind has changed.",
+    CREDIT: "A promise joins the ledger — fly #{debtor} owes fly #{creditor} {amountUsdc} USDC; trade now runs on trust as well as coin.",
+    RUN: "Dread turns due all at once — a run on the swarm's credit: {creditors} creditors call, {badRate} of the paper is overdue, the spreads double.",
+    CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24 },
+  // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
+  // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
+  shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
+  shockCooldown: 200,
+  famineCrons: 45,
+  famineRichness: 0.18,
+  plageraDeaths: 3,
+  greatHuddleCrons: 120,
+  dynasticShare: 0.30,
 };
 
 function chronRoman(n) {
@@ -1845,6 +2009,10 @@ async function chronRulesHash() {
   return sha256HexClient({
     v: CHRON_.version, templates: CHRON_.templates, eraNames: CHRON_.eraNames,
     cooldown: CHRON_.cooldown, eraMinRun: CHRON_.eraMinRun, eraMinAge: CHRON_.eraMinAge,
+    shockNames: CHRON_.shockNames, shockCooldown: CHRON_.shockCooldown,
+    famineCrons: CHRON_.famineCrons, famineRichness: CHRON_.famineRichness,
+    plageraDeaths: CHRON_.plageraDeaths, greatHuddleCrons: CHRON_.greatHuddleCrons,
+    dynasticShare: CHRON_.dynasticShare,
   });
 }
 
@@ -3174,7 +3342,12 @@ async function poll() {
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
     // Only fetched while the drawer is actually open (it self-fetches on open too) — the canvas body
     // scale is driven by /population balances, so the roster is not needed on every poll for viewers.
-    if (walletsOpen) getJSON("/economy").then((econ) => { if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents); }).catch(() => {});
+    if (walletsOpen) getJSON("/economy").then((econ) => {
+      if (!econ) return;
+      if (Array.isArray(econ.agents)) applyEconAgents(econ.agents);
+      if (econ.market) { econMarket = econ.market; renderMarketSection(); }
+      if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
+    }).catch(() => {});
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh

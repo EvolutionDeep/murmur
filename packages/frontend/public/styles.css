@@ -489,6 +489,37 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .dyn-head-grave { margin-top: 8px; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px dashed var(--hair); padding-bottom: 3px; }
 .dyn-head-grave em { font-style: normal; text-transform: none; letter-spacing: 0.02em; }
 .dyn-grave { font-family: var(--mono); font-size: 10.5px; color: rgba(26, 26, 24, 0.66); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ⑤ culture (chronicle panel): the passing fashion + the houses holding the old way — mirrors the dynasty block */
+.chron-culture { flex: none; max-height: 30%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.cult-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.cult-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cult-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.cult-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cult-row.cult-trend { color: #3f5a3a; }
+.cult-row.cult-trad { color: #5a4a33; }
+
+/* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
+.wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
+.wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.wmk-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.wmk-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.wmk-row { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.wmk-spark { width: 104px; height: 24px; flex: none; color: rgba(26, 26, 24, 0.5); }
+.wmk-row.up .wmk-spark { color: #3f5a3a; }
+.wmk-row.down .wmk-spark { color: #9c3b2e; }
+.wmk-good { text-transform: uppercase; letter-spacing: 0.06em; font-size: 9px; color: var(--muted); width: 84px; flex: none; }
+.wmk-mark { color: var(--ink); flex: 1; }
+.wmk-chg { font-variant-numeric: tabular-nums; }
+.wmk-row.up .wmk-chg { color: #3f5a3a; }
+.wmk-row.down .wmk-chg { color: #9c3b2e; }
+.wmk-foot { margin-top: 6px; font-family: var(--mono); font-size: 9.5px; color: var(--muted); line-height: 1.5; }
+.wmk-run { color: #9c3b2e; border: 1px solid rgba(156, 59, 46, 0.5); border-radius: 2px; padding: 0 5px; letter-spacing: 0.06em; text-transform: uppercase; font-size: 8.5px; }
+.wr-prof { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.05em; padding: 1px 4px; border: 1px solid var(--hair); border-radius: 2px; color: #5a4a33; white-space: nowrap; }
+.wr-prof.trader { color: #8a6d1f; border-color: rgba(138, 109, 31, 0.4); }
+.wr-prof.brooder { color: #46607a; border-color: rgba(70, 96, 122, 0.4); }
+.wr-prof.forager { color: #3f5a3a; border-color: rgba(63, 90, 58, 0.4); }
+.wr-debt { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.04em; padding: 1px 4px; border: 1px solid rgba(156, 59, 46, 0.4); border-radius: 2px; color: #9c3b2e; white-space: nowrap; }
 .wallet-row.gone { opacity: 0.5; }
 .wallet-row.gone .wr-bal { text-decoration: line-through; text-decoration-color: rgba(26, 26, 24, 0.35); }
 .wr-house { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; color: #5a4a33; border-bottom: 1px dotted rgba(90, 74, 51, 0.5); white-space: nowrap; }
@@ -746,6 +777,8 @@ body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-event
 }
 .chron-era-name { font-family: var(--display); font-size: 18px; font-weight: 400; color: var(--ink); font-style: italic; }
 .chron-era-regime { margin-left: auto; font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+/* ⑦ EPOCHS: a shock era carries the upheaval's name; ⚖ marks one the commons willed on themselves */
+.chron-era-shock { margin-left: 8px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; color: #9c3b2e; border: 1px solid rgba(156, 59, 46, 0.4); border-radius: 2px; padding: 1px 6px; white-space: nowrap; }
 
 /* --- "prove no LLM" verification (runs entirely in the browser) --- */
 .chron-verify-bar { display: flex; margin: 0 0 10px; }

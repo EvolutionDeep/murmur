@@ -460,3 +460,194 @@ test("contexts without dynasty signals behave exactly as before (older callers u
   const out = await c.observe(ctx({ tick: 2, settlements: 3, social }));
   assert.ok(!kinds(out).some((k) => ["HOUSE_FOUNDED", "DYNASTY", "ELEGY"].includes(k)), "no dynasty ctx ⇒ no dynasty lines");
 });
+
+// ================= ⑦ EPOCHS: shock detector force-opens an era (pure read-out, never feeds back) =================
+// A shock closes the current era with a retrospective line and dawns a NEW, shock-named age at severity 5.
+// The spontaneous (fly-side) detector and the governance-injection path share ONE forcing entry, differing
+// only in the source tag. SHOCK_COOLDOWN (200 crons) keeps the calendar from flooding, and EPOCHS-OFF
+// restores today's slow regime drift byte-for-byte (not a single EPOCH line may appear).
+
+test("a one-cron volume record while wealth concentrates forces a BOOM epoch (the Gilding)", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1, volumeUsdc: 0.01 }));            // init seeds the volume/gini baselines
+  const out = await c.observe(ctx({ tick: 2, volumeUsdc: 5, gini: 0.3 })); // a genuine one-cron record + rising gini
+  const close = out.find((e) => e.kind === "EPOCH_CLOSE");
+  const open = out.find((e) => e.kind === "EPOCH_OPEN");
+  assert.ok(close && open, "the old era closes and a shock era opens");
+  assert.equal(close!.era, 1, "the CLOSE line still names the outgoing era");
+  assert.match(close!.text, /closes Era I · the Awakening/);
+  assert.equal(open!.era, 2, "the forced epoch advanced the era counter");
+  assert.equal(open!.severity, 5, "a shock is the loudest kind of line");
+  assert.equal(open!.eraName, "the Gilding", "the new age is named for the shock kind");
+  assert.match(open!.text, /Era II · the Gilding — BOOM falls upon the swarm\./);
+  assert.ok(!/willed by the commons/.test(open!.text), "a spontaneous shock carries no human-source tag");
+  const info = c.eraInfo();
+  assert.equal(info.era, 2);
+  assert.equal(info.eraShock, "BOOM");
+  assert.equal(info.eraShockWilled, false);
+  // re-derivation + chain hold across the new kinds too.
+  for (const e of [close!, open!]) assert.equal(renderTemplate(e.kind, e.tokens), e.text);
+});
+
+test("a governance-injected shock dawns the SAME kind of epoch, tagged 'willed by the commons'", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 2, governanceShock: { kind: "PLAGERA", actor: 7 } }));
+  const open = out.find((e) => e.kind === "EPOCH_OPEN")!;
+  assert.ok(open, "the passed miracle/cataclysm forces an epoch through the ONE shared entry");
+  assert.equal(open.eraName, "the Rot");
+  assert.deepEqual(open.actors, [7], "the proposing citizen is named on the line");
+  assert.match(open.text, /PLAGERA falls upon the swarm, willed by the commons\./);
+  assert.equal(open.metrics.willed, 1);
+  const info = c.eraInfo();
+  assert.equal(info.eraShock, "PLAGERA");
+  assert.equal(info.eraShockWilled, true, "the UI badge reads the source from eraInfo()");
+  assert.equal(renderTemplate("EPOCH_OPEN", open.tokens), open.text);
+});
+
+test("a sustained signal-food drought (richness < 0.18) dawns the Famine after 45 crons", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1, richness: 0.1 }));                 // init: the famine counter stays at 0
+  let fired: ChronicleEntry | null = null;
+  let firedAt = 0;
+  for (let t = 2; t <= 60 && !fired; t++) {
+    const out = await c.observe(ctx({ tick: t, richness: 0.1 }));   // the drought holds cron after cron
+    const open = out.find((e) => e.kind === "EPOCH_OPEN");
+    if (open) { fired = open; firedAt = t; }
+  }
+  assert.ok(fired, "the long famine eventually forces an epoch");
+  assert.equal(firedAt, 46, "FAMINE needs exactly 45 consecutive drought crons (tick 2..46)");
+  assert.equal(fired!.eraName, "the Famine");
+  assert.equal(c.eraInfo().eraShock, "FAMINE");
+});
+
+test("SHOCK_COOLDOWN (200 crons) stops one shock from spamming the calendar", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const first = await c.observe(ctx({ tick: 2, volumeUsdc: 5, gini: 0.3 }));      // BOOM #1
+  assert.ok(kinds(first).includes("EPOCH_OPEN"), "the first shock dawns an epoch");
+  const second = await c.observe(ctx({ tick: 3, volumeUsdc: 10, gini: 0.4 }));    // record again, one cron later
+  assert.ok(!kinds(second).includes("EPOCH_OPEN"), "a fresh record inside the cooldown must NOT re-crown an era");
+  assert.ok(c.eraInfo().eraShock === "BOOM", "the era is still the first forced one");
+});
+
+test("EPOCHS OFF: the very shock that would force an epoch stays silent (byte-for-byte today's era logic)", async () => {
+  const c = new Chronicler(false);                                   // epochsEnabled = false
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 2, volumeUsdc: 5, gini: 0.3, governanceShock: { kind: "PLAGERA" } }));
+  assert.ok(!kinds(out).some((k) => k === "EPOCH_OPEN" || k === "EPOCH_CLOSE"),
+    "with epochs off neither the spontaneous detector nor a governance injection may force an era");
+  assert.equal(c.eraInfo().era, 1, "the era counter never moved");
+  assert.equal(c.eraInfo().eraShock, null, "no shock is remembered");
+});
+
+test("a full shock-epoch history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 2, settlements: 1, volumeUsdc: 5, gini: 0.3 }),   // spontaneous BOOM epoch
+    ctx({ tick: 3, settlements: 1000, volumeUsdc: 5.1 }),          // a milestone, but inside the epoch cooldown
+  ]);
+  const epochKinds = all.filter((e) => e.kind === "EPOCH_OPEN" || e.kind === "EPOCH_CLOSE").map((e) => e.kind);
+  assert.deepEqual(epochKinds, ["EPOCH_CLOSE", "EPOCH_OPEN"],
+    "exactly one close-then-open from the single BOOM; the cooldown holds the next one off");
+  assert.equal(c.eraInfo().era, 2, "one forced epoch dawned (Era I → II)");
+  assert.ok(all.some((e) => e.kind === "MILESTONE"), "an ordinary milestone still rides the same chain");
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over epoch entries intact: ${v.reason} @${v.brokenAt}`);
+});
+
+// ================= ⑤ CULTURE + ⑥ INSTITUTIONS narrative kinds (landscape read-outs, told once) =================
+// TREND/TRADITION ride the culture membrane's signals; MARKET_SHIFT/CREDIT/RUN/CLASS ride the economy's
+// market read-out. Each is a landscape detector (fire on a CHANGE, deduped by key/edge + a cooldown), and
+// every sentence still re-derives from its public template. No `culture`/`market` in the context ⇒ silent.
+
+function marketOver(over: Record<string, unknown> = {}) {
+  return {
+    marks: { signal: 0.01 }, openIous: 0, topIou: null, run: false,
+    badRate: 0, creditors: 0, creditorNetShare: 0, ...over,
+  };
+}
+
+test("⑤ TREND and TRADITION are proclaimed from the culture signals, once per landscape change", async () => {
+  const c = new Chronicler();
+  const out = await c.observe(ctx({
+    tick: 1,
+    culture: {
+      trend: { fap: "FEED", adherents: 8, share: 0.33 },
+      tradition: { houseId: 7, name: "Ochre", sigil: "\u2726", fap: "FORAGE", streak: 9 },
+    },
+  }));
+  const tr = out.find((e) => e.kind === "TREND");
+  const td = out.find((e) => e.kind === "TRADITION");
+  assert.ok(tr && td, "a sweeping fashion and a held tradition both make the record");
+  assert.match(tr!.text, /A custom sweeps the swarm — 8 flies take to FEED at once, one mood carrying 33% of the market\./);
+  assert.match(td!.text, /The House of Ochre keeps the old way — FORAGE, held by its kindred for 9 crons against the passing fashion\./);
+  for (const e of [tr!, td!]) assert.equal(renderTemplate(e.kind, e.tokens), e.text);
+  // The SAME creed leading, and the SAME house+creed tradition, are not news again next cron.
+  const again = await c.observe(ctx({
+    tick: 2,
+    culture: {
+      trend: { fap: "FEED", adherents: 9, share: 0.35 },
+      tradition: { houseId: 7, name: "Ochre", sigil: "\u2726", fap: "FORAGE", streak: 10 },
+    },
+  }));
+  assert.ok(!kinds(again).includes("TREND"), "the same fashion does not re-sweep");
+  assert.ok(!kinds(again).includes("TRADITION"), "the same house+creed is already told");
+  // A DIFFERENT creed seizing the swarm (past TREND's 8-cron cooldown) is a new chapter.
+  const shift = await c.observe(ctx({ tick: 12, culture: { trend: { fap: "GROOM", adherents: 10, share: 0.4 }, tradition: null } }));
+  assert.ok(kinds(shift).includes("TREND"), "a different creed at the head of the swarm is news");
+});
+
+test("⑥ the market's drama — MARKET_SHIFT, CREDIT, RUN and CLASS each read off the tape and ledger", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1, market: marketOver() }));            // primes the mark tape, no move yet
+  // MARKET_SHIFT: signal jumps +40% in a single cron (a first-cron mark only primes, so this is the real break).
+  const ms = (await c.observe(ctx({ tick: 2, market: marketOver({ marks: { signal: 0.014 } }) })))
+    .find((e) => e.kind === "MARKET_SHIFT")!;
+  assert.ok(ms, "a one-cron +40% move is a market shift");
+  assert.match(ms.text, /signal moves \+40% in a single breath to 0\.014 USDC; the market's mind has changed\./);
+  assert.equal(renderTemplate("MARKET_SHIFT", ms.tokens), ms.text);
+  // CREDIT: a fresh, weighty promise appears (open-IOU count grew, largest note ≥ the floor).
+  const cr = (await c.observe(ctx({ tick: 12, market: marketOver({ marks: { signal: 0.014 }, openIous: 3, topIou: { debtor: 4, creditor: 9, amountUsdc: 0.05 } }) })))
+    .find((e) => e.kind === "CREDIT")!;
+  assert.ok(cr, "the first consequential promise is recorded");
+  assert.match(cr.text, /fly #4 owes fly #9 0\.05 USDC/);
+  assert.deepEqual(cr.actors, [4, 9]);
+  // RUN: a live credit panic announced on its false→true edge — the economy's loudest event (severity 4).
+  const rn = (await c.observe(ctx({ tick: 20, market: marketOver({ marks: { signal: 0.014 }, openIous: 6, run: true, badRate: 0.4, creditors: 5 }) })))
+    .find((e) => e.kind === "RUN")!;
+  assert.ok(rn, "a run on credit breaks");
+  assert.equal(rn.severity, 4);
+  assert.match(rn.text, /5 creditors call, 40% of the paper is overdue, the spreads double\./);
+  // CLASS: the creditor purse grips >15% of net capital — a chapter, told once.
+  const cl = (await c.observe(ctx({ tick: 30, market: marketOver({ marks: { signal: 0.014 }, creditorNetShare: 0.22 }) })))
+    .find((e) => e.kind === "CLASS")!;
+  assert.ok(cl, "a class gripping capital enters history");
+  assert.match(cl.text, /creditor purse now grips 22% of the swarm's whole net capital\./);
+  const later = await c.observe(ctx({ tick: 400, market: marketOver({ marks: { signal: 0.014 }, creditorNetShare: 0.4 }) }));
+  assert.ok(!kinds(later).includes("CLASS"), "the class chapter is told once, not censused every cron");
+});
+
+test("contexts with no culture/market read-out narrate none of the ⑤⑥ lines (byte-for-byte older chronicle)", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 2, settlements: 3, volumeUsdc: 0.01 }));
+  assert.ok(!kinds(out).some((k) => ["TREND", "TRADITION", "MARKET_SHIFT", "CREDIT", "RUN", "CLASS"].includes(k)),
+    "no culture/market in the context ⇒ those detectors never speak");
+});
+
+test("a culture-and-market history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1, culture: { trend: { fap: "FEED", adherents: 8, share: 0.33 }, tradition: null }, market: marketOver() }),
+    ctx({ tick: 2, culture: { trend: { fap: "FEED", adherents: 8, share: 0.33 }, tradition: null }, market: marketOver({ marks: { signal: 0.02 }, openIous: 2, topIou: { debtor: 1, creditor: 2, amountUsdc: 0.03 } }) }),
+    ctx({ tick: 30, market: marketOver({ marks: { signal: 0.02 }, creditorNetShare: 0.3 }) }),
+  ]);
+  assert.ok(all.some((e) => e.kind === "TREND"), "trend line present");
+  assert.ok(all.some((e) => e.kind === "MARKET_SHIFT"), "shift line present");
+  assert.ok(all.some((e) => e.kind === "CLASS"), "class line present");
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over culture/market entries intact: ${v.reason} @${v.brokenAt}`);
+});
+
