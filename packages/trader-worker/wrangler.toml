@@ -17,8 +17,8 @@ routes = [
 crons = ["* * * * *"]
 
 # ---------- Variables (non-sensitive, committed with the code) ----------
-# PRODUCTION PHASE — 10x LIVE. The swarm runs 10,800-neuron brains sharded across 12 FlyShardDO isolates
-# (SHARD_COUNT = "12" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
+# PRODUCTION PHASE — 10x LIVE + GROWTH ARMED (Phase C). The swarm runs 10,800-neuron brains sharded across
+# 24 FlyShardDO isolates (SHARD_COUNT = "24" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
 # a REAL EIP-3009 USDC broadcast on Arc mainnet, bounded by the daily/per-agent caps + kill switch below. The
 # 10x behaviour decoder is recalibrated (band collapse fixed: inject() normalises against a fixed reference
 # channel size and proboscis uses a fixed fan-in, so all 5 motor channels stay live and unsaturated at 10x).
@@ -47,13 +47,17 @@ POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = bas
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
 # Swarm sharding (see swarm.ts / shard.ts). "1" = the original single-DO swarm — every brain in FlyStateDO,
-# the FLY_SHARD binding inert (ZERO shards). "12" fans the HEAVY per-fly LIF advance out to 12 FlyShardDO
-# isolates (2 flies each at POPULATION_SIZE=24), each with its own 128 MB + CPU budget and its own SQLite,
-# so each brain can grow past the single-isolate memory ceiling. Only the compact motor/sensory read-out
-# crosses the boundary, so the coordinator stays small at any size. 12 is the MEASURED floor for the
-# 10,800-neuron brains below: 2 flies/shard serialise to ~1.4 MB (under the 2 MB single-value cap) and fan
-# out safely (Cloudflare QUEUES subrequests past the 6th, never rejects). Rollback = set this back to "1".
-SHARD_COUNT = "12"
+# the FLY_SHARD binding inert (ZERO shards). "24" fans the HEAVY per-fly LIF advance out to 24 FlyShardDO
+# isolates, each with its own 128 MB + CPU budget and its own SQLite, so each brain can grow past the
+# single-isolate memory ceiling. Only the compact motor/sensory read-out crosses the boundary, so the
+# coordinator stays small at any size. MUST stay paired with EVOLUTION_MAX_LIVE_POPULATION: shardCount =
+# ceil(cap/2) keeps ≤2 flies/shard (2 of the 10,800-neuron brains serialise to ~1.4 MB, under the 2 MB
+# single-value cap) — cap=48 ⇒ 24 shards (the startup guard forces hatchLive=false if flies/shard > 2).
+# Because slices derive from the STABLE cap, shardSlice(48,24,k) = shardSlice(24,12,k) = [2k,2k+2) for
+# k=0..11 — the 24 genesis brains NEVER migrate when growth is armed; shards 12..23 are new + empty until an
+# offspring hatches. Cloudflare QUEUES subrequests past the 6th (never rejects), so 24 fan out safely.
+# Rollback = SHARD_COUNT back to "12" + EVOLUTION_MAX_LIVE_POPULATION back to "24" (or "1" for single-DO).
+SHARD_COUNT = "24"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
@@ -196,8 +200,11 @@ ARENA_STALE_GRACE_SEC = "259200"              # 3 days past a round's deadline b
 # committed to ConnectomeLineage (LINEAGE_ADDRESS above), so "who founded which genome, with their own money"
 # is a public, tamper-evident fact. Selection is pure (src/evolution.ts): fitness = the trustless leaderboard,
 # no LLM and no human picks the parents. Breeding DEBITS the parent's PnL (the fee), so it must keep earning
-# to keep founding generations — a natural brake. Offspring do NOT join the live 24-fly trading population
-# (the manifest/sharding/funding stay fixed); they live only in the breeding market.
+# to keep founding generations — a natural brake. Since Phase C a bred offspring can ALSO hatch into a NEW
+# live trading fly (EVOLUTION_HATCH_LIVE below), growing the live population from the fixed genesis 24 toward
+# EVOLUTION_MAX_LIVE_POPULATION. The manifest stays fixed at 24 (bred brains are verified via ConnectomeLineage
+# + buildFromGenome replay, never re-committed), and each hatch is bootstrapped with real USDC from the
+# PARENT's own wallet — never minted, never treasury-funded.
 # ROLLOUT (mirrors PREDICT/ARENA): shipped OFF first so the plumbing was provably inert and the economy
 # unregressed, then flipped LIVE — EVOLUTION_ENABLED = "true" + EVOLUTION_TREASURY = the project deployer
 # wallet (0x307D…3a0d), which collects each breeding fee. It fires ONLY when the
@@ -213,13 +220,29 @@ EVOLUTION_PER_AGENT_DAILY = "1"               # max offspring ONE agent may fund
 EVOLUTION_GLOBAL_DAILY = "4"                  # max offspring bred per UTC day across the whole swarm; 0 = no global limit
 EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, P(cross the top two) else mutate the champion
 
+# ----- Live-population GROWTH (Phase C — hatch bred offspring into REAL trading flies) -----
+# EVOLUTION_HATCH_LIVE arms the post-breed hatch step in driveEvolution (state.ts): after an offspring's genome
+# is persisted + anchored on-chain it may HATCH into a new live trading fly. Each hatch is gated by (1) live
+# size < EVOLUTION_MAX_LIVE_POPULATION, (2) the genome passing genomeWithinBudget — bounds BOTH the 2 MB
+# serialised-value cap (via neurons) AND the 128 MB isolate heap (via synapses), self-calibrated from the
+# genesis brain, and (3) economy.fundOffspring settling a REAL USDC bootstrap from the PARENT's own HD wallet
+# to the child's fresh HD address (same x402/EIP-3009 rails + caps as a trade; the child goes live ONLY once
+# that transfer is MINED). EVOLUTION_MAX_LIVE_POPULATION is the hard live ceiling (genesis 24 .. 256) AND the
+# STABLE basis for shard slicing — keep it paired with SHARD_COUNT = ceil(cap/2) so ≤2 flies/shard. Genesis
+# slots 0..23 keep their shard across the (24,12)→(48,24) change (zero brain migration); growth fills the
+# empty slots 24..47. Set EVOLUTION_HATCH_LIVE = "false" to freeze the live population instantly (bred genomes
+# still commit on-chain; the 24 genesis flies are untouched either way).
+EVOLUTION_MAX_LIVE_POPULATION = "48"          # hard live-population ceiling (genesis 24 → 48); ALSO the stable shard-slice basis — keep paired with SHARD_COUNT = ceil(cap/2) = 24
+EVOLUTION_HATCH_LIVE = "true"                 # LIVE: a bred offspring hatches into a new live trading fly (parent-funded, memory-gated); set "false" to freeze the live population
+EVOLUTION_HATCH_SEED_USDC = "0.002"           # real USDC bootstrap the PARENT sends the child's own wallet at hatch (~1 base good); bounded by the per-agent/global daily caps
+
 
 # ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
 # 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:
 # connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically
 # with layer size — keeping 0.02 at 10x would give ~837k synapses/fly (~66 MB heap). 0.002 holds it to
 # ~116k/fly (~11 MB), which fits 2 flies/shard under 128 MB and ~1.4 MB serialised under the 2 MB value cap
-# (hence SHARD_COUNT = 12 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
+# (hence SHARD_COUNT = ceil(cap/2) = 24 at cap 48 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
 # the 10x drive distribution needs recalibration — which is exactly why ECONOMY_SHADOW stays on until then.
 BRAIN_N_SENSORY = "1800"
 BRAIN_N_INTER_L1 = "4000"
@@ -245,8 +268,8 @@ class_name = "FlyShardDO"
 tag = "v1"
 new_sqlite_classes = ["FlyStateDO"]
 
-# v2 registers the FlyShardDO SQLite class. With SHARD_COUNT = "12" the coordinator fans out to 12 shards
-# ("fly-shard-0".."fly-shard-11"), which spring up on demand on the first cron after deploy. At SHARD_COUNT
+# v2 registers the FlyShardDO SQLite class. With SHARD_COUNT = "24" the coordinator fans out to 24 shards
+# ("fly-shard-0".."fly-shard-23"), which spring up on demand on the first cron after deploy. At SHARD_COUNT
 # = "1" this class stays uninstantiated, so the migration is inert for a single-DO configuration.
 [[migrations]]
 tag = "v2"
