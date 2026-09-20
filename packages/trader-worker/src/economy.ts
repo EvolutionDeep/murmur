@@ -522,6 +522,12 @@ export class AgentEconomy {
   private graves: GraveRecord[] = [];
   private dead = new Set<number>();
 
+  /** ⑧ THE COMMONS: this era's legislated overrides of two institution knobs, applied fresh each cron by
+   *  state.ts. null ⇒ base config (byte-for-byte the pre-law economy). Runtime-only, NEVER serialized —
+   *  they are recomputed from the commons' own persisted decrees, so the economy payload stays untouched. */
+  private lawCreditCapBaseUsdc: number | null = null;
+  private lawIouRatePer10: number | null = null;
+
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
     // Injected facilitator wins; otherwise derive from mode. makeFacilitator("onchain") without wiring
@@ -1213,6 +1219,16 @@ export class AgentEconomy {
     return !!this.cfg.institutions && this.cfg.institutions.enabled !== false;
   }
 
+  /**
+   * ⑧ THE COMMONS — apply this era's legislated credit line / interest for the coming steps. A PURE
+   * PARAMETER OVERRIDE: it moves no money and touches no brain, only re-sizes the two knobs the credit
+   * branch reads. Both null (law off, or no decree on a knob) ⇒ the base config ⇒ byte-for-byte today.
+   */
+  applyLaw(creditCapBaseUsdc: number | null, iouRatePer10: number | null): void {
+    this.lawCreditCapBaseUsdc = creditCapBaseUsdc != null && Number.isFinite(creditCapBaseUsdc) ? creditCapBaseUsdc : null;
+    this.lawIouRatePer10 = iouRatePer10 != null && Number.isFinite(iouRatePer10) ? iouRatePer10 : null;
+  }
+
   /** Rebuild all four goods' books around the formula center for THIS tick (bounded 4×2 rungs each). */
   private buildBooks(readings: FlyReading[], T: number, tick: number): void {
     // A credit RUN doubles the panic factor on top of the swarm's own dispersion: the herd stampeding
@@ -1279,7 +1295,7 @@ export class AgentEconomy {
     if (!role || !CREDIT_ROLES.includes(role)) return null;
     const rep = this.memOf(id).rep;
     if (rep < 0) return null;
-    const base = (this.cfg.institutions?.creditCapBaseUsdc ?? CREDIT_CAP_BASE_USDC) * 1e6;
+    const base = (this.lawCreditCapBaseUsdc ?? this.cfg.institutions?.creditCapBaseUsdc ?? CREDIT_CAP_BASE_USDC) * 1e6;
     const cap = Math.round(base * (role === "trader" ? 2 : 1) * (1 + Math.min(2, rep)));
     return cap > 0 ? String(cap) : null;
   }
@@ -1314,7 +1330,7 @@ export class AgentEconomy {
     if (BigInt(cap) <= 0n || debt + BigInt(amount) > BigInt(cap)) return false;
     this.ious.unshift({
       debtor: debtorId, creditor: creditorId, amountAtomic: amount,
-      issuedTick: tick, ratePer10: this.cfg.institutions?.iouRatePer10 ?? IOU_RATE_PER_10,
+      issuedTick: tick, ratePer10: this.lawIouRatePer10 ?? this.cfg.institutions?.iouRatePer10 ?? IOU_RATE_PER_10,
     });
     return true;
   }

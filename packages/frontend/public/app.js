@@ -297,6 +297,7 @@ let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]
 let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dead} — names, treasuries, monuments
 let econMarket = null;      // ⑥ institutions read-out {marks, professions, classes, openIous, debt, run, …} — the tape
 let econCulture = null;     // ⑤ culture read-out {trend, tradition} — the passing fashion & the houses holding the old way
+let econCommons = null;     // ⑧ commons read-out {seatedEra, seats[], decrees[], effective} — the swarm's self-legislation
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -1142,6 +1143,7 @@ function applyEconomy(econ) {
   if (econ.social) { econSocial = econ.social; renderSocialSection(); }
   if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
   if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
+  if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -1591,6 +1593,55 @@ function renderCultureSection() {
   }
 }
 
+// ================= the commons section (in the chronicle panel) =================
+// The commons in law: the assembly the swarm seats when a new era dawns, the two knobs it re-prices, and
+// the law now in force. A pure read-out of commons.ts — it moves no money, only re-prices the credit line
+// and its rate through the same rails. Hidden while LAW is off or no council is seated yet.
+function renderCommonsSection() {
+  const host = $("chron-commons");
+  const body = $("com-body");
+  if (!host || !body) return;
+  const c = econCommons;
+  if (!c || !(c.seatedEra > 0)) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  const roman = (n) => {
+    if (!n || n <= 0) return String(n ?? "");
+    const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+    let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
+  };
+  const seats = Array.isArray(c.seats) ? c.seats : [];
+  const asb = document.createElement("div");
+  asb.className = "com-row com-assembly";
+  asb.textContent = `⛬ a council sits in Era ${roman(c.seatedEra)} — ${seats.length} of the swarm's honoured and propertied`;
+  asb.title = "when a new era dawns the wealthiest-and-best-regarded living flies take the seats and vote, a pure function of the era and their identities, on two knobs: the base credit line and its rate";
+  body.appendChild(asb);
+  if (seats.length) {
+    const roster = document.createElement("div");
+    roster.className = "com-row com-roster";
+    roster.textContent = seats.slice(0, 8).map((s) => `#${s.id}·${Number(s.balanceUsdc).toFixed(3)}ᵁ·${(Number(s.rep) * 100).toFixed(0)}r`).join("  ");
+    roster.title = "the seated flies — purse in USDC, standing (rep) as a percent; chosen by the assembly's own deterministic ranking, never by a brain";
+    body.appendChild(roster);
+  }
+  const decrees = Array.isArray(c.decrees) ? c.decrees : [];
+  const label = (p) => (p === "creditCap" ? "the base credit line" : "the rate of interest");
+  for (const d of decrees) {
+    const row = document.createElement("div");
+    row.className = "com-row com-decree";
+    row.textContent = `✎ ${label(d.param)} set to ${Number(d.target).toFixed(4)} in Era ${roman(d.passedEra)}`;
+    row.title = "a carried law — the era that passed it, hard-clamped into its constitutional band so no radical room can corner the ledger";
+    body.appendChild(row);
+  }
+  const eff = c.effective || {};
+  const line = eff.creditCapBaseUsdc != null ? Number(eff.creditCapBaseUsdc).toFixed(4) : "base";
+  const rate = eff.iouRatePer10 != null ? Number(eff.iouRatePer10).toFixed(4) : "base";
+  const eRow = document.createElement("div");
+  eRow.className = "com-row com-eff";
+  eRow.textContent = `≈ in force — credit line ${line} USDC · rate ${rate}`;
+  eRow.title = "the parameters the economy consults when it sizes an IOU line and stamps its rate; 'base' means no law is live and the config stands";
+  body.appendChild(eRow);
+}
+
 function openWallets() {
   walletsOpen = true;
   if (brainOpen) closeBrain();
@@ -1616,6 +1667,7 @@ function openWallets() {
     if (e.dynasty) { econDynasty = e.dynasty; renderDynastySection(); renderWallets(); }
     if (e.market) { econMarket = e.market; renderMarketSection(); }
     if (e.culture) { econCulture = e.culture; renderCultureSection(); }
+    if (e.commons) { econCommons = e.commons; renderCommonsSection(); }
   }).catch(() => {});
 }
 
@@ -1848,6 +1900,7 @@ const CHRON_ICONS = {
   HOUSE_FOUNDED: "⌂", DYNASTY: "♜", ELEGY: "†",
   EPOCH_OPEN: "✷", EPOCH_CLOSE: "✥", TREND: "≈", TRADITION: "⚜",
   MARKET_SHIFT: "↕", CREDIT: "⛁", RUN: "⇊", CLASS: "☰",
+  ASSEMBLY: "⛬", DECREE: "✎",
 };
 
 function renderChron() {
@@ -1959,13 +2012,15 @@ const CHRON_ = {
     CREDIT: "A promise joins the ledger — fly #{debtor} owes fly #{creditor} {amountUsdc} USDC; trade now runs on trust as well as coin.",
     RUN: "Dread turns due all at once — a run on the swarm's credit: {creditors} creditors call, {badRate} of the paper is overdue, the spreads double.",
     CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
+    ASSEMBLY: "A commons sits in Era {era~roman} — {seats} of the swarm's honoured and propertied take the seats; the age will now write its own law.",
+    DECREE: "The commons decrees in Era {era~roman}: {what} shall stand at {value}. The swarm has rewritten its own rule.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -3347,6 +3402,7 @@ async function poll() {
       if (Array.isArray(econ.agents)) applyEconAgents(econ.agents);
       if (econ.market) { econMarket = econ.market; renderMarketSection(); }
       if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
+      if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
     }).catch(() => {});
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron

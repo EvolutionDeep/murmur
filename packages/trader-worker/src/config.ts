@@ -139,6 +139,10 @@ export interface Env {
   EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
+  LAW_ENABLED?: string;                 // "true"/"false" (default TRUE) — ⑧ THE COMMONS: at each NEW era a deterministic assembly is convened from the swarm's own read-out condition (standing + stake of its wealthiest/honoured living flies) and votes — a pure function of (era, address, hashes) — to nudge TWO bounded institution knobs (the credit line and its interest). ECONOMIC-SIDE ONLY: it re-prices credit the economy already reads, moves no money and touches no neuron. A sub-switch of INSTITUTIONS — false (or institutions off) ⇒ no assembly, effective ≡ base config, byte-for-byte today.
+  LAW_ASSEMBLY_SIZE?: string;           // seats in the commons (default 7; clamped 2..16 and to the living population).
+  LAW_CREDIT_CAP_BAND?: string;         // "min,max" USDC the assembly may legislate the base credit line into (default "0.01,0.2"); a HARD clamp so self-legislation can never crash the ledger or mint.
+  LAW_IOU_RATE_BAND?: string;           // "min,max" the assembly may legislate iouRatePer10 into (default "0,0.05"); a HARD clamp on interest.
   DYNASTY_ENABLED?: string;             // "true"/"false" (default TRUE) — dynasty layer: houses (inherited names + sigils + tithe treasury) and mortality (penury / old-age / plague deaths with estate inheritance). Economic-ledger ONLY — it never touches the connectome, the shards or the live population; false restores the pre-dynasty economy byte-for-byte.
   CULTURE_ENABLED?: string;             // "true"/"false" (default TRUE) — Lamarckian culture layer: feeding-cohort FAP-creed contagion with bounded TTL, house traditions as breakwaters. Overrides the decoded READ-OUT line only (fap/role), before the snapshot + economy ever see it — the connectome, genomes and manifests never notice; false restores today's readings byte-for-byte.
   INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
@@ -330,6 +334,18 @@ export interface RuntimeConfig {
   // read-out of state already computed elsewhere; OFF leaves only today's slow regime-driven era logic.
   epochs: {
     enabled: boolean;         // master switch (default ON): false ⇒ the shock detectors never receive their signals
+  };
+
+  // The Commons (layer ⑧): fly self-legislation — a sub-switch of INSTITUTIONS. A pure read-out of the
+  // economy/social state convenes a deterministic assembly at each new era which votes to nudge two
+  // bounded credit knobs; the effective values are hard-clamped to the bands below and recomputed every
+  // cron, so the layer never writes a neuron, never moves money, and never persists into the economy
+  // payload (KEY_VERSION stays "economy:v1"). LAW_ENABLED=false ⇒ effective ≡ base config, byte-for-byte.
+  law: {
+    enabled: boolean;         // master switch (default ON)
+    assemblySize: number;     // seats (default 7, clamped)
+    creditCapBandUsdc: [number, number];  // hard clamp on any legislated base credit line (USDC)
+    iouRateBand: [number, number];        // hard clamp on any legislated interest rate
   };
   
   // connectome sizing (ts-lif)
@@ -568,6 +584,26 @@ export function loadConfig(env: Env): RuntimeConfig {
       // byte-for-byte today's slow regime drift.
       enabled: (env.EPOCHS_ENABLED ?? "true").toLowerCase() !== "false",
     },
+
+    law: (() => {
+      // ⑧ THE COMMONS. ON by default, but a SUB-SWITCH of institutions (state.ts convenes only when both
+      // are on). The two bands are HARD clamps the assembly can never legislate past — the guard rail that
+      // lets a society rewrite its own credit rules without ever being able to mint or crash its ledger.
+      const band = (raw: string | undefined, def: [number, number], lo: number, hi: number): [number, number] => {
+        if (!raw) return def;
+        const parts = raw.split(",").map((x) => Number(x.trim()));
+        const min = clamp(Number.isFinite(parts[0]) ? parts[0] : def[0], lo, hi);
+        const max = clamp(Number.isFinite(parts[1]) ? parts[1] : def[1], lo, hi);
+        return min <= max ? [min, max] : def;
+      };
+      const size = Math.round(Number(env.LAW_ASSEMBLY_SIZE ?? "7"));
+      return {
+        enabled: (env.LAW_ENABLED ?? "true").toLowerCase() !== "false",
+        assemblySize: clamp(Number.isFinite(size) ? size : 7, 2, 16),
+        creditCapBandUsdc: band(env.LAW_CREDIT_CAP_BAND, [0.01, 0.2], 0, 1000),
+        iouRateBand: band(env.LAW_IOU_RATE_BAND, [0, 0.05], 0, 0.2),
+      };
+    })(),
 
     brainOpts: {
       nSensory: posCount(env.BRAIN_N_SENSORY),

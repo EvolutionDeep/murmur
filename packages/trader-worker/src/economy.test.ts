@@ -750,3 +750,33 @@ test("institutions: the market blob round-trips; an old payload restores the pur
   assert.equal(c.snapshot().agents.find((x) => x.id === 0)!.profession, null, "or worked — the restored row reads jobless until re-read");
   assert.equal(c.snapshot().totals.count, a.snapshot().totals.count, "the LEDGER still restores (KEY_VERSION untouched)");
 });
+
+test("commons wiring: applyLaw is runtime-only yet its legislated rate rides the notes the economy issues", async () => {
+  // ⑧ THE COMMONS must be a PURE PARAMETER OVERRIDE: it can re-price credit (the note's interest), but it
+  // can NEVER leak into the serialized economy:v1 payload (the runtime law is recomputed from the commons'
+  // own decrees each cron), and it moves no money. applyLaw(null,…) ⇒ the base config, byte-for-byte.
+  const poor = { institutions: { enabled: true, creditCapBaseUsdc: 0.02 }, initialBalanceUsdc: 0.007, solvencyFloorUsdc: 0, basePriceUsdc: 0.01 };
+
+  // BASELINE (no law): a promise on the poor swarm bears the economy's own base rate (config default 0.002).
+  const base = new AgentEconomy(cfg(poor));
+  await base.step(population("AGITATE"), collective(0.8), 1);
+  const baseIou = JSON.parse(base.serialize()).market.ious.find((i: { ratePer10: number }) => i.ratePer10 != null);
+  assert.ok(baseIou, "the thin-of-purse but good-of-name swarm signed a promise");
+  assert.equal(baseIou.ratePer10, 0.002, "absent a law the note carries the base config byte-for-byte");
+
+  // LAWED: the assembly sets a higher rate — first, that the override never touches the persisted payload…
+  const lawed = new AgentEconomy(cfg(poor));
+  const s0 = lawed.serialize();
+  lawed.applyLaw(0.02, 0.05);                                  // same credit line, a legislated interest
+  assert.equal(lawed.serialize(), s0, "applyLaw is runtime-only — the serialized economy:v1 payload is byte-identical");
+  await lawed.step(population("AGITATE"), collective(0.8), 1);
+  const lawIou = JSON.parse(lawed.serialize()).market.ious.find((i: { ratePer10: number }) => i.ratePer10 != null);
+  assert.equal(lawIou.ratePer10, 0.05, "the commons' rate rides the note it just issued — re-pricing, never minting");
+
+  // …and that standing the law back down returns the base exactly.
+  const off = new AgentEconomy(cfg(poor));
+  off.applyLaw(null, null);
+  await off.step(population("AGITATE"), collective(0.8), 1);
+  const offIou = JSON.parse(off.serialize()).market.ious.find((i: { ratePer10: number }) => i.ratePer10 != null);
+  assert.equal(offIou.ratePer10, 0.002, "null law ⇒ the base config, byte-for-byte");
+});

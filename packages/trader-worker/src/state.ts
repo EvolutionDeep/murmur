@@ -60,6 +60,7 @@ import type { FlyReading, PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement, type LeaderRow } from "./economy.js";
 import { CultureMembrane } from "./culture.js";
+import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
@@ -79,6 +80,7 @@ const KEY_ECONOMY = "economy:v1";
 /** Culture membrane (adopted FAP creeds + TTLs) — its OWN key: culture is a read-out overlay, so a
  *  corrupt/absent blob only loses fashions, never ledger state. Bounded (≤64 records), DO-safe. */
 const KEY_CULTURE = "culture:v1";
+const KEY_COMMONS = "commons:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
@@ -130,6 +132,8 @@ export class FlyStateDO {
   private economy: AgentEconomy | null = null;
   /** The Lamarckian culture membrane — null while CULTURE_ENABLED=false (byte-for-byte inert). */
   private culture: CultureMembrane | null = null;
+  /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
+  private commons: CommonsAssembly | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
@@ -260,6 +264,26 @@ export class FlyStateDO {
     this.culture = new CultureMembrane({ enabled: true });
     if (stored) this.culture.restore(stored);
     return this.culture;
+  }
+
+  /**
+   * Lazily load the commons (null while LAW_ENABLED is off, or while institutions/economy are off — a
+   * commons has no credit system to legislate over otherwise). A corrupt blob restores an EMPTY commons, so
+   * self-legislation can never poison the economy it only observes. false ⇒ the cron never convenes and the
+   * economy keeps its base config byte-for-byte.
+   */
+  private async ensureCommons(): Promise<CommonsAssembly | null> {
+    if (!this.cfg.law.enabled || !this.cfg.institutions.enabled || !this.cfg.economy.enabled) return null;
+    if (this.commons) return this.commons;
+    const stored = await this.state.storage.get<string>(KEY_COMMONS);
+    this.commons = new CommonsAssembly({
+      enabled: true,
+      assemblySize: this.cfg.law.assemblySize,
+      creditCapBandUsdc: this.cfg.law.creditCapBandUsdc,
+      iouRateBand: this.cfg.law.iouRateBand,
+    });
+    if (stored) this.commons.restore(stored);
+    return this.commons;
   }
 
   /** Runtime prediction-market config derived from the loaded RuntimeConfig + chain network tag. */
@@ -671,6 +695,7 @@ export class FlyStateDO {
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     if (this.culture) await this.state.storage.put(KEY_CULTURE, this.culture.serialize());
+    if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
@@ -864,6 +889,16 @@ export class FlyStateDO {
             creditorNetShare: mr.creditorNetShare,
           }
         : null;
+      // ⑧ fold the commons read-out ONLY while LAW is on AND the commons instance exists (null when
+      // institutions/economy off). Off ⇒ no `commons` key ⇒ the historian's ASSEMBLY/DECREE detectors never speak.
+      const comRo = this.cfg.law.enabled ? this.commons?.readout() ?? null : null;
+      const commons = comRo
+        ? {
+            seatedEra: comRo.seatedEra,
+            seats: comRo.seats.length,
+            decrees: comRo.decrees.map((d) => ({ param: d.param, target: d.target })),
+          }
+        : null;
       const ctx: ChronicleContext = {
         tick,
         ts: Date.now(),
@@ -896,6 +931,7 @@ export class FlyStateDO {
         governanceShock,
         culture,
         market,
+        commons,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -907,6 +943,35 @@ export class FlyStateDO {
       if (entries.length) await this.state.storage.put(KEY_ANNALS, this.annals);
     } catch (e) {
       console.warn("[DO] chronicle observe failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑧ THE COMMONS — convene the assembly when the historian has just raised a NEW era. The roster is a
+   * pure read-out of the economy snapshot already taken this cron (living agents + their reputations), and
+   * the era is the historian's own counter, so the shock/era logic stays single-sourced. Inert while law
+   * is off; best-effort so a council can never break the tick.
+   */
+  private async driveCommons(): Promise<void> {
+    const commons = await this.ensureCommons();
+    if (!commons || !this.chronicler) return;
+    try {
+      const snap = this.lastEconomy;
+      if (!snap) return;
+      const repOf = new Map<number, number>();
+      for (const r of snap.social.rep) repOf.set(r.id, r.score);
+      const roster: CommonsSeat[] = snap.agents
+        .filter((a) => !a.dead)
+        .map((a) => ({ id: a.id, address: a.address, balanceAtomic: a.balance, rep: repOf.get(a.id) ?? 0 }));
+      if (commons.convene(this.chronicler.eraInfo().era, roster)) {
+        const eff = commons.effectiveParams();
+        console.log(
+          `[DO] commons convened era ${this.chronicler.eraInfo().era} · ${commons.size} seats · ` +
+            `credit=${eff.creditCapBaseUsdc ?? "base"} rate=${eff.iouRatePer10 ?? "base"}`,
+        );
+      }
+    } catch (e) {
+      console.warn("[DO] commons convene failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -1019,6 +1084,16 @@ export class FlyStateDO {
     // CULTURE — the Lamarckian overlay between the brain's decode and every consumer (snapshot,
     // economy, prediction). Null while CULTURE_ENABLED=false ⇒ byte-for-byte today's behaviour.
     const culture = await this.ensureCulture();
+    // ⑧ THE COMMONS — apply last era's law to THIS cron's credit line before any sub-tick settles, so the
+    // assembly's verdict is in force for the whole cron. ensureCommons() null (or a knob without a decree) ⇒
+    // applyLaw(null,…) ⇒ base config, byte-for-byte. Convening the NEXT era's assembly is step 8 below.
+    if (economy) {
+      const commons = await this.ensureCommons();
+      if (commons) {
+        const eff = commons.effectiveParams();
+        economy.applyLaw(eff.creditCapBaseUsdc, eff.iouRatePer10);
+      }
+    }
     // Per-CRON settlement budget (previously spent in a single step; now spread across the sub-ticks).
     let econBudget = this.cfg.economy.maxDealsPerTick;
     const cronSettlements: Settlement[] = [];
@@ -1153,6 +1228,12 @@ export class FlyStateDO {
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
     await this.observeChronicle(swarm.getTickIndex(), snapshot, temperature, regime, pulse);
+
+    // 8) THE COMMONS — if the historian just raised a NEW era, convene a deterministic assembly over the
+    //    swarm's own read-out condition and let it legislate the two credit knobs for the era ahead (applied
+    //    at the top of the next cron). PURE READ-OUT + a sub-switch of INSTITUTIONS: never touches a neuron,
+    //    moves no money, inert while LAW_ENABLED=false. Best-effort — a failure only skips a council.
+    await this.driveCommons();
 
     console.log(
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
@@ -1300,6 +1381,8 @@ export class FlyStateDO {
     if (economy) {
       const culture = await this.cultureReadout(snap);
       if (culture) (economy as { culture?: unknown }).culture = culture;
+      const commons = await this.commonsReadout();
+      if (commons) (economy as { commons?: unknown }).commons = commons;
     }
     return json({ snapshot: snap, economy, topology: this.topology() });
   }
@@ -1339,7 +1422,23 @@ export class FlyStateDO {
     // ⑤ CULTURE folded into the same read-out the wallets drawer already draws — a pure read of the
     // membrane. Switch-off ⇒ cultureReadout() null ⇒ key absent ⇒ byte-for-byte the pre-culture /economy.
     const culture = await this.cultureReadout();
-    return json(culture ? { ...snap, culture } : snap);
+    // ⑧ THE COMMONS — the seated assembly + its live law, a pure read of commons.ts. LAW off ⇒ null ⇒ no
+    // key ⇒ byte-for-byte the pre-law /economy.
+    const commons = await this.commonsReadout();
+    if (!culture && !commons) return json(snap);
+    return json({ ...snap, ...(culture ? { culture } : null), ...(commons ? { commons } : null) });
+  }
+
+  /**
+   * ⑧ The commons read-out (who holds the seats, what law the current era passed, and the effective
+   * credit line / rate the economy is now running under). Null while LAW_ENABLED/institutions/economy are
+   * off (ensureCommons returns null) — callers then ship NO commons key, staying byte-identical to the
+   * pre-law build.
+   */
+  private async commonsReadout(): Promise<CommonsReadout | null> {
+    const com = await this.ensureCommons();
+    if (!com) return null;
+    return com.readout();
   }
 
   /**

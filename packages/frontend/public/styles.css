@@ -498,6 +498,16 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .cult-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cult-row.cult-trend { color: #3f5a3a; }
 .cult-row.cult-trad { color: #5a4a33; }
+/* ⑧ the commons in law — the seated assembly + the two knobs it re-prices (pure read-out of commons.ts) */
+.chron-commons { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.com-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.com-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.com-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.com-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.com-row.com-assembly { color: var(--ink); }
+.com-row.com-roster { color: var(--muted); }
+.com-row.com-decree { color: #4a3f6a; }
+.com-row.com-eff { color: #3f5a3a; }
 
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }

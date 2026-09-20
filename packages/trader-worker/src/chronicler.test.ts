@@ -651,3 +651,61 @@ test("a culture-and-market history passes in-browser-style verifyChain end to en
   assert.ok(v.ok, `chain over culture/market entries intact: ${v.reason} @${v.brokenAt}`);
 });
 
+// ================= ⑧ THE COMMONS narrative kinds (a seated council + the law it writes, told once) ==========
+// ASSEMBLY/DECREE ride the commons read-out (state.ts folds `commons` when LAW_ENABLED + institutions +
+// economy are all on). Both are landscape detectors: one council per seated era, one law per (knob, era),
+// deduped by the era/param trackers + a cooldown, and every sentence still re-derives from its template.
+// No `commons` in the context (LAW off) or a zero seatedEra (no council yet) ⇒ the whole block stays silent.
+
+test("⑧ the commons legislates into the chronicle — an ASSEMBLY and per-knob DECREEs, each told once per era", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const a = await c.observe(ctx({ tick: 2, commons: { seatedEra: 1, seats: 7, decrees: [{ param: "creditCap", target: 0.02 }] } }));
+  const asb = a.find((e) => e.kind === "ASSEMBLY")!;
+  assert.ok(asb, "a council seated for an era opens a chapter");
+  assert.match(asb.text, /A commons sits in Era I — 7 of the swarm's honoured and propertied take the seats/);
+  assert.equal(renderTemplate("ASSEMBLY", asb.tokens), asb.text);
+  const dec = a.find((e) => e.kind === "DECREE")!;
+  assert.ok(dec, "the knob it settles is written into the record");
+  assert.equal(dec.severity, 3);
+  assert.match(dec.text, /The commons decrees in Era I: the base credit line shall stand at 0\.02\./);
+  assert.equal(renderTemplate("DECREE", dec.tokens), dec.text);
+
+  // Same era, next cron: neither the council nor the already-told knob repeats.
+  const b = await c.observe(ctx({ tick: 3, commons: { seatedEra: 1, seats: 7, decrees: [{ param: "creditCap", target: 0.02 }] } }));
+  assert.ok(!kinds(b).includes("ASSEMBLY"), "one council per era");
+  assert.ok(!kinds(b).includes("DECREE"), "creditCap was already decreed this era");
+  // A DIFFERENT knob settling (past DECREE's 6-cron cooldown) is a fresh chapter in the same era.
+  const cdec = await c.observe(ctx({ tick: 9, commons: { seatedEra: 1, seats: 7, decrees: [{ param: "creditCap", target: 0.02 }, { param: "iouRate", target: 0.05 }] } }));
+  assert.ok(!kinds(cdec).includes("ASSEMBLY"), "the era's council is already seated");
+  const rate = cdec.find((e) => e.kind === "DECREE")!;
+  assert.ok(rate, "the second knob's law is news");
+  assert.match(rate.text, /the rate of interest shall stand at 0\.05\./);
+
+  // A NEW seated era convenes a NEW council.
+  const d = await c.observe(ctx({ tick: 30, commons: { seatedEra: 2, seats: 7, decrees: [] } }));
+  assert.ok(kinds(d).includes("ASSEMBLY"), "a new seatedEra is a new assembly");
+});
+
+test("contexts with no commons (or an unseated era 0) narrate none of the ⑧ lines (byte-for-byte older chronicle)", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const o1 = await c.observe(ctx({ tick: 2, settlements: 3, volumeUsdc: 0.01 }));
+  assert.ok(!kinds(o1).some((k) => ["ASSEMBLY", "DECREE"].includes(k)), "no commons in the context ⇒ those detectors never speak");
+  const o2 = await c.observe(ctx({ tick: 3, commons: { seatedEra: 0, seats: 0, decrees: [] } }));
+  assert.ok(!kinds(o2).some((k) => ["ASSEMBLY", "DECREE"].includes(k)), "an unseated commons (era 0) stays silent");
+});
+
+test("a commons history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 2, commons: { seatedEra: 1, seats: 7, decrees: [{ param: "creditCap", target: 0.02 }] } }),
+    ctx({ tick: 30, commons: { seatedEra: 2, seats: 7, decrees: [{ param: "iouRate", target: 0.05 }] } }),
+  ]);
+  assert.ok(all.some((e) => e.kind === "ASSEMBLY"), "assembly line present");
+  assert.ok(all.some((e) => e.kind === "DECREE"), "decree line present");
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over commons entries intact: ${v.reason} @${v.brokenAt}`);
+});
+

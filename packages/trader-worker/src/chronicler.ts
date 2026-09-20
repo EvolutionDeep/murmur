@@ -62,7 +62,10 @@ export type ChronicleKind =
   | "MARKET_SHIFT"
   | "CREDIT"
   | "RUN"
-  | "CLASS";
+  | "CLASS"
+  // ⑧ THE COMMONS narrative kinds (self-legislation detectors off the commons read-out):
+  | "ASSEMBLY"
+  | "DECREE";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -135,6 +138,9 @@ export interface ChronicleContext {
   /** ⑥ INSTITUTIONS read-out (economy marketReadout): the tape, the credit, the classes. Absent ⇒ no
    *  MARKET_SHIFT/CREDIT/RUN/CLASS (INSTITUTIONS_ENABLED=false keeps them out of the context). */
   market?: ChronicleMarket | null;
+  /** ⑧ THE COMMONS read-out (commons.ts readout): the seated assembly and the law it passes. Absent ⇒ no
+   *  ASSEMBLY/DECREE (LAW_ENABLED=false, or institutions/economy off, keeps it out of the context). */
+  commons?: ChronicleCommons | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -152,6 +158,13 @@ export interface ChronicleMarket {
   badRate: number;
   creditors: number;               // creditor-class headcount
   creditorNetShare: number;        // creditors' share of the swarm's positive net worth, 0..1
+}
+
+/** ⑧ the commons' chronicle signals — the era a council was seated for, its headcount, its live decrees. */
+export interface ChronicleCommons {
+  seatedEra: number;
+  seats: number;
+  decrees: { param: string; target: number }[];
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -200,6 +213,9 @@ interface ChroniclerState {
   lastCreditCount: number;          // openIous seen last cron (an increase is a fresh issuance)
   lastRunActive: boolean;           // was a RUN live last cron? (RUN is told on the false→true edge)
   classAnnounced: boolean;          // the creditor CLASS has been counted once — history, not a per-cron census
+  // --- ⑧ commons trackers: a council is one chapter per era, each knob's law one decree per era ---
+  lastAssemblyEra: number;          // era the last ASSEMBLY line told (0 ⇒ never)
+  lastDecreeEra: Record<string, number>; // param → era of its last DECREE
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -248,6 +264,7 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1,
   EPOCH_OPEN: 200, EPOCH_CLOSE: 200,
   TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24,
+  ASSEMBLY: 8, DECREE: 6,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -283,6 +300,8 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   CREDIT: "A promise joins the ledger — fly #{debtor} owes fly #{creditor} {amountUsdc} USDC; trade now runs on trust as well as coin.",
   RUN: "Dread turns due all at once — a run on the swarm's credit: {creditors} creditors call, {badRate} of the paper is overdue, the spreads double.",
   CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
+  ASSEMBLY: "A commons sits in Era {era~roman} — {seats} of the swarm's honoured and propertied take the seats; the age will now write its own law.",
+  DECREE: "The commons decrees in Era {era~roman}: {what} shall stand at {value}. The swarm has rewritten its own rule.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -677,6 +696,28 @@ export class Chronicler {
       }
     }
 
+    // --- ⑧ THE COMMONS: a council seated at a new era, and the law it passes for that era. Both are pure
+    //     read-outs of the commons' own signals; LAW_ENABLED=false ⇒ state.ts folds no `commons` into the
+    //     context ⇒ this block never speaks and the chronicle stays byte-for-byte the pre-law build. ---
+    const com = ctx.commons;
+    if (com && com.seatedEra > 0) {
+      if (com.seatedEra !== s.lastAssemblyEra && this.ready("ASSEMBLY", ctx)) {
+        s.lastAssemblyEra = com.seatedEra;
+        out.push(await this.emit(ctx, "ASSEMBLY", 2, [],
+          { era: com.seatedEra, seats: com.seats },
+          { seats: com.seats }));
+      }
+      for (const d of com.decrees) {
+        if ((s.lastDecreeEra[d.param] ?? -1) !== com.seatedEra && this.ready("DECREE", ctx)) {
+          s.lastDecreeEra[d.param] = com.seatedEra;
+          const what = d.param === "creditCap" ? "the base credit line" : "the rate of interest";
+          out.push(await this.emit(ctx, "DECREE", 3, [],
+            { era: com.seatedEra, what, value: `${round(d.target)}` },
+            { target: d.target }));
+        }
+      }
+    }
+
     return out;
   }
 
@@ -805,6 +846,7 @@ function freshState(): ChroniclerState {
     cronSeen: 0, lastShockCron: -1000, prevVolume: 0, maxCronVolume: 0, prevGini: 0, famineRun: 0,
     eraStartCron: 0, eraShock: null, eraShockWilled: false,
     lastTrendFap: null, lastTraditionKey: null, lastMarks: {}, lastCreditCount: 0, lastRunActive: false, classAnnounced: false,
+    lastAssemblyEra: 0, lastDecreeEra: {},
     headHash: GENESIS_HASH,
   };
 }
