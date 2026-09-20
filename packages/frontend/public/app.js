@@ -129,6 +129,14 @@ const REG_SEL_CHAINHEAD = "0x008f51c6"; // chainHead()
 const MAN_SEL_LATEST = "0x6f17d258";       // latestHash()
 const MAN_SEL_ISCOMMITTED = "0x054765a3";  // isCommitted(bytes32)
 const MAN_SEL_COUNT = "0x9123988b";        // commitCount()
+// ConnectomeLineage selectors (precomputed keccak256 prefixes) — the browser reads each genome's committed
+// ancestry STRAIGHT off Arc (no murmur server in the loop), so the breeding market's family tree is trustless
+// end-to-end. lineages(bytes32) returns 7 words: genomeHash,parentA,parentB,op,generation,breeder,ts.
+const LIN_SEL_LINEAGES = "0xce3dace4";     // lineages(bytes32)
+const LIN_SEL_COUNT = "0x9123988b";        // commitCount()
+const LIN_SEL_LATEST = "0x6f17d258";       // latestHash()
+const LIN_SEL_COMMITTER = "0x5bc8e8f9";    // committer()
+const isZeroBytes32 = (w) => !w || /^0x0{64}$/.test(String(w).toLowerCase());
 const bytes32 = (h) => "0x" + String(h || "").replace(/^0x/i, "").toLowerCase().padStart(64, "0");
 const wordToNum = (w) => Number(BigInt(w || "0x0"));
 /** One JSON-RPC call to Arc. Throws on transport/HTTP failure so callers can fall back. */
@@ -197,6 +205,46 @@ async function readManifestOnchain(registryAddress, manifestHash) {
     const count = wordToNum(typeof countRes === "string" ? countRes : "0x0");
     const isLatest = !!latest && latest.toLowerCase() === bytes32(manifestHash).toLowerCase();
     return { latest, committed, count, isLatest };
+  } catch { return null; }
+}
+
+/**
+ * Read one genome's committed ancestry STRAIGHT off the on-chain ConnectomeLineage via eth_call — no murmur
+ * server in the loop, so the breeding market's family tree is verifiable trustlessly. lineages(bytes32) returns
+ * 7 words: genomeHash, parentA, parentB, op, generation, breeder, ts (ts==0 means never committed). Returns null
+ * on transport/CORS failure (caller falls back to served fields), or { committed:false } when not anchored.
+ */
+async function readLineageOnchain(lineageAddress, genomeHash) {
+  if (!isRealAddr(lineageAddress) || !genomeHash) return null;
+  try {
+    const res = await arcRpc("eth_call", [{ to: lineageAddress, data: LIN_SEL_LINEAGES + bytes32(genomeHash).slice(2) }, "latest"]);
+    const hex = typeof res === "string" ? res.replace(/^0x/, "") : "";
+    if (hex.length < 7 * 64) return { committed: false };
+    const word = (i) => "0x" + hex.slice(i * 64, (i + 1) * 64);
+    const ts = wordToNum(word(6));
+    return {
+      committed: ts !== 0,
+      genomeHash: word(0), parentA: word(1), parentB: word(2),
+      op: wordToNum(word(3)), generation: wordToNum(word(4)),
+      breeder: "0x" + word(5).slice(2).slice(-40), ts,
+    };
+  } catch { return null; }
+}
+
+/** Read the ConnectomeLineage head (commitCount, latestHash, committer) straight off Arc — the tree's live status. */
+async function readLineageHead(lineageAddress) {
+  if (!isRealAddr(lineageAddress)) return null;
+  try {
+    const [c, l, m] = await Promise.all([
+      arcRpc("eth_call", [{ to: lineageAddress, data: LIN_SEL_COUNT }, "latest"]),
+      arcRpc("eth_call", [{ to: lineageAddress, data: LIN_SEL_LATEST }, "latest"]),
+      arcRpc("eth_call", [{ to: lineageAddress, data: LIN_SEL_COMMITTER }, "latest"]),
+    ]);
+    return {
+      commitCount: wordToNum(typeof c === "string" ? c : "0x0"),
+      latestHash: typeof l === "string" && !isZeroBytes32(l) ? l : null,
+      committer: typeof m === "string" ? "0x" + m.slice(2).slice(-40) : null,
+    };
   } catch { return null; }
 }
 let econMode = "simulated";
@@ -1737,6 +1785,7 @@ function brainVerifyCard() {
 // only appears when ?token= is in the URL, so the public surface stays read-only.
 let lineageOpen = false;
 let lineageData = null;        // latest /lineage payload {count, genesis, bred, generations, entries[]}
+let lineageHead = null;        // live on-chain head read DIRECTLY from Arc: {commitCount, latestHash, committer}
 let lineageLoading = false;
 let lineageSel = null;         // {hash, detail, verify, clientHash, bodyOk} for the selected individual
 let lineageSelLoading = false;
@@ -1749,6 +1798,9 @@ async function loadLineage() {
   lineageLoading = true; renderLineage();
   lineageData = await getJSON("/lineage?limit=500", 12000).catch(() => null);
   lineageLoading = false; renderLineage();
+  // Read the contract head STRAIGHT off Arc (best-effort) so the tree shows live, trustless on-chain status.
+  const addr = d0LineageAddr();
+  if (addr) { const head = await readLineageHead(addr); if (head) { lineageHead = head; renderLineage(); } }
 }
 
 function openLineage() {
@@ -1778,16 +1830,32 @@ function toggleLineage() { if (lineageOpen) closeLineage(); else openLineage(); 
 // Load one individual's full detail + server verify, and recompute its genome hash in-browser (the trustless bit).
 async function selectLineage(hash) {
   lineageSelLoading = true; lineageSel = { hash }; renderLineage();
-  const [detail, verify] = await Promise.all([
+  const [detail, verify, onchainDirect] = await Promise.all([
     getJSON("/lineage/" + hash, 12000).catch(() => null),
     getJSON("/lineage/verify?hash=" + hash, 12000).catch(() => null),
+    readLineageOnchain(d0LineageAddr(), hash),           // read the committed ancestry off Arc IN THE BROWSER (trustless)
   ]);
   let clientHash = null;
   const genome = detail && detail.entry ? detail.entry.genome : null;
   if (genome) { try { clientHash = await sha256HexClient(genome); } catch { clientHash = null; } }
   const bodyOk = clientHash != null && detail && detail.entry
     && clientHash === String(detail.entry.genomeHash || "").toLowerCase();
-  lineageSel = { hash, detail, verify, clientHash, bodyOk };
+  // Cross-check the DIRECT Arc read against the served entry — trusts no murmur server. (Genesis rows carry an
+  // empty served breeder, so only compare breeder when the server actually has one.)
+  const e = (detail && detail.entry) || {};
+  const opCode = e.op === "genesis" ? 0 : e.op === "mutate" ? 1 : 2;
+  let chainMatch = null;
+  if (onchainDirect && onchainDirect.committed && detail && detail.entry) {
+    const norm = (p) => String(p || "").toLowerCase().replace(/^0x/, "");   // served parents are bare 64-hex; chain words keep 0x
+    const servedParents = (Array.isArray(e.parents) ? e.parents : []).map(norm).sort();
+    const chainParents = [onchainDirect.parentA, onchainDirect.parentB]
+      .filter((p) => !isZeroBytes32(p)).map(norm).sort();
+    chainMatch = onchainDirect.op === opCode
+      && onchainDirect.generation === (e.generation ?? 0)
+      && chainParents.join(",") === servedParents.join(",")
+      && (!isRealAddr(e.breeder || "") || onchainDirect.breeder.toLowerCase() === String(e.breeder).toLowerCase());
+  }
+  lineageSel = { hash, detail, verify, clientHash, bodyOk, onchainDirect, chainMatch };
   lineageSelLoading = false; renderLineage();
 }
 
@@ -1842,6 +1910,8 @@ function renderLineage() {
   // header / attestation
   const auto = document.createElement("div"); auto.className = "pf-auto";
   const anchored = isRealAddr(d.lineageAddress || "");
+  const anchoredCount = entries.filter((e) => e.commitTx).length;   // genomes carrying a real on-chain commit tx
+  const head = lineageHead;                                        // live head read DIRECTLY from Arc (may be null)
   auto.innerHTML =
     `<div class="pf-auto-title">connectome breeding market</div>` +
     `<p class="pf-auto-body">Every brain's heritable identity is its <b>genome</b> — the generator parameters that deterministically rebuild it. The 24 base-population brains are generation-0 <b>genesis</b> roots; breeding applies pure genetic operators (<b>mutate</b> / <b>cross</b>) and records each offspring's ancestry. Select any individual to rebuild + verify it in your browser.</p>` +
@@ -1851,6 +1921,8 @@ function renderLineage() {
     `<div><dt>generations</dt><dd>${d.generations ?? 0}</dd></div>` +
     `<div><dt>chain</dt><dd>arc (${d.chainId ?? "–"})</dd></div>` +
     `<div><dt>on-chain anchor</dt><dd class="fp">${anchored ? `<a href="${ARC_EXPLORER}/address/${d.lineageAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.lineageAddress)}</a>` : "not configured"}</dd></div>` +
+    `<div><dt>committed on arc (live)</dt><dd>${head ? head.commitCount : anchoredCount + "*"} · ${anchoredCount}/${entries.length} shown</dd></div>` +
+    `<div><dt>committer (gas wallet)</dt><dd class="fp">${head && head.committer ? `<a href="${ARC_EXPLORER}/address/${head.committer}" target="_blank" rel="noopener noreferrer">${shortHash(head.committer)}</a>` : "reading arc…"}</dd></div>` +
     `</dl>`;
   body.appendChild(auto);
 
@@ -1925,8 +1997,14 @@ function lineageDetailCard() {
   const parents = Array.isArray(e.parents) ? e.parents : [];
   const children = Array.isArray(det.children) ? det.children : [];
 
+  const chainProvenBrowser = lineageSel.chainMatch === true;   // ancestry matched via a DIRECT Arc read in-browser
   const badge = document.createElement("div");
-  if (hardOk && chainOk === true) { badge.className = "pf-badge ok"; badge.textContent = "✓ genome proven end-to-end · body hash + replay + on-chain ancestry all match"; }
+  if (hardOk && (chainProvenBrowser || chainOk === true)) {
+    badge.className = "pf-badge ok";
+    badge.textContent = chainProvenBrowser
+      ? "✓ genome proven end-to-end · body hash + replay match, ancestry verified against Arc in your browser"
+      : "✓ genome proven end-to-end · body hash + replay + on-chain ancestry all match";
+  }
   else if (hardOk) { badge.className = "pf-badge ok"; badge.textContent = "✓ body hash + replay match · not anchored on Arc yet"; }
   else { badge.className = "pf-badge bad"; badge.textContent = "✗ verification failed"; }
   card.appendChild(badge);
@@ -1945,10 +2023,17 @@ function lineageDetailCard() {
   if (e.commitTx) {
     dl.innerHTML += `<div><dt>on-chain commit</dt><dd class="fp"><a href="${ARC_EXPLORER}/tx/${e.commitTx}" target="_blank" rel="noopener noreferrer">↗ ${shortHash(e.commitTx)}</a></dd></div>`;
   }
-  if (det.onchain) {
-    dl.innerHTML += `<div><dt>on-chain ancestry (direct Arc RPC)</dt><dd class="fp${chainOk ? " ok" : ""}">op ${det.onchain.op} · gen ${det.onchain.generation} ${chainOk ? "✓ matches" : "✗"}</dd></div>`;
+  const oc = lineageSel.onchainDirect;                    // read off Arc in YOUR browser — no murmur server in the loop
+  if (oc && oc.committed) {
+    const when = oc.ts ? new Date(oc.ts * 1000).toISOString().slice(0, 19).replace("T", " ") + "Z" : "–";
+    const m = lineageSel.chainMatch;
+    const ocParents = [oc.parentA, oc.parentB].filter((p) => !isZeroBytes32(p));
+    dl.innerHTML +=
+      `<div><dt>on-chain ancestry · read from arc in your browser</dt><dd class="fp${m ? " ok" : ""}">op ${oc.op} · gen ${oc.generation} · committed ${when} ${m ? "✓ matches served genome" : "✗ mismatch"}</dd></div>` +
+      `<div><dt>on-chain breeder (arc)</dt><dd class="fp">${isRealAddr(oc.breeder) ? `<a href="${ARC_EXPLORER}/address/${oc.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(oc.breeder)}</a>` : "–"}</dd></div>` +
+      (ocParents.length ? `<div><dt>on-chain parents (arc)</dt><dd class="fp">${ocParents.map((p) => `<a href="#" data-lin-hash="${p.slice(2)}" class="lin-plink">${shortHash(p)}</a>`).join(" · ")}</dd></div>` : "");
   } else if (isRealAddr(d0LineageAddr())) {
-    dl.innerHTML += `<div><dt>on-chain ancestry</dt><dd class="fp">not committed</dd></div>`;
+    dl.innerHTML += `<div><dt>on-chain ancestry</dt><dd class="fp">${oc ? "not committed on arc" : "arc read unavailable (cors/network) — showing served data"}</dd></div>`;
   }
   card.appendChild(dl);
 
