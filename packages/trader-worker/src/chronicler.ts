@@ -50,7 +50,10 @@ export type ChronicleKind =
   | "FEUD"
   | "ALLIANCE"
   | "BETRAYAL"
-  | "REPUTATION";
+  | "REPUTATION"
+  | "HOUSE_FOUNDED"
+  | "DYNASTY"
+  | "ELEGY";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -77,6 +80,14 @@ export interface ChronicleSocial {
   deadbeat: { id: number; kept: number; broken: number; score: number } | null;  // worst live reputation
 }
 
+/** The dynasty read-out the historian narrates (houses, dominance, deaths — all computed by the ECONOMY
+ *  layer from its persisted kinship ledger; same pure read-out law as ChronicleSocial above). */
+export interface ChronicleDynasty {
+  founding: { houseId: number; name: string; sigil: string; founder: number; childId: number; tick: number } | null;  // newest house
+  dominance: { id: number; name: string; sigil: string; capitalShare: number; gen: number } | null;                   // house holding the swarm's capital
+  death: { id: number; tick: number; cause: string; deals: number; age: number; estateUsdc: number; heirIds: number[]; houseName: string | null } | null; // newest grave
+}
+
 /** The per-cron facts the historian reads. Primitives + loose records so it stays decoupled from the
  *  population/economy types (the caller adapts its own snapshot into this shape). */
 export interface ChronicleContext {
@@ -100,6 +111,8 @@ export interface ChronicleContext {
   meanBalanceUsdc: number;
   /** SOCIAL read-out (optional for replay-compat: older callers simply narrate no relationships). */
   social?: ChronicleSocial | null;
+  /** DYNASTY read-out (optional for replay-compat: older callers simply narrate no houses or deaths). */
+  dynasty?: ChronicleDynasty | null;
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -124,6 +137,11 @@ interface ChroniclerState {
   lastAllianceKey: string | null;   // "a>b" of the last announced alliance
   lastBetrayalTick: number;         // grudge-book tick already told
   lastDeadbeatId: number | null;    // last named deadbeat
+  // --- dynasty trackers: a founding is told once per house, a dominance high once per (house,generation),
+  //     an epitaph once per burial tick — landscape-change detectors, never a per-cron stutter ---
+  lastHouseKey: string | null;      // houseId of the last announced founding
+  lastDynastyKey: string | null;    // "id>gen" of the last announced dominance
+  lastDeathTick: number;            // grave tick already told
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -143,6 +161,7 @@ const ERA_NAMES: Record<ChronicleContext["regime"], string[]> = {
 const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3,
   FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12,
+  HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -167,6 +186,9 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   ALLIANCE: "Fly #{a} and fly #{b} have settled {trades} dealings in good faith — the swarm's steadiest partnership (bond {bond}).",
   BETRAYAL: "Fly #{buyer} defaults on a {amountUsdc} USDC debt to fly #{seller} — the name is entered in the grudge book.",
   REPUTATION: "Word across the market: fly #{id} is known for {broken} defaults against {kept} kept settlements — the purse is public, so is the name.",
+  HOUSE_FOUNDED: "Fly #{founder} founds the House of {name} — its sigil {sigil} rises as fly #{child} takes the name. A lineage begins in the ledger.",
+  DYNASTY: "The House of {name} holds {share} of all the swarm's capital at generation {gen} — ledgers bend before an old name.",
+  ELEGY: "Fly #{id} of {house} falls to {cause} — {deals} dealings, age {age}. An estate of {estateUsdc} USDC passes to {heirs}. The name endures.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -424,6 +446,44 @@ export class Chronicler {
       }
     }
 
+    // --- DYNASTY: foundings, dominations, epitaphs. Every signal is computed by the ECONOMY layer from
+    //     its persisted kinship/house/grave ledger (pure read-out again — the historian only names the
+    //     moments). Trackers make each house's founding, each generational high and each burial one chapter. ---
+    const dyn = ctx.dynasty;
+    if (dyn) {
+      if (dyn.founding) {
+        const key = String(dyn.founding.houseId);
+        if (key !== s.lastHouseKey && this.ready("HOUSE_FOUNDED", ctx)) {
+          s.lastHouseKey = key;
+          out.push(await this.emit(ctx, "HOUSE_FOUNDED", 3, [dyn.founding.founder, dyn.founding.childId],
+            { founder: dyn.founding.founder, name: dyn.founding.name, sigil: dyn.founding.sigil, child: dyn.founding.childId },
+            { houseId: dyn.founding.houseId, foundedTick: dyn.founding.tick }));
+        }
+      }
+      if (dyn.dominance) {
+        const key = `${dyn.dominance.id}>${dyn.dominance.gen}`;
+        if (key !== s.lastDynastyKey && this.ready("DYNASTY", ctx)) {
+          s.lastDynastyKey = key;
+          out.push(await this.emit(ctx, "DYNASTY", 3, idList(dyn.dominance.id),
+            { name: dyn.dominance.name, share: `${Math.round(dyn.dominance.capitalShare * 100)}%`, gen: dyn.dominance.gen },
+            { capitalShare: dyn.dominance.capitalShare, gen: dyn.dominance.gen }));
+        }
+      }
+      if (dyn.death && dyn.death.tick !== s.lastDeathTick && this.ready("ELEGY", ctx)) {
+        s.lastDeathTick = dyn.death.tick;
+        const heirs = dyn.death.heirIds.length > 0 ? dyn.death.heirIds.map((h) => `#${h}`).join(", ") : "the commons";
+        const cause = dyn.death.cause === "aged" ? "old age" : dyn.death.cause === "plague" ? "the plague" : dyn.death.cause;
+        out.push(await this.emit(ctx, "ELEGY", 2, idList(dyn.death.id),
+          {
+            id: dyn.death.id,
+            house: dyn.death.houseName ? `the House of ${dyn.death.houseName}` : "no house",
+            cause, deals: dyn.death.deals, age: dyn.death.age,
+            estateUsdc: dyn.death.estateUsdc, heirs,
+          },
+          { deals: dyn.death.deals, age: dyn.death.age, estateUsdc: dyn.death.estateUsdc }));
+      }
+    }
+
     return out;
   }
 
@@ -488,6 +548,7 @@ function freshState(): ChroniclerState {
     eraStartTick: 0, prevRegime: null, regimeRun: 0, firstTradeDone: false,
     lastMilestone: 0, maxSize: 0, maxGini: 0, leaderId: null, lastKindTick: {},
     lastFeudKey: null, lastAllianceKey: null, lastBetrayalTick: 0, lastDeadbeatId: null,
+    lastHouseKey: null, lastDynastyKey: null, lastDeathTick: 0,
     headHash: GENESIS_HASH,
   };
 }

@@ -295,3 +295,165 @@ test("social signals for the historian name the live feud, alliance, betrayal an
   assert.ok(sig.topFeud && sig.topFeud.score <= -0.6, "a blacklist-deep directed bond surfaces as the live feud");
   assert.equal(sig.topAlliance, null, "no alliance yet — nothing was ever settled in good faith");
 });
+
+// ================= DYNASTY: houses, tithes, deaths, inheritance =================
+// Same one-way law as social memory: a house and a grave move LEDGERS and feed the historian's read-out;
+// nothing here touches a neuron. And every collection is capped so the DO blob stays bounded.
+
+const HASH_A = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+const HASH_B = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+test("dynasty: a hatch founds a house; descendants inherit the name; the seed folds from the genome hash", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: {} }));
+  await econ.step(population("AGITATE"), collective(0.8), 100);
+
+  const f = econ.noteHatch(3, 24, HASH_A);
+  assert.ok(f && f.founded, "a nameless parent's hatch founds a house");
+  assert.ok(f!.name.length > 0 && f!.sigil.length > 0, "the house bears a deterministic name + sigil");
+  const c1 = econ.noteHatch(3, 25, HASH_B);
+  assert.equal(c1!.houseId, f!.houseId, "a sibling is born into the same house");
+  assert.equal(c1!.founded, false);
+  const c2 = econ.noteHatch(24, 26, HASH_B);
+  assert.equal(c2!.houseId, f!.houseId, "a grandchild carries the same name");
+  const rd = econ.dynastyReadout();
+  const house = rd.houses.find((h) => h.id === 3)!;
+  assert.equal(house.gen, 2, "the banner records the highest generation reached");
+  assert.equal(house.members, 4, "founder + 3 inducted descendants");
+
+  // Determinism: an identical call sequence on a fresh economy names the identical house.
+  const twin = new AgentEconomy(cfg({ dynasty: {} }));
+  await twin.step(population("AGITATE"), collective(0.8), 100);
+  assert.deepEqual(twin.noteHatch(3, 24, HASH_A), f, "same genome hash ⇒ same name and sigil");
+});
+
+test("dynasty: the house roll is capped — past it, offspring are born commoners (DO storage bound)", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { maxHouses: 4 } }));
+  await econ.step(population("AGITATE"), collective(0.8), 5);
+  for (let p = 0; p < 4; p++) assert.ok(econ.noteHatch(p, 100 + p, HASH_A)?.founded, `parent #${p} founds`);
+  assert.equal(econ.noteHatch(10, 110, HASH_A), null, "the 5th founder stays a commoner — the roll is full");
+  assert.equal(econ.dynastyReadout().houses.length, 4);
+});
+
+test("dynasty: members' income tithes into the common treasury; commoners and thin purses pay nothing", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { tithePct: 0.02 } }));
+  await econ.step(population("EXPLORE"), collective(0.5), 10);
+  econ.noteHatch(5, 24, HASH_A);
+  const founder = econ.getAgent(5)!;
+  founder.balance = "1000000";                       // 1.0 USDC
+  econ.titheHouse(5, "500000");                      // 2% of a 0.5 USDC gross income
+  let rd = econ.dynastyReadout();
+  const house = rd.houses.find((h) => h.id === 5)!;
+  assert.equal(house.treasuryUsdc, 0.01, "exactly the per-mille tithe landed in the vault");
+  assert.equal(founder.balance, "990000", "the tithe came out of the member's own wallet — never minted");
+  assert.equal(house.earnedUsdc, 0.5, "lifetime gross tithed income is the prestige counter");
+  // A commoner's income tithes nothing, and a member poorer than the tithe skips rather than goes negative.
+  const poor = econ.getAgent(7)!;
+  poor.balance = "5";
+  econ.titheHouse(7, "1000000");
+  econ.titheHouse(5, "999999999");                   // tithe would exceed the founder's whole balance
+  assert.equal(poor.balance, "5", "a commoner pays no tithe");
+  rd = econ.dynastyReadout();
+  assert.equal(rd.houses.find((h) => h.id === 5)!.treasuryUsdc, 0.01, "an unaffordable tithe is skipped whole");
+});
+
+test("dynasty: the eldest is buried of old age and the estate passes to the living children — no minting", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);   // quiet: barely any settlement
+  econ.noteHatch(0, 24, HASH_A);                     // #0 founds, #24 is its heir
+  await econ.step([...population("EXPLORE"), reading(24, "EXPLORE")], collective(0.3), 10);  // heir gets a wallet
+  const founder = econ.getAgent(0)!;
+  const child = econ.getAgent(24)!;
+  founder.balance = "900";
+  const before = BigInt(child.balance);
+  const graves = econ.noteMortality(16, 0.3);        // age 6 ≥ oldAgeTicks 5 → the eldest falls
+  assert.equal(graves.length, 1);
+  assert.equal(graves[0].id, 0);
+  assert.equal(graves[0].cause, "aged");
+  assert.deepEqual(graves[0].heirIds, [24], "the living child inherits");
+  assert.equal(founder.balance, "0", "the estate left the grave");
+  assert.equal(BigInt(child.balance) - before, 900n, "exactly the estate moved — the ledger neither grows nor shrinks");
+  const rd = econ.dynastyReadout();
+  assert.equal(rd.dead, 1);
+  assert.equal(rd.graves[0].houseName, graves.length ? rd.houses[0].name : null, "the grave bears the house name");
+  // A closed ledger trades no more: the buried founder cannot buy, sell, or be bailed out.
+  const dead0 = econ.snapshot().agents.find((a) => a.id === 0)!;
+  assert.equal(dead0.dead, true);
+  for (let t = 17; t < 27; t++) await econ.step(population("AGITATE"), collective(0.9), t);
+  assert.equal(econ.getAgent(0)!.balance, "0", "penury stays buried: no solvency bailout for the dead");
+});
+
+test("dynasty: penury claims a broke silent trader, and an estate with no living heir falls to the house vault", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { penuryGraceTicks: 10, oldAgeTicks: 1_000_000 } }));
+  await econ.step(population("AGITATE"), collective(0.9), 100);
+  const broke = econ.getAgent(2)!;
+  broke.balance = "0"; broke.deals = 3; broke.lastTick = 50;   // once traded, now broke and silent
+  const graves = econ.noteMortality(80, 0.5);        // 30 ticks of silence ≥ grace 10
+  assert.equal(graves.length, 1, "one penury burial per cron at most");
+  assert.equal(graves[0].id, 2);
+  assert.equal(graves[0].cause, "penury", "a fly that once traded and sits broke in silence dies of want");
+  assert.equal(graves[0].estate, "0", "the penurious leave nothing behind");
+  assert.equal(econ.snapshot().agents.find((a) => a.id === 2)!.dead, true);
+
+  // Vault inheritance: the founder outlives his line (heir predeceased — ledger shaping) and falls himself.
+  const b = new AgentEconomy(cfg({ dynasty: { penuryGraceTicks: 1_000_000, oldAgeTicks: 5 } }));
+  await b.step(population("EXPLORE"), collective(0.2), 60);
+  b.noteHatch(1, 24, HASH_A);                        // #1 founds the house
+  const p = JSON.parse(b.serialize());
+  const kin1 = p.dynasty.kin.find((k: { id: number }) => k.id === 1);
+  kin1.bornTick = 50;                                 // the founder is the eldest fly by a decade
+  kin1.children = [];                                 // and his line is extinguished
+  const v = new AgentEconomy(cfg({ dynasty: { penuryGraceTicks: 1_000_000, oldAgeTicks: 5 } }), JSON.stringify(p));
+  v.getAgent(1)!.balance = "800";
+  const g2 = v.noteMortality(66, 0.3);               // founder born 50 → by far the eldest
+  assert.equal(g2.length, 1);
+  assert.equal(g2[0].id, 1, "the eldest fly falls first — the founder himself");
+  assert.equal(g2[0].cause, "aged");
+  assert.deepEqual(g2[0].heirIds, [], "no living heir is named");
+  assert.equal(v.dynastyReadout().houses[0].treasuryUsdc, 0.0008, "the estate fell to the common vault — the name outlives the fly");
+});
+
+test("dynasty: serialize round-trips the houses, graves and the dead; an old payload restores no dynasty", async () => {
+  const a = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await a.step(population("AGITATE"), collective(0.8), 40);
+  a.noteHatch(2, 24, HASH_A);
+  a.noteMortality(60, 0.4);                          // ages out the founder line slowly
+  const b = new AgentEconomy(cfg({ dynasty: {} }), a.serialize());
+  assert.deepEqual(b.dynastyReadout(), a.dynastyReadout(), "houses, graves and closed ledgers survive eviction");
+  const p = JSON.parse(a.serialize());
+  delete p.dynasty;                                  // simulate a pre-dynasty blob
+  const c = new AgentEconomy(cfg({ dynasty: {} }), JSON.stringify(p));
+  const rd = c.dynastyReadout();
+  assert.equal(rd.houses.length, 0, "no dynasty field ⇒ no houses, nobody ever died");
+  assert.equal(rd.dead, 0);
+  assert.equal(c.snapshot().totals.count, a.snapshot().totals.count, "the LEDGER still restores (KEY_VERSION untouched)");
+});
+
+test("dynasty: disabled (or absent) the layer is inert — no names, no tithes, no deaths", async () => {
+  const off = new AgentEconomy(cfg({ dynasty: { enabled: false } }));
+  await off.step(population("AGITATE"), collective(0.9), 10);
+  assert.equal(off.noteHatch(0, 24, HASH_A), null);
+  assert.equal(off.noteMortality(999999, 1).length, 0, "even a million ticks of age: the switch is the switch");
+  off.titheHouse(0, "1000000");
+  assert.equal(off.dynastyReadout().houses.length, 0);
+  assert.deepEqual(off.dynastySignals(), { founding: null, dominance: null, death: null });
+  const absent = new AgentEconomy(cfg());            // no dynasty key at all ⇒ byte-for-byte the old economy
+  await absent.step(population("AGITATE"), collective(0.9), 10);
+  assert.equal(absent.noteHatch(0, 24, HASH_A), null);
+});
+
+test("dynasty signals name the founding, the dominant house and the newest grave for the historian", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);
+  const f = econ.noteHatch(4, 24, HASH_A);
+  let sig = econ.dynastySignals();
+  assert.equal(sig.founding?.name, f!.name, "the newest house surfaces for the chronicle");
+  assert.equal(sig.founding?.houseId, 4);
+  assert.equal(sig.death, null, "nobody has died yet");
+  econ.getAgent(4)!.balance = "6000000000";          // 6000 USDC: the house towers over the swarm
+  sig = econ.dynastySignals();
+  assert.ok(sig.dominance && sig.dominance.capitalShare >= 0.18, "a house holding the swarm's capital surfaces");
+  for (let t = 16; t <= 20; t++) econ.noteMortality(t, 0.3);   // the eldest fall one per cron until the founder's turn
+  sig = econ.dynastySignals();
+  assert.equal(sig.death?.id, 4, "the newest grave is the house founder");
+  assert.equal(sig.death?.houseName, f!.name, "the epitaph names the house");
+});

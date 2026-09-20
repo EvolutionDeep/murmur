@@ -375,3 +375,88 @@ test("a full social history passes in-browser-style verifyChain end to end", asy
   const v = await verifyChain(all);
   assert.ok(v.ok, `chain over social entries intact: ${v.reason} @${v.brokenAt}`);
 });
+
+// ================= DYNASTY: foundings, dominations, epitaphs =================
+// Same contract as the social entries: each dynasty moment is landscape-triggered, told once, and every
+// sentence must re-derive from its public template — including the epitaphs on the graves.
+
+const dynasty = {
+  founding: { houseId: 7, name: "Ochre", sigil: "\u2B22", founder: 7, childId: 30, tick: 40 },
+  dominance: null,
+  death: null,
+};
+
+test("HOUSE_FOUNDED is proclaimed once per house, from the template + the house's own name", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 41, settlements: 5, dynasty }));
+  const f = out.find((e) => e.kind === "HOUSE_FOUNDED");
+  assert.ok(f, "the founding is announced");
+  assert.match(f!.text, /Fly #7 founds the House of Ochre/);
+  assert.deepEqual(f!.actors, [7, 30], "founder and first heir star in the entry");
+  assert.equal(renderTemplate("HOUSE_FOUNDED", f!.tokens), f!.text);
+  // The SAME standing house on later crons is not news again (key dedup), far past the cooldown.
+  const again = await c.observe(ctx({ tick: 400, settlements: 6, dynasty }));
+  assert.ok(!kinds(again).includes("HOUSE_FOUNDED"), "a house already proclaimed stays proclaimed");
+  // A DIFFERENT house founding is a new chapter.
+  const second = await c.observe(ctx({ tick: 401, settlements: 7, dynasty: { ...dynasty, founding: { ...dynasty.founding!, houseId: 9, founder: 9, childId: 31 } } }));
+  assert.ok(kinds(second).includes("HOUSE_FOUNDED"), "the second house gets its own line");
+});
+
+test("DYNASTY sounds only when a house holds the swarm's capital — and re-sounds at a new generation", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const dom = { id: 7, name: "Ochre", sigil: "\u2B22", capitalShare: 0.22, gen: 6 };
+  const out = await c.observe(ctx({ tick: 20, settlements: 5, dynasty: { founding: null, dominance: dom, death: null } }));
+  const d = out.find((e) => e.kind === "DYNASTY");
+  assert.ok(d, "dominance is announced");
+  assert.match(d!.text, /holds 22% of all the swarm's capital at generation 6/);
+  assert.equal(renderTemplate("DYNASTY", d!.tokens), d!.text);
+  const same = await c.observe(ctx({ tick: 200, settlements: 6, dynasty: { founding: null, dominance: dom, death: null } }));
+  assert.ok(!kinds(same).includes("DYNASTY"), "the same house at the same generation is not fresh news");
+  const rose = await c.observe(ctx({ tick: 201, settlements: 7, dynasty: { founding: null, dominance: { ...dom, gen: 7 }, death: null } }));
+  assert.ok(kinds(rose).includes("DYNASTY"), "a generational high under the same name is a new chapter");
+});
+
+test("ELEGY carves an epitaph per burial — cause, dealings, estate and heirs all from the grave record", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const death = { id: 3, tick: 11, cause: "penury", deals: 4207, age: 99999, estateUsdc: 1.5, heirIds: [12, 13], houseName: "Ochre" };
+  const out = await c.observe(ctx({ tick: 12, settlements: 5, dynasty: { founding: null, dominance: null, death } }));
+  const e = out.find((x) => x.kind === "ELEGY");
+  assert.ok(e, "the falling is mourned");
+  assert.match(e!.text, /Fly #3 of the House of Ochre falls to penury — 4207 dealings/);
+  assert.match(e!.text, /estate of 1\.5 USDC passes to #12, #13/);
+  assert.match(e!.text, /The name endures\./);
+  assert.equal(renderTemplate("ELEGY", e!.tokens), e!.text);
+  // The same grave on a later cron is not re-mourned (the burial tick was already told).
+  const again = await c.observe(ctx({ tick: 90, settlements: 6, dynasty: { founding: null, dominance: null, death } }));
+  assert.ok(!kinds(again).includes("ELEGY"), "one grave, one epitaph");
+  // A plague death with no named heirs reads "the plague" and "the commons".
+  const plague = await c.observe(ctx({ tick: 91, settlements: 7, dynasty: { founding: null, dominance: null, death: { ...death, tick: 90, cause: "plague", heirIds: [], houseName: null } } }));
+  const p = plague.find((x) => x.kind === "ELEGY")!;
+  assert.match(p.text, /Fly #3 of no house falls to the plague/);
+  assert.match(p.text, /passes to the commons/);
+});
+
+test("a full dynasty history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 41, settlements: 5, dynasty }),
+    ctx({ tick: 42, settlements: 6, dynasty: { ...dynasty, dominance: { id: 7, name: "Ochre", sigil: "\u2B22", capitalShare: 0.19, gen: 2 }, death: { id: 4, tick: 42, cause: "aged", deals: 10, age: 400, estateUsdc: 0.25, heirIds: [30], houseName: "Ochre" } } }),
+  ]);
+  assert.deepEqual(
+    all.filter((e) => ["HOUSE_FOUNDED", "DYNASTY", "ELEGY"].includes(e.kind)).map((e) => e.kind).sort(),
+    ["DYNASTY", "ELEGY", "HOUSE_FOUNDED"],
+  );
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over dynasty entries intact: ${v.reason} @${v.brokenAt}`);
+});
+
+test("contexts without dynasty signals behave exactly as before (older callers unaffected)", async () => {
+  const c = new Chronicler();
+  await c.observe(ctx({ tick: 1 }));
+  const out = await c.observe(ctx({ tick: 2, settlements: 3, social }));
+  assert.ok(!kinds(out).some((k) => ["HOUSE_FOUNDED", "DYNASTY", "ELEGY"].includes(k)), "no dynasty ctx ⇒ no dynasty lines");
+});

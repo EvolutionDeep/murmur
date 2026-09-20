@@ -171,6 +171,64 @@ export interface SocialReadout {
   grudges: GrudgeRecord[];                                              // newest first (the grudge book)
 }
 
+/**
+ * DYNASTY CONFIG (economic layer ONLY — same one-way law as social memory: a house, a death and an
+ * inheritance never feed the connectome; they only re-shape the LEDGER the neurons' trades settle into).
+ * EVERY field optional so an EconomyConfig literal without `dynasty` compiles and behaves exactly as
+ * before (the layer is inert until state.ts supplies the block). `enabled` defaults to true; the master
+ * switch is the DYNASTY_ENABLED env folded in by config.ts.
+ */
+export interface DynastyConfig {
+  enabled?: boolean;          // master switch (default true); false ⇒ no houses, no deaths, no tithes
+  tithePct?: number;          // share of a member's settlement income that flows to the house treasury
+  oldAgeTicks?: number;       // sub-ticks after birth before the eldest fly may be buried of old age
+  penuryGraceTicks?: number;  // silence required on a zero balance before penury claims it (dealt flies only)
+  plagueTemp?: number;        // collective temperature at or above which a plague draw may run
+  plaguePct?: number;         // fraction of the living culled by oldest-first when the plague draws
+  maxHouses?: number;         // hard cap on simultaneous houses (DO storage bound)
+}
+
+/** Per-fly kinship record: birth, house membership, known children, generation. */
+export interface KinRecord {
+  bornTick: number;           // sub-tick of birth (genesis flies: first tick the economy saw them)
+  house: number | null;       // house id (= founding parent's id) or null for a commoner
+  children: number[];         // hatched offspring ids (capped; inheritance heirs first)
+  gen: number;                // generation (genesis 0, child = parent + 1)
+}
+
+/** A house: named by a deterministic sigil+colour off the genome hash, holding a common treasury. */
+export interface HouseRecord {
+  id: number;                 // = founder parent's fly id (houses are unique per founder)
+  name: string;               // "Ochre", "Vermilion"… (deterministic from seedBase × parentId × genomeHash)
+  sigil: string;              // one glyph from the sigil alphabet, same deterministic seed
+  foundedTick: number;        // sub-tick the name was first taken
+  firstHeir: number;          // the hatch that granted the founding its name
+  treasury: string;           // atomic USDC held in common (tithes + unclaimed estates)
+  earnedAtomic: string;       // lifetime gross member income tithed in (dynasty prestige key)
+  members: number[];          // every fly ever inducted (capped; dead stay on the roster — a house is its graves too)
+  gen: number;                // highest generation reached under this name
+}
+
+/** One burial: cause, lifetime dealings, the estate and who took it. The chronicle's epitaph source. */
+export interface GraveRecord {
+  id: number;
+  tick: number;
+  cause: "aged" | "penury" | "plague";
+  deals: number;              // lifetime settlements (deals + sales) — the epitaph's "4207 dealings"
+  age: number;                // sub-ticks lived (tick − bornTick)
+  estate: string;             // atomic USDC in the wallet at death (the inheritance)
+  heirIds: number[];          // who received it (living children; empty ⇒ house treasury or pauper's dole)
+  house: number | null;       // the house the dead belonged to, for "of the House of X"
+}
+
+/** Bounded dynasty read-out for the frontend panel + the historian (pure read-out, never feeds back). */
+export interface DynastyReadout {
+  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number }[];
+  graves: { id: number; tick: number; cause: string; deals: number; age: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
+  living: number;
+  dead: number;
+}
+
 /** Per-agent read-out for the frontend. */
 export interface AgentReading {
   id: number;
@@ -181,6 +239,11 @@ export interface AgentReading {
   earned: string;
   deals: number;
   sales: number;
+  /** dynasty: ledger closed — this fly is buried (absent ⇒ living; only ever set by a death). */
+  dead?: boolean;
+  /** dynasty: house name + sigil this fly bears (absent ⇒ commoner). */
+  house?: string;
+  sigil?: string;
 }
 
 /**
@@ -223,6 +286,8 @@ export interface EconomySnapshot {
   lastTick: Settlement[];
   /** Bounded social-memory read-out: reputations, strongest bonds, the grudge book. Pure read-out. */
   social: SocialReadout;
+  /** Bounded dynasty read-out: houses, graves, living/dead counts. Additive — pure read-out. */
+  dynasty?: DynastyReadout;
   /** A rolling window of recent settlements for the ledger HUD. */
   recent: Settlement[];
   totals: EconomyTotals;
@@ -251,6 +316,8 @@ export interface EconomyConfig {
   //     the frontend would show a newborn as fake-rich (wrong wallet number AND wrong wealth-ramp size/colour).
   populationSize: number;          // fixed genesis cohort size; ids >= this are hatched offspring
   hatchSeedUsdc: number;           // real USDC a parent funds each hatched child's wallet with (its opening mirror)
+  // --- DYNASTY (houses/inheritance/death): OPTIONAL — absent ⇒ the whole layer is inert, byte-for-byte ---
+  dynasty?: DynastyConfig;
 }
 
 /**
@@ -287,6 +354,22 @@ const ALLIANCE_MIN_TRADES = 8;           // a partnership is only chronicle-wort
 const PICK_CANDIDATES = 5;               // pool size re-weighted inside the neural span
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
+// --- dynasty tuning (all deterministic; every collection is a hard cap so DO storage stays bounded) ---
+const HOUSE_CAP = 16;                   // simultaneous houses at most (older houses endure, no new names past it)
+const HOUSE_MEMBERS_CAP = 200;           // roster cap per house (a house is bounded memory, not a nation)
+const HOUSE_TITHE = 0.02;                // 2% of a member's settled income flows to the common treasury
+const GRAVE_CAP = 24;                    // epitaph ring size (newest first)
+const CHILD_CAP = 24;                    // children remembered per fly for inheritance (oldest 24 by hatch order)
+const OLD_AGE_DEFAULT = 150000;          // sub-ticks ≈ 5.8 days at ~1/s before the eldest may be buried
+const PENURY_GRACE_DEFAULT = 20000;      // silence on an empty wallet before penury claims it (~1.9h)
+const PLAGUE_TEMP = 0.93;                // collective temperature at which a plague draw may run
+const PLAGUE_PCT = 0.12;                 // share of the living culled, oldest first, when the plague draws
+const DYNASTY_SHARE_FOCUS = 0.18;        // a house holding ≥18% of swarm capital is chronicle-worthy
+const HOUSE_COLORS = [
+  "Ochre", "Russet", "Umber", "Vermilion", "Azure", "Glacial",
+  "Ashen", "Ember", "Verdant", "Ivory", "Obsidian", "Amber",
+];
+const HOUSE_SIGILS = ["\u2B22", "\u2726", "\u2756", "\u25C6", "\u25B2", "\u2B23", "\u2735", "\u25C8"];
 
 export class AgentEconomy {
   private cfg: EconomyConfig;
@@ -333,6 +416,16 @@ export class AgentEconomy {
    */
   private social = new Map<number, AgentSocial>();
   private grudges: GrudgeRecord[] = [];
+  /**
+   * DYNASTY (economic layer only, same one-way law as social memory): kinship + houses keyed by fly id, a
+   * capped epitaph ring, and the closed-ledger set. A death moves ONLY ledger balances + a read-out flag —
+   * the swarm, the sharding, the canvas and the live-cap slots are NEVER touched (population dynamics own
+   * liveness; the economy only buries the wallet). Persisted with the economy; absent payloads ⇒ no dynasty.
+   */
+  private kin = new Map<number, KinRecord>();
+  private houses = new Map<number, HouseRecord>();
+  private graves: GraveRecord[] = [];
+  private dead = new Set<number>();
 
   constructor(cfg: EconomyConfig, restored?: string, deps?: EconomyDeps) {
     this.cfg = cfg;
@@ -438,6 +531,9 @@ export class AgentEconomy {
 
     for (let i = 0; i < n && made.length < budget; i++) {
       const r = readings[i];
+      // A buried fly's ledger is closed: it neither buys (here) nor sells (pickCounterparty) nor
+      // absorbs prediction flows. Inert while the dynasty layer is off (dead stays empty).
+      if (this.dead.has(r.id)) continue;
       const buyerIdx = this.indexOfId.get(r.id);
       if (buyerIdx == null) continue;
 
@@ -646,6 +742,9 @@ export class AgentEconomy {
         this.count++;
         // The mined net IS the settled history reputation is made of: both sides keep the promise.
         this.rememberTrade(debtor.id, creditor.id, tickIndex);
+        // Dynasty tithe: 2% of what the creditor just earned flows to its house treasury (no-op for a
+        // commoner or with the layer off; never pushes a member below zero — it skips if it would).
+        this.titheHouse(creditor.id, amountStr);
         if (primaryHash === "0x") primaryHash = receipt.txHash;
         // Mirror this receipt onto our own NeuralReceiptRegistry so the hash-chain head lives ON-CHAIN,
         // not just in DO storage. BEST-EFFORT: prevHead is the chain head BEFORE this receipt (exactly
@@ -716,6 +815,8 @@ export class AgentEconomy {
       // Both sides must already have wallets (they bet this round, so ensureAgents has seen them); skip
       // anything unknown rather than mint an agent here.
       if (fromIdx == null || toIdx == null || fromIdx === toIdx) continue;
+      // A closed ledger absorbs nothing: skip flows touching the dead (inert while the dynasty is off).
+      if (this.dead.has(f.fromId) || this.dead.has(f.toId)) continue;
       const debtor = this.agents[fromIdx];
       const creditor = this.agents[toIdx];
       const resource = `predict:${f.round}:${creditor.id}`;
@@ -823,7 +924,7 @@ export class AgentEconomy {
     let total = 0;
     for (const idx of pool) {
       const cand = this.agents[idx];
-      if (!cand) continue;
+      if (!cand || this.dead.has(cand.id)) continue;   // you cannot buy from a grave
       const bond = this.effectiveBond(r.id, cand.id, tick);
       if (bond <= BOND_BLACKLIST) continue;   // the grudge vetoes; the neurons never notice
       const rep = this.effectiveRep(cand.id, tick);
@@ -977,6 +1078,295 @@ export class AgentEconomy {
     return { topFeud, topAlliance, betrayal, deadbeat };
   }
 
+  // ---------- dynasty: houses, death, inheritance (economic layer only; the neurons never notice) ----------
+
+  /** Resolved dynasty config, or null when the layer is off (absent block or enabled:false ⇒ fully inert). */
+  private dcfg(): {
+    tithePct: number; oldAgeTicks: number; penuryGraceTicks: number;
+    plagueTemp: number; plaguePct: number; maxHouses: number;
+  } | null {
+    const raw = this.cfg.dynasty;
+    if (!raw || raw.enabled === false) return null;
+    return {
+      tithePct: raw.tithePct ?? HOUSE_TITHE,
+      oldAgeTicks: raw.oldAgeTicks ?? OLD_AGE_DEFAULT,
+      penuryGraceTicks: raw.penuryGraceTicks ?? PENURY_GRACE_DEFAULT,
+      plagueTemp: raw.plagueTemp ?? PLAGUE_TEMP,
+      plaguePct: raw.plaguePct ?? PLAGUE_PCT,
+      maxHouses: raw.maxHouses ?? HOUSE_CAP,
+    };
+  }
+
+  /** Fetch (creating on first sight — a genesis fly is "born" when the economy first met it) a kin record. */
+  private kinOf(id: number): KinRecord {
+    let k = this.kin.get(id);
+    if (!k) { k = { bornTick: this.tickIndex, house: null, children: [], gen: 0 }; this.kin.set(id, k); }
+    return k;
+  }
+
+  /**
+   * Deterministic house seed: the offspring's genome hash IS the bloodline — its first 16 hex folds into a
+   * 32-bit seed alongside the founder id and the protocol seedBase, so the same lineage always bears the
+   * same name and sigil (verifiable by re-hashing the genome; no RNG, no table). Fallback without a hash:
+   * FNV over (seedBase, parentId) — still reproducible across restarts.
+   */
+  private houseSeed(parentId: number, genomeHash?: string): number {
+    if (genomeHash && /^[0-9a-f]{16,}$/i.test(genomeHash)) {
+      const hi = parseInt(genomeHash.slice(0, 8), 16) >>> 0;
+      const lo = parseInt(genomeHash.slice(8, 16), 16) >>> 0;
+      return (hi ^ lo ^ this.cfg.seedBase ^ (parentId >>> 0)) >>> 0;
+    }
+    return hash32(this.cfg.seedBase, parentId, 0x11ad);
+  }
+
+  /**
+   * A hatched offspring enters the dynasty: it takes its parent's house name + sigil, or — when the parent
+   * is nameless and the house roll has room — the parent FOUNDS a house on this birth (the founding parent
+   * keeps its own id as the house id, the hatch is the first heir). Returns the house touched, or null when
+   * the layer is off or the founder kept commoner status (house roll full). Called by state.ts right after
+   * a hatch went live — purely ledger-side, it can never affect the hatch itself.
+   */
+  noteHatch(parentId: number, childId: number, genomeHash?: string):
+    { houseId: number; name: string; sigil: string; childId: number; founded: boolean } | null {
+    const d = this.dcfg();
+    if (!d) return null;
+    const parent = this.kinOf(parentId);
+    const child = this.kinOf(childId);
+    child.bornTick = this.tickIndex;
+    child.gen = parent.gen + 1;
+    if (parent.children.length < CHILD_CAP) parent.children.push(childId);
+    // Inheritance first: the child is born into the name the parent already bears.
+    const inherited = parent.house != null ? this.houses.get(parent.house) : undefined;
+    if (inherited) {
+      if (!inherited.members.includes(childId) && inherited.members.length < HOUSE_MEMBERS_CAP) {
+        inherited.members.push(childId);
+      }
+      if (child.gen > inherited.gen) inherited.gen = child.gen;
+      child.house = inherited.id;
+      return { houseId: inherited.id, name: inherited.name, sigil: inherited.sigil, childId, founded: false };
+    }
+    if (this.houses.size >= d.maxHouses) return null;   // house roll full: the child is born a commoner
+    const seed = this.houseSeed(parentId, genomeHash);
+    const house: HouseRecord = {
+      id: parentId,
+      name: HOUSE_COLORS[seed % HOUSE_COLORS.length],
+      sigil: HOUSE_SIGILS[(seed >>> 4) % HOUSE_SIGILS.length],
+      foundedTick: this.tickIndex,
+      firstHeir: childId,
+      treasury: "0",
+      earnedAtomic: "0",
+      members: [parentId, childId],
+      gen: child.gen,
+    };
+    this.houses.set(house.id, house);
+    parent.house = house.id;
+    child.house = house.id;
+    return { houseId: house.id, name: house.name, sigil: house.sigil, childId, founded: true };
+  }
+
+  /**
+   * The house tithe: a fixed share of a member's SETTLED income flows into the common treasury, paid out
+   * of the balance the member just grew (per-mille BigInt maths — exact, no float dust). Skips, never
+   * partially takes: if the member's own wallet cannot cover the tithe the house goes without, so a tithe
+   * can never manufacture penury on its own. No-op for commoners and while the layer is off.
+   */
+  titheHouse(earnerId: number, amountStr: string): void {
+    const d = this.dcfg();
+    if (!d) return;
+    const houseId = this.kin.get(earnerId)?.house;
+    if (houseId == null) return;
+    const h = this.houses.get(houseId);
+    const idx = this.indexOfId.get(earnerId);
+    if (!h || idx == null) return;
+    let gross: bigint;
+    try { gross = BigInt(amountStr); } catch { return; }
+    if (gross <= 0n) return;
+    const tithe = ((gross * BigInt(Math.round(d.tithePct * 1000))) / 1000n).toString();
+    const a = this.agents[idx];
+    if (tithe === "0" || !gteAtomic(a.balance, tithe)) return;
+    a.balance = subAtomic(a.balance, tithe);
+    h.treasury = addAtomic(h.treasury, tithe);
+    h.earnedAtomic = addAtomic(h.earnedAtomic, amountStr);
+  }
+
+  /**
+   * Mortality sweep — call ONCE per cron (not per sub-tick): the economy's slow heartbeat. Up to one
+   * penury death + one old-age burial per cron (史诗节奏, not a cull), plus a PLAGUE under extreme
+   * collective heat: a deterministic 6% draw that culs the oldest share of the living at once. Every
+   * death closes ONE WALLET — swarm ids, live caps, shards and the canvas are untouched (population
+   * dynamics own liveness; the dynasty only burries the ledger). Returns the graves for the chronicle.
+   */
+  noteMortality(tick: number, temperature: number): GraveRecord[] {
+    const d = this.dcfg();
+    if (!d) return [];
+    const out: GraveRecord[] = [];
+    // ① Penury: a fly that once traded, sits at zero, and has been silent past the grace dies of want.
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      if (a.balance === "0" && a.deals + a.sales > 0 && a.lastTick >= 0 && tick - a.lastTick >= d.penuryGraceTicks) {
+        out.push(this.entomb(a.id, "penury", tick));
+        break;
+      }
+    }
+    // ② Old age: the eldest living fly, past the age bound, is buried — one per cron, nature not carnage.
+    let oldestId = -1;
+    let oldestBorn = Infinity;
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      const born = this.kinOf(a.id).bornTick;
+      if (born < oldestBorn) { oldestBorn = born; oldestId = a.id; }
+    }
+    if (oldestId >= 0 && tick - oldestBorn >= d.oldAgeTicks) {
+      out.push(this.entomb(oldestId, "aged", tick));
+    }
+    // ③ Plague: at extreme heat a deterministic draw culls the oldest share of the swarm in one sweep.
+    if (clamp01(temperature) >= d.plagueTemp && hash01(tick, 0, 0xface6) < 0.06) {
+      const living = this.agents
+        .filter((a) => !this.dead.has(a.id))
+        .sort((x, y) => this.kinOf(x.id).bornTick - this.kinOf(y.id).bornTick || x.id - y.id);
+      const cull = Math.max(1, Math.floor(living.length * d.plaguePct));
+      for (let i = 0; i < cull && i < living.length; i++) {
+        const a = living[i];
+        if (this.dead.has(a.id)) continue;
+        out.push(this.entomb(a.id, "plague", tick));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Bury one wallet: mark the ledger closed, settle the estate down the inheritance chain
+   * LIVING CHILDREN (even split) → HOUSE TREASURY → PAUPER'S DOLE to the poorest living fly, and press
+   * the epitaph record. Dust that cannot split (estate < children) is entombed with the dead — never
+   * silently minted. The dead fly's balance goes to zero; the total supply only MOVES, never grows.
+   */
+  private entomb(id: number, cause: GraveRecord["cause"], tick: number): GraveRecord {
+    const idx = this.indexOfId.get(id);
+    const a = idx == null ? undefined : this.agents[idx];
+    this.dead.add(id);
+    const kin = this.kin.get(id);
+    const house = kin?.house != null ? this.houses.get(kin.house) : undefined;
+    const estate = BigInt(a?.balance ?? "0");
+    const heirIds: number[] = [];
+    let rest = estate;
+    // ① Blood heirs first: the estate splits evenly among the LIVING children (cap CHILD_CAP by hatch order).
+    const kids = (kin?.children ?? []).filter((c) => c !== id && !this.dead.has(c) && this.indexOfId.has(c));
+    if (a && estate > 0n && kids.length > 0) {
+      const share = estate / BigInt(kids.length);
+      if (share > 0n) {
+        for (const c of kids) {
+          const ci = this.indexOfId.get(c)!;
+          this.agents[ci].balance = addAtomic(this.agents[ci].balance, share.toString());
+          heirIds.push(c);
+          rest -= share;
+        }
+      }
+    }
+    // ② No child heirs: the house treasury inherits (the name outlives the fly).
+    if (heirIds.length === 0 && house && estate > 0n) {
+      house.treasury = addAtomic(house.treasury, estate.toString());
+      rest = 0n;
+    }
+    // ③ No house either: a pauper's dole — the poorest living fly takes the estate off the books.
+    if (a && heirIds.length === 0 && rest > 0n) {
+      let poor: AgentState | null = null;
+      for (const x of this.agents) {
+        if (this.dead.has(x.id) || x.id === id) continue;
+        if (!poor || BigInt(x.balance) < BigInt(poor.balance)) poor = x;
+      }
+      if (poor) {
+        poor.balance = addAtomic(poor.balance, rest.toString());
+        heirIds.push(poor.id);
+        rest = 0n;
+      }
+    }
+    const grave: GraveRecord = {
+      id,
+      tick,
+      cause,
+      deals: (a?.deals ?? 0) + (a?.sales ?? 0),
+      age: tick - (kin?.bornTick ?? tick),
+      estate: estate.toString(),
+      heirIds,
+      house: kin?.house ?? null,
+    };
+    if (a) a.balance = "0";
+    this.graves.unshift(grave);
+    if (this.graves.length > GRAVE_CAP) this.graves.length = GRAVE_CAP;
+    return grave;
+  }
+
+  /** Bounded dynasty read-out for the frontend: notable houses, newest graves, living/dead counts. */
+  dynastyReadout(): DynastyReadout {
+    let pot = 0n;
+    for (const a of this.agents) if (!this.dead.has(a.id)) pot += BigInt(a.balance);
+    for (const h of this.houses.values()) pot += BigInt(h.treasury);
+    const houses: DynastyReadout["houses"] = [];
+    for (const h of Array.from(this.houses.values()).sort((x, y) => x.id - y.id)) {
+      let live = 0;
+      let memberBal = 0n;
+      for (const m of h.members) {
+        if (this.dead.has(m)) continue;
+        const i = this.indexOfId.get(m);
+        if (i == null) continue;
+        live++;
+        memberBal += BigInt(this.agents[i].balance);
+      }
+      houses.push({
+        id: h.id, name: h.name, sigil: h.sigil, gen: h.gen, foundedTick: h.foundedTick,
+        members: h.members.length, live, deaths: h.members.length - live,
+        treasuryUsdc: atomicToUsdc(h.treasury),
+        earnedUsdc: atomicToUsdc(h.earnedAtomic),
+        capitalShare: pot > 0n
+          ? Math.round((Number(memberBal + BigInt(h.treasury)) * 10000) / Number(pot)) / 10000
+          : 0,
+      });
+    }
+    // Prestige order: lifetime tithed gross first, treasury second, founder id to break ties.
+    houses.sort((x, y) => y.earnedUsdc - x.earnedUsdc || y.treasuryUsdc - x.treasuryUsdc || x.id - y.id);
+    const graves = this.graves.slice(0, 12).map((g) => ({
+      id: g.id, tick: g.tick, cause: g.cause, deals: g.deals, age: g.age,
+      estateUsdc: atomicToUsdc(g.estate), heirIds: g.heirIds,
+      houseName: g.house != null ? this.houses.get(g.house)?.name ?? null : null,
+    }));
+    let living = 0;
+    for (const a of this.agents) if (!this.dead.has(a.id)) living++;
+    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size };
+  }
+
+  /**
+   * The historian's dynasty signals: the newest founding, the dominant house (once one holds a focus
+   * share of all swarm capital) and the newest grave. Dedup keys live in the chronicler (houseId / id>gen /
+   * grave tick), so each story is told once. Still a pure READ-OUT — the chronicle never feeds back.
+   */
+  dynastySignals(): {
+    founding: { houseId: number; name: string; sigil: string; founder: number; childId: number; tick: number } | null;
+    dominance: { id: number; name: string; sigil: string; capitalShare: number; gen: number } | null;
+    death: { id: number; tick: number; cause: string; deals: number; age: number; estateUsdc: number; heirIds: number[]; houseName: string | null } | null;
+  } {
+    const none = { founding: null, dominance: null, death: null };
+    if (!this.dcfg()) return none;
+    let found: HouseRecord | null = null;
+    for (const h of this.houses.values()) if (!found || h.foundedTick > found.foundedTick) found = h;
+    const top = this.dynastyReadout().houses[0];
+    const g = this.graves[0];
+    return {
+      founding: found
+        ? { houseId: found.id, name: found.name, sigil: found.sigil, founder: found.id, childId: found.firstHeir, tick: found.foundedTick }
+        : null,
+      dominance: top && top.capitalShare >= DYNASTY_SHARE_FOCUS
+        ? { id: top.id, name: top.name, sigil: top.sigil, capitalShare: top.capitalShare, gen: top.gen }
+        : null,
+      death: g
+        ? {
+            id: g.id, tick: g.tick, cause: g.cause, deals: g.deals, age: g.age,
+            estateUsdc: Math.round(atomicToUsdc(g.estate) * 10000) / 10000, heirIds: g.heirIds,
+            houseName: g.house != null ? this.houses.get(g.house)?.name ?? null : null,
+          }
+        : null,
+    };
+  }
+
   /** Price of one unit of `good` this tick, in atomic USDC (min 1): base × market heat × arousal × good mult. */
   private dealAmount(r: FlyReading, T: number, good: GoodKind): string {
     const meta = GOOD_META[good];
@@ -1075,6 +1465,9 @@ export class AgentEconomy {
     // A settled deal is a promise kept on BOTH sides — mutual trust accrues (social memory, read-only
     // for everything above: this never touches the ledger maths, only tomorrow's counterparty choice).
     this.rememberTrade(buyer.id, seller.id, tick);
+    // Dynasty tithe: the seller's house (if any) takes its cut of the earned income, straight from the
+    // balance the seller just grew. Pure ledger movement inside the already-committed transfer above.
+    this.titheHouse(seller.id, amount);
 
     // Meter real spend against the daily caps — ONCHAIN ONLY (simulated has no real budget to meter).
     if (onchain) this.recordSpend(buyer.id, amount);
@@ -1271,6 +1664,8 @@ export class AgentEconomy {
   private solvencyTopUp(): void {
     const floor = usdcToAtomic(this.cfg.solvencyFloorUsdc);
     for (const a of this.agents) {
+      // The treasury never resurrects a buried wallet — penury must STAY dead (inert while dead is empty).
+      if (this.dead.has(a.id)) continue;
       if (!gteAtomic(a.balance, floor)) {
         const deficit = subAtomic(floor, a.balance);
         a.balance = floor;
@@ -1342,12 +1737,19 @@ export class AgentEconomy {
       network: this.cfg.network,
       asset: this.facilitator.asset,
       x402Version: X402_VERSION,
-      agents: this.agents.map((a) => ({
-        id: a.id, address: a.address, balance: a.balance, balanceUsdc: atomicToUsdc(a.balance),
-        paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
-      })),
+      agents: this.agents.map((a) => {
+        const hId = this.kin.get(a.id)?.house;
+        const house = hId != null ? this.houses.get(hId) : undefined;
+        return {
+          id: a.id, address: a.address, balance: a.balance, balanceUsdc: atomicToUsdc(a.balance),
+          paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
+          ...(this.dead.has(a.id) ? { dead: true } : {}),
+          ...(house ? { house: house.name, sigil: house.sigil } : {}),
+        };
+      }),
       lastTick: this.lastTick,
       social: this.socialReadout(),
+      dynasty: this.dynastyReadout(),
       recent: this.recent,
       totals: {
         volumeAtomic: this.volumeAtomic,
@@ -1363,11 +1765,14 @@ export class AgentEconomy {
   }
 
   /** A compact summary folded into /population so the frontend gets edges + totals in one poll. */
-  summary(): { lastTick: Settlement[]; totals: EconomyTotals; balances: Record<number, string>; social: SocialReadout } {
+  summary(): {
+    lastTick: Settlement[]; totals: EconomyTotals; balances: Record<number, string>;
+    social: SocialReadout; dynasty?: DynastyReadout;
+  } {
     const snap = this.snapshot();
     const balances: Record<number, string> = {};
     for (const a of this.agents) balances[a.id] = a.balance;
-    return { lastTick: snap.lastTick, totals: snap.totals, balances, social: snap.social };
+    return { lastTick: snap.lastTick, totals: snap.totals, balances, social: snap.social, dynasty: snap.dynasty };
   }
 
   getAgent(id: number): AgentState | undefined {
@@ -1404,6 +1809,16 @@ export class AgentEconomy {
           .sort((x, y) => x[0] - y[0])
           .map(([id, m]) => ({ id, rep: m.rep, repTick: m.repTick, kept: m.kept, broken: m.broken, bonds: m.bonds })),
         grudges: this.grudges,
+      },
+      // DYNASTY. Additive exactly like `social` above: KEY_VERSION stays "economy:v1", an older payload has
+      // no `dynasty` key ⇒ no houses, no graves, nobody dead — the pre-dynasty economy restores verbatim.
+      dynasty: {
+        kin: Array.from(this.kin.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, k]) => ({ id, bornTick: k.bornTick, house: k.house, children: k.children, gen: k.gen })),
+        houses: Array.from(this.houses.values()).sort((x, y) => x.id - y.id),
+        graves: this.graves,
+        dead: Array.from(this.dead).sort((x, y) => x - y),
       },
     });
   }
@@ -1489,6 +1904,70 @@ export class AgentEconomy {
             amount: String(g.amount ?? "0"),
             reason: String(g.reason ?? ""),
           }));
+      }
+    }
+    // Restore the dynasty (absent in pre-dynasty payloads ⇒ nobody ever died and no house was named).
+    // Fields sanitised + re-capped exactly like the social block above: a corrupted blob can never blow
+    // up DO storage, and a house id with no house record simply de-genes its members to commoners.
+    this.kin = new Map();
+    this.houses = new Map();
+    this.graves = [];
+    this.dead = new Set();
+    const dyn = p.dynasty;
+    if (dyn && typeof dyn === "object") {
+      if (Array.isArray(dyn.kin)) {
+        for (const e of dyn.kin) {
+          if (!e || typeof e !== "object") continue;
+          const id = Number(e.id);
+          if (!Number.isFinite(id)) continue;
+          this.kin.set(id, {
+            bornTick: Number(e.bornTick ?? 0) || 0,
+            house: e.house == null ? null : Number(e.house) || null,
+            children: (Array.isArray(e.children) ? e.children : [])
+              .slice(0, CHILD_CAP).map((c: unknown) => Number(c) || 0).filter((c: number) => Number.isFinite(c)),
+            gen: Math.max(0, Number(e.gen ?? 0) || 0),
+          });
+        }
+      }
+      if (Array.isArray(dyn.houses)) {
+        for (const e of dyn.houses) {
+          if (!e || typeof e !== "object") continue;
+          const id = Number(e.id);
+          if (!Number.isFinite(id)) continue;
+          this.houses.set(id, {
+            id,
+            name: String(e.name ?? ""),
+            sigil: String(e.sigil ?? ""),
+            foundedTick: Number(e.foundedTick ?? 0) || 0,
+            firstHeir: Number(e.firstHeir ?? -1),
+            treasury: /^\d+$/.test(String(e.treasury ?? "")) ? String(e.treasury) : "0",
+            earnedAtomic: /^\d+$/.test(String(e.earnedAtomic ?? "")) ? String(e.earnedAtomic) : "0",
+            members: (Array.isArray(e.members) ? e.members : [])
+              .slice(0, HOUSE_MEMBERS_CAP).map((m: unknown) => Number(m) || 0),
+            gen: Math.max(0, Number(e.gen ?? 0) || 0),
+          });
+        }
+      }
+      if (Array.isArray(dyn.graves)) {
+        this.graves = dyn.graves
+          .filter((g: Record<string, unknown>) => g && typeof g === "object")
+          .slice(0, GRAVE_CAP)
+          .map((g: Record<string, unknown>) => ({
+            id: Number(g.id ?? 0) || 0,
+            tick: Number(g.tick ?? 0) || 0,
+            cause: (g.cause === "penury" || g.cause === "plague" ? g.cause : "aged") as GraveRecord["cause"],
+            deals: Math.max(0, Number(g.deals ?? 0) || 0),
+            age: Math.max(0, Number(g.age ?? 0) || 0),
+            estate: /^\d+$/.test(String(g.estate ?? "")) ? String(g.estate) : "0",
+            heirIds: (Array.isArray(g.heirIds) ? g.heirIds : []).slice(0, CHILD_CAP).map((h: unknown) => Number(h) || 0),
+            house: g.house == null ? null : Number(g.house) || null,
+          }));
+      }
+      if (Array.isArray(dyn.dead)) {
+        for (const raw of dyn.dead) {
+          const id = Number(raw);
+          if (Number.isFinite(id)) this.dead.add(id);
+        }
       }
     }
   }

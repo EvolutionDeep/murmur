@@ -139,6 +139,7 @@ export interface Env {
   EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
+  DYNASTY_ENABLED?: string;             // "true"/"false" (default TRUE) — dynasty layer: houses (inherited names + sigils + tithe treasury) and mortality (penury / old-age / plague deaths with estate inheritance). Economic-ledger ONLY — it never touches the connectome, the shards or the live population; false restores the pre-dynasty economy byte-for-byte.
 
   // --- Community governance page (off-chain, token-gated forum + weighted voting; D1-backed) ---
   //     A standalone /community page: anyone may browse, but posting / proposing / voting requires a wallet
@@ -298,6 +299,12 @@ export interface RuntimeConfig {
     hatchLive: boolean;       // hatch bred offspring into LIVE trading flies (grow to maxLivePopulation) vs lineage-only
     hatchSeedUsdc: number;    // parent→child bootstrap USDC transferred to the offspring's own wallet on hatch
     treasury: string | null;  // revenue address collecting each fee; null ⇒ step skipped entirely
+  };
+
+  // Dynasty (economic-ledger layer: houses/inheritance/death — purely downstream of the economy, the
+  // swarm's liveness is population dynamics' alone, so this switch cannot change the population)
+  dynasty: {
+    enabled: boolean;         // master switch (default ON): house names/sigils/tithe + mortality/inheritance
   };
   
   // connectome sizing (ts-lif)
@@ -503,6 +510,13 @@ export function loadConfig(env: Env): RuntimeConfig {
       crossBias: clamp(Number(env.EVOLUTION_CROSS_BIAS ?? "0.5"), 0, 1),
       hatchLive,
       hatchSeedUsdc: clamp(Number(env.EVOLUTION_HATCH_SEED_USDC ?? "0.002"), 0.000001, 100),
+    },
+
+    dynasty: {
+      // ON by default: with no houses and no deaths the ledger is still a ledger, but the dynasty layer
+      // only MOVES money between wallets already in it and never mints, so there is nothing to gate behind
+      // real money. Set DYNASTY_ENABLED=false to restore the pre-dynasty economy byte-for-byte.
+      enabled: (env.DYNASTY_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     brainOpts: {

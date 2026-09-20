@@ -294,6 +294,7 @@ const seenSettlements = new Set();
 const SEEN_CAP = 400;                                 // bounded: trim oldest half when exceeded
 let econAgents = [];                                  // full roster from /economy: {id, address, balance, paid, earned, deals, sales}
 let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]} — who owes whom a grudge
+let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dead} — names, treasuries, monuments
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
@@ -1136,6 +1137,7 @@ function applyEconomy(econ) {
   refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
   if (econ.social) { econSocial = econ.social; renderSocialSection(); }
+  if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -1332,12 +1334,19 @@ function renderWallets() {
   host.textContent = "";
   for (const ag of list) {
     const row = document.createElement("div");
-    row.className = "wallet-row" + (ag.id === selectedId ? " sel" : "");
+    row.className = "wallet-row" + (ag.id === selectedId ? " sel" : "") + (ag.dead ? " gone" : "");
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-label", `fly ${ag.id} wallet, ${atomicToUsdc(ag.balance || "0").toFixed(4)} USDC`);
 
     const idEl = document.createElement("span"); idEl.className = "wr-id"; idEl.textContent = "#" + ag.id;
+    // Dynasty: the house name a fly bears (sigil + colour), inherited at birth from its parent's line.
+    if (ag.house) {
+      const nm = document.createElement("span"); nm.className = "wr-house";
+      nm.textContent = `${ag.sigil || ""} ${ag.house}`;
+      nm.title = `of the House of ${ag.house} — name and sigil inherited; vault and monuments in the chronicle panel`;
+      idEl.append(" ", nm);
+    }
     const balEl = document.createElement("span"); balEl.className = "wr-bal";
     balEl.innerHTML = `${atomicToUsdc(ag.balance || "0").toFixed(4)} <em>usdc</em>`;
     // Reputation badge: the fly's NAME, earned from settled history (kept promises vs defaults).
@@ -1349,6 +1358,14 @@ function renderWallets() {
       badge.textContent = dead ? "☠ deadbeat" : "★ honour";
       badge.title = `reputation ${rp.score.toFixed(2)} · ${rp.kept} settlements kept · ${rp.broken} defaulted`;
       balEl.append(" ", badge);
+    }
+    // Dynasty: a closed ledger — the wallet was buried and its estate inherited (see the monuments).
+    if (ag.dead) {
+      const grave = document.createElement("span");
+      grave.className = "wr-grave";
+      grave.textContent = "† buried";
+      grave.title = "ledger closed — estate passed to heirs; the epitaph stands in the chronicle monuments";
+      balEl.append(" ", grave);
     }
     const addrEl = document.createElement("span"); addrEl.className = "wr-addr";
     addrEl.textContent = isRealAddr(ag.address) ? shortHash(ag.address) : (ag.address || "–");
@@ -1409,6 +1426,43 @@ function renderSocialSection() {
   }
 }
 
+// ================= dynasty section (in the chronicle panel) =================
+// The houses with names, treasuries and generations — and the monuments carved for the dead. Pure
+// read-out of the economy's kinship ledger; the same memory the HOUSE_FOUNDED / DYNASTY / ELEGY lines tell.
+function renderDynastySection() {
+  const host = $("chron-dynasty");
+  if (!host) return;
+  const d = econDynasty;
+  const houses = (d && d.houses) || [];
+  const graves = (d && d.graves) || [];
+  if (!houses.length && !graves.length) { host.hidden = true; return; }
+  host.hidden = false;
+  const hh = $("dyn-houses");
+  if (hh) {
+    hh.textContent = "";
+    for (const h of houses.slice(0, 6)) {
+      const row = document.createElement("div");
+      row.className = "dyn-row";
+      row.textContent = `${h.sigil} House of ${h.name} · gen ${h.gen} · ${h.live}/${h.members} live · ${(h.capitalShare * 100).toFixed(1)}% of capital · vault ${Number(h.treasuryUsdc).toFixed(4)}`;
+      row.title = `founded at tick ${h.foundedTick} by fly #${h.id} · ${h.deaths} buried · lifetime tithes ${Number(h.earnedUsdc).toFixed(4)} USDC`;
+      hh.appendChild(row);
+    }
+  }
+  const head = $("dyn-graves-head");
+  const gb = $("dyn-graves");
+  if (head && gb) {
+    gb.textContent = "";
+    head.hidden = graves.length === 0;
+    for (const g of graves.slice(0, 6)) {
+      const row = document.createElement("div");
+      row.className = "dyn-grave";
+      row.textContent = `† #${g.id}${g.houseName ? " · " + g.houseName : " · no house"} · ${g.cause} · ${g.deals} dealings`;
+      row.title = `estate ${Number(g.estateUsdc).toFixed(4)} USDC → ${g.heirIds && g.heirIds.length ? g.heirIds.map((x) => "#" + x).join(", ") : "the commons"} · age ${g.age} ticks · fell at t${g.tick}`;
+      gb.appendChild(row);
+    }
+  }
+}
+
 function openWallets() {
   walletsOpen = true;
   if (brainOpen) closeBrain();
@@ -1429,6 +1483,7 @@ function openWallets() {
     if (!e) return;
     if (Array.isArray(e.agents)) applyEconAgents(e.agents);
     if (e.social) { econSocial = e.social; renderSocialSection(); renderWallets(); }
+    if (e.dynasty) { econDynasty = e.dynasty; renderDynastySection(); renderWallets(); }
   }).catch(() => {});
 }
 
@@ -1630,6 +1685,7 @@ const CHRON_ICONS = {
   BIRTH: "✿", PANIC: "⚡", STORM: "☀", HUDDLE: "❄", FEAST: "✿",
   RECORD_CONC: "⚖", LEAD_CHANGE: "♛",
   FEUD: "⚔", ALLIANCE: "❖", BETRAYAL: "✕", REPUTATION: "☠",
+  HOUSE_FOUNDED: "⌂", DYNASTY: "♜", ELEGY: "†",
 };
 
 function renderChron() {
@@ -1710,13 +1766,16 @@ const CHRON_ = {
     ALLIANCE: "Fly #{a} and fly #{b} have settled {trades} dealings in good faith — the swarm's steadiest partnership (bond {bond}).",
     BETRAYAL: "Fly #{buyer} defaults on a {amountUsdc} USDC debt to fly #{seller} — the name is entered in the grudge book.",
     REPUTATION: "Word across the market: fly #{id} is known for {broken} defaults against {kept} kept settlements — the purse is public, so is the name.",
+    HOUSE_FOUNDED: "Fly #{founder} founds the House of {name} — its sigil {sigil} rises as fly #{child} takes the name. A lineage begins in the ledger.",
+    DYNASTY: "The House of {name} holds {share} of all the swarm's capital at generation {gen} — ledgers bend before an old name.",
+    ELEGY: "Fly #{id} of {house} falls to {cause} — {deals} dealings, age {age}. An estate of {estateUsdc} USDC passes to {heirs}. The name endures.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1 },
 };
 
 function chronRoman(n) {

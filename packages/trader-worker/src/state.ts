@@ -218,6 +218,9 @@ export class FlyStateDO {
       // bootstrap, not the genesis initialBalance, so the frontend shows a newborn's true (tiny) wallet.
       populationSize: this.cfg.populationSize,
       hatchSeedUsdc: this.cfg.evolution.hatchSeedUsdc,
+      // DYNASTY: houses + mortality ride the economy's own ledger (never the connectome); the master
+      // switch is DYNASTY_ENABLED (default ON). Absent/false ⇒ every dynasty hook below is inert.
+      dynasty: { enabled: this.cfg.dynasty.enabled },
     };
   }
 
@@ -440,6 +443,10 @@ export class FlyStateDO {
           } else {
             const ok = await swarm.hatchLiveFly(childId, child.genome, this.state.storage);
             if (ok) {
+              // DYNASTY: the live child enters the kinship ledger — it is born into its parent's house, or
+              // this very hatch FLAGS a new one (name + sigil fold from the child's genome hash). Pure
+              // ledger bookkeeping inside the hatch block's existing try/catch: it can never un-hatch a fly.
+              economy.noteHatch(plan.payerId, childId, child.genomeHash);
               console.log(
                 `[DO] evolution hatched #${childId} gen=${child.generation} funded by #${plan.payerId} ` +
                   `${ev.hatchSeedUsdc}USDC tx=${seed.txHash.slice(0, 10)} live=${swarm.size()}/${this.cfg.maxLivePopulation}`,
@@ -815,6 +822,9 @@ export class FlyStateDO {
         // SOCIAL signals come from the economy's OWN persisted bonds/reputations (pure read-out — the
         // historian narrates relationships, it never creates or feeds them).
         social: this.economy?.socialSignals() ?? null,
+        // DYNASTY signals likewise: foundings, a house holding the swarm's capital, and the newest grave
+        // — all read from the economy's persisted kinship ledger. The historian only writes the epitaph.
+        dynasty: this.economy?.dynastySignals() ?? null,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -987,6 +997,14 @@ export class FlyStateDO {
       deals += flushed.filter((s) => s.valid).length;
       // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
       economy.setLastTick(cronSettlements);
+      // DYNASTY mortality sweep — ONCE per cron, ledger-side only (the swarm, shards and canvas never
+      // notice): up to one penury + one old-age burial, plus a heat-plague cull of the eldest, estates
+      // already inherited. Runs BEFORE the snapshot so the published read-out carries this cron's graves;
+      // the historian narrates them via dynastySignals() at step 7. Inert while DYNASTY_ENABLED=false.
+      const graves = economy.noteMortality(swarm.getTickIndex(), temperature);
+      if (graves.length) {
+        console.log(`[DO] dynasty buried ${graves.map((g) => `#${g.id}(${g.cause})`).join(" ")}`);
+      }
       this.lastEconomy = economy.snapshot();
     }
 

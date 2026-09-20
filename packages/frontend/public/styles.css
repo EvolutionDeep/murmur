@@ -480,6 +480,20 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wsoc-row.shun { color: #9c3b2e; }
 .wsoc-head-grudge { margin-top: 8px; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px dashed var(--hair); padding-bottom: 3px; }
 
+/* --- chronicle panel: dynasty (houses of note + monuments) — ink-on-paper, same family as wsoc --- */
+.chron-dynasty { flex: none; max-height: 46%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.dyn-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.dyn-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.dyn-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.dyn-row { font-family: var(--mono); font-size: 10.5px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dyn-head-grave { margin-top: 8px; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px dashed var(--hair); padding-bottom: 3px; }
+.dyn-head-grave em { font-style: normal; text-transform: none; letter-spacing: 0.02em; }
+.dyn-grave { font-family: var(--mono); font-size: 10.5px; color: rgba(26, 26, 24, 0.66); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wallet-row.gone { opacity: 0.5; }
+.wallet-row.gone .wr-bal { text-decoration: line-through; text-decoration-color: rgba(26, 26, 24, 0.35); }
+.wr-house { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; color: #5a4a33; border-bottom: 1px dotted rgba(90, 74, 51, 0.5); white-space: nowrap; }
+.wr-grave { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 5px; border: 1px solid rgba(107, 93, 79, 0.5); border-radius: 2px; color: #6b5d4f; white-space: nowrap; }
+
 /* --- inspector: this fly's x402 agent wallet --- */
 .ins-wallet {
   margin: 0 0 14px; padding: 11px 12px;
