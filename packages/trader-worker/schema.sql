@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS chronicle (
   severity  INTEGER NOT NULL,           -- 1 minor | 2 notable | 3 chapter-defining
   actors    TEXT    NOT NULL,           -- JSON number[] of implicated fly ids (may be [])
   text      TEXT    NOT NULL,           -- the rendered narrative line (template, no LLM)
-  metrics   TEXT                        -- JSON object of the raw numbers behind the sentence
+  metrics   TEXT,                       -- JSON object of the raw numbers behind the sentence
+  tokens    TEXT,                       -- JSON object of the exact template substitution values (re-derives text)
+  hash      TEXT,                       -- sha256(canonical(entryCore ‖ prevHash)) — binds this line to the chain
+  prev_hash TEXT                        -- hash of the previous entry (64 zeros for the founding line)
 );
 CREATE INDEX IF NOT EXISTS idx_chronicle_ts ON chronicle (ts);
 

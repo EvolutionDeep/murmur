@@ -5,18 +5,35 @@
 // the ethogram FAP distribution, per-fly valence, and the lifetime economy totals) and DETECTS history-making
 // moments via pure, stateless-friendly rules — eras dawning, the first settlement, a wealth record, a panic,
 // the great huddle, a feeding frenzy, births, milestones, a change of leadership. Each detected event is
-// rendered into one narrative sentence FROM TEMPLATES (no LLM anywhere — the whole project's identity), and
-// appended to an ordered chronicle.
+// rendered into one narrative sentence FROM A PUBLIC TEMPLATE (no LLM anywhere — the whole project's identity),
+// and appended to an ordered, HASH-CHRONED chronicle.
+//
+// WHY THIS IS PROVABLY "NOT AN LLM" (the verification model, mirrored byte-for-byte in the browser):
+//   1. DETERMINISTIC RE-DERIVATION. Every sentence is renderTemplate(kind, tokens) — a pure string substitution
+//      over the entry's own `tokens` (the raw numbers it cites). A visitor ships the SAME TEMPLATES table, fills
+//      it with the entry's tokens, and must reproduce the served `text` exactly. An LLM cannot be re-derived
+//      this way; if the words regenerate from a template + real numbers, they are the template's, not a model's.
+//   2. TAMPER-EVIDENT CHAIN. Each entry carries prevHash + hash = sha256(canonical(entryCore) ‖ prevHash). Edit
+//      any word and the chain breaks; the head is a single binding digest of the whole history.
+//   3. RULES FINGERPRINT. chroniclerRulesHash() = sha256 of the entire deterministic rule-set (templates,
+//      thresholds, cooldowns, era-names). It is the historian's "genome": match it and you know exactly WHICH
+//      rule-set wrote every line — and that it contains no model, only string templates and comparisons.
 //
 // Iron-clad constraints this file upholds:
 //   • PURE READ-OUT. It observes state; it never mutates a connectome, a drive, a wallet or a settlement
 //     decision. Economy remains a one-way read of neurons; nothing here feeds back. Zero gas, zero on-chain
 //     commitment, so the brain manifest hash is untouched.
 //   • DETERMINISTIC & REPLAYABLE. No Math.random, no Date.now inside the logic (timestamps are passed in),
-//     no locale-dependent formatting. Given the same sequence of contexts it yields the same entries — so the
-//     chronicle can, like the receipts, one day be hash-anchored and re-derived by anyone.
-//   • BOUNDED. It keeps only a handful of monotonic trackers, so its serialized state is tiny and DO-safe.
+//     no locale-dependent formatting. Given the same sequence of contexts it yields the same entries + chain.
+//   • BOUNDED. It keeps only a handful of monotonic trackers + one running head hash, so its serialized state
+//     is tiny and DO-safe.
 // ============================================================================================================
+
+import { canonical, sha256Hex } from "./provenance.js";
+
+export const CHRONICLE_VERSION = 1;
+/** The chain's seed: the prevHash of the very first entry. A fixed, well-known constant. */
+export const GENESIS_HASH = "0".repeat(64);
 
 export type ChronicleKind =
   | "ERA_OPEN"
@@ -40,8 +57,11 @@ export interface ChronicleEntry {
   eraName: string;                  // evocative name of that era
   severity: 1 | 2 | 3;              // visual weight (3 = chapter-defining)
   actors: number[];                 // implicated fly ids (may be empty)
-  text: string;                     // the rendered narrative line
+  text: string;                     // the rendered narrative line == renderTemplate(kind, tokens)
   metrics: Record<string, number>;  // the raw numbers behind the sentence (for the UI / audit)
+  tokens: Record<string, string | number>;  // the EXACT substitution values the template was filled with
+  prevHash: string;                 // hash of the previous entry (GENESIS_HASH for the first)
+  hash: string;                     // sha256(canonical({...core, prevHash})) — binds this entry to the chain
 }
 
 /** The per-cron facts the historian reads. Primitives + loose records so it stays decoupled from the
@@ -83,7 +103,14 @@ interface ChroniclerState {
   maxGini: number;                  // all-time concentration high
   leaderId: number | null;          // last known richest agent
   lastKindTick: Record<string, number>;
+  headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
+
+// ------------------------------------------------------------------------------------------------------------
+// The PUBLIC rule-set. These five tables ARE the historian. Their sha256 (chroniclerRulesHash) is the single
+// value a visitor checks to know the whole rule-set is the deterministic one shipped in the open-source repo —
+// no model weights, only these strings and these thresholds.
+// ------------------------------------------------------------------------------------------------------------
 
 const ERA_NAMES: Record<ChronicleContext["regime"], string[]> = {
   HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
@@ -100,6 +127,26 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
 const ERA_MIN_RUN = 6;
 const ERA_MIN_AGE = 8;
 
+/** The narrative templates. `{key}` inserts tokens[key]; `{key~roman}` / `{key~kth}` / `{key~lower}` apply a
+ *  tiny, fully-deterministic formatter (see renderToken). This exact map is shipped to the browser verbatim. */
+export const TEMPLATES: Record<ChronicleKind, string> = {
+  ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds open their eyes on the Arc market and begin, for the first time, to feel the price.",
+  ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
+  FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
+  MILESTONE: "Milestone — the ledger records its {settlements~kth} verifiable exchange. {settlements} settlements, {volumeUsdc} USDC moved.",
+  BIRTH: "A new generation hatches into the live swarm — it now numbers {size} minds, a record for the species.",
+  PANIC: "Panic sweeps the hot market (T={temperature}) — {flight} flies bolt into flight and retreat at once. The swarm routs.",
+  STORM: "A scorching pulse peaks the temperature at {temperature}; the whole connectome swarm convulses under the heat.",
+  HUDDLE: "The Great Huddle — cold pins the swarm still; {still} flies rest and crowd together against the freeze (T={temperature}).",
+  FEAST: "A feeding frenzy — {feed} flies extend their proboscides at once as the market suddenly smells of sugar.",
+  RECORD_CONC: "Wealth gathers like never before — the gini climbs to {gini}, the sharpest inequality the swarm has known.",
+  LEAD_CHANGE: "Fly #{newLeader} overtakes fly #{oldLeader} at the head of the ledger — the richest purse changes hands.",
+};
+
+// ------------------------------------------------------------------------------------------------------------
+// Pure formatters + the template renderer. The browser ships the identical logic so it can re-derive text.
+// ------------------------------------------------------------------------------------------------------------
+
 function roman(n: number): string {
   if (n <= 0) return String(n);
   const map: [number, string][] = [
@@ -112,13 +159,89 @@ function roman(n: number): string {
   return out;
 }
 
+/** Ordinal words for a milestone count ("one thousandth", "21 thousandth", …). */
+function kth(settlements: number): string {
+  const k = Math.round(settlements / 1000);
+  const words = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
+  const w = words[k] ?? String(k);
+  return `${w} thousandth`;
+}
+
+function renderToken(value: string | number, formatter?: string): string {
+  switch (formatter) {
+    case "roman": return roman(Number(value));
+    case "kth": return kth(Number(value));
+    case "lower": return String(value).toLowerCase();
+    default: return String(value);
+  }
+}
+
+/** Fill a template from an entry's tokens. Deterministic, dependency-free, and mirrored in the browser. */
+export function renderTemplate(kind: ChronicleKind, tokens: Record<string, string | number>): string {
+  const tpl = TEMPLATES[kind];
+  if (!tpl) return "";
+  return tpl.replace(/\{(\w+)(?:~(\w+))?\}/g, (_m, key: string, fmt?: string) =>
+    renderToken(tokens[key] ?? "", fmt));
+}
+
+/** The historian's "genome": a single digest of the entire deterministic rule-set. */
+export function chroniclerRulesHash(): Promise<string> {
+  return sha256Hex({
+    v: CHRONICLE_VERSION,
+    templates: TEMPLATES,
+    eraNames: ERA_NAMES,
+    cooldown: COOLDOWN,
+    eraMinRun: ERA_MIN_RUN,
+    eraMinAge: ERA_MIN_AGE,
+  });
+}
+
+/** The canonical pre-image that an entry's hash commits to (everything except the hash itself). */
+export function entryHashInput(e: ChronicleEntry): Record<string, unknown> {
+  return {
+    seq: e.seq, tick: e.tick, ts: e.ts, kind: e.kind, era: e.era, eraName: e.eraName,
+    severity: e.severity, actors: e.actors, text: e.text, metrics: e.metrics, tokens: e.tokens,
+    prevHash: e.prevHash,
+  };
+}
+
+/** Recompute an entry's hash from its own fields (async: SHA-256 via WebCrypto). */
+export function computeEntryHash(e: ChronicleEntry): Promise<string> {
+  return sha256Hex(entryHashInput(e));
+}
+
+export interface ChainVerifyResult {
+  ok: boolean;
+  head: string;
+  /** index of the first broken entry (-1 when ok) */
+  brokenAt: number;
+  reason: string;
+}
+
+/** Verify a served chronicle's hash chain end-to-end (integrity + linkage). The browser does the same. */
+export async function verifyChain(entries: ChronicleEntry[]): Promise<ChainVerifyResult> {
+  let prev = GENESIS_HASH;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.prevHash !== prev) return { ok: false, head: prev, brokenAt: i, reason: "prev-hash mismatch" };
+    const recomputed = await computeEntryHash(e);
+    if (recomputed !== e.hash) return { ok: false, head: e.hash, brokenAt: i, reason: "entry hash mismatch (text/tokens altered)" };
+    // The sentence must regenerate from its own template + tokens — the direct "not an LLM" check.
+    if (renderTemplate(e.kind, e.tokens) !== e.text) return { ok: false, head: e.hash, brokenAt: i, reason: "text does not match template(kind, tokens)" };
+    prev = e.hash;
+  }
+  return { ok: true, head: prev, brokenAt: -1, reason: "chain intact · every line re-derives from a public template" };
+}
+
 function clamp01(x: number): number { return Math.min(1, Math.max(0, x)); }
 
 export class Chronicler {
   private s: ChroniclerState = freshState();
 
-  /** Feed one cron's read-out; returns zero or more newly-detected chronicle entries (oldest→newest). */
-  observe(ctx: ChronicleContext): ChronicleEntry[] {
+  /** Feed one cron's read-out; returns zero or more newly-detected chronicle entries (oldest→newest).
+   *  Async because each emitted line is folded into the SHA-256 chain. */
+  async observe(ctx: ChronicleContext): Promise<ChronicleEntry[]> {
     const out: ChronicleEntry[] = [];
     const s = this.s;
 
@@ -134,8 +257,8 @@ export class Chronicler {
       s.maxSize = ctx.size;
       s.maxGini = ctx.gini;
       s.leaderId = ctx.richestId;
-      out.push(this.emit(ctx, "ERA_OPEN", 3, [],
-        `Era I · the Awakening — ${ctx.size} minds open their eyes on the Arc market and begin, for the first time, to feel the price.`,
+      out.push(await this.emit(ctx, "ERA_OPEN", 3, [],
+        { era: s.era, eraName: s.eraName, size: ctx.size, temperature: round(ctx.temperature) },
         { size: ctx.size, temperature: round(ctx.temperature) }));
     } else {
       // --- era bookkeeping: a regime must HOLD to be remembered as an age ---
@@ -151,8 +274,8 @@ export class Chronicler {
         const pick = pool[(s.era - 1) % pool.length];
         // avoid ever repeating the exact same title back-to-back
         s.eraName = pick === s.eraName ? pool[s.era % pool.length] : pick;
-        out.push(this.emit(ctx, "ERA_SHIFT", 3, [],
-          `Era ${roman(s.era)} · ${s.eraName} dawns — the market has turned ${ctx.regime.toLowerCase()} and held it. An age begins.`,
+        out.push(await this.emit(ctx, "ERA_SHIFT", 3, [],
+          { era: s.era, eraName: s.eraName, regime: ctx.regime, temperature: round(ctx.temperature) },
           { era: s.era, temperature: round(ctx.temperature) }));
       }
     }
@@ -160,8 +283,8 @@ export class Chronicler {
     // --- the economy's first light ---
     if (!s.firstTradeDone && ctx.settlements > 0) {
       s.firstTradeDone = true;
-      out.push(this.emit(ctx, "FIRST_TRADE", 3, namedActors(ctx),
-        `The first exchange settles on-chain — agents trade real USDC for the first time across ${ctx.liveAgents} wallets. A swarm becomes a market.`,
+      out.push(await this.emit(ctx, "FIRST_TRADE", 3, namedActors(ctx),
+        { liveAgents: ctx.liveAgents, volumeUsdc: round(ctx.volumeUsdc) },
         { volumeUsdc: round(ctx.volumeUsdc), liveAgents: ctx.liveAgents }));
     }
 
@@ -170,8 +293,8 @@ export class Chronicler {
       const th = Math.floor(ctx.settlements / 1000);
       if (th > s.lastMilestone) {
         s.lastMilestone = th;
-        out.push(this.emit(ctx, "MILESTONE", 2, [],
-          `Milestone — the ledger records its ${romanUnit(th * 1000)} verifiable exchange. ${ctx.settlements} settlements, ${round(ctx.volumeUsdc)} USDC moved.`,
+        out.push(await this.emit(ctx, "MILESTONE", 2, [],
+          { settlements: ctx.settlements, volumeUsdc: round(ctx.volumeUsdc) },
           { settlements: ctx.settlements, volumeUsdc: round(ctx.volumeUsdc) }));
       }
     }
@@ -180,8 +303,8 @@ export class Chronicler {
     if (ctx.size > s.maxSize) {
       s.maxSize = ctx.size;
       if (this.ready("BIRTH", ctx)) {
-        out.push(this.emit(ctx, "BIRTH", 2, [],
-          `A new generation hatches into the live swarm — it now numbers ${ctx.size} minds, a record for the species.`,
+        out.push(await this.emit(ctx, "BIRTH", 2, [],
+          { size: ctx.size },
           { size: ctx.size }));
       }
     }
@@ -189,15 +312,15 @@ export class Chronicler {
     // --- wealth chronicles ---
     if (ctx.gini > s.maxGini + 0.02 && this.ready("RECORD_CONC", ctx)) {
       s.maxGini = ctx.gini;
-      out.push(this.emit(ctx, "RECORD_CONC", 2, idList(ctx.richestId),
-        `Wealth gathers like never before — the gini climbs to ${round(ctx.gini)}, the sharpest inequality the swarm has known.`,
+      out.push(await this.emit(ctx, "RECORD_CONC", 2, idList(ctx.richestId),
+        { gini: round(ctx.gini) },
         { gini: round(ctx.gini) }));
     } else if (ctx.gini > s.maxGini) {
       s.maxGini = ctx.gini;
     }
     if (ctx.richestId != null && s.leaderId != null && ctx.richestId !== s.leaderId && this.ready("LEAD_CHANGE", ctx)) {
-      out.push(this.emit(ctx, "LEAD_CHANGE", 2, [s.leaderId, ctx.richestId],
-        `Fly #${ctx.richestId} overtakes fly #${s.leaderId} at the head of the ledger — the richest purse changes hands.`,
+      out.push(await this.emit(ctx, "LEAD_CHANGE", 2, [s.leaderId, ctx.richestId],
+        { newLeader: ctx.richestId, oldLeader: s.leaderId, gini: round(ctx.gini) },
         { oldLeader: s.leaderId, newLeader: ctx.richestId, gini: round(ctx.gini) }));
       s.leaderId = ctx.richestId;
     } else if (ctx.richestId != null) {
@@ -211,23 +334,23 @@ export class Chronicler {
     const feed = ctx.faps.FEED ?? 0;
 
     if (ctx.regime === "HOT" && flight / n >= 0.34 && this.ready("PANIC", ctx)) {
-      out.push(this.emit(ctx, "PANIC", 3, [],
-        `Panic sweeps the hot market (T=${round(ctx.temperature)}) — ${flight} flies bolt into flight and retreat at once. The swarm routs.`,
+      out.push(await this.emit(ctx, "PANIC", 3, [],
+        { temperature: round(ctx.temperature), flight, size: ctx.size },
         { flight, size: ctx.size, temperature: round(ctx.temperature) }));
     }
     if (ctx.temperature >= 0.97 && this.ready("STORM", ctx)) {
-      out.push(this.emit(ctx, "STORM", 3, [],
-        `A scorching pulse peaks the temperature at ${round(ctx.temperature)}; the whole connectome swarm convulses under the heat.`,
+      out.push(await this.emit(ctx, "STORM", 3, [],
+        { temperature: round(ctx.temperature), arousal: round(ctx.arousal) },
         { temperature: round(ctx.temperature), arousal: round(ctx.arousal) }));
     }
     if (ctx.regime === "COLD" && still / n >= 0.6 && this.ready("HUDDLE", ctx)) {
-      out.push(this.emit(ctx, "HUDDLE", 2, [],
-        `The Great Huddle — cold pins the swarm still; ${still} flies rest and crowd together against the freeze (T=${round(ctx.temperature)}).`,
+      out.push(await this.emit(ctx, "HUDDLE", 2, [],
+        { still, size: ctx.size, temperature: round(ctx.temperature) },
         { still, size: ctx.size, temperature: round(ctx.temperature) }));
     }
     if (feed / n >= 0.3 && this.ready("FEAST", ctx)) {
-      out.push(this.emit(ctx, "FEAST", 2, [],
-        `A feeding frenzy — ${feed} flies extend their proboscides at once as the market suddenly smells of sugar.`,
+      out.push(await this.emit(ctx, "FEAST", 2, [],
+        { feed, size: ctx.size, valence: round(ctx.valence) },
         { feed, size: ctx.size, valence: round(ctx.valence) }));
     }
 
@@ -242,17 +365,19 @@ export class Chronicler {
     return true;
   }
 
-  private emit(
+  /** Build an entry, render its sentence from the template, and fold it into the running hash chain. */
+  private async emit(
     ctx: ChronicleContext,
     kind: ChronicleKind,
     severity: 1 | 2 | 3,
     actors: number[],
-    text: string,
+    tokens: Record<string, string | number>,
     metrics: Record<string, number>,
-  ): ChronicleEntry {
+  ): Promise<ChronicleEntry> {
     this.s.seq += 1;
     this.s.lastKindTick[kind] = ctx.tick;
-    return {
+    const prevHash = this.s.headHash;
+    const base: ChronicleEntry = {
       seq: this.s.seq,
       tick: ctx.tick,
       ts: ctx.ts,
@@ -261,14 +386,21 @@ export class Chronicler {
       eraName: this.s.eraName,
       severity,
       actors,
-      text,
+      text: renderTemplate(kind, tokens),   // ← the sentence IS a template fill; nothing else could produce it
       metrics,
+      tokens,
+      prevHash,
+      hash: "",
     };
+    const hash = await computeEntryHash(base);
+    base.hash = hash;
+    this.s.headHash = hash;
+    return base;
   }
 
-  /** The current age, for the UI header. */
-  eraInfo(): { era: number; eraName: string; eraRegime: ChronicleContext["regime"]; seq: number } {
-    return { era: this.s.era, eraName: this.s.eraName, eraRegime: this.s.eraRegime, seq: this.s.seq };
+  /** The current age + chain head, for the UI header and the verifier. */
+  eraInfo(): { era: number; eraName: string; eraRegime: ChronicleContext["regime"]; seq: number; headHash: string } {
+    return { era: this.s.era, eraName: this.s.eraName, eraRegime: this.s.eraRegime, seq: this.s.seq, headHash: this.s.headHash };
   }
 
   snapshot(): ChroniclerState { return JSON.parse(JSON.stringify(this.s)); }
@@ -276,6 +408,7 @@ export class Chronicler {
   restore(st: Partial<ChroniclerState> | null | undefined): void {
     if (!st) return;
     this.s = { ...freshState(), ...st, lastKindTick: { ...(st.lastKindTick ?? {}) } };
+    if (typeof this.s.headHash !== "string" || this.s.headHash.length !== 64) this.s.headHash = GENESIS_HASH;
   }
 }
 
@@ -284,6 +417,7 @@ function freshState(): ChroniclerState {
     inited: false, seq: 0, era: 1, eraName: "the Awakening", eraRegime: "COLD",
     eraStartTick: 0, prevRegime: null, regimeRun: 0, firstTradeDone: false,
     lastMilestone: 0, maxSize: 0, maxGini: 0, leaderId: null, lastKindTick: {},
+    headHash: GENESIS_HASH,
   };
 }
 
@@ -295,13 +429,3 @@ function namedActors(ctx: ChronicleContext): number[] { return idList(ctx.riches
 function round(x: number): number { return Math.round(clamp100(x) * 1000) / 1000; }
 // keep values readable in JSON without over-clamping real metrics (settlements can be huge)
 function clamp100(x: number): number { return Number.isFinite(x) ? Math.max(-1e9, Math.min(1e9, x)) : 0; }
-
-function romanUnit(n: number): string {
-  // friendly ordinal words for milestone counts ("one thousandth", "twenty thousandth", …).
-  // The caller treats this as a complete ordinal — it MUST already end in "th".
-  const k = Math.round(n / 1000);
-  const words = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
-  const w = words[k] ?? String(k);
-  return `${w} thousandth`;
-}

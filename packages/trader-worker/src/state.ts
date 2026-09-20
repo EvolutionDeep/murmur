@@ -67,7 +67,7 @@ import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
-import { Chronicler, type ChronicleEntry, type ChronicleContext } from "./chronicler.js";
+import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext } from "./chronicler.js";
 
 const KEY_METER = "marketMeter:v1";
 const KEY_MARKET = "market:v1";
@@ -82,9 +82,12 @@ const KEY_LINEAGE = "lineage:v1";
 const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
 const MAX_STIMULI = 200;
-/** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage. */
-const KEY_CHRONICLER = "chronicler:v1";
-const KEY_ANNALS = "annals:v1";
+/** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage.
+ *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash); the version bump discards the
+ *  pre-chain blob so the historian restarts its chain cleanly (a deterministic history, so it re-writes the
+ *  same founding lines — now hash-linked — on the next cron). */
+const KEY_CHRONICLER = "chronicler:v2";
+const KEY_ANNALS = "annals:v2";
 /** How many recent chronicle entries to keep hot in the DO (and serve from /annals) — bounded, DO-safe. */
 const ANNALS_CAP = 300;
 
@@ -142,6 +145,8 @@ export class FlyStateDO {
   private annals: ChronicleEntry[] = [];
   /** Set once the D1 chronicle table has been ensured this DO lifetime. */
   private d1ChronicleReady = false;
+  /** Cached sha256 of the historian's deterministic rule-set (a pure function of the source tables). */
+  private chroniclerRulesHash: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -724,7 +729,7 @@ export class FlyStateDO {
         const db = this.env.DB;
         await this.ensureD1Chronicle(db);
         const r = await db
-          .prepare(`SELECT seq, tick, ts, kind, era, era_name, severity, actors, text, metrics FROM chronicle ORDER BY seq DESC LIMIT ?`)
+          .prepare(`SELECT seq, tick, ts, kind, era, era_name, severity, actors, text, metrics, tokens, hash, prev_hash FROM chronicle WHERE hash IS NOT NULL AND hash <> '' ORDER BY seq DESC LIMIT ?`)
           .bind(ANNALS_CAP).all();
         this.annals = (r.results ?? []).map(parseChronicleRow).reverse();
       } catch (e) {
@@ -742,8 +747,15 @@ export class FlyStateDO {
       `CREATE TABLE IF NOT EXISTS chronicle (
          seq INTEGER PRIMARY KEY, tick INTEGER NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL,
          era INTEGER NOT NULL, era_name TEXT NOT NULL, severity INTEGER NOT NULL,
-         actors TEXT NOT NULL, text TEXT NOT NULL, metrics TEXT )`,
+         actors TEXT NOT NULL, text TEXT NOT NULL, metrics TEXT,
+         tokens TEXT, hash TEXT, prev_hash TEXT )`,
     ).run();
+    // Migration: a chronicle table deployed before the hash-chain upgrade lacks these columns. SQLite has no
+    // "ADD COLUMN IF NOT EXISTS", so each ALTER is attempted and a duplicate-column error is swallowed — a
+    // fresh provisioner skips straight through, an already-live table gains the columns in place.
+    for (const col of [`tokens TEXT`, `hash TEXT`, `prev_hash TEXT`]) {
+      try { await db.prepare(`ALTER TABLE chronicle ADD COLUMN ${col}`).run(); } catch { /* already present */ }
+    }
     await db.prepare(`CREATE INDEX IF NOT EXISTS idx_chronicle_ts ON chronicle (ts)`).run();
     this.d1ChronicleReady = true;
   }
@@ -756,9 +768,9 @@ export class FlyStateDO {
       await this.ensureD1Chronicle(db);
       await db.batch(entries.map((e) =>
         db.prepare(
-          `INSERT OR REPLACE INTO chronicle (seq, tick, ts, kind, era, era_name, severity, actors, text, metrics)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(e.seq, e.tick, e.ts, e.kind, e.era, e.eraName, e.severity, JSON.stringify(e.actors), e.text, JSON.stringify(e.metrics)),
+          `INSERT OR REPLACE INTO chronicle (seq, tick, ts, kind, era, era_name, severity, actors, text, metrics, tokens, hash, prev_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(e.seq, e.tick, e.ts, e.kind, e.era, e.eraName, e.severity, JSON.stringify(e.actors), e.text, JSON.stringify(e.metrics), JSON.stringify(e.tokens), e.hash, e.prevHash),
       ));
     } catch (e) {
       console.warn("[DO] chronicle D1 write failed (non-fatal):", (e as Error).message);
@@ -800,7 +812,7 @@ export class FlyStateDO {
         liveAgents: totals?.liveAgents ?? col?.size ?? 0,
         meanBalanceUsdc: totals?.meanBalanceUsdc ?? 0,
       };
-      const entries = c.observe(ctx);
+      const entries = await c.observe(ctx);
       if (entries.length) {
         this.annals.push(...entries);
         if (this.annals.length > ANNALS_CAP) this.annals = this.annals.slice(-ANNALS_CAP);
@@ -838,6 +850,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/annals") return await this.getAnnals(url);
+      if (req.method === "GET" && path === "/annals/verify") return await this.getAnnalsVerify(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -1873,14 +1886,86 @@ export class FlyStateDO {
     const info = this.chronicler!.eraInfo();
     return json({
       enabled: true,
+      version: CHRONICLE_VERSION,
       era: info.era,
       eraName: info.eraName,
       eraRegime: info.eraRegime,
       seq: info.seq,
+      headHash: info.headHash,
+      chroniclerHash: await this.getChroniclerRulesHash(),
       order: asc ? "asc" : "desc",
       count: rows.length,
       entries: rows,
     });
+  }
+
+  /**
+   * GET /annals/verify — the deterministic-verification companion to /annals. Proves a served line is a real
+   * historian output, not an LLM, two ways the visitor can check independently:
+   *   • `entry`   — the exact ChronicleEntry (tokens + text + hash + prevHash) so the browser can re-derive
+   *                 text = renderTemplate(kind, tokens) and recompute sha256(canonical(entry)‖prevHash).
+   *   • `archive` — the D1 `ticks` row for that entry's tick, so the numbers the sentence cites (temperature,
+   *                 gini, settlements, volume) are confirmed against the independent per-cron archive.
+   * Query: ?seq=<n> (a single entry) or ?from=&to= (a seq range, for a chain re-verification).
+   */
+  private async getAnnalsVerify(url: URL): Promise<Response> {
+    await this.ensureChronicler();
+    const seqRaw = url.searchParams.get("seq");
+    const chroniclerHash = await this.getChroniclerRulesHash();
+    const info = this.chronicler!.eraInfo();
+    if (seqRaw != null && Number.isFinite(Number(seqRaw))) {
+      const seq = Number(seqRaw);
+      const entry = this.annals.find((e) => e.seq === seq) ?? null;
+      if (!entry) return json({ enabled: true, chroniclerHash, found: false, seq }, 404);
+      return json({
+        enabled: true,
+        version: CHRONICLE_VERSION,
+        chroniclerHash,
+        headHash: info.headHash,
+        found: true,
+        entry,
+        archive: await this.readTickArchive(entry.tick),
+      });
+    }
+    // range mode: hand back the raw chain slice so a client can re-verify linkage + re-derive every line.
+    const from = Number(url.searchParams.get("from") ?? "0") || 0;
+    const toRaw = url.searchParams.get("to");
+    const to = toRaw != null && Number.isFinite(Number(toRaw)) ? Number(toRaw) : Number.MAX_SAFE_INTEGER;
+    const entries = this.annals.filter((e) => e.seq >= from && e.seq <= to).sort((a, b) => a.seq - b.seq);
+    return json({
+      enabled: true,
+      version: CHRONICLE_VERSION,
+      chroniclerHash,
+      headHash: info.headHash,
+      count: entries.length,
+      entries,
+    });
+  }
+
+  /** Read the archived `ticks` row for one tick (best-effort; null when D1 is unbound or the row is gone). */
+  private async readTickArchive(tick: number): Promise<Record<string, unknown> | null> {
+    const db = this.env.DB;
+    if (!db) return null;
+    try {
+      await this.ensureD1Schema(db);
+      const r = await db
+        .prepare(`SELECT tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini FROM ticks WHERE tick = ?`)
+        .bind(tick).first();
+      if (!r) return null;
+      return {
+        tick: (r as any).tick, ts: (r as any).ts, temperature: (r as any).temperature, regime: (r as any).regime,
+        size: (r as any).size, deals: (r as any).deals, settlements: (r as any).settlements,
+        volumeUsdc: (r as any).volume_usdc, gini: (r as any).gini,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The historian's rule-set digest — computed once per DO lifetime (a pure function of the source). */
+  private async getChroniclerRulesHash(): Promise<string> {
+    if (this.chroniclerRulesHash == null) this.chroniclerRulesHash = await chroniclerRulesHash();
+    return this.chroniclerRulesHash;
   }
 
   private async getMarket() {
@@ -2042,12 +2127,14 @@ function parseHistoryRow(r: any) {
   };
 }
 
-/** Shape a raw D1 `chronicle` row back into a ChronicleEntry (JSON-parse actors + metrics). */
+/** Shape a raw D1 `chronicle` row back into a ChronicleEntry (JSON-parse actors + metrics + tokens). */
 function parseChronicleRow(r: any): ChronicleEntry {
   let actors: number[] = [];
   let metrics: Record<string, number> = {};
+  let tokens: Record<string, string | number> = {};
   try { actors = Array.isArray(JSON.parse(r?.actors ?? "[]")) ? JSON.parse(r.actors) : []; } catch { actors = []; }
   try { metrics = r?.metrics ? JSON.parse(r.metrics) : {}; } catch { metrics = {}; }
+  try { tokens = r?.tokens ? JSON.parse(r.tokens) : {}; } catch { tokens = {}; }
   return {
     seq: Number(r?.seq ?? 0),
     tick: Number(r?.tick ?? 0),
@@ -2059,6 +2146,9 @@ function parseChronicleRow(r: any): ChronicleEntry {
     actors,
     text: String(r?.text ?? ""),
     metrics,
+    tokens,
+    prevHash: String(r?.prev_hash ?? ""),
+    hash: String(r?.hash ?? ""),
   };
 }
 
