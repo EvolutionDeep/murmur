@@ -1720,6 +1720,12 @@ const CHRON_ICONS = {
 function renderChron() {
   const list = $("chron-list");
   if (!list) return;
+  // The corner button carries a live count — the chronicle should beg to be opened.
+  const cbadge = $("chron-badge");
+  if (cbadge) {
+    cbadge.hidden = chronRows.length === 0;
+    cbadge.textContent = chronRows.length > 99 ? "99+" : String(chronRows.length);
+  }
   // Header (era badge + name + regime).
   const badge = $("chron-era-badge"); const name = $("chron-era-name"); const reg = $("chron-era-regime");
   const sub = $("chron-sub"); const foot = $("chron-foot");

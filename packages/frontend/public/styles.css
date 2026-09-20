@@ -683,13 +683,28 @@ body.history-open .panel-pop, body.chron-open .panel-pop { opacity: 0.1; pointer
 .drawer.panel-chron .drawer-body { display: flex; flex-direction: column; overflow: hidden; }
 .chron-btn {
   position: fixed; z-index: 6; right: var(--pad); bottom: var(--pad);
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 8px 12px; cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, opacity 0.25s ease;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink); background: var(--accent);
+  border: 1px solid rgba(var(--ink-rgb), 0.35); border-radius: 3px;
+  padding: 11px 16px; cursor: pointer;
+  box-shadow: 0 6px 22px rgba(var(--accent-rgb), 0.38);
+  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.25s ease;
+  animation: chron-pulse 2.6s ease-out infinite;   /* a breathing halo: the chronicle asks to be opened */
 }
-.chron-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.chron-btn:hover { transform: translateY(-2px) scale(1.04); filter: brightness(1.07); }
+.chron-btn:active { transform: translateY(0) scale(0.99); }
+.chron-badge {
+  min-width: 20px; padding: 2px 6px; border-radius: 10px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-align: center;
+  color: var(--paper); background: rgba(var(--ink-rgb), 0.78);
+}
+@keyframes chron-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
+  70%  { box-shadow: 0 0 0 12px rgba(var(--accent-rgb), 0), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
+}
+@media (prefers-reduced-motion: reduce) { .chron-btn { animation: none; } }
 /* the trigger bows out while the drawer is on stage, or when the inspector claims the bottom edge */
 body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-events: none; }
 .panel-chron .chron-era { margin: 0 0 8px; padding: 7px 9px; gap: 6px; flex: none; }
