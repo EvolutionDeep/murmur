@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=34" />
+  <link rel="stylesheet" href="./styles.css?v=35" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -113,13 +113,18 @@
     <button class="brain-btn lineage-btn" id="lineage-btn" type="button" title="The connectome breeding market: every brain's genome + its on-chain ancestry — explore the family tree and verify any individual trustlessly in your browser">breeding market →</button>
   </section>
 
-  <!-- ============ the chronicle (bottom-right, under population) — the deterministic historian's
-         narrative timeline + the ledger of relationships; a permanent panel, pure read-out ============ -->
-  <section class="panel panel-chron" id="panel-chron">
-    <div class="chron-head">
-      <span class="panel-title">chronicle</span>
-      <span class="chron-sub" id="chron-sub">–</span>
+  <!-- ============ chronicle trigger (bottom-right) — the historian is no longer a permanent panel:
+         one button opens it as a full-height drawer, pure read-out as ever ============ -->
+  <button class="chron-btn" id="chron-btn" type="button" title="The deterministic historian's chronicle — eras, the narrative timeline, the ledger of grudges, houses &amp; monuments. Every line re-derivable in your browser; no LLM ever wrote one">chronicle →</button>
+
+  <!-- ============ the chronicle drawer (slides in from the right edge) ============ -->
+  <aside class="drawer panel-chron" id="panel-chron" hidden aria-label="the chronicle">
+    <div class="drawer-head">
+      <span class="drawer-title">chronicle</span>
+      <span class="drawer-sub" id="chron-sub">–</span>
+      <button class="drawer-close" id="chron-close" aria-label="close">×</button>
     </div>
+    <div class="drawer-body">
     <div class="chron-era" id="chron-era">
       <span class="chron-era-badge" id="chron-era-badge">era i</span>
       <span class="chron-era-name" id="chron-era-name">the awakening</span>
@@ -143,7 +148,8 @@
       <div class="dyn-body" id="dyn-graves"></div>
     </div>
     <div class="chron-foot" id="chron-foot">one line per history-making moment · written by a deterministic historian · pure read-out</div>
-  </section>
+    </div>
+  </aside>
 
   <!-- ============ fly inspector (slides in when a fly is touched) ============ -->
   <aside class="inspector" id="inspector" hidden>
@@ -320,6 +326,6 @@
 
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=34" type="module"></script>
+  <script src="./app.js?v=35" type="module"></script>
 </body>
 </html>

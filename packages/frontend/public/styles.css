@@ -674,23 +674,24 @@ body.lineage-open .panel-pop { opacity: 0.1; pointer-events: none; }
   pointer-events: none;
 }
 .drawer.open { transform: translateX(0); pointer-events: auto; }
-body.history-open .panel-pop { opacity: 0.1; pointer-events: none; }
-/* the chronicle panel recedes behind any full-height drawer or the inspector */
-body.wallets-open .panel-chron, body.ins-open .panel-chron, body.brain-open .panel-chron,
-body.lineage-open .panel-chron, body.history-open .panel-chron, body.proofs-open .panel-chron,
-body.pulse-open .panel-chron, body.predict-open .panel-chron, body.arena-open .panel-chron { opacity: 0.1; pointer-events: none; }
+body.history-open .panel-pop, body.chron-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
-/* ============ the chronicle panel (bottom-right, under population) ============
-   The permanent home of the historian: era badge, "prove no LLM" verdict, the narrative timeline
-   and the ledger of relationships (bonds / reputation / grudges). Inheritor of the about slot. */
-.panel-chron {
-  right: var(--pad); bottom: var(--pad); width: clamp(232px, 26vw, 300px);
-  max-height: min(58vh, 560px);
-  display: flex; flex-direction: column;
+/* ============ the chronicle drawer (bottom-right button → full-height sheet) ============
+   The historian's home: era badge, "prove no LLM" verdict, the narrative timeline, the ledger
+   of relationships (bonds / reputation / grudges) and the houses & monuments blocks.
+   No longer a permanent panel — one button in the corner opens the whole column. */
+.drawer.panel-chron .drawer-body { display: flex; flex-direction: column; overflow: hidden; }
+.chron-btn {
+  position: fixed; z-index: 6; right: var(--pad); bottom: var(--pad);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
+  padding: 8px 12px; cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.25s ease;
 }
-.chron-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.chron-head .panel-title { margin-bottom: 0; }
-.chron-sub { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); text-align: right; }
+.chron-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+/* the trigger bows out while the drawer is on stage, or when the inspector claims the bottom edge */
+body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-events: none; }
 .panel-chron .chron-era { margin: 0 0 8px; padding: 7px 9px; gap: 6px; flex: none; }
 .panel-chron .chron-era-name { font-size: 14px; }
 .panel-chron .chron-verify-bar { margin: 0 0 8px; flex: none; }

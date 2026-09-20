@@ -296,6 +296,7 @@ let econAgents = [];                                  // full roster from /econo
 let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]} — who owes whom a grudge
 let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dead} — names, treasuries, monuments
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
+let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
 let synthVolume = 0, synthDeals = 0;
@@ -1471,6 +1472,7 @@ function openWallets() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1632,6 +1634,7 @@ function openHistory() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1652,9 +1655,35 @@ function closeHistory() {
 
 function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); }
 
-// ================= the chronicle panel (bottom-right, under population) =================
-// Poll /annals — the deterministic historian's timeline. The panel is permanent, so every poll re-renders
-// it in place: era badge, entry list, and the browser-side verdict if a proof has been run.
+// ---- chronicle drawer lifecycle (button in the bottom-right corner; mutually exclusive like the others) ----
+function openChron() {
+  chronOpen = true;
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (brainOpen) closeBrain();
+  if (lineageOpen) closeLineage();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (arenaOpen) closeArena();
+  const d = $("panel-chron"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("chron-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+}
+function closeChron() {
+  chronOpen = false;
+  document.body.classList.remove("chron-open");
+  const d = $("panel-chron"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!chronOpen) d.hidden = true; }, 420);
+}
+function toggleChron() { if (chronOpen) closeChron(); else openChron(); }
+
+// ================= the chronicle drawer (opened from the bottom-right button) =================
+// Poll /annals — the deterministic historian's timeline. The poll runs whether or not the drawer is open,
+// so the sheet is never stale when the button pulls it in: era badge, entry list, and the browser-side
+// verdict if a proof has been run.
 async function pollChron() {
   try {
     const r = await getJSON("/annals?order=desc&limit=200", 6000);
@@ -1967,6 +1996,7 @@ function openProofs() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("proofs"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("proofs-open");
@@ -2196,6 +2226,7 @@ function openBrain() {
   if (predictOpen) closePredict();
   if (arenaOpen) closeArena();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("brain"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("brain-open");
@@ -2369,6 +2400,7 @@ function openLineage() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (arenaOpen) closeArena();
+  if (chronOpen) closeChron();
   const d = $("lineage"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("lineage-open");
@@ -2613,6 +2645,7 @@ function openPulse() {
   if (proofsOpen) closeProofs();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("pulse"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("pulse-open");
@@ -2856,6 +2889,7 @@ function openPredict() {
   if (pulseOpen) closePulse();
   if (arenaOpen) closeArena();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("predict"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("predict-open");
@@ -3681,6 +3715,8 @@ function bindUI() {
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
+  const crb = $("chron-btn"); if (crb) crb.addEventListener("click", toggleChron);
+  const crc = $("chron-close"); if (crc) crc.addEventListener("click", closeChron);
   const cp = $("chron-prove"); if (cp) cp.addEventListener("click", proveChron);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
@@ -3740,10 +3776,10 @@ function bindUI() {
       eb.textContent = nowHidden ? "\u2013" : "+";
     }
   });
-  // Escape closes the topmost overlay first: proofs drawer, then history, then wallets, then the inspector.
+  // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (chronOpen) closeChron(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -3804,6 +3840,7 @@ function openArena() {
   if (pulseOpen) closePulse();
   if (predictOpen) closePredict();
   if (lineageOpen) closeLineage();
+  if (chronOpen) closeChron();
   const d = $("arena"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("arena-open");
