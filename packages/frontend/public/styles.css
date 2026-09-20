@@ -195,45 +195,6 @@ body { transition: background 1.6s linear; }
 .dist-legend .sw { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .dist-legend b { margin-left: auto; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* --- about panel (bottom-right): the project note in four languages --- */
-.panel-about { right: var(--pad); bottom: var(--pad); width: clamp(250px, 28vw, 344px); }
-.about-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-.about-head .panel-title { margin-bottom: 0; }
-.lang-switch { display: flex; gap: 3px; }
-.lang {
-  font-family: var(--mono), var(--cjk);
-  font-size: 9px; letter-spacing: 0.04em; line-height: 1;
-  color: var(--muted); background: transparent;
-  border: 1px solid var(--hair); border-radius: 2px;
-  padding: 3px 5px; cursor: pointer;
-  transition: background 0.25s, border-color 0.25s, color 0.25s;
-}
-.lang:hover { border-color: rgba(var(--accent-rgb), 0.55); color: var(--ink); }
-.lang.active { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.5); color: var(--ink); }
-.about-title {
-  font-family: var(--display); font-weight: 400; font-style: italic;
-  font-size: clamp(19px, 2.5vw, 25px); letter-spacing: 0.01em;
-  color: var(--ink); margin-bottom: 6px;
-}
-.about-body {
-  font-family: var(--mono), var(--cjk);
-  font-size: 10.5px; line-height: 1.72; color: var(--ink); opacity: 0.82;
-  margin-bottom: 10px;
-}
-.about-points {
-  list-style: none; display: flex; flex-direction: column; gap: 5px;
-  border-top: 1px solid var(--hair); padding-top: 10px;
-}
-.about-points li {
-  font-family: var(--mono), var(--cjk);
-  font-size: 9.5px; line-height: 1.55; color: var(--muted);
-  padding-left: 12px; position: relative;
-}
-.about-points li::before {
-  content: ""; position: absolute; left: 2px; top: 6px;
-  width: 3px; height: 3px; border-radius: 50%; background: var(--accent); opacity: 0.8;
-}
-
 /* ============ fly inspector ============ */
 .inspector {
   position: fixed; z-index: 12;
@@ -249,7 +210,7 @@ body { transition: background 1.6s linear; }
 }
 .inspector.open { opacity: 1; pointer-events: auto; transform: translateY(-50%) translateX(0); }
 /* when a fly is selected, recede the other floating panels so the inspector is the focus */
-body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ { opacity: 0.1; pointer-events: none; }
+body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-events: none; }
 .ins-close {
   position: absolute; top: 8px; right: 10px;
   background: none; border: none; cursor: pointer;
@@ -472,7 +433,7 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
   pointer-events: none;
 }
 .wallets.open { transform: translateX(0); pointer-events: auto; }
-body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wallets-head {
   display: flex; align-items: baseline; gap: 8px;
   padding: calc(var(--pad) * 0.85) var(--pad); border-bottom: 1px solid var(--hair);
@@ -614,8 +575,8 @@ body.wallets-open .panel-pop, body.wallets-open .panel-about { opacity: 0.1; poi
   padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
 }
 .brain-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
-body.brain-open .panel-pop, body.brain-open .panel-about { opacity: 0.1; pointer-events: none; }
-body.lineage-open .panel-pop, body.lineage-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.brain-open .panel-pop { opacity: 0.1; pointer-events: none; }
+body.lineage-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .br-table { margin-top: 4px; }
 .br-row {
   display: grid; grid-template-columns: 20px 58px 1fr 74px; gap: 6px; align-items: baseline;
@@ -721,8 +682,8 @@ body.lineage-open .panel-pop, body.lineage-open .panel-about { opacity: 0.1; poi
   pointer-events: none;
 }
 .drawer.open { transform: translateX(0); pointer-events: auto; }
-body.history-open .panel-pop, body.history-open .panel-about { opacity: 0.1; pointer-events: none; }
-body.chron-open .panel-pop, body.chron-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.history-open .panel-pop { opacity: 0.1; pointer-events: none; }
+body.chron-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 /* --- the chronicle drawer (the deterministic historian's narrative timeline) --- */
 .chron-era {
@@ -830,7 +791,7 @@ body.chron-open .panel-pop, body.chron-open .panel-about { opacity: 0.1; pointer
 /* ============ neural provenance drawer ============
    Publishes the on-chain receipts that bind every real transfer to the connectome
    read-out that caused it. Reuses the generic .drawer chrome; these are its innards. */
-body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.proofs-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 .pf-auto {
   margin: 0 0 14px; padding: 12px 13px;
@@ -904,7 +865,7 @@ body.proofs-open .panel-pop, body.proofs-open .panel-about { opacity: 0.1; point
   padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
 }
 .pulse-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
-body.pulse-open .panel-pop, body.pulse-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.pulse-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 /* --- "prediction market" toggle (in the temperature panel, under arc pulse) --- */
 .predict-btn {
@@ -915,7 +876,7 @@ body.pulse-open .panel-pop, body.pulse-open .panel-about { opacity: 0.1; pointer
   padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
 }
 .predict-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
-body.predict-open .panel-pop, body.predict-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.predict-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 .pulse-loading, .pulse-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.8; text-align: center; padding: 18px 6px; }
 .pulse-card { margin-bottom: 12px; padding: 12px; border: 1px solid var(--hair); border-radius: 2px; background: rgba(var(--accent-rgb), 0.03); }
@@ -1078,7 +1039,7 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
   padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
 }
 .arena-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
-body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer-events: none; }
+body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 .ar-loading, .ar-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.85; text-align: center; padding: 18px 6px; }
 .ar-empty { text-align: left; opacity: 1; padding: 10px 2px; }
@@ -1219,14 +1180,13 @@ body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer
        min-height:601px so the stacked fallback below is unaffected. --- */
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 900px) {
   .econ-feed { display: none; }
-  .panel-econ, .panel-temp, .panel-pop, .panel-about {
+  .panel-econ, .panel-temp, .panel-pop {
     max-height: 42vh; overflow-y: auto; scrollbar-width: thin;
   }
 }
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 800px) {
   .temp-history { display: none; }
   .net-note { display: none; }
-  .about-points { display: none; }
 }
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 700px) {
   .panel-pop { display: none; }
@@ -1239,8 +1199,6 @@ body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer
   .x-link .x-handle { display: none; }
   .panel-pop { width: clamp(150px, 40vw, 200px); }
   .panel-temp { width: clamp(180px, 46vw, 240px); }
-  .panel-about { width: clamp(184px, 48vw, 250px); }
-  .about-body { font-size: 10px; }
   .panel-econ { width: clamp(150px, 40vw, 200px); }
   .econ-feed { display: none; }
   .wallets { width: min(86vw, 372px); }
@@ -1264,15 +1222,13 @@ body.arena-open .panel-pop, body.arena-open .panel-about { opacity: 0.1; pointer
   body { height: auto; min-height: 100%; overflow: visible; }
 
   /* the field / grain / vignette / topbar stay fixed — they're the backdrop */
-  .panel-econ, .panel-temp, .panel-pop, .panel-about {
+  .panel-econ, .panel-temp, .panel-pop {
     position: relative; left: auto; right: auto; top: auto; bottom: auto;
     width: auto; max-width: min(92vw, 460px);
     margin: 0 auto 12px;
   }
   /* first panel clears the pinned topbar and leaves a band of artwork above it */
   .panel-econ { margin-top: clamp(74px, 24vh, 220px); }
-  /* last panel isn't flush against the bottom edge */
-  .panel-about { margin-bottom: calc(var(--pad) + 24px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }

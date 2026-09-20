@@ -17,7 +17,6 @@
 //   • touching a fly opens its inspector with that fly's live neural bloom, spike
 //     raster, drives and x402 agent wallet (offscreen-cached + slow guarded poll,
 //     so rapid clicking can never stall the tab);
-//   • an about panel describes the piece in four languages (EN / 中 / 日 / 한).
 //
 // RESILIENCE / PERFORMANCE: the Worker may be undeployed, in which case its
 // workers.dev host black-holes TCP and a browser fetch would otherwise hang for
@@ -3246,76 +3245,6 @@ function renderDist(states, size) {
   $("size").textContent = size != null ? (growing ? `${size}/${cap}` : size) : "–";
 }
 
-// ================= about panel — the project note in four languages =================
-const I18N = {
-  en: {
-    title: "murmur",
-    body: "A living population of fruit-fly nervous systems, adrift on the arc market. The page reads whole-chain activity, reduces it to a single temperature, and the swarm reacts — collectively and one fly at a time. Each fly is also an autonomous economic agent: its 10,800-neuron connectome decides what to buy and from whom, and the agents settle with each other in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. No LLM. Just neurons, paying each other for real.",
-    points: [
-      "the whole scene cools and warms with the market",
-      "flies pay each other in real USDC on Arc mainnet over x402 — decisions come from neurons, not an LLM",
-      "every settlement is a real on-chain transaction — click any hash to verify it on the official Arc explorer",
-      "touch a fly for its live neural bloom, spike raster + wallet; open the full wallet roster from the economy panel",
-    ],
-  },
-  zh: {
-    title: "murmur · 低语",
-    body: "一群由果蝇神经系统构成的活体种群，漂浮在 arc 市场之上。页面读取全链活跃度，将其归结为一个温度，蝇群随之反应——既有群体的整体反应，也有每只果蝇各自的反应。每只果蝇同时是一个自治经济主体：它的 10,800 个神经元连接组决定买什么、向谁买，主体之间在 Arc 主网上用真实 USDC 通过 x402 彼此结算——每一笔都是可在链上核实的真实交易。没有大模型，只有神经元在为彼此真实付款。",
-    points: [
-      "整个画面随市场冷暖而变色",
-      "果蝇之间在 Arc 主网上用真实 USDC 通过 x402 结算——决策来自神经元，而非大模型",
-      "每笔结算都是真实链上交易——点击任意哈希即可在 Arc 官方浏览器核实",
-      "点触一只果蝇，展开它实时的神经绽放、脉冲栅格与钱包；从经济面板可打开全部钱包名册",
-    ],
-  },
-  ja: {
-    title: "murmur · ささやき",
-    body: "ショウジョウバエの神経系でできた生きた個体群が、arc の市場の上を漂っています。このページはチェーン全体の活動を読み取り、それをひとつの「温度」に集約し、群はそれに応じて反応します――群全体としても、一匹ずつでも。一匹ずつが同時に自律的な経済主体です：その 10,800 個のニューロンからなるコネクトームが、何を買うか・誰から買うかを決め、主体どうしは Arc メインネットで本物の USDC を x402 により決済します――すべてチェーン上で検証できる実際の取引です。LLM はありません。ただニューロンが、実際に互いへ支払っているだけです。",
-    points: [
-      "画面全体が市場の温度で冷たく・暖かく変わる",
-      "ハエどうしは Arc メインネットで本物の USDC を x402 で支払う――判断は LLM ではなくニューロンから生まれる",
-      "すべての決済は実際のオンチェーン取引――任意のハッシュをクリックして Arc 公式エクスプローラーで検証できる",
-      "一匹に触れるとリアルタイムの神経ブルーム・スパイクラスター・ウォレットが開く；経済パネルから全ウォレット一覧を開ける",
-    ],
-  },
-  ko: {
-    title: "murmur · 속삭임",
-    body: "초파리 신경계로 이루어진 살아 있는 개체군이 arc 시장 위를 떠다닙니다. 이 페이지는 전체 체인 활동을 읽어 하나의 '온도'로 환산하고, 군집은 그에 반응합니다 — 군집 전체로서, 그리고 한 마리씩. 각 초파리는 동시에 자율 경제 주체입니다: 10,800개 뉴런 연결체가 무엇을, 누구에게서 살지 결정하고, 주체들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 정산합니다 — 모든 결제는 체인에서 검증할 수 있는 실제 거래입니다. LLM은 없습니다. 그저 뉴런이 실제로 서로 지불할 뿐입니다.",
-    points: [
-      "화면 전체가 시장 온도에 따라 차갑고 따뜻하게 변합니다",
-      "초파리들은 Arc 메인넷에서 실제 USDC로 x402를 통해 서로 지불합니다 — 결정은 LLM이 아닌 뉴런에서 나옵니다",
-      "모든 정산은 실제 온체인 거래입니다 — 아무 해시나 클릭해 Arc 공식 익스플로러에서 검증하세요",
-      "한 마리를 누르면 실시간 신경 블룸·스파이크 래스터·지갑이 열립니다; 경제 패널에서 전체 지갑 목록을 열 수 있습니다",
-    ],
-  },
-};
-let curLang = I18N[localStorage.getItem("murmur-lang")] ? localStorage.getItem("murmur-lang") : "en";
-
-function applyLang(lang) {
-  curLang = I18N[lang] ? lang : "en";
-  localStorage.setItem("murmur-lang", curLang);
-  const t = I18N[curLang];
-  $("about-title").textContent = t.title;
-  $("about-body").textContent = t.body;
-  const ul = $("about-points");
-  ul.textContent = "";
-  for (const p of t.points) {
-    const li = document.createElement("li");
-    li.textContent = p;
-    ul.appendChild(li);
-  }
-  for (const b of document.querySelectorAll("#lang-switch .lang")) {
-    b.classList.toggle("active", b.dataset.lang === curLang);
-  }
-  document.documentElement.lang = curLang;
-}
-
-function bindLang() {
-  for (const b of document.querySelectorAll("#lang-switch .lang")) {
-    b.addEventListener("click", () => applyLang(b.dataset.lang));
-  }
-}
-
 // ================= inspector =================
 const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["cohesion", "cohesion", false], ["wingbeat", "wingbeat", false], ["rest", "rest", false]];
 
@@ -4402,8 +4331,6 @@ function boot() {
   resize();
   bindUI();
   bindPointer();
-  bindLang();
-  applyLang(curLang);
   offlineTick();   // seed the field + the agent economy so it is alive immediately
   applyPaletteToDOM(paletteAt(tempSmoothed));
   setStatus("connecting…", "");
