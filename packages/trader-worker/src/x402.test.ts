@@ -142,10 +142,12 @@ test("leaderboard ranks agents by realized USDC flow (earned − paid), descendi
   const readings = Array.from({ length: 24 }, (_, i) => ({
     id: i, state: "AGITATE" as const, arousal: 0.9, turnBias: i % 2 ? 0.4 : -0.4, cohesion: 0.5,
     wingbeat: 0.8, rest: 0.05, temperament: ((i * 7919) % 1000) / 1000, fingerprint: `fp${i}`,
+    fap: "FORAGE" as const, valence: 0, heading: 0, role: "signal-seeker", bouts: [],
   }));
   const coll = {
     temperature: 0.9, regime: "HOT" as const, vitality: 0.9, size: 24, arousal: 0.7, cohesion: 0.5,
     rest: 0.1, wingbeat: 0.6, states: { AGITATE: 0, EXPLORE: 0, AGGREGATE: 0, REST: 0 },
+    faps: {}, valence: 0,
   };
   for (let tick = 0; tick < 12; tick++) await econ.step(readings, coll, tick);
 

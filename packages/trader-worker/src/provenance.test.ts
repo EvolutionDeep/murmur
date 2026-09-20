@@ -107,7 +107,9 @@ function reading(id: number, state: FlyReading["state"], over: Partial<FlyReadin
     id, state,
     arousal: 0.9, turnBias: id % 2 ? 0.4 : -0.4, cohesion: 0.5,
     wingbeat: 0.8, rest: 0.05, temperament: (id * 7919) % 1000 / 1000,
-    fingerprint: `fp${id}`, ...over,
+    fingerprint: `fp${id}`,
+    fap: "FORAGE", valence: 0, heading: 0, role: "signal-seeker", bouts: [],
+    ...over,
   };
 }
 
@@ -116,6 +118,7 @@ function collective(temperature = 0.9): CollectiveState {
     temperature, regime: "HOT", vitality: temperature, size: 24,
     arousal: 0.7, cohesion: 0.5, rest: 0.1, wingbeat: 0.6,
     states: { AGITATE: 24, EXPLORE: 0, AGGREGATE: 0, REST: 0 },
+    faps: {}, valence: 0,
   };
 }
 

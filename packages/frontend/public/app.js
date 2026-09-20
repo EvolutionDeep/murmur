@@ -79,6 +79,41 @@ const hexRgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16),
 // state colours as RGB triples (STATE_COLOR holds CSS hex) — for the canvas dots in the shard-topology ring
 const STATE_RGB = { AGITATE: hexRgb(STATE_COLOR.AGITATE), EXPLORE: hexRgb(STATE_COLOR.EXPLORE), AGGREGATE: hexRgb(STATE_COLOR.AGGREGATE), REST: hexRgb(STATE_COLOR.REST) };
 
+// ---- Ethogram: named Fixed Action Patterns (FAPs) -----------------------------------------------
+// The richer behaviour vocabulary decoded server-side from the SAME neural read-out (fly-brain/ethogram.ts):
+// a competitive appetitive/aversive pathway + an inhibition hierarchy pick one named action per tick. Each
+// FAP gets an earth-tone colour (so the swarm's actions read at a glance), a one-line gloss and an implied
+// observable economic role. READ-OUT ONLY — it never feeds a settlement decision, it only animates the fly.
+const FAP_COLOR = {
+  FEED: "#7d9a4a",     // leaf green       — appetitive, proboscis extended
+  GROOM: "#9a7b52",    // soft brown       — front legs sweep head & body
+  FORAGE: "#c99a3f",   // amber            — walking search, the default roam
+  HALT: "#6b7d8a",     // slate            — arrested mid-stride, assessing
+  RETREAT: "#b04a3a",  // alert red-brown  — aversive, backing off
+  COURT: "#c2607e",    // rose             — one wing extended & vibrated (the love song)
+  FLIGHT: "#4f7fa8",   // sky blue         — airborne escape, wings blurred
+  HUDDLE: "#7d7290",   // muted violet     — crowding in with the swarm
+  REST: "#8b9a86",     // sage             — quiescent, wings folded tight
+};
+const FAP_GLOSS = {
+  FEED: "proboscis down, taking in a reward",
+  GROOM: "cleaning itself — front legs sweep the head",
+  FORAGE: "roaming and sampling the field",
+  HALT: "arrested mid-stride, assessing",
+  RETREAT: "backing away from an aversive pulse",
+  COURT: "one wing extended, singing a courtship song",
+  FLIGHT: "airborne escape — wings blurred",
+  HUDDLE: "crowding in with the swarm",
+  REST: "quiescent, wings folded tight",
+};
+const FAP_ROLE = {
+  FEED: "momentum-buyer", GROOM: "self-maintainer", FORAGE: "signal-seeker", HALT: "observer",
+  RETREAT: "risk-off", COURT: "attestation-broadcaster", FLIGHT: "liquidator", HUDDLE: "consensus-follower", REST: "dormant",
+};
+// a legible gait multiplier per FAP (flight bolts, rest barely stirs) layered over the raw drives
+const FAP_SPEED = { FLIGHT: 1.55, RETREAT: 1.4, FORAGE: 1.0, HUDDLE: 0.78, GROOM: 0.55, COURT: 0.6, FEED: 0.5, HALT: 0.3, REST: 0.18 };
+const fapColor = (fap) => FAP_COLOR[fap] || "#8b9a86";
+
 // Wealth → colour ramp: the poorest flies read cool slate, the richest glow warm gold, so body HUE and
 // body SIZE (both balance-driven) tell the same story at a glance — big + gold = a wealthy wallet.
 const WEALTH_RAMP = [
@@ -411,6 +446,10 @@ function spawnFly(id) {
     // … and the latest authoritative server reading (used by the inspector)
     tAro: 0.3, tCoh: 0.5, tTurn: 0, tWing: 0.3, tRest: 0.3,
     state: "EXPLORE", temperament: 0.5, fingerprint: "",
+    // ethogram read-out (never a settlement input): the named action pattern + its animation carriers
+    fap: "FORAGE", tFap: "FORAGE", role: "", valence: 0, tValence: 0,
+    tHeading: null, sHead: null, bouts: [], boutAge: 1,
+    legPhase: Math.random() * TAU, courtSide: Math.random() < 0.5 ? -1 : 1,
     born: performance.now(), dying: false, dieT: 0,
   };
 }
@@ -441,12 +480,21 @@ function updateSim(dt, now) {
     f.wing = lerp(f.wing, f.tWing, 0.05 * dt);
     f.rest = lerp(f.rest, f.tRest, 0.05 * dt);
     f.balN = lerp(f.balN ?? 0.5, f.tBalN ?? 0.5, 0.04 * dt);   // wealth → size eases smoothly, never jumps
+    f.valence = lerp(f.valence, f.tValence ?? 0, 0.05 * dt);   // approach/avoid mood glides in
+    // the ring-attractor compass (a persistent internal heading) eases toward the latest server value
+    if (f.tHeading != null) {
+      if (f.sHead == null) f.sHead = f.tHeading;
+      else { const dh = ((f.tHeading - f.sHead + Math.PI * 3) % TAU) - Math.PI; f.sHead += dh * 0.06 * dt; }
+    }
 
-    const speed = (0.22 + f.aro * 2.3) * (1 - 0.55 * f.rest);
+    const speed = (0.22 + f.aro * 2.3) * (1 - 0.55 * f.rest) * (FAP_SPEED[f.fap] ?? 1);
 
     // wander + turn bias → heading drift
     f.wander = (f.wander + (Math.random() - 0.5) * 0.5) * 0.92;
     f.heading += f.turn * 0.045 * dt + f.wander * 0.035 * dt + (Math.random() - 0.5) * 0.05 * (0.3 + f.aro) * dt;
+    // a real fly holds a course: the persistent compass gently steers it between tumbles (weak, so the
+    // flow field / collisions still win short-term, but each individual keeps a legible heading)
+    if (f.sHead != null) { const dh = ((f.sHead - f.heading + Math.PI * 3) % TAU) - Math.PI; f.heading += dh * 0.012 * dt; }
 
     let ax = Math.cos(f.heading) * speed;
     let ay = Math.sin(f.heading) * speed;
@@ -497,7 +545,12 @@ function updateSim(dt, now) {
     if (f.y > VH - my) f.vy -= (f.y - (VH - my)) * 0.017 * dt;
     f.x = clamp(f.x, 6, VW - 6); f.y = clamp(f.y, 6, VH - 6);
     if (Math.hypot(f.vx, f.vy) > 0.05) f.heading = Math.atan2(f.vy, f.vx);
-    f.phase += (0.06 + f.wing * 0.55) * dt;
+    // wingbeat: the FAP sets the tempo (a bolting fly blurs, a resting one barely trembles)
+    const flapRate = f.fap === "FLIGHT" ? 2.5 : f.fap === "RETREAT" ? 2.0 : f.fap === "COURT" ? 1.5
+      : (f.fap === "REST" || f.fap === "HALT") ? 0.22 : 1;
+    f.phase += (0.06 + f.wing * 0.55) * flapRate * dt;
+    // the walking cycle advances with the gait speed (parked FAPs keep the legs nearly still)
+    f.legPhase = (f.legPhase ?? 0) + (0.04 + speed * 0.55) * dt;
   }
 }
 
@@ -661,38 +714,48 @@ function drawFly(f, acc, alpha, now) {
   // fly. Balance is normalised 0..1 across the swarm (the real spread is tight, so min-max scaling makes
   // the ranking legible); arousal stays a secondary modulation so an agitated rich fly pulses larger.
   const body = mix([26, 26, 24], wealthColorAt(balN), 0.55 + f.temperament * 0.25);
-  const size = (2.4 + balN * 3.4) * (0.9 + f.aro * 0.45);
-  const haloR = size * 3.2 + f.wing * flap * size * 2.6;
+  const size = (3.4 + balN * 3.4) * (0.92 + f.aro * 0.42);   // a touch larger so the anatomy actually reads
+  const fap = f.fap || "FORAGE";
+  const valence = f.valence || 0;
+  const haloR = size * 3.0 + f.wing * flap * size * 2.4;
 
   // ink trail: a short stroke from the previous position (stronger when aroused)
   const tdx = f.x - f.px, tdy = f.y - f.py;
   if (quality >= 1 && tdx * tdx + tdy * tdy > 0.6) {
     ctx.strokeStyle = rgba(body, (0.05 + f.aro * 0.15) * alpha);
-    ctx.lineWidth = size * 0.62;
+    ctx.lineWidth = size * 0.6;
     ctx.beginPath(); ctx.moveTo(f.px, f.py); ctx.lineTo(f.x, f.y); ctx.stroke();
   }
 
-  // soft halo (cached sprite, tinted by alpha)
+  // soft halo (cached sprite) + a valence-tinted rim: warm when appetitive, cool/alert when aversive
   if (haloSprite) {
-    ctx.globalAlpha = (0.1 + f.aro * 0.16) * alpha;
+    ctx.globalAlpha = (0.09 + f.aro * 0.15) * alpha;
     ctx.drawImage(haloSprite, f.x - haloR, f.y - haloR, haloR * 2, haloR * 2);
     ctx.globalAlpha = 1;
+    if (quality >= 2 && Math.abs(valence) > 0.22) {
+      const rim = valence >= 0 ? [150, 170, 90] : [176, 74, 58];
+      ctx.strokeStyle = rgba(rim, (Math.abs(valence) - 0.22) * 0.55 * alpha);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(f.x, f.y, haloR * 0.9, 0, TAU); ctx.stroke();
+    }
   }
 
-  // wings (two faint arcs that open/close with the wingbeat)
+  // the articulated fly — or, at the lowest quality tier, the original cheap comma + wing arcs
   ctx.save();
   ctx.translate(f.x, f.y); ctx.rotate(f.heading);
-  const wspread = 0.5 + flap * 0.9;
-  ctx.strokeStyle = rgba(acc, (0.1 + f.wing * 0.22) * alpha);
-  ctx.lineWidth = 0.7;
-  for (const s of [-1, 1]) {
-    ctx.beginPath();
-    ctx.ellipse(-size * 0.3, s * size * 0.5, size * 1.5, size * 0.6, s * wspread, 0, TAU);
-    ctx.stroke();
+  if (quality >= 1) drawFlyAnatomy(f, size, flap, alpha, body, acc, fap, now);
+  else {
+    const wspread = 0.5 + flap * 0.9;
+    ctx.strokeStyle = rgba(acc, (0.1 + f.wing * 0.22) * alpha);
+    ctx.lineWidth = 0.7;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(-size * 0.3, s * size * 0.5, size * 1.5, size * 0.6, s * wspread, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.fillStyle = rgba(body, (0.5 + f.aro * 0.45) * alpha);
+    ctx.beginPath(); ctx.ellipse(0, 0, size * 1.5, size * 0.82, 0, 0, TAU); ctx.fill();
   }
-  // body: a small comma oriented along travel
-  ctx.fillStyle = rgba(body, (0.5 + f.aro * 0.45) * alpha);
-  ctx.beginPath(); ctx.ellipse(0, 0, size * 1.5, size * 0.82, 0, 0, TAU); ctx.fill();
   ctx.restore();
 
   // bred-offspring marker: a thin accent ring around any live fly hatched PAST the fixed genesis cohort
@@ -706,11 +769,132 @@ function drawFly(f, acc, alpha, now) {
     ctx.beginPath(); ctx.arc(f.x, f.y, size * 2.6 + 2, 0, TAU); ctx.stroke();
   }
 
-  // selection ring
+  // selection ring + a heading tick along the persistent internal compass (the ring-attractor direction)
   if (f.id === selectedId) {
+    const rr = size * 4 + 4 + flap * 1.6;
     ctx.strokeStyle = rgba(acc, 0.85 * alpha);
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(f.x, f.y, size * 4 + 4 + flap * 1.6, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(f.x, f.y, rr, 0, TAU); ctx.stroke();
+    if (f.sHead != null && quality >= 1) {
+      ctx.strokeStyle = rgba(acc, 0.5 * alpha);
+      ctx.beginPath();
+      ctx.moveTo(f.x + Math.cos(f.sHead) * rr, f.y + Math.sin(f.sHead) * rr);
+      ctx.lineTo(f.x + Math.cos(f.sHead) * (rr + 7), f.y + Math.sin(f.sHead) * (rr + 7));
+      ctx.stroke();
+    }
+  }
+}
+
+// A recognisable Drosophila drawn in local space (+x = the direction of travel): two veined wings, six
+// bent legs in an alternating tripod gait, a striped abdomen, a thorax, a head with two red compound
+// eyes + feathery antennae, and a proboscis that pumps while feeding. The named action pattern drives
+// the pose — COURT extends & vibrates ONE wing (the male love song), GROOM sweeps the front legs over the
+// head, FLIGHT/RETREAT blur the spread wings, REST/HALT fold everything tight. Detail is shed at quality<2.
+function drawFlyAnatomy(f, s, flap, alpha, body, acc, fap, now) {
+  const detail = quality >= 2;
+  const rest = f.rest ?? 0;
+  const lp = f.legPhase ?? 0;
+  const parked = fap === "REST" || fap === "HALT";
+  const walk = (1 - rest * 0.85) * (parked ? 0.12 : 1);
+  const abdomen = mix(body, [16, 16, 14], 0.2);
+  const chitin = mix(body, [8, 8, 7], 0.4);
+  const flying = fap === "FLIGHT" || fap === "RETREAT";
+  const court = fap === "COURT";
+  const side = f.courtSide || 1;
+
+  // ---- wings (drawn first so the body overlaps their base) ----
+  const wingLen = s * 2.1, wingW = s * 0.6, fold = parked ? 0.2 : 1;
+  for (const sg of [-1, 1]) {
+    let cx = -wingLen * 0.4, cy = sg * s * 0.3, ang = sg * (0.5 + flap * 0.42) * fold, len = wingLen;
+    if (court && sg === side) { cx = wingLen * 0.16; cy = sg * s * 0.5; ang = sg * (-0.95 + Math.sin(now * 0.055) * 0.16); len = wingLen * 1.18; }
+    else if (flying) { ang = sg * (0.82 + flap * 0.5); }
+    ctx.save();
+    ctx.rotate(ang);
+    ctx.fillStyle = rgba(mix([236, 239, 242], acc, 0.16), (flying ? 0.18 : 0.30) * alpha);
+    ctx.beginPath(); ctx.ellipse(cx, cy, len * 0.5, wingW, 0, 0, TAU); ctx.fill();
+    // a faint outline so the wing silhouette reads against the paper (the vein alone is too subtle)
+    ctx.strokeStyle = rgba(mix([120, 122, 120], acc, 0.25), (0.30 + f.wing * 0.2) * alpha);
+    ctx.lineWidth = Math.max(0.4, s * 0.05);
+    ctx.beginPath(); ctx.ellipse(cx, cy, len * 0.5, wingW, 0, 0, TAU); ctx.stroke();
+    if (detail) {
+      ctx.strokeStyle = rgba(mix([110, 112, 110], acc, 0.2), (0.2 + f.wing * 0.18) * alpha);
+      ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(cx + len * 0.42, cy); ctx.lineTo(cx - len * 0.46, cy + sg * wingW * 0.2); ctx.stroke();
+      if (flying) { ctx.strokeStyle = rgba([238, 240, 242], 0.09 * alpha); ctx.beginPath(); ctx.ellipse(cx, cy, len * 0.5, wingW * 1.7, 0, 0, TAU); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+
+  // ---- legs: six bent legs in an alternating tripod gait; GROOM lifts the front pair to the head ----
+  ctx.strokeStyle = rgba(mix(chitin, [0, 0, 0], 0.06), (0.5 + f.aro * 0.25) * alpha);
+  ctx.lineWidth = Math.max(0.5, s * 0.11);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const groom = fap === "GROOM";
+  for (const sg of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {                 // 0 = pro (front), 1 = meso (mid), 2 = meta (hind)
+      const hipX = s * (0.46 - i * 0.48), hipY = sg * s * 0.26;
+      let kneeX, kneeY, footX, footY;
+      if (groom && i === 0) {                      // the front leg sweeps up over the compound eye
+        const g = Math.sin(now * 0.013 + sg * 1.4) * 0.5 + 0.5;
+        footX = s * (1.05 + g * 0.4); footY = sg * s * (0.12 + g * 0.08);
+        kneeX = s * 0.72; kneeY = sg * s * (0.66 - g * 0.24);
+      } else {
+        const tri = (i === 1) ? Math.PI : 0;       // tripod: the mid leg swings opposite front + hind
+        const swing = Math.sin(lp + tri + (sg > 0 ? 0 : Math.PI * 0.5)) * s * 0.38 * walk;
+        footX = hipX + s * (0.6 - i * 0.5) + swing;
+        footY = sg * s * (0.92 + i * 0.12);
+        kneeX = (hipX + footX) * 0.5; kneeY = sg * s * (0.64 + i * 0.05);
+      }
+      ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.lineTo(footX, footY); ctx.stroke();
+    }
+  }
+
+  // ---- abdomen (rear): a tapered barrel with transverse stripes ----
+  const abX = -s * 1.0, abL = s * 1.12, abW = s * 0.5;
+  ctx.fillStyle = rgba(abdomen, (0.74 + f.aro * 0.2) * alpha);
+  ctx.beginPath(); ctx.ellipse(abX, 0, abL, abW, 0, 0, TAU); ctx.fill();
+  if (detail) {
+    ctx.strokeStyle = rgba(mix(abdomen, [0, 0, 0], 0.42), 0.38 * alpha);
+    ctx.lineWidth = Math.max(0.4, s * 0.085);
+    for (let k = 1; k <= 3; k++) {
+      const gx = abX + abL * (0.1 + k * 0.26);
+      ctx.beginPath(); ctx.ellipse(gx, 0, s * 0.045, abW * (0.9 - k * 0.11), 0, 0, TAU); ctx.stroke();
+    }
+  }
+  // ---- thorax (middle): the muscular box the wings & legs attach to ----
+  ctx.fillStyle = rgba(body, (0.82 + f.aro * 0.16) * alpha);
+  ctx.beginPath(); ctx.ellipse(s * 0.2, 0, s * 0.76, s * 0.58, 0, 0, TAU); ctx.fill();
+  if (detail) {
+    ctx.strokeStyle = rgba(mix(body, [0, 0, 0], 0.34), 0.28 * alpha);
+    ctx.lineWidth = Math.max(0.4, s * 0.07);
+    ctx.beginPath(); ctx.moveTo(s * 0.62, -s * 0.1); ctx.lineTo(-s * 0.28, -s * 0.12); ctx.stroke();
+  }
+  // ---- head + the two big red compound eyes ----
+  const headX = s * 1.0;
+  ctx.fillStyle = rgba(chitin, (0.86 + f.aro * 0.12) * alpha);
+  ctx.beginPath(); ctx.ellipse(headX, 0, s * 0.5, s * 0.45, 0, 0, TAU); ctx.fill();
+  for (const sg of [-1, 1]) {
+    ctx.fillStyle = rgba([152, 44, 32], 0.92 * alpha);
+    ctx.beginPath(); ctx.ellipse(headX + s * 0.04, sg * s * 0.25, s * 0.25, s * 0.3, sg * 0.35, 0, TAU); ctx.fill();
+    if (detail) { ctx.fillStyle = rgba([226, 132, 110], 0.5 * alpha); ctx.beginPath(); ctx.ellipse(headX + s * 0.12, sg * s * 0.2, s * 0.07, s * 0.09, 0, 0, TAU); ctx.fill(); }
+  }
+  // ---- antennae (a lazy sweep) ----
+  if (detail) {
+    ctx.strokeStyle = rgba(chitin, 0.7 * alpha);
+    ctx.lineWidth = Math.max(0.4, s * 0.07);
+    const asw = Math.sin(now * 0.004 + (f.id || 0)) * 0.16;
+    for (const sg of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(headX + s * 0.34, sg * s * 0.08);
+      ctx.lineTo(headX + s * 0.78, sg * s * (0.3 + asw)); ctx.stroke();
+    }
+  }
+  // ---- proboscis: the rostrum pumps forward-down while FEEDING ----
+  if (fap === "FEED") {
+    const pump = Math.sin(now * 0.02) * 0.5 + 0.5;
+    ctx.strokeStyle = rgba(mix(chitin, [128, 84, 40], 0.5), 0.9 * alpha);
+    ctx.lineWidth = Math.max(0.6, s * 0.15);
+    ctx.beginPath(); ctx.moveTo(headX + s * 0.3, 0);
+    ctx.lineTo(headX + s * (0.82 + pump * 0.32), s * 0.1); ctx.stroke();
   }
 }
 
@@ -2614,6 +2798,12 @@ function applySnapshot(snap) {
     f.dying = false; f.dieT = 0;
     f.tAro = r.arousal; f.tCoh = r.cohesion; f.tTurn = r.turnBias; f.tWing = r.wingbeat; f.tRest = r.rest;
     f.state = r.state; f.temperament = r.temperament; f.fingerprint = r.fingerprint;
+    // ethogram read-out (never a settlement input): the named action pattern + its carriers drive the pose
+    if (r.fap) { if (f.tFap !== r.fap) f.boutAge = 1; else f.boutAge = (f.boutAge || 1) + 1; f.fap = f.tFap = r.fap; }
+    if (typeof r.valence === "number") f.tValence = r.valence;
+    if (typeof r.heading === "number") f.tHeading = r.heading;
+    if (r.role) f.role = r.role;
+    if (Array.isArray(r.bouts)) f.bouts = r.bouts;
   }
   // retire flies that vanished from the snapshot
   for (const [id, f] of sim) if (!seen.has(id) && !f.dying) f.dying = true;
@@ -2791,6 +2981,7 @@ function fillInspectorFromSim(id) {
   stEl.textContent = (f.state || "—").toLowerCase();
   stEl.style.background = STATE_COLOR[f.state] || "var(--accent)";
   renderDrives(f);
+  renderEthogram(f);
   $("ins-temp").textContent = (f.temperament ?? 0).toFixed(2);
   $("ins-fp").textContent = f.fingerprint || "–";
 }
@@ -2822,6 +3013,51 @@ function renderDrives(f) {
   set("cohesion", f.tCoh, false);
   set("wingbeat", f.tWing, false);
   set("rest", f.tRest, false);
+}
+
+// Ethogram panel: the named action pattern (FAP) badge + gloss, the implied economic role, the
+// approach/avoid valence bar and the persistent ring-attractor compass. All read-out — none of it
+// is a settlement input; it only makes the fly's inner state legible.
+function renderEthogram(f) {
+  const fap = f.fap || "FORAGE";
+  const badge = $("ins-fap");
+  if (badge) { badge.textContent = fap.toLowerCase(); badge.style.background = fapColor(fap); }
+  const gl = $("ins-fap-gloss"); if (gl) gl.textContent = FAP_GLOSS[fap] || "";
+  const role = $("ins-role"); if (role) role.textContent = f.role || FAP_ROLE[fap] || "—";
+  // valence: a centred −1..1 bar (appetitive fills right, aversive fills left)
+  const v = clamp(f.valence || 0, -1, 1);
+  const vFill = $("ins-val-fill");
+  if (vFill) {
+    const pct = Math.abs(v) * 50;
+    vFill.style.width = pct + "%";
+    vFill.style.left = (v >= 0 ? 50 : 50 - pct) + "%";
+    vFill.style.background = v >= 0 ? "#7d9a4a" : "#b04a3a";
+  }
+  const vVal = $("ins-val"); if (vVal) vVal.textContent = (v >= 0 ? "+" : "") + v.toFixed(2);
+  // heading: the persistent internal compass in degrees
+  const h = f.tHeading != null ? f.tHeading : (f.sHead != null ? f.sHead : 0);
+  const deg = ((h * 180 / Math.PI) % 360 + 360) % 360;
+  const hEl = $("ins-heading"); if (hEl) hEl.textContent = deg.toFixed(0) + "°";
+  const nd = $("ins-heading-needle"); if (nd) nd.style.transform = "rotate(" + deg + "deg)";
+  renderBouts(f);
+}
+
+// The behaviour ribbon: the recent bout sequence (oldest → newest) the server's inhibition hierarchy
+// committed, plus the action still running. Each segment is a FAP, its width ∝ how many ticks it held —
+// so you watch one fly's behaviour unfold as a timeline of named actions.
+function renderBouts(f) {
+  const host = $("ins-ribbon");
+  if (!host) return;
+  const bouts = Array.isArray(f.bouts) ? f.bouts : [];
+  const segs = bouts.map((b) => ({ fap: b.fap || "FORAGE", ticks: Math.max(1, b.ticks | 0), live: false }));
+  segs.push({ fap: f.fap || "FORAGE", ticks: Math.max(1, f.boutAge || 1), live: true });
+  const tail = segs.slice(-9);                       // keep the ribbon to the most recent handful
+  const total = tail.reduce((a, b) => a + b.ticks, 0) || 1;
+  host.innerHTML = tail.map((sg) => {
+    const wide = sg.ticks / total > 0.13;
+    return `<span class="rb-seg${sg.live ? " live" : ""}" style="flex:${sg.ticks};background:${fapColor(sg.fap)}" ` +
+      `title="${sg.fap.toLowerCase()} · ${sg.ticks} tick${sg.ticks === 1 ? "" : "s"}${sg.live ? " · now" : ""}">${wide ? sg.fap.toLowerCase() : ""}</span>`;
+  }).join("");
 }
 
 // ================= live neural feed (bloom + spike raster), performance-safe =================
@@ -3668,8 +3904,11 @@ function synthSnapshot() {
   const regime = T >= 0.66 ? "HOT" : T <= 0.33 ? "COLD" : "CALM";
   const N = 24, flies = [];
   const states = { AGITATE: 0, EXPLORE: 0, AGGREGATE: 0, REST: 0 };
-  let sa = 0, sc = 0, sr = 0, sw = 0;
+  const faps = {};
+  let sa = 0, sc = 0, sr = 0, sw = 0, sv = 0;
   const pr = (seed) => ((seed >>> 0) % 1000) / 1000;
+  // offline ethogram: pick a plausible FAP per behavioural state so the anatomy animates without a Worker
+  const FAP_POOL = { AGITATE: ["FLIGHT", "RETREAT", "FORAGE"], EXPLORE: ["FORAGE", "COURT", "GROOM"], AGGREGATE: ["HUDDLE", "FEED", "COURT"], REST: ["REST", "GROOM", "HALT"] };
   for (let i = 0; i < N; i++) {
     const temper = pr(i * 7919) * 0.6 + 0.2;
     const rel = pr(i * 2654435761 + 7);
@@ -3683,11 +3922,18 @@ function synthSnapshot() {
     else if (T <= 0.33) st = rel < 0.25 ? "REST" : "AGGREGATE";
     else st = rel >= 0.75 ? "AGITATE" : coh >= 0.75 ? "AGGREGATE" : "EXPLORE";
     states[st]++; sa += aro; sc += coh; sr += rest; sw += wing;
-    flies.push({ id: i, state: st, arousal: aro, turnBias: turn, cohesion: coh, wingbeat: wing, rest, temperament: temper, fingerprint: (0x1000000 + Math.floor(rel * 0xffffff)).toString(16).slice(1, 9) });
+    const pool = FAP_POOL[st] || ["FORAGE"];
+    const fap = pool[Math.floor(pr(i * 1597 + 13) * pool.length) % pool.length];
+    const valence = clamp((T - 0.5) * -0.7 + (pr(i * 40503 + 9) - 0.5) * 1.1, -1, 1);
+    const heading = pr(i * 2654435761 + 17) * Math.PI * 2;
+    const role = FAP_ROLE[fap] || "signal-seeker";
+    const bouts = [{ fap, ticks: 2 + Math.floor(pr(i * 31 + 1) * 6) }];
+    faps[fap] = (faps[fap] ?? 0) + 1; sv += valence;
+    flies.push({ id: i, state: st, arousal: aro, turnBias: turn, cohesion: coh, wingbeat: wing, rest, temperament: temper, fingerprint: (0x1000000 + Math.floor(rel * 0xffffff)).toString(16).slice(1, 9), fap, valence, heading, role, bouts });
   }
   return {
     tickIndex: synthTick++,
-    collective: { temperature: T, regime, vitality: T, size: N, arousal: sa / N, cohesion: sc / N, rest: sr / N, wingbeat: sw / N, states },
+    collective: { temperature: T, regime, vitality: T, size: N, arousal: sa / N, cohesion: sc / N, rest: sr / N, wingbeat: sw / N, states, faps, valence: sv / N },
     flies,
   };
 }

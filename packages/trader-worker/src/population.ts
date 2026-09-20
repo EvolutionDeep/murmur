@@ -34,6 +34,8 @@ import {
   type RawDrives,
   type FlyBehavior,
   type BehaviorState,
+  type Fap,
+  type Bout,
   type ConnectomeOptions,
   type Genome,
   genomeToConnectomeOptions,
@@ -75,6 +77,12 @@ export interface FlyReading {
   rest: number;                   // 0..1 → stillness
   temperament: number;            // 0..1 → the fly's stable personality (for colour identity)
   fingerprint: string;            // neural fingerprint hash (per-fly identity)
+  /** --- Ethogram enrichment (read-out only; never a settlement input) --- */
+  fap: Fap;                       // named fixed action pattern (richer than `state`)
+  valence: number;                // −1..1 appetitive − aversive (approach/avoid conflict)
+  heading: number;                // 0..2π persistent ring-attractor head direction
+  role: string;                   // observable economic role implied by `fap`
+  bouts: Bout[];                  // recent behaviour sequence (oldest → newest), capped
 }
 
 /** The swarm's shared mood this tick (collective response to the market regime). */
@@ -88,6 +96,10 @@ export interface CollectiveState {
   rest: number;                   // mean per-fly rest
   wingbeat: number;               // mean per-fly wingbeat
   states: Record<BehaviorState, number>;   // how many flies are in each behavioural state
+  /** How many flies express each fixed action pattern this tick (ethogram distribution; loose keys). */
+  faps: Record<string, number>;
+  /** Mean appetitive−aversive valence across the swarm, −1..1 (the collective approach/avoid mood). */
+  valence: number;
 }
 
 export interface PopulationSnapshot {
@@ -361,7 +373,8 @@ export function reduceReadOuts(
   const readings: FlyReading[] = [];
   const behaviors: FlyBehavior[] = [];
   const states = EMPTY_STATES();
-  let sumAro = 0, sumCoh = 0, sumRest = 0, sumWing = 0;
+  const faps: Record<string, number> = {};
+  let sumAro = 0, sumCoh = 0, sumRest = 0, sumWing = 0, sumVal = 0;
   for (const entry of roster) {
     const r = byId.get(entry.id);
     const b = entry.decoder.decode(
@@ -373,10 +386,12 @@ export function reduceReadOuts(
     );
     behaviors.push(b);
     states[b.state]++;
+    faps[b.fap] = (faps[b.fap] ?? 0) + 1;
     sumAro += b.arousal;
     sumCoh += b.cohesion;
     sumRest += b.rest;
     sumWing += b.wingbeat;
+    sumVal += b.valence;
     readings.push({
       id: entry.id,
       state: b.state,
@@ -387,6 +402,11 @@ export function reduceReadOuts(
       rest: b.rest,
       temperament: entry.temperament,
       fingerprint: b.neuralFingerprint,
+      fap: b.fap,
+      valence: b.valence,
+      heading: b.heading,
+      role: b.role,
+      bouts: b.bouts,
     });
   }
 
@@ -404,6 +424,8 @@ export function reduceReadOuts(
     rest: sumRest / n,
     wingbeat: sumWing / n,
     states,
+    faps,
+    valence: sumVal / n,
   };
 
   return { readings, collective, behaviors, vitality };

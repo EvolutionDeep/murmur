@@ -20,6 +20,17 @@ export {
   type PopulationBands,
 } from "./motor-decoder.js";
 export {
+  Ethogram,
+  ETHOGRAM_CONFIG,
+  ETHOGRAM_MOTIFS,
+  FAP_DOMINANCE,
+  FAP_LIST,
+  FAP_ROLE,
+  computeValence,
+  selectFap,
+  type EthogramDrives,
+} from "./ethogram.js";
+export {
   encodeMarketPulse,
   encodeStimulus,
   type MarketPulse,

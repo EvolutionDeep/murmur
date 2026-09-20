@@ -1,5 +1,6 @@
 import type { MotorChannel, MotorOutput, FlyBehavior, BehaviorState, SensoryInput } from "./types.js";
 import { MOTOR_CHANNEL_LIST } from "./connectome.js";
+import { Ethogram } from "./ethogram.js";
 
 /**
  * Behaviour decoder: translates the fly's motor-neuron firing rates into a behavioural state plus
@@ -138,6 +139,13 @@ export class MotorDecoder {
   private lastState: BehaviorState = "EXPLORE";
   private candidate: BehaviorState = "EXPLORE";
   private candidateCount = 0;
+  /**
+   * Per-fly ethogram engine (ring-attractor heading + FAP suppression hierarchy + bout timeline). One
+   * instance per decoder, advanced one step per decode() tick. Purely a read-out layer: it consumes the
+   * motor/sensory signals and the drives computed below, and NEVER writes back into the connectome, so
+   * the on-chain brain manifest and the economic provenance are unaffected (see ethogram.ts header).
+   */
+  private readonly etho = new Ethogram();
 
   constructor(cfg: Partial<DecoderConfig> = {}) {
     this.cfg = { ...DEFAULT_DECODER_CONFIG, ...cfg };
@@ -196,6 +204,17 @@ export class MotorDecoder {
       this.candidateCount >= this.cfg.hysteresisSteps ? this.candidate : this.lastState;
     this.lastState = state;
 
+    // Ethogram enrichment: derive the named FAP, approach/avoid valence, persistent ring-attractor
+    // heading, economic role and bout timeline from the SAME motor/sensory read-outs (pure read-out).
+    const etho = this.etho.step(motor, sensory, {
+      arousal,
+      turnBias,
+      cohesion,
+      wingbeat,
+      rest,
+      temperature: T,
+    });
+
     return {
       state,
       arousal,
@@ -206,6 +225,11 @@ export class MotorDecoder {
       motor,
       sensory,
       neuralFingerprint: neuralFingerprint(motor, simTimeMs),
+      fap: etho.fap,
+      valence: etho.valence,
+      heading: etho.heading,
+      role: etho.role,
+      bouts: etho.bouts,
     };
   }
 

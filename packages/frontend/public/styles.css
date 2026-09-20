@@ -333,6 +333,34 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
 .drive.turn .d-fill { left: 50%; }
 .drive .d-val { font-size: 10px; text-align: right; color: var(--ink); opacity: 0.8; font-variant-numeric: tabular-nums; }
 
+/* ---- ethogram: the named action pattern (FAP), its valence / compass and the behaviour ribbon ---- */
+.ins-etho { margin: 0 0 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.etho-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.etho-fap {
+  font-family: var(--display); font-weight: 600; font-size: 15px; letter-spacing: 0.02em; text-transform: lowercase;
+  padding: 2px 10px; border-radius: 2px; color: var(--paper); background: var(--accent); transition: background 0.5s;
+}
+.etho-role { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: lowercase; color: var(--muted); text-align: right; }
+.etho-gloss { font-size: 10px; line-height: 1.5; color: var(--ink); opacity: 0.6; margin: 6px 0 10px; font-style: italic; }
+.etho-row { display: grid; grid-template-columns: 62px 1fr 34px; align-items: center; gap: 8px; margin-bottom: 8px; }
+.etho-lab { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.etho-bar { height: 4px; background: rgba(var(--ink-rgb), 0.1); border-radius: 2px; position: relative; overflow: hidden; }
+.etho-bar .etho-mid { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: rgba(var(--ink-rgb), 0.28); }
+.etho-bar .etho-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0%; background: var(--accent); border-radius: 2px; transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1), left 0.6s cubic-bezier(0.22, 1, 0.36, 1), background 0.6s; }
+.etho-val { font-size: 10px; text-align: right; color: var(--ink); opacity: 0.8; font-variant-numeric: tabular-nums; }
+.etho-compass { position: relative; width: 20px; height: 20px; border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 50%; justify-self: center; }
+.etho-needle { position: absolute; left: 50%; top: 50%; width: 8px; height: 1.5px; margin-top: -0.75px; background: var(--accent); transform-origin: 0% 50%; border-radius: 1px; transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+.etho-ribbon-lab { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 4px 0 5px; }
+.etho-ribbon-lab em { opacity: 0.6; font-style: normal; letter-spacing: 0.02em; text-transform: none; }
+.ins-ribbon { display: flex; gap: 2px; height: 22px; align-items: stretch; }
+.rb-seg {
+  min-width: 3px; border-radius: 2px; opacity: 0.82;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.02em; color: var(--paper);
+  white-space: nowrap; transition: flex 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.rb-seg.live { opacity: 1; box-shadow: 0 0 0 1px rgba(var(--paper-rgb, 242, 238, 230), 0.75) inset; }
+
 .ins-meta { padding-top: 12px; border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 6px; }
 .ins-meta > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .ins-meta dt { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }

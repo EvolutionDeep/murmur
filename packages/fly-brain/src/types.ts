@@ -95,6 +95,53 @@ export interface BrainSnapshot {
 export type BehaviorState = "AGITATE" | "EXPLORE" | "AGGREGATE" | "REST";
 
 /**
+ * Fixed Action Pattern — a named, biologically-grounded motor program the fly is currently expressing.
+ * This is a RICHER read-out than the 4 coarse BehaviorStates: where a state describes the general
+ * regime (agitate/explore/aggregate/rest), a FAP names the specific ethological act, emulating circuits
+ * published for the real fly brain (see ethogram.ts ETHOGRAM_MOTIFS). Derived purely as a decoder
+ * read-out — it NEVER feeds back into the connectome, so the on-chain brain manifest is unaffected.
+ *   FEED     proboscis extension / ingestion (taste feeding-initiation circuit)
+ *   GROOM    antennal / body grooming (Johnston's-organ → aBN → aDN grooming circuit)
+ *   FORAGE   walking & searching (locomotor foraging program)
+ *   HALT     context-specific halting / brief freeze (Sapkal halting circuit)
+ *   RETREAT  aversive backing-off / avoidance (bitter/threat → pre-motor inhibition)
+ *   COURT    courtship song — wing extension + vibration (courtship motor program)
+ *   FLIGHT   escape takeoff / wing burst (giant-fibre-like escape)
+ *   HUDDLE   aggregation / clustering (cold, cohesive)
+ *   REST     quiescence / sleep-like stillness (abdominal rest tone)
+ */
+export type Fap =
+  | "FEED" | "GROOM" | "FORAGE" | "HALT" | "RETREAT" | "COURT" | "FLIGHT" | "HUDDLE" | "REST";
+
+/** One completed segment of the behaviour timeline: a FAP held for `ticks` consecutive decode steps. */
+export interface Bout {
+  fap: Fap;
+  /** How many ticks this FAP was expressed before the next switch (>= 1). */
+  ticks: number;
+}
+
+/** An observable economic role label derived from the current FAP (surfaced to the UI; NOT a settlement input). */
+export type RoleName = string;
+
+/**
+ * The ethogram layer's per-tick enrichment of a decoded behaviour. Computed by the Ethogram engine
+ * (ethogram.ts) from the SAME motor + sensory read-outs the drives come from — no new neurons, no
+ * connectome change, so it cannot perturb the committed brain manifest or the economic provenance.
+ */
+export interface EthogramReading {
+  /** The fixed action pattern expressed this tick. */
+  fap: Fap;
+  /** Appetitive − aversive valence, −1 (strongly averse) .. +1 (strongly appetitive). */
+  valence: number;
+  /** Persistent head-direction from the ring attractor, radians in [0, 2π). */
+  heading: number;
+  /** Observable economic role implied by `fap`. */
+  role: RoleName;
+  /** Recent behaviour sequence (oldest → newest), capped — the fly's "ethogram ribbon". */
+  bouts: Bout[];
+}
+
+/**
  * One fly's decoded behavioural response for a tick (replaces the old trading decision — nothing
  * here buys or sells; it only describes how the fly MOVES and FEELS, which the frontend renders).
  */
@@ -116,6 +163,22 @@ export interface FlyBehavior {
   sensory: SensoryInput[];
   /** Neural fingerprint: hash (hex) of every motor neuron's recent firing rate */
   neuralFingerprint: string;
+  /**
+   * --- Ethogram enrichment (added by the decoder's Ethogram engine; purely a read-out) ---
+   * These fields do NOT change the connectome, the drives above, or the fingerprint, so the on-chain
+   * brain manifest and the economic provenance receipt are unaffected. Consumers that predate them can
+   * ignore them safely.
+   */
+  /** The named fixed action pattern expressed this tick (a richer label than `state`). */
+  fap: Fap;
+  /** Appetitive − aversive valence, −1..1 (the approach/avoid conflict driving `fap`). */
+  valence: number;
+  /** Persistent ring-attractor head-direction, radians [0, 2π) — gives each fly a real compass. */
+  heading: number;
+  /** Observable economic role implied by `fap` (UI only; never a settlement input). */
+  role: RoleName;
+  /** Recent behaviour sequence (oldest → newest), capped — rendered as the fly's ethogram ribbon. */
+  bouts: Bout[];
 }
 
 export interface IFlyBrain {
