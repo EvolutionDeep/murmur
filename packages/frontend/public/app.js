@@ -1263,7 +1263,7 @@ function pushEconFeed(s) {
   }
 
   host.prepend(line);
-  while (host.children.length > 8) host.lastChild.remove();
+  while (host.children.length > 3) host.lastChild.remove();
 }
 
 /** Show one fly's x402 agent wallet in the inspector. `ag` carries atomic-string amounts. */

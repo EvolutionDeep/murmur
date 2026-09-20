@@ -377,7 +377,7 @@ body.ins-open .panel-pop, body.ins-open .panel-about, body.ins-open .panel-econ 
 .hint-select.hide { opacity: 0; }
 
 /* --- agent economy panel (top-left): the x402 swarm ledger --- */
-.panel-econ { left: var(--pad); top: calc(var(--pad) + 44px); width: clamp(300px, 32vw, 420px); }
+.panel-econ { left: var(--pad); top: calc(var(--pad) + 44px); width: clamp(250px, 28vw, 340px); }
 .econ-mode {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: lowercase;
   color: var(--accent); border: 1px solid rgba(var(--accent-rgb), 0.4);
