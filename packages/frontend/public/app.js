@@ -1720,11 +1720,11 @@ const CHRON_ICONS = {
 function renderChron() {
   const list = $("chron-list");
   if (!list) return;
-  // The corner button carries a live count — the chronicle should beg to be opened.
+  // The corner stele carries a live count — an inscription line beneath the title, not a notification chip.
   const cbadge = $("chron-badge");
   if (cbadge) {
     cbadge.hidden = chronRows.length === 0;
-    cbadge.textContent = chronRows.length > 99 ? "99+" : String(chronRows.length);
+    cbadge.textContent = `${chronRows.length > 99 ? "99+" : chronRows.length} entries inscribed`;
   }
   // Header (era badge + name + regime).
   const badge = $("chron-era-badge"); const name = $("chron-era-name"); const reg = $("chron-era-regime");

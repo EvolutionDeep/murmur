@@ -679,30 +679,44 @@ body.history-open .panel-pop, body.chron-open .panel-pop { opacity: 0.1; pointer
 /* ============ the chronicle drawer (bottom-right button → full-height sheet) ============
    The historian's home: era badge, "prove no LLM" verdict, the narrative timeline, the ledger
    of relationships (bonds / reputation / grudges) and the houses & monuments blocks.
-   No longer a permanent panel — one button in the corner opens the whole column. */
+   No longer a permanent panel — the corner carries a dark stone stele: open the chronicle. */
 .drawer.panel-chron .drawer-body { display: flex; flex-direction: column; overflow: hidden; }
+/* the trigger as a stele: deep-ink slab, arched top, double-engraved gilt rule, Fraunces capitals */
 .chron-btn {
   position: fixed; z-index: 6; right: var(--pad); bottom: var(--pad);
-  display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink); background: var(--accent);
-  border: 1px solid rgba(var(--ink-rgb), 0.35); border-radius: 3px;
-  padding: 11px 16px; cursor: pointer;
-  box-shadow: 0 6px 22px rgba(var(--accent-rgb), 0.38);
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 212px; padding: 14px 28px 12px;
+  font-family: var(--mono);
+  color: var(--paper); background: var(--ink);
+  border: 1px solid rgba(var(--accent-rgb), 0.85);
+  border-radius: 18px 18px 3px 3px;              /* arched stele on a squared plinth */
+  box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4);
+  cursor: pointer;
   transition: transform 0.2s ease, filter 0.2s ease, opacity 0.25s ease;
-  animation: chron-pulse 2.6s ease-out infinite;   /* a breathing halo: the chronicle asks to be opened */
+  animation: chron-breathe 5.5s ease-in-out infinite;   /* candlelight, not a blink */
 }
-.chron-btn:hover { transform: translateY(-2px) scale(1.04); filter: brightness(1.07); }
-.chron-btn:active { transform: translateY(0) scale(0.99); }
+.chron-btn::before {                              /* the inner engraved rule of the double frame */
+  content: ""; position: absolute; inset: 5px 5px 6px;
+  border: 1px solid rgba(242, 238, 230, 0.16);
+  border-radius: 13px 13px 2px 2px;
+  pointer-events: none;
+}
+.chron-btn:hover { transform: translateY(-1px); filter: brightness(1.14); }
+.chron-btn:active { transform: translateY(1px); }
+.chron-orn { font-size: 15px; line-height: 1; color: var(--accent); text-indent: 0.42em; margin-left: 0.42em; }   /* fleur-de-lis, the dynastic crest */
+.chron-word {
+  font-family: var(--display); font-weight: 600; font-size: 23px; line-height: 1.2;
+  letter-spacing: 0.16em; text-transform: uppercase; text-indent: 0.16em; margin-top: 1px;
+}
 .chron-badge {
-  min-width: 20px; padding: 2px 6px; border-radius: 10px;
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-align: center;
-  color: var(--paper); background: rgba(var(--ink-rgb), 0.78);
+  width: 100%; margin-top: 9px; padding-top: 8px;
+  border-top: 1px solid rgba(242, 238, 230, 0.18);   /* hairline carve beneath the title */
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; text-align: center;
+  color: rgba(242, 238, 230, 0.66);
 }
-@keyframes chron-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
-  70%  { box-shadow: 0 0 0 12px rgba(var(--accent-rgb), 0), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
-  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0), 0 6px 22px rgba(var(--accent-rgb), 0.38); }
+@keyframes chron-breathe {
+  0%, 100% { box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4), 0 0 0 0 rgba(var(--accent-rgb), 0.25); }
+  55%      { box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4), 0 0 26px 7px rgba(var(--accent-rgb), 0.3); }
 }
 @media (prefers-reduced-motion: reduce) { .chron-btn { animation: none; } }
 /* the trigger bows out while the drawer is on stage, or when the inspector claims the bottom edge */
