@@ -1298,7 +1298,7 @@ export class FlyStateDO {
     // ⑤ Carry the culture read-out on the same hot feed that already drives the chronicle panel's dynasty
     // block, so "the commons in custom" tracks every cron whether or not the drawer is open (open⇒latest).
     if (economy) {
-      const culture = await this.cultureReadout();
+      const culture = await this.cultureReadout(snap);
       if (culture) (economy as { culture?: unknown }).culture = culture;
     }
     return json({ snapshot: snap, economy, topology: this.topology() });
@@ -1347,13 +1347,13 @@ export class FlyStateDO {
    * last population snapshot. Returns null while the CULTURE switch is off or no snapshot exists yet —
    * callers then ship NO culture key, so every consumer stays byte-identical to the pre-culture build.
    */
-  private async cultureReadout(): Promise<{
+  private async cultureReadout(snapshot?: PopulationSnapshot | null): Promise<{
     trend: { fap: string; adherents: number; share: number } | null;
     tradition: { houseId: number; name: string; sigil: string; fap: string; streak: number } | null;
   } | null> {
     const cul = await this.ensureCulture();
     if (!cul) return null;
-    const snap = await this.loadSnapshot();
+    const snap = snapshot !== undefined ? snapshot : await this.loadSnapshot();
     if (!snap) return null;
     const sig = cul.signals(snap.flies);
     return {

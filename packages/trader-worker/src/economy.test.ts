@@ -644,6 +644,41 @@ test("institutions: an IOU is issued in place of a stiff, repaid from real incom
   assert.ok(offSettled.some((s) => s.reason === "insufficient-funds"), "the old stiff path is untouched");
 });
 
+test("institutions: a partial repayment never capitalises interest into principal (no compounding, no phantom default)", async () => {
+  // A single aged-but-alive note (accrued, capped interest well above what a thin wallet can sweep). The
+  // OLD applyRepayment rewrote amountAtomic to `owed - left` — folding the accrued interest into the
+  // principal field — so owedAtomicOf then charged interest on the rolled-in interest (compounding) AND
+  // debtAtomicOf (which the credit cap + over-line default check read) ballooned past the true principal,
+  // threatening a fly that was merely paying down interest with a phantom-default. amountAtomic must stay
+  // a PURE principal. maxDealsPerTick 0 freezes the trade loop, so the ONLY money that moves is debt service.
+  const cLine = { institutions: { enabled: true, creditCapBaseUsdc: 0.02 }, initialBalanceUsdc: 0.007, solvencyFloorUsdc: 0, basePriceUsdc: 0.01, maxDealsPerTick: 0 };
+  const poor = population("AGITATE");
+  const seed = new AgentEconomy(cfg(cLine));
+  await seed.step(poor, collective(0.8), 1);                             // open wallets + professions
+  const PRINCIPAL = "10000";
+  const p = JSON.parse(seed.serialize());
+  p.market.ious = [{ debtor: 0, creditor: 1, amountAtomic: PRINCIPAL, issuedTick: -15000, ratePer10: 0.002 }];  // aged 15k (overdue, interest capped at 50%) yet under IOU_MAX_AGE → not a default
+  p.market.lastRecallTick = 999_999;                                     // fence the recall: only debt service runs
+  const e = new AgentEconomy(cfg(cLine), JSON.stringify(p));
+  const d0 = e.getAgent(0)!, c1 = e.getAgent(1)!;
+  d0.balance = "1000";                                                   // a thin purse: any sweep ≪ the accrued interest
+  const netBefore = BigInt(d0.balance) + BigInt(d0.paid) - BigInt(d0.earned);
+  const before1 = BigInt(c1.balance);
+  const out = await e.step(poor, collective(0.8), 2);
+  const pays = out.filter((s) => s.valid && s.resource.startsWith("debt:"));
+  assert.ok(pays.length >= 1, "the thin debtor still pays its creditor out of what it holds");
+  assert.equal(BigInt(d0.balance) + BigInt(d0.paid) - BigInt(d0.earned), netBefore,
+    "conservation: a repayment moves wallets — it never mints or burns");
+  assert.equal(BigInt(c1.balance) - before1, pays.reduce((s, x) => s + BigInt(x.amount), 0n),
+    "exactly the swept atomic reached the creditor — no phantom compensation");
+  const live = JSON.parse(e.serialize()).market.ious as { amountAtomic: string }[];
+  assert.equal(live.length, 1, "the crumbs covered only part of the interest — the note survives");
+  assert.ok(BigInt(live[0].amountAtomic) <= BigInt(PRINCIPAL),
+    `a partial payment must not capitalise interest into principal (got ${live[0].amountAtomic}, cap ${PRINCIPAL})`);
+  assert.ok(BigInt(e.snapshot().market!.debtAtomic) <= BigInt(PRINCIPAL),
+    "the debt/cap read-out counts principal only — a fly paying down interest is not pushed into phantom default");
+});
+
 test("institutions: a RUN stampedes every creditor at once and doubles the panic in the spreads", async () => {
   // maxDealsPerTick 0 keeps the fixture honest: the storm is measured on the SEEDED book, not diluted by
   // a fresh wave of same-tick borrowing, so the overdue share is exactly what we put on the ledger.

@@ -1476,10 +1476,17 @@ export class AgentEconomy {
         left -= owed;
         this.ious.splice(k, 1);
       } else {
-        // Partial: rewrite the note as the remaining principal — the ORIGINAL issue date stands, so a
-        // half-paid overdue note is still overdue (re-basing it would let the storm be dodged by crumbs).
-        const remain = owed - left;
-        iou.amountAtomic = remain.toString();
+        // Partial: settle accrued INTEREST off first, then shave the note's PRINCIPAL. amountAtomic MUST
+        // stay a pure principal: folding the interest in (the old `owed - left`) let owedAtomicOf charge
+        // interest on the rolled-in interest (compounding) and inflated debtAtomicOf — which the credit
+        // cap and the over-line DEFAULT check both read — so a half-paid fly could be pushed into default
+        // by phantom principal. The ORIGINAL issue date still stands, so a half-paid overdue note is still
+        // overdue (re-basing it would let the storm be dodged by crumbs).
+        const principal = BigInt(iou.amountAtomic);
+        const accrued = owed - principal;                       // owed = principal + interest at this tick
+        const coverInterest = left < accrued ? left : accrued;
+        const coverPrincipal = left - coverInterest;            // < principal (left < owed) ⇒ stays positive
+        iou.amountAtomic = (principal - coverPrincipal).toString();
         left = 0n;
       }
     }

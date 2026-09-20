@@ -57,8 +57,8 @@ export interface TraditionSignal {
 
 // --- bounded, deterministic constants (DO-safe: the meme table can never outgrow the population) ---
 const ADOPT_PCT = 0.18;            // per contact pair per cron: P(the fed-to fly catches the creed)
-const TTL_MIN = 18;                // sub-ticks a caught creed persists (≈3 crons at 6 sub-ticks)
-const TTL_MAX = 42;                // upper bound; the exact hold is a hash draw in [MIN, MAX]
+const TTL_MIN = 18;                // crons a caught creed persists (TTL burns once per cron, in contagion)
+const TTL_MAX = 42;                // upper bound; the exact hold is a hash draw in [MIN, MAX] crons
 const TRADITION_HOLD_PCT = 0.35;   // P a house fly rebuffs a contrary fashion and keeps the old way
 const MEME_CAP = 64;               // hard bound on simultaneous creeds (population cap is 256 anyway)
 const TRADITION_MIN_STREAK = 8;    // crons of majority-held tradition before the chronicle calls it one
