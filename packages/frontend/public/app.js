@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=51";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=52";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -140,7 +140,8 @@ let selectedId = null;
 let offline = false;
 let offlineUntil = 0;           // circuit-breaker: skip network probes until this timestamp
 let cronHeartbeatMs = 0;        // last /state lastCron (epoch ms) — the DO cron's heartbeat, for the watchdog
-const CRON_STALE_MS = 180000;   // cron fires ~every 60s; 3 min without a fresh heartbeat ⇒ likely stalled
+const CRON_STALE_MS = 240000;   // cron fires ~every 60s, but a heavy on-chain cron can overrun and trip the
+                                // reentrancy skip (measured inter-cron gaps up to ~164s), so only warn past 4 min
 let pollInFlight = false;       // never let two polls overlap
 let cachedRect = null;          // cached canvas rect — avoid a reflow on every pointer event
 let tempTarget = 0.5, tempSmoothed = 0.5;
@@ -360,11 +361,13 @@ let lastHistSample = 0;
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
-let showMind = false, showShards = false, showSocieties = true;
+let showMind = false, showShards = false, showSocieties = true, showGraves = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
 const MIND_REBUILD_MS = 320;                          // offscreen + low-frequency rebuild (per-frame is one drawImage)
+// ---- illuminated-manuscript layers: an aged-parchment base + a gilded frame (offscreen, rebuilt rarely) ----
+let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
 
 // ================= canvas field =================
 const canvas = $("field");
@@ -400,6 +403,8 @@ function resize() {
   ctx.fillRect(0, 0, VW, VH);
   cachedRect = null;             // canvas box changed — drop the cached rect
   mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
+  parchOff = null; parchKey = "";   // parchment re-tiles at the new size (the gilt frame draws direct each frame)
+  rebuildGraveField();           // the headstone band is laid out in field coordinates → re-place on resize
   initMotes();
 }
 window.addEventListener("resize", resize);
@@ -777,6 +782,14 @@ const houseOf = new Map();                // flyId → {name, sigil, color} — 
 const monuments = [];                     // fading grave steles at OBSERVED death positions
 const chronFx = [];                       // transient canvas events spawned by fresh chronicle entries
 const MONUMENT_MS = 42000;                // how long a stele lingers before it fades into the paper
+// ---- the persistent necropolis: headstones rebuilt from the server's grave ledger (econDynasty.graves) ----
+const graveField = [];                    // stable, weathered stones scattered across the field's lower band
+let selectedGrave = null;                 // the stone whose epitaph card is open
+const GRAVE_CAP = 120;                    // most-recent stones kept on the field
+const GILT = [176, 138, 54];              // gold-leaf
+const GILT_HI = [214, 178, 92];           // gold highlight
+const INK = [40, 32, 24];                 // sepia ink for engraved text
+const VELLUM = [236, 227, 208];           // aged parchment base tone
 let chronBanner = null;                   // the epic centre-caption flashed when the chronicle "happens"
 const LAW_GOLD = [186, 152, 66];          // the legislative shockwave tint (assembly / decree)
 
@@ -811,6 +824,7 @@ function focusDim(id) {
 /** Plant a fading grave stele where a fly is observed dying (its death position). */
 function plantMonument(f, now) {
   f._mon = true;
+  if (graveField.some((g) => g.id === f.id)) return;   // the necropolis already keeps a stone for this id
   const h = houseOf.get(f.id);
   monuments.push({ x: f.x, y: f.y, t0: now, id: f.id, sigil: (h && h.sigil) || "", color: (h && h.color) || [120, 120, 124], pulse: 0 });
   if (monuments.length > 48) monuments.shift();
@@ -851,6 +865,213 @@ function renderMonuments(pal, now) {
   }
 }
 
+// ================= illuminated-manuscript layers: parchment base + gilded frame + necropolis =================
+/** Build the aged-parchment base once into an offscreen (re-run on resize / temperature-bucket change /
+ *  ~2s): the live paper pulled toward vellum, deterministic foxing blotches + fibre speckle, and burnt
+ *  edges. Per-frame it is a single blit, so the costly texture never redraws on the hot path. */
+function rebuildParchment(pal) {
+  if (!parchOff) { parchOff = document.createElement("canvas"); parchOffCtx = parchOff.getContext("2d"); }
+  if (parchOff.width !== VW || parchOff.height !== VH) { parchOff.width = VW; parchOff.height = VH; }
+  const x = parchOffCtx;
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  const base = mix(pal.paper, VELLUM, 0.55);
+  x.fillStyle = rgb(base); x.fillRect(0, 0, VW, VH);
+  // deterministic foxing: soft radial stains (water marks / ageing) seeded by index, so they never crawl
+  const nb = Math.max(8, Math.round((VW * VH) / 22000));
+  for (let i = 0; i < nb; i++) {
+    const a = fnv1a("fox:" + i), b = fnv1a("fox2:" + i);
+    const bx = (a % 100000) / 100000 * VW, by = (b % 100000) / 100000 * VH;
+    const br = 46 + ((a >>> 8) % 120);
+    const warm = (b & 3) !== 0;
+    const tone = warm ? mix(base, [150, 118, 74], 0.5) : mix(base, [120, 108, 84], 0.4);
+    const g = x.createRadialGradient(bx, by, 0, bx, by, br);
+    g.addColorStop(0, rgba(tone, warm ? 0.085 : 0.05));
+    g.addColorStop(1, rgba(tone, 0));
+    x.fillStyle = g; x.beginPath(); x.arc(bx, by, br, 0, TAU); x.fill();
+  }
+  // paper fibre: a light speckle of 1px flecks (bounded so huge viewports stay cheap)
+  const nf = Math.min(1500, Math.round((VW * VH) / 1300));
+  for (let i = 0; i < nf; i++) {
+    const a = fnv1a("fib:" + i);
+    const fx = (a % 100000) / 100000 * VW, fy = ((a >>> 9) % 100000) / 100000 * VH;
+    x.fillStyle = rgba(INK, 0.02 + ((a >>> 3) & 7) / 7 * 0.022);
+    x.fillRect(fx, fy, 1, 1);
+  }
+  // burnt / aged edges: darken toward the border so the sheet reads as handled vellum
+  const eg = x.createRadialGradient(VW / 2, VH / 2, Math.min(VW, VH) * 0.34, VW / 2, VH / 2, Math.max(VW, VH) * 0.72);
+  eg.addColorStop(0, rgba(INK, 0));
+  eg.addColorStop(1, rgba(mix(base, [110, 86, 54], 0.6), 0.22));
+  x.fillStyle = eg; x.fillRect(0, 0, VW, VH);
+}
+
+/** A gilded lozenge + curl tucked into one corner; the sign vector mirrors it across the four corners. */
+function drawCorner(cx, cy, sx, sy) {
+  ctx.save();
+  ctx.translate(cx, cy); ctx.scale(sx, sy);
+  ctx.fillStyle = rgba(GILT_HI, 0.55);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(9, 0); ctx.lineTo(0, 9); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = rgba(GILT, 0.55); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(2, 15); ctx.quadraticCurveTo(15, 15, 15, 2); ctx.stroke();
+  ctx.fillStyle = rgba(GILT, 0.5); ctx.beginPath(); ctx.arc(6, 6, 1.6, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+/** The manuscript border: a double gold rule + a hairline margin guide + four corner flourishes, drawn
+ *  direct each frame (a dozen path ops — far cheaper than a full-screen alpha blit of a mostly-clear layer). */
+function renderFrame(pal) {
+  const m = 13;
+  ctx.save();
+  ctx.lineWidth = 2; ctx.strokeStyle = rgba(GILT, 0.5); ctx.strokeRect(m, m, VW - 2 * m, VH - 2 * m);
+  ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT, 0.34); ctx.strokeRect(m + 4.5, m + 4.5, VW - 2 * (m + 4.5), VH - 2 * (m + 4.5));
+  ctx.lineWidth = 1; ctx.strokeStyle = rgba(INK, 0.06); ctx.strokeRect(m + 15, m + 15, VW - 2 * (m + 15), VH - 2 * (m + 15));
+  drawCorner(m, m, 1, 1); drawCorner(VW - m, m, -1, 1); drawCorner(m, VH - m, 1, -1); drawCorner(VW - m, VH - m, -1, -1);
+  ctx.restore();
+}
+
+/** Re-place the persistent necropolis from the server's grave ledger (econDynasty.graves). Deterministic:
+ *  the newest ≤GRAVE_CAP stones cluster by house into adjacent family plots along the field's lower band
+ *  (clear of the left panel + right drawer), each weathered by how long ago it fell. */
+function rebuildGraveField() {
+  graveField.length = 0;
+  const graves = (econDynasty && econDynasty.graves) || [];
+  if (!graves.length || !VW || !VH) return;
+  const gs = graves.slice().sort((a, b) => (b.tick || 0) - (a.tick || 0)).slice(0, GRAVE_CAP);   // newest first
+  const byHouse = new Map();
+  for (const g of gs) {
+    const k = g.houseName || "";
+    let arr = byHouse.get(k); if (!arr) { arr = []; byHouse.set(k, arr); }
+    arr.push(g);
+  }
+  // houses (biggest bloodline first) lead, the houseless commons trails, so kin share a plot
+  const groups = [...byHouse.entries()].sort((a, b) =>
+    (a[0] === "" ? 1 : b[0] === "" ? -1 : b[1].length - a[1].length));
+  const ordered = [];
+  for (const [, arr] of groups) for (const g of arr) ordered.push(g);
+  const x0 = VW * 0.18, x1 = VW * 0.82, y0 = VH * 0.72, y1 = VH * 0.93;
+  const bandW = x1 - x0, bandH = y1 - y0, n = ordered.length;
+  const cols = clamp(Math.round(bandW / 46), 4, 20) | 0;
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const cw = bandW / cols, ch = bandH / rows;
+  let maxTick = -Infinity, minTick = Infinity;
+  for (const g of ordered) { const t = g.tick || 0; if (t > maxTick) maxTick = t; if (t < minTick) minTick = t; }
+  const span = Math.max(1, maxTick - minTick);
+  for (let i = 0; i < n; i++) {
+    const g = ordered[i], r = (i / cols) | 0, c = i % cols;
+    const h = fnv1a("grave:" + g.id);
+    const jx = ((h % 1000) / 1000 - 0.5), jy = (((h >>> 10) % 1000) / 1000 - 0.5);
+    const x = x0 + cw * (c + 0.5) + jx * cw * 0.34;
+    const y = y0 + ch * (r + 0.5) + jy * ch * 0.28;
+    const weather = clamp(((maxTick - (g.tick || 0)) / span) * 0.85 + ((h >>> 4) % 100) / 100 * 0.15);
+    graveField.push({
+      id: g.id, x, y,
+      houseName: g.houseName || "", cause: g.cause || "", deals: g.deals || 0,
+      estateUsdc: Number(g.estateUsdc) || 0, heirIds: g.heirIds || [], age: g.age || 0, tick: g.tick || 0,
+      color: houseColor(g.houseName) || [120, 116, 108],
+      sigil: g.houseName ? String(g.houseName).trim().charAt(0).toUpperCase() : "",
+      tilt: (((h >>> 6) % 100) / 100 - 0.5) * weather * 0.16,   // the oldest stones lean into the ground
+      weather, seed: h,
+    });
+  }
+  if (selectedGrave) { const keep = graveField.find((g) => g.id === selectedGrave.id); selectedGrave = keep || null; }
+}
+
+/** An arched headstone silhouette centred on the origin: flat base at +h, rounded top at -h. */
+function stonePath(c, w, h) {
+  c.beginPath();
+  c.moveTo(-w, h); c.lineTo(-w, -h * 0.28);
+  c.quadraticCurveTo(-w, -h, 0, -h);
+  c.quadraticCurveTo(w, -h, w, -h * 0.28);
+  c.lineTo(w, h); c.closePath();
+}
+
+/** The engraved death-mark: † aged, ☠ plague, ⛁ penury (the empty purse already used by the debt badge). */
+function glyphFor(g) {
+  if (g.cause === "plague") return "☠";
+  if (g.cause === "penury") return "⛁";
+  return "†";
+}
+
+/** Draw the necropolis: a weathered stone per buried wallet. Thinned under load (every Nth stone) and
+ *  gated by the graveyard toggle; the selected stone wears a gilded halo. */
+function renderGraveyard(pal, now) {
+  if (!showGraves || !graveField.length) return;
+  const step = quality >= 2 ? 1 : quality >= 1 ? 2 : 3;   // thin under load: draw every Nth stone
+  ctx.save();
+  ctx.textAlign = "center";
+  for (let i = 0; i < graveField.length; i += step) {
+    const g = graveField[i], wx = g.weather, w = 8, h = 12;
+    const sel = selectedGrave && selectedGrave.id === g.id;
+    const stone = mix([151, 143, 129], INK, 0.18 + wx * 0.42);   // fresh warm stone → dark weathered
+    ctx.save();
+    ctx.translate(g.x, g.y); ctx.rotate(g.tilt);
+    ctx.fillStyle = rgba([40, 34, 26], 0.16);                     // ground shadow
+    ctx.beginPath(); ctx.ellipse(0, h + 2, w + 3, 3.2, 0, 0, TAU); ctx.fill();
+    stonePath(ctx, w, h); ctx.fillStyle = rgb(stone); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = rgba(INK, 0.5); ctx.stroke();
+    ctx.strokeStyle = rgba(GILT_HI, 0.5); ctx.lineWidth = 1.1;    // gilt highlight on the top-left rim
+    ctx.beginPath(); ctx.moveTo(-w, h * 0.2); ctx.lineTo(-w, -h * 0.28);
+    ctx.quadraticCurveTo(-w, -h, 0, -h); ctx.stroke();
+    ctx.textBaseline = "middle";
+    ctx.font = "600 9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = rgba(INK, 0.72); ctx.fillText(glyphFor(g), 0, -h * 0.34);   // the death-mark
+    ctx.font = "7px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = rgba(INK, 0.5); ctx.fillText("#" + g.id, 0, h * 0.36);      // the buried wallet
+    if (wx > 0.45) {                                                            // weathering cracks
+      ctx.strokeStyle = rgba(INK, 0.32 * wx); ctx.lineWidth = 0.6;
+      const cx = ((g.seed >>> 3) % (w * 2)) - w;
+      ctx.beginPath(); ctx.moveTo(cx, -h * 0.6); ctx.lineTo(cx + 2, -h * 0.1); ctx.lineTo(cx - 1, h * 0.4); ctx.stroke();
+    }
+    ctx.restore();
+    if (wx > 0.5 && quality >= 1) {                               // moss creeping up the base
+      ctx.fillStyle = rgba([96, 120, 76], 0.5 * wx);
+      ctx.beginPath(); ctx.ellipse(g.x - w + 2, g.y + h + 1, 2.4, 1.1, 0, 0, TAU);
+      ctx.ellipse(g.x + w - 2, g.y + h + 1, 2.0, 1.0, 0, 0, TAU); ctx.fill();
+    }
+    if (sel) {                                                    // a gilded halo on the chosen stone
+      ctx.strokeStyle = rgba(GILT, 0.9); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(g.x, g.y - 1, h + 7, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(GILT_HI, 0.5); ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(g.x, g.y - 1, h + 10, 0, TAU); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/** Open the epitaph card for a buried wallet. A DOM overlay (not canvas type) so every line stays crisp,
+ *  mirrors under RTL and re-localises on the fly — geometry stays LTR, only the text direction flips. */
+function showEpitaph(g) {
+  selectedGrave = g;
+  const card = $("epitaph"); if (!card) return;
+  const head = $("epitaph-title");
+  const house = g.houseName ? T("epitaph.house", { name: g.houseName }) : T("dyn.noHouse");
+  if (head) head.textContent = glyphFor(g) + " #" + g.id + " \u00b7 " + house;   // the mark matches the stone's own death-mark
+  const heirs = g.heirIds && g.heirIds.length ? g.heirIds.map((x) => "#" + x).join(", ") : T("dyn.theCommons");
+  const cause = g.cause ? gl("cause", g.cause) : "\u2014";
+  const lines = [
+    ["\u2020", T("epitaph.died", { cause })],
+    ["\u2696", T("epitaph.deals", { n: g.deals })],
+    ["\u23f3", T("epitaph.age", { age: g.age })],
+    ["\u25c7", T("epitaph.estate", { amt: Number(g.estateUsdc).toFixed(4) })],
+    ["\u2192", T("epitaph.heirs", { heirs })],
+    ["#", T("epitaph.tick", { tick: g.tick })],
+  ];
+  const body = $("epitaph-body");
+  if (body) {
+    body.textContent = "";
+    for (const [mark, text] of lines) {
+      const d = document.createElement("div"); d.className = "ep-line";
+      const s = document.createElement("span"); s.className = "ep-mark"; s.textContent = mark;
+      const v = document.createElement("span"); v.className = "ep-val"; v.textContent = text;
+      d.appendChild(s); d.appendChild(v); body.appendChild(d);
+    }
+  }
+  card.hidden = false;
+}
+function hideEpitaph() {
+  selectedGrave = null;
+  const card = $("epitaph"); if (card) card.hidden = true;
+}
+
 /** The chronicle made visible: every fresh ALLIANCE/FEUD/BETRAYAL/HOUSE_FOUNDED/ASSEMBLY/DECREE entry
  *  becomes a transient canvas event at the actors' live positions, so each annals sentence can be
  *  WATCHED happening on the field. */
@@ -861,15 +1082,38 @@ function renderChronFx(pal, now) {
     if (ba >= 1) chronBanner = null;
     else {
       const env = Math.sin(Math.PI * Math.min(1, ba));
+      const cx = VW / 2, cy = VH * 0.30;
+      const chars = Array.from(chronBanner.text || "");
+      const cap = chars.length ? chars[0] : "";
+      const rest = chars.slice(1).join("");
+      const box = 52;
       ctx.save();
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = "italic 600 30px Fraunces, Georgia, serif";
-      ctx.fillStyle = rgba(chronBanner.color, env * 0.92);
-      ctx.fillText(chronBanner.text, VW / 2, VH * 0.30);
+      ctx.textBaseline = "middle";
+      ctx.globalAlpha = env;
+      // measure the trailing line so the whole drop-cap + text composite sits centred on the field
+      ctx.font = "italic 600 26px Fraunces, Georgia, serif";
+      const totalW = box + 10 + ctx.measureText(rest).width;
+      const left = Math.max(cx - totalW / 2, box / 2 + 14);
+      // the gilded initial: a vellum field, a double gold rule, the capital in monumental Roman caps
+      ctx.fillStyle = rgba(mix(chronBanner.color, VELLUM, 0.74), 0.92);
+      ctx.fillRect(left, cy - box / 2, box, box);
+      ctx.lineWidth = 2; ctx.strokeStyle = rgba(GILT, 0.95); ctx.strokeRect(left, cy - box / 2, box, box);
+      ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT_HI, 0.85); ctx.strokeRect(left + 3.5, cy - box / 2 + 3.5, box - 7, box - 7);
+      ctx.textAlign = "center";
+      ctx.font = "600 38px Cinzel, Fraunces, Georgia, serif";
+      ctx.fillStyle = rgba(INK, 0.92);
+      ctx.fillText(cap, left + box / 2, cy + 1);
+      // the rest of the sentence, hung to the right of the initial
+      ctx.textAlign = "left";
+      ctx.font = "italic 600 26px Fraunces, Georgia, serif";
+      ctx.fillStyle = rgba(chronBanner.color, 0.92);
+      ctx.fillText(rest, left + box + 10, cy);
       if (chronBanner.sub) {
+        ctx.textAlign = "center";
+        ctx.globalAlpha = env * 0.7;
         ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
-        ctx.fillStyle = rgba(chronBanner.color, env * 0.62);
-        ctx.fillText(chronBanner.sub, VW / 2, VH * 0.30 + 26);
+        ctx.fillStyle = rgba(chronBanner.color, 0.85);
+        ctx.fillText(chronBanner.sub, cx, cy + box / 2 + 15);
       }
       ctx.restore();
     }
@@ -1170,12 +1414,24 @@ function renderSocieties(pal, now) {
     ctx.strokeStyle = rgba(c.color, 0.55 * cdim); ctx.lineWidth = 1.4; ctx.stroke();
     // soft inner glow for depth (cached gradient)
     if (cdim >= 1) { ctx.fillStyle = glow.grad; ctx.fill(); }
-    // label: colony name + headcount, above the territory
+    // the colony's heraldic plate: a small shield in the colony hue + its initial, then the name in Roman caps
     ctx.save();
-    ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.fillStyle = rgba(c.color, 0.9 * cdim);
-    ctx.fillText(`${c.name} · ${pts.length}`, blob.cx, blob.cy - blob.rmax - 6);
+    ctx.textBaseline = "middle";
+    const label = `${c.name} · ${pts.length}`;
+    ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif";
+    const crestW = 13, gap = 6;
+    const total = crestW + gap + ctx.measureText(label).width;
+    const lx = blob.cx - total / 2, by = blob.cy - blob.rmax - 12;
+    ctx.beginPath();
+    ctx.moveTo(lx, by - 6); ctx.lineTo(lx + crestW, by - 6); ctx.lineTo(lx + crestW, by + 2);
+    ctx.quadraticCurveTo(lx + crestW, by + 7, lx + crestW / 2, by + 8);
+    ctx.quadraticCurveTo(lx, by + 7, lx, by + 2); ctx.closePath();
+    ctx.fillStyle = rgba(c.color, 0.92 * cdim); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT, 0.7 * cdim); ctx.stroke();
+    ctx.textAlign = "center"; ctx.font = "700 8px Cinzel, Fraunces, serif";
+    ctx.fillStyle = rgba([248, 244, 236], 0.95 * cdim); ctx.fillText(String(c.name).charAt(0), lx + crestW / 2, by + 1);
+    ctx.textAlign = "left"; ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif";
+    ctx.fillStyle = rgba(c.color, 0.92 * cdim); ctx.fillText(label, lx + crestW + gap, by);
     ctx.restore();
   }
   // 2) gold bond web inside colonies (the alliances that define each society)
@@ -1204,8 +1460,12 @@ function render(pal, now) {
   // fade slowly, smearing moving flies AND every glyph/label into ghosts that read as stutter.
   // Crisp clear removes all ghosting with no quality loss (motion feel stays via the per-fly ink
   // trail stroke), and an opaque fill is cheaper than an alpha-blended wash.
-  ctx.fillStyle = rgb(pal.paper);
-  ctx.fillRect(0, 0, VW, VH);
+  // aged-parchment base (offscreen, rebuilt on resize / temperature-bucket change / ~2s): one blit per frame.
+  const pkey = VW + "x" + VH + ":" + Math.round(tempSmoothed * 8);
+  if (!parchOff || parchKey !== pkey || now - parchLast > 2000) { parchKey = pkey; parchLast = now; rebuildParchment(pal); }
+  ctx.drawImage(parchOff, 0, 0, VW, VH);
+  // a thin temperature wash keeps the market's warm/cool read on the page without rebuilding the texture
+  ctx.fillStyle = rgba(pal.accent, 0.03 + tempSmoothed * 0.05); ctx.fillRect(0, 0, VW, VH);
 
   // the swarm's ambient neural aura — deepest background layer, breathing with the collective mood
   renderMind(pal, now);
@@ -1216,7 +1476,10 @@ function render(pal, now) {
   // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
   renderSocieties(pal, now);
 
-  // fading grave steles at observed death positions (the dynasty's monuments, on the field)
+  // the persistent necropolis: weathered headstones for every buried wallet the ledger remembers
+  renderGraveyard(pal, now);
+
+  // fading grave steles at observed death positions (a just-died glow riding above the old stones)
   renderMonuments(pal, now);
 
   const acc = pal.accent;
@@ -1266,6 +1529,9 @@ function render(pal, now) {
 
   // the chronicle made visible: transient alliance/feud/house/legislative events, over everything
   renderChronFx(pal, now);
+
+  // the gilded manuscript border frames the whole field last, above every ink layer
+  renderFrame(pal);
 }
 
 function drawFly(f, acc, alpha, now) {
@@ -1704,7 +1970,7 @@ function applyEconomy(econ) {
   refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
   if (econ.social) { econSocial = econ.social; renderSocialSection(); rebuildSocieties(); sgMarkDirty(); }
-  if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
+  if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); rebuildGraveField(); }
   if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
   if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
@@ -4279,7 +4545,7 @@ function updateCronWatchdog() {
   const ageMs = Date.now() - cronHeartbeatMs;
   if (ageMs > CRON_STALE_MS) {
     const mins = Math.max(1, Math.round(ageMs / 60000));
-    el.textContent = `⚠ 史官休眠 · 已约 ${mins} 分钟未更新（cron 可能停摆，数据非实时）`;
+    el.textContent = T("cron.warnStale", { mins });
     el.hidden = false;
   } else {
     el.hidden = true;
@@ -4711,7 +4977,10 @@ function pickHover() {
     if (d < bd) { bd = d; best = f; }
   }
   hoverId = (best && bd < 26) ? best.id : null;
-  canvas.style.cursor = hoverId != null ? "pointer" : "";
+  // a headstone under the pointer also reads as clickable (it opens its epitaph), independent of any fly
+  let onGrave = false;
+  if (showGraves) { for (const g of graveField) { if (Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y) < 16) { onGrave = true; break; } } }
+  canvas.style.cursor = (hoverId != null || onGrave) ? "pointer" : "";
 }
 function bindPointer() {
   const toLocal = (e) => {
@@ -4729,6 +4998,13 @@ function bindPointer() {
     toLocal(e);
     pointer.inside = true;
     pointer.down = true;
+    // a headstone tap opens its epitaph and swallows the gesture (never stirs the swarm or selects a fly)
+    if (showGraves) {
+      let gg = null, gd = 16;
+      for (const g of graveField) { const d = Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y); if (d < gd) { gd = d; gg = g; } }
+      if (gg) { showEpitaph(gg); return; }
+    }
+    hideEpitaph();   // any tap that misses a stone dismisses an open epitaph
     let best = null, bd = Infinity;
     for (const f of sim.values()) {
       if (f.dying) continue;
@@ -4805,6 +5081,7 @@ function rerenderAll() {
     updateSinceLaunch();
     const dv = $("ins-drives"); if (dv) dv.innerHTML = "";   // force the cached drive labels to rebuild in the new language
     if (selectedId != null) fillInspectorFromSim(selectedId);
+    if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
     if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderCommonsSection(); renderSocialSection(); }
@@ -4825,7 +5102,9 @@ function bindUI() {
     if (b.dataset.layer === "mind") showMind = on;
     else if (b.dataset.layer === "shards") showShards = on;
     else if (b.dataset.layer === "societies") showSocieties = on;
+    else if (b.dataset.layer === "graves") { showGraves = on; if (!on) hideEpitaph(); }
   });
+  const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
   const hb = $("hist-btn"); if (hb) hb.addEventListener("click", toggleHistory);

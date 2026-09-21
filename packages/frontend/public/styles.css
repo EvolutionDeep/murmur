@@ -275,8 +275,8 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 
 /* layer toggles (top-centre): switch the two ambient 10x layers — the swarm-mind aura + the isolate ring */
 .layer-toggles {
-  position: fixed; z-index: 9; left: 50%; top: calc(var(--pad) + 3px); transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px;
+  position: fixed; z-index: 9; left: 50%; top: calc(var(--pad) + 26px); transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; max-width: 62vw;
   font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .layer-toggles .layer-btn {
@@ -355,6 +355,32 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
   opacity: 0.55; pointer-events: none; transition: opacity 0.8s; text-align: center;
 }
 .hint-select.hide { opacity: 0; }
+
+/* ============ epitaph card — an illuminated grave plaque (gilded double rule, vellum field, sepia ink) ============ */
+.epitaph {
+  position: fixed; z-index: 24; left: 50%; top: 30%; transform: translate(-50%, -50%);
+  width: min(360px, 86vw); pointer-events: auto;
+  font-family: var(--display); color: var(--ink);
+  background: linear-gradient(180deg, rgba(238, 230, 210, 0.97), rgba(226, 214, 188, 0.97));
+  border: 2px solid #b08a36; border-radius: 4px;
+  box-shadow: 0 10px 40px rgba(26, 26, 24, 0.28), inset 0 0 0 1px rgba(214, 178, 92, 0.55), inset 0 0 26px rgba(120, 96, 60, 0.10);
+  padding: 20px 22px 18px;
+}
+.epitaph[hidden] { display: none; }
+.epitaph-close {
+  position: absolute; top: 6px; right: 10px; border: 0; background: none; cursor: pointer;
+  font: 300 22px/1 var(--mono); color: rgba(64, 52, 40, 0.6);
+}
+.epitaph-close:hover { color: #9c3b2e; }
+.epitaph-head {
+  font-family: "Cinzel", var(--display); font-weight: 700; font-size: 17px; letter-spacing: 0.02em;
+  color: #3a2f22; line-height: 1.25; padding-right: 20px;
+}
+.epitaph-rule { height: 0; border-top: 1px solid rgba(176, 138, 54, 0.55); border-bottom: 1px solid rgba(176, 138, 54, 0.26); margin: 12px 0; }
+.epitaph-body { display: flex; flex-direction: column; gap: 7px; }
+.ep-line { display: flex; gap: 9px; align-items: baseline; font-size: 14px; color: #40342a; }
+.ep-mark { flex: 0 0 14px; text-align: center; color: #b08a36; font-weight: 600; }
+.ep-val { flex: 1 1 auto; }
 
 /* --- agent economy panel (top-left): the x402 swarm ledger --- */
 .panel-econ { left: var(--pad); top: calc(var(--pad) + 44px); width: clamp(250px, 28vw, 340px); }
@@ -1426,6 +1452,8 @@ html[dir="rtl"] .hist-foot,
 html[dir="rtl"] .chron-era-name,
 html[dir="rtl"] .chron-era-regime,
 html[dir="rtl"] .chron-btn .chron-label,
-html[dir="rtl"] .dist-legend li {
+html[dir="rtl"] .dist-legend li,
+html[dir="rtl"] .epitaph-head,
+html[dir="rtl"] .ep-line {
   direction: rtl; text-align: right;
 }
