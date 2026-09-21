@@ -1018,6 +1018,30 @@ test("conflict ON (raid only): the weakest house bears a deep, reproducible grud
   assert.ok(bal <= minted, "conflict never minted value: total supply stays at or below founding float + treasury top-ups");
 });
 
+test("conflict ON (raid gate is PER-CRON): the raid rolls only on a cron-boundary sub-tick, never on the other five", async () => {
+  // raidProb=1 ⇒ the hash gate always passes WHEN it is rolled, so the ONLY thing that can now suppress a raid is
+  // the cron-boundary flag. Two runs over the same 20 sub-ticks differ solely in that flag: this pins the regression
+  // for the 6× over-fire (the economy steps 6×/cron, but a raid must be attempted at most once per cron).
+  const make = () => new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { raidStep: 1, raidProb: 1 }) }));
+  const run = async (boundary: boolean) => {
+    const e = make();
+    for (let t = 0; t < 10; t++) await e.step(population("AGITATE"), collective(0.9), t, undefined, boundary);
+    e.noteHatch(2, 10, HASH_A);                                    // house 2 ⇒ members {2,10}
+    e.noteHatch(5, 15, HASH_B);                                    // house 5 ⇒ members {5,15}
+    for (let t = 10; t < 20; t++) await e.step(population("AGITATE"), collective(0.9), t, undefined, boundary);
+    return e;
+  };
+  const feud = (e: AgentEconomy) => {
+    const f = e.houseFeuds().find((x) => (x.a === 2 && x.b === 5) || (x.a === 5 && x.b === 2));
+    return f ? f.score : 0;
+  };
+  const onBoundary = await run(true);    // rolled on every sub-tick (as a direct step() — tests, replay — does)
+  const offBoundary = await run(false);  // suppressed on every sub-tick (as 5 of 6 cron sub-ticks now are)
+
+  assert.ok(feud(onBoundary) < 0, "on a cron boundary the raid fires ⇒ the weakest house bears a deep grudge");
+  assert.ok(feud(offBoundary) > feud(onBoundary), "off the boundary the raid never rolls ⇒ strictly less grudge (the 6× over-fire is gone)");
+});
+
 test("conflict ON (rivalry only): houses trading the same good grow a grudge, deterministically", async () => {
   const make = () => new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { rivalStep: 0.5 }) }));
   const a = make(); await seedTwoHouses(a, 40);

@@ -401,7 +401,7 @@ test("by default organic conflict is OFF with pure-mean feuds, and every knob is
   assert.equal(off.envyStep, 0.1);
   assert.equal(off.embargoStep, 0.05);
   assert.equal(off.raidStep, 0.4);
-  assert.equal(off.raidProb, 0.02);
+  assert.equal(off.raidProb, 0.0003);
   assert.equal(off.feudBlend, 0, "FEUD_BLEND defaults to 0 ⇒ houseFeuds stays a pure mean even if armed");
 
   assert.equal(loadConfig(env({ CONFLICT_ENABLED: "TRUE" })).conflict.enabled, true, "case-insensitive enable");

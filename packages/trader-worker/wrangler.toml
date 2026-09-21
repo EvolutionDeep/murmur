@@ -245,7 +245,7 @@ CONFLICT_RIVAL_STEP = "0.06"                  # grudge/tick between two houses c
 CONFLICT_ENVY_STEP = "0.10"                   # max grudge a losing house takes toward the dominant house on a hot shock (sampled ~1-in-5)
 CONFLICT_EMBARGO_STEP = "0.05"                # grievance a shunned seller accrues back at the embargoing buyer's house
 CONFLICT_RAID_STEP = "0.40"                   # heavy social grudge the raided (weakest) house holds against the raider (Phase 1: no money moves)
-CONFLICT_RAID_PROB = "0.02"                   # per-cron, hash-gated chance a raid is attempted (rare, ~"one every few days")
+CONFLICT_RAID_PROB = "0.0003"                 # per-cron hash-gated chance a raid is attempted (~0.43/day ⇒ one every 2–3 days; the gate now rolls ONCE per cron, not per sub-tick)
 FEUD_BLEND = "0.55"                           # 0 ⇒ pure-mean houseFeuds (byte-identical to today); >0 weights the K=3 deepest grudges toward the -0.6 war line
 
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====

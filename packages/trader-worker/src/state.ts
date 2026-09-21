@@ -1369,6 +1369,7 @@ export class FlyStateDO {
           snapshot.collective,
           swarm.getTickIndex(),
           econBudget,
+          st === 0,   // cron boundary: the per-cron RAID gate rolls only on the first sub-tick, not all 6
         );
         cronSettlements.push(...made);
         deals += made.filter((s) => s.valid).length;

@@ -149,7 +149,7 @@ export interface Env {
   CONFLICT_ENVY_STEP?: string;          // max grudge a losing house takes toward the dominant house on a hot shock (default 0.10)
   CONFLICT_EMBARGO_STEP?: string;       // grievance accrued on a retaliatory supply-cut / whole-span shun (default 0.05)
   CONFLICT_RAID_STEP?: string;          // heavy social grudge a raided house takes toward the raider house (default 0.40)
-  CONFLICT_RAID_PROB?: string;          // per-cron hash-gated probability a raid is attempted (default 0.02)
+  CONFLICT_RAID_PROB?: string;          // per-cron hash-gated probability a raid is attempted (default 0.0003 ≈ one every 2–3 days)
   FEUD_BLEND?: string;                  // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in (default 0)
 
   // --- Autonomous evolution: profitable agents self-fund breeding from their OWN wallets ---
@@ -626,7 +626,7 @@ export function loadConfig(env: Env): RuntimeConfig {
       envyStep: clamp(Number(env.CONFLICT_ENVY_STEP ?? "0.10"), 0, 1),
       embargoStep: clamp(Number(env.CONFLICT_EMBARGO_STEP ?? "0.05"), 0, 1),
       raidStep: clamp(Number(env.CONFLICT_RAID_STEP ?? "0.40"), 0, 1),
-      raidProb: clamp(Number(env.CONFLICT_RAID_PROB ?? "0.02"), 0, 1),
+      raidProb: clamp(Number(env.CONFLICT_RAID_PROB ?? "0.0003"), 0, 1),
       feudBlend: clamp(Number(env.FEUD_BLEND ?? "0"), 0, 1),
     },
 

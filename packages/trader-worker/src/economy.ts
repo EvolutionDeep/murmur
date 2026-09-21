@@ -667,7 +667,7 @@ export class AgentEconomy {
    * onchain settlement does real RPC; the simulated facilitator resolves immediately with identical
    * results, so awaiting changes nothing about the default economy's output.
    */
-  async step(readings: FlyReading[], collective: CollectiveState, tickIndex: number, budgetOverride?: number): Promise<Settlement[]> {
+  async step(readings: FlyReading[], collective: CollectiveState, tickIndex: number, budgetOverride?: number, cronBoundary = true): Promise<Settlement[]> {
     this.tickIndex = tickIndex;
     if (!this.cfg.enabled || readings.length < 2) { this.lastTick = []; return this.lastTick; }
 
@@ -748,7 +748,7 @@ export class AgentEconomy {
 
     // ORGANIC CONFLICT: after the market clears, accrue deterministic negative cross-house bonds (rivalry /
     // envy / embargo / raid) so genuine feuds can surface on-chain. Inert (byte-for-byte) unless the switch is on.
-    if (this.conflictOn()) this.applyConflict(tickIndex, T, made, held);
+    if (this.conflictOn()) this.applyConflict(tickIndex, T, made, held, cronBoundary);
 
     this.lastTick = made;
     for (const s of made) {
@@ -1326,7 +1326,7 @@ export class AgentEconomy {
   }
 
   /** Run all four conflict sources for this tick. Returns immediately (byte-for-byte) when the switch is off. */
-  private applyConflict(tick: number, T: number, made: Settlement[], held: { buyer: number; shunned: number[] }[]): void {
+  private applyConflict(tick: number, T: number, made: Settlement[], held: { buyer: number; shunned: number[] }[], cronBoundary: boolean): void {
     if (!this.conflictOn()) return;
     const c = this.cfg.conflict!;
     if (this.houses.size < 2) return;
@@ -1335,7 +1335,7 @@ export class AgentEconomy {
     this.conflictRivalry(tick, made, c);
     this.conflictEnvy(tick, T, rows, c);
     this.conflictEmbargo(tick, held, c);
-    this.conflictRaid(tick, rows, c);
+    this.conflictRaid(tick, rows, c, cronBoundary);
   }
 
   /** RIVALRY: the two houses trading the same good most this tick compete for its demand and resent each other. */
@@ -1396,8 +1396,15 @@ export class AgentEconomy {
     }
   }
 
-  /** RAID: rarely, the strongest house preys on the weakest — a heavy social grudge (NO money moves in Phase 1). */
-  private conflictRaid(tick: number, rows: WarHouse[], c: NonNullable<EconomyConfig["conflict"]>): void {
+  /**
+   * RAID: rarely, the strongest house preys on the weakest — a heavy social grudge (NO money moves in Phase 1).
+   * Gated PER-CRON, not per sub-tick: the economy steps `ticksPerCron` (6) times per cron, so rolling the raid
+   * hash on every sub-tick fired it ~6× too often (measured 191/day ⇒ the strongest↔weakest pair was pinned at a
+   * permanent −1 feud within minutes). `cronBoundary` is true only on a cron's first sub-tick (state.ts passes
+   * st===0); it defaults true so a direct step() — tests, replay — still rolls the raid once per call.
+   */
+  private conflictRaid(tick: number, rows: WarHouse[], c: NonNullable<EconomyConfig["conflict"]>, cronBoundary: boolean): void {
+    if (!cronBoundary) return;
     if (c.raidStep <= 0 || hash01(tick, 0x0a1d, 0x5f3a) >= c.raidProb) return;
     const sorted = rows.slice().sort((a, b) => housePower(b) - housePower(a) || a.id - b.id);
     const raider = sorted[0];
