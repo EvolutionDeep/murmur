@@ -854,3 +854,24 @@ test("live-retirement: a hatch onto a retired id reopens it and births the newbo
   const oldHouse = econ.dynastyReadout().houses.find((h) => h.id === 0);
   assert.ok(!oldHouse || oldHouse.members < 2, "the buried founder's old house does not resurrect him as a member");
 });
+
+test("liveAgents counts only the LIVING: a buried fly drops out of the total, a recycled hatch restores it", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);          // 24 genesis wallets
+  assert.equal(econ.snapshot().totals.liveAgents, 24, "all genesis wallets are live");
+
+  econ.noteHatch(0, 24, HASH_A);                                         // #24 offspring
+  await econ.step([...population("EXPLORE"), reading(24, "EXPLORE")], collective(0.3), 10);
+  econ.getAgent(0)!.balance = "900";
+  assert.equal(econ.snapshot().totals.liveAgents, 25, "the offspring wallet is live too");
+
+  econ.noteMortality(16, 0.3);                                           // #0 eldest → buried
+  assert.equal(econ.isDead(0), true, "the economy reports the founder entombed");
+  assert.deepEqual(econ.deadIds(), [0], "deadIds names exactly the buried wallet");
+  assert.equal(econ.snapshot().totals.liveAgents, 24, "the dead fly leaves the LIVING count even though its wallet stays in the ledger");
+  assert.equal(econ.snapshot().agents.find((a) => a.id === 0)!.dead, true, "the closed wallet persists (dead:true) — only the count excludes it");
+
+  econ.noteHatch(1, 0, HASH_B);                                          // a newborn reclaims slot #0
+  assert.equal(econ.isDead(0), false, "reopening #0 lifts its tombstone");
+  assert.equal(econ.snapshot().totals.liveAgents, 25, "the reborn fly counts as living again");
+});

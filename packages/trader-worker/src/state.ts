@@ -1200,6 +1200,22 @@ export class FlyStateDO {
           }
         }
       }
+      // LIVE-RETIRE backlog reconciliation: a fly that died BEFORE retirement shipped (or whose retire fetch
+      // failed on an earlier cron) is STILL in the swarm roster even though the economy has entombed it.
+      // noteMortality only reports NEW graves, so reconcile the live roster against the economy's dead set and
+      // evict any dead-but-still-flying id — freeing its slot so aliveCount/size reflect ONLY the living.
+      if (this.cfg.liveRetire) {
+        for (const id of swarm.liveIds()) {
+          if (!economy.isDead(id)) continue;
+          try {
+            if (await swarm.retireFly(id, this.state.storage)) {
+              console.log(`[DO] live-retire reconcile: evicted dead #${id} still squatting a slot (live=${swarm.size()})`);
+            }
+          } catch (e) {
+            console.warn(`[DO] live-retire reconcile #${id} failed (roster may retry next cron):`, (e as Error).message);
+          }
+        }
+      }
       this.lastEconomy = economy.snapshot();
     }
 

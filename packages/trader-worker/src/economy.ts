@@ -2334,6 +2334,10 @@ export class AgentEconomy {
   snapshot(): EconomySnapshot {
     const balances = this.agents.map((a) => BigInt(a.balance));
     const n = this.agents.length;
+    // "live agents" = wallets that are actually still flying, NOT every wallet ever funded: a buried fly
+    // keeps its ledger entry (dead:true) and a recycled slot reuses one, so agents.length over-counts.
+    let liveAgents = 0;
+    for (const a of this.agents) if (!this.dead.has(a.id)) liveAgents++;
     let sum = 0n;
     for (const b of balances) sum += b;
     const meanUsdc = n ? atomicToUsdc((sum / BigInt(n)).toString()) : 0;
@@ -2381,7 +2385,7 @@ export class AgentEconomy {
         settleFail: this.settleFail,
         settleAttempts: this.settleOk + this.settleFail,
         successRate: this.settleOk + this.settleFail > 0 ? this.settleOk / (this.settleOk + this.settleFail) : null,
-        liveAgents: n,
+        liveAgents,
         meanBalanceUsdc: meanUsdc,
         gini: giniAtomic(this.agents.map((a) => a.balance)),
         treasuryOutAtomic: this.treasuryOutAtomic,
@@ -2404,6 +2408,19 @@ export class AgentEconomy {
   getAgent(id: number): AgentState | undefined {
     const idx = this.indexOfId.get(id);
     return idx == null ? undefined : this.agents[idx];
+  }
+
+  /**
+   * LIVE-RETIREMENT read accessors (pure read-out, no state change): whether a wallet is economically
+   * closed (entombed), and the full set of closed ids. The coordinator reconciles the SWARM roster against
+   * `deadIds()` each cron, so a fly that died before live-retirement shipped (or whose retire fetch failed)
+   * is still evicted from the population — the dead never keep squatting a breeding slot.
+   */
+  isDead(id: number): boolean {
+    return this.dead.has(id);
+  }
+  deadIds(): number[] {
+    return Array.from(this.dead);
   }
 
   // ---------- persistence ----------

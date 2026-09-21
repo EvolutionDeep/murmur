@@ -86,7 +86,7 @@ const ECON_TOTALS = {
     settleFail: { type: "integer", description: "Lifetime on-chain net settlement attempts that failed to mine (incl. missing-signer, verify/settle failures)." },
     settleAttempts: { type: "integer", description: "settleOk + settleFail — real broadcast attempts (shadow dry-runs excluded)." },
     successRate: { type: ["number", "null"], description: "settleOk / settleAttempts (0..1), or null before any on-chain attempt." },
-    liveAgents: { type: "integer", description: "Agents with a non-dust balance." },
+    liveAgents: { type: "integer", description: "Currently-LIVING agent wallets = every funded wallet minus the entombed (dead) ones. A buried fly keeps its ledger entry (dead:true) and a recycled slot reuses a wallet, so this counts who is actually flying, not wallets ever created." },
     meanBalanceUsdc: { type: "number" },
     gini: { type: "number", description: "Wealth inequality across agents (0..1)." },
     treasuryOutAtomic: { type: "string", description: "Total paid out from the funding treasury (integer string)." },
