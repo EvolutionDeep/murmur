@@ -355,7 +355,7 @@ let lastHistSample = 0;
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
-let showMind = true, showShards = true, showSocieties = true;
+let showMind = false, showShards = false, showSocieties = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
@@ -496,6 +496,23 @@ function updateSim(dt, now) {
     for (const c of societies.colonies) {
       const axp = smx + c.ax * (VW - 2 * smx), ayp = smy + c.ay * (VH - 2 * smy);
       for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { f.sx += (axp - f.x) * SOCIETY_ANCHOR_K; f.sy += (ayp - f.y) * SOCIETY_ANCHOR_K; } }
+    }
+    // territories are exclusive jurisdictions: repel whole colonies so their bodies never merge
+    const cents = [];
+    for (const c of societies.colonies) {
+      let x = 0, y = 0, n = 0, r = 0;
+      for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { x += f.x; y += f.y; n++; } }
+      if (n) { x /= n; y /= n; for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { const d = Math.hypot(f.x - x, f.y - y); if (d > r) r = d; } } }
+      cents.push({ x, y, n, r: r + SOCIETY_PAD });
+    }
+    for (let i = 0; i < cents.length; i++) for (let j = i + 1; j < cents.length; j++) {
+      const A = cents[i], B = cents[j]; if (A.n < 2 || B.n < 2) continue;
+      const dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy);
+      const need = A.r + B.r + SOCIETY_TERR_GAP;
+      if (d < 0.001 || d >= need) continue;
+      const ux = dx / d, uy = dy / d, s = (need - d) * SOCIETY_TERR_K;
+      for (const id of societies.colonies[i].ids) { const f = sim.get(id); if (f && !f.dying) { f.sx -= ux * s; f.sy -= uy * s; } }
+      for (const id of societies.colonies[j].ids) { const f = sim.get(id); if (f && !f.dying) { f.sx += ux * s; f.sy += uy * s; } }
     }
     for (const p of societies.allies) {
       const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
@@ -715,6 +732,11 @@ const SOCIETY_ANCHOR_K = 0.0025;   // spring toward the colony's home anchor (ge
 const SOCIETY_ALLY_K = 0.5;        // ally pull accel (unit vector × bond weight)
 const SOCIETY_FEUD_K = 1.1;        // feud push accel, faded out beyond SOCIETY_FEUD_RANGE
 const SOCIETY_FEUD_RANGE = 220;    // css px — grudges only shove when the flies are this close
+const SOCIETY_PAD = 30;            // territory outline padding beyond the outermost member
+const SOCIETY_TERR_GAP = 26;       // css px of clear space physics keeps between two territories
+const SOCIETY_TERR_K = 0.02;       // colony-vs-colony repulsion strength (per px of overlap)
+const SOCIETY_CAP_GAP = 12;        // css px gap enforced by the Voronoi cap when drawing
+const SOCIETY_MINCAP = 24;         // a territory never shrinks below this radius (still exclusive)
 // muted jewel/earth tones so colonies read on the light paper without clashing with the palette
 const COLONY_COLORS = [
   [91, 124, 141], [154, 110, 90], [120, 140, 96], [176, 142, 86],
@@ -822,10 +844,10 @@ function rebuildSocieties() {
 
 /** Smooth organic boundary hugging a colony's living members: angular-bin the member radii around the
  *  live centroid, interpolate + smooth the empty bins, pad outward, and return a closed point ring. */
-function colonyBlob(pts) {
+function colonyBlob(pts, others, scr) {
   let cx = 0, cy = 0; for (const p of pts) { cx += p.x; cy += p.y; } cx /= pts.length; cy /= pts.length;
-  const BINS = 28, MINR = 44, PAD = 30;
-  const rad = new Array(BINS).fill(0);
+  const BINS = 28, MINR = 44;
+  const rad = scr.rad.fill(0), sm = scr.sm, P = scr.P;
   for (const p of pts) {
     const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy);
     let bi = Math.floor(((Math.atan2(dy, dx) + Math.PI) / TAU) * BINS) % BINS; if (bi < 0) bi += BINS;
@@ -834,19 +856,29 @@ function colonyBlob(pts) {
   // fill empty angular bins from their neighbours so the outline stays closed and organic
   for (let pass = 0; pass < 3; pass++) for (let i = 0; i < BINS; i++) if (rad[i] <= 0) rad[i] = Math.max(rad[(i - 1 + BINS) % BINS], rad[(i + 1) % BINS]) * 0.9 || MINR;
   for (let i = 0; i < BINS; i++) rad[i] = Math.max(rad[i], MINR * 0.6);
-  // circular smoothing so the territory reads as one soft body, not a star
+  // circular smoothing so the territory reads as one soft body, not a star (scratch-reused, no alloc)
   for (let pass = 0; pass < 2; pass++) {
-    const sm = rad.slice();
-    for (let i = 0; i < BINS; i++) rad[i] = (sm[(i - 1 + BINS) % BINS] + sm[i] * 2 + sm[(i + 1) % BINS]) / 4;
+    for (let i = 0; i < BINS; i++) sm[i] = (rad[(i - 1 + BINS) % BINS] + rad[i] * 2 + rad[(i + 1) % BINS]) / 4;
+    for (let i = 0; i < BINS; i++) rad[i] = sm[i];
   }
   let rmax = 0;
-  const P = [];
   for (let i = 0; i < BINS; i++) {
-    const a = (i / BINS) * TAU - Math.PI, r = rad[i] + PAD;
+    const a = (i / BINS) * TAU - Math.PI;
+    let r = rad[i] + SOCIETY_PAD;
+    // exclusive jurisdiction: cap at the bisector toward every other colony (Voronoi), minus a gap
+    if (others) for (const o of others) {
+      const dx = o.x - cx, dy = o.y - cy, D = Math.hypot(dx, dy);
+      if (D < 1) continue;
+      const cosT = (Math.cos(a) * dx + Math.sin(a) * dy) / D;
+      if (cosT <= 0.2) continue;
+      const cap = (D / 2 - SOCIETY_CAP_GAP) / cosT;
+      if (cap < r) r = cap;
+    }
+    r = Math.max(r, SOCIETY_MINCAP);
     if (r > rmax) rmax = r;
-    P.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+    const q = P[i]; q[0] = cx + Math.cos(a) * r; q[1] = cy + Math.sin(a) * r;
   }
-  return { cx, cy, P, rmax };
+  return { cx, cy, rmax };
 }
 
 /** Trace a smooth closed curve through a point ring (quadratic through edge midpoints) onto a target
@@ -879,31 +911,35 @@ function traceCrack(a, b) {
 function renderSocieties(pal, now) {
   if (!showSocieties || !societies || !societies.colonies.length) return;
   // 1) bounded territories hugging each colony's live members.
-  //    The outline geometry + glow gradient are CACHED as a Path2D and only rebuilt ~15Hz (or when the
-  //    centroid moves >3px), because members drift slowly — per-frame we just fill/stroke the cache.
-  for (const c of societies.colonies) {
-    const pts = [];
+  //    The outline ring is recomputed EVERY frame (cheap bin math on reused scratch buffers, zero
+  //    allocation) so the border tracks members smoothly at 60fps; only the radial glow gradient —
+  //    the genuinely expensive object — is cached and rebuilt ~15Hz / on centroid move.
+  const cents = societies.colonies.map((c) => { let x = 0, y = 0, n = 0; for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { x += f.x; y += f.y; n++; } } return { x: n ? x / n : 0, y: n ? y / n : 0, n }; });
+  for (let ci = 0; ci < societies.colonies.length; ci++) {
+    const c = societies.colonies[ci];
+    const pts = c._pts || (c._pts = []);
+    pts.length = 0;
     for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) pts.push(f); }
     if (pts.length < 2) continue;
-    let cx = 0, cy = 0; for (const p of pts) { cx += p.x; cy += p.y; } cx /= pts.length; cy /= pts.length;
-    let cache = c._blob;
-    if (!cache || (now - cache.t > 66) || Math.hypot(cx - cache.cx, cy - cache.cy) > 3) {
-      const blob = colonyBlob(pts);
-      const path = new Path2D(); traceBlob(path, blob.P);
+    const scr = c._scr || (c._scr = { rad: new Array(28).fill(0), sm: new Array(28).fill(0), P: Array.from({ length: 28 }, () => [0, 0]) });
+    const blob = colonyBlob(pts, cents.filter((o, k) => k !== ci && o.n >= 2), scr);
+    let glow = c._glow;
+    if (!glow || (now - glow.t > 66) || Math.hypot(blob.cx - glow.cx, blob.cy - glow.cy) > 3) {
       const grad = ctx.createRadialGradient(blob.cx, blob.cy, 0, blob.cx, blob.cy, blob.rmax);
       grad.addColorStop(0, rgba(c.color, 0.10)); grad.addColorStop(1, rgba(c.color, 0));
-      cache = c._blob = { path, grad, cx: blob.cx, cy: blob.cy, rmax: blob.rmax, t: now };
+      glow = c._glow = { grad, cx: blob.cx, cy: blob.cy, rmax: blob.rmax, t: now };
     }
-    ctx.fillStyle = rgba(c.color, 0.13); ctx.fill(cache.path);
-    ctx.strokeStyle = rgba(c.color, 0.55); ctx.lineWidth = 1.4; ctx.stroke(cache.path);
+    traceBlob(ctx, scr.P);
+    ctx.fillStyle = rgba(c.color, 0.13); ctx.fill();
+    ctx.strokeStyle = rgba(c.color, 0.55); ctx.lineWidth = 1.4; ctx.stroke();
     // soft inner glow for depth (cached gradient)
-    ctx.fillStyle = cache.grad; ctx.fill(cache.path);
+    ctx.fillStyle = glow.grad; ctx.fill();
     // label: colony name + headcount, above the territory
     ctx.save();
     ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     ctx.fillStyle = rgba(c.color, 0.9);
-    ctx.fillText(`${c.name} · ${pts.length}`, cache.cx, cache.cy - cache.rmax - 6);
+    ctx.fillText(`${c.name} · ${pts.length}`, blob.cx, blob.cy - blob.rmax - 6);
     ctx.restore();
   }
   // 2) gold bond web inside colonies (the alliances that define each society)
@@ -924,9 +960,11 @@ function renderSocieties(pal, now) {
 }
 
 function render(pal, now) {
-  // trail wash: cohesive swarms leave long lingering trails, scattered ones fade fast
-  const fade = 0.055 + (1 - cohSmoothed) * 0.24;
-  ctx.fillStyle = rgba(pal.paper, fade);
+  // OPAQUE full clear every frame. The old translucent "trail wash" let previous frames linger and
+  // fade slowly, smearing moving flies AND every glyph/label into ghosts that read as stutter.
+  // Crisp clear removes all ghosting with no quality loss (motion feel stays via the per-fly ink
+  // trail stroke), and an opaque fill is cheaper than an alpha-blended wash.
+  ctx.fillStyle = rgb(pal.paper);
   ctx.fillRect(0, 0, VW, VH);
 
   // the swarm's ambient neural aura — deepest background layer, breathing with the collective mood

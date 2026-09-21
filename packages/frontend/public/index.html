@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=43" />
+  <link rel="stylesheet" href="./styles.css?v=47" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -333,15 +333,13 @@
     <div class="drawer-body" id="arena-body"></div>
   </aside>
 
-  <!-- ============ layer toggles: the two ambient layers that make the 10x infra visible ============ -->
+  <!-- ============ layer toggles: the ambient social layer (mind aura + isolates ring removed for perf) ============ -->
   <div class="layer-toggles" id="layer-toggles" role="group" aria-label="ambient layers">
-    <button type="button" class="layer-btn is-on" data-layer="mind" title="the swarm's shared neural mood, breathing behind the field">swarm mind</button>
-    <button type="button" class="layer-btn is-on" data-layer="shards" title="the FlyShardDO isolates the 24 brains are split across — 12 isolates let each grow to 10,800 neurons">isolates</button>
     <button type="button" class="layer-btn is-on" data-layer="societies" title="the swarm's social graph: bonded flies gather into named colonies, feuds tear rifts between them — drawn live from the on-chain bond &amp; grudge ledger">societies</button>
   </div>
 
   <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=43" type="module"></script>
+  <script src="./app.js?v=47" type="module"></script>
 </body>
 </html>
