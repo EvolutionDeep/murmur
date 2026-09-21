@@ -209,6 +209,27 @@ ARENA_FLAT_BAND = "0.008"                     # |Δtemperature| ≤ this ⇒ FLA
 ARENA_STALE_GRACE_SEC = "259200"              # 3 days past a round's deadline before anyone may expire it for a refund
 
 
+# ===== COLONY WAR + TAXATION (ONCHAIN — house-vs-house feud escrowed in real USDC via WarCoffer) =====
+# Deeply feuding houses may go to WAR and every vault-holding house pays an extra on-chain TAX beyond the
+# internal 2% tithe, both settled through the deployed WarCoffer contract. It escrows bounded real USDC per
+# house vault and derives the winner IN-CONTRACT from inputs committed at declare time (powerA/powerB + a
+# keccak seed hash), so the resolver cannot steer an outcome; money only moves inside the contract (never
+# minted). The Worker's facilitator wallet is the authorized RESOLVER (it calls deposit/declareWar/resolveWar/
+# levyTax). This whole slice is inert unless the onchain facilitator is armed with real spend on (ECONOMY_FACILITATOR=onchain,
+# ECONOMY_SHADOW=false, ECONOMY_REAL_SPEND not false) AND war.enabled AND WAR_ADDRESS — the same master rails as the arena.
+# The coffer starts EMPTY: no USDC is escrowed until driveWar tops a vault against the hard cap below.
+# Set WAR_ENABLED = "false" to halt the whole layer instantly (byte-for-byte rollback to the pre-war economy).
+WAR_ENABLED = "true"                          # LIVE: coffer 0x3d900b…454b deployed; the swarm's feuds settle on-chain + the extra tax is levied each bucket
+WAR_ADDRESS = "0x3d900b8d1d48b46fc18a3f57dfd15a4a28bb454b"   # deployed WarCoffer (Arc mainnet 5042, deploy tx 0x26cc993c…d964); resolver = Worker facilitator 0x2b9a…055c, deployer/gas 0x307D…3a0d
+WAR_MAX_ESCROW_USDC = "50"                    # hard ceiling on real USDC the coffer may ever hold (immutable in the contract; kept in sync here for the per-vault target math)
+WAR_STAKE_PCT = "0.05"                        # stake as a fraction of the funded vault, bounded by WAR_PER_WAR_CAP_USDC
+WAR_MIN_VAULT_USDC = "1"                      # a house must hold at least this much on-chain before it can fight
+WAR_PER_WAR_CAP_USDC = "5"                    # per-war stake ceiling (USDC) — bounded, no whole-vault annexation
+WAR_CADENCE_SEC = "3600"                      # one war/tax bucket per N seconds (clamped 300..7d)
+WAR_FEUD_THRESHOLD = "-0.6"                   # cross-house mean bond at or below this is feud-worthy (war.ts ties this to the social-memory blacklist line)
+WAR_TAX_PCT = "0.01"                          # extra on-chain tax per bucket as a fraction of a house's on-chain vault (bounded)
+WAR_TAX_DEST = "coffer"                       # "coffer" = tax stays in the coffer's commons purse (default); "dominant" sweeps it to the leading house
+
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
 # fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /
