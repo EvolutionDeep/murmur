@@ -720,6 +720,10 @@ const COLONY_COLORS = [
   [91, 124, 141], [154, 110, 90], [120, 140, 96], [176, 142, 86],
   [140, 104, 140], [96, 140, 138], [168, 110, 110], [124, 124, 168],
 ];
+// evocative deterministic colony names, index-aligned with COLONY_COLORS so a colony keeps one identity
+const COLONY_NAMES = ["Helios", "Nimbus", "Verdant", "Aurora", "Axiom", "Hearth", "Echo", "Quorum", "Solace", "Umbra", "Cinder", "Thistle"];
+const GOLD_THREAD = [198, 152, 66];   // the reference's signature "gold thread" for intra-colony bonds
+const CRACK_RED = [198, 60, 44];      // conflict / grudge cracks between rivals
 const fnv1a = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; };
 
 /** Weighted-modularity community detection (Louvain local-moving, single level). The live bond graph is
@@ -809,50 +813,114 @@ function rebuildSocieties() {
     col.ax = clamp(SLOTS[si][0] + jx * 0.05, 0.06, 0.94);
     col.ay = clamp(SLOTS[si][1] + jy * 0.05, 0.06, 0.94);
     col.color = COLONY_COLORS[i % COLONY_COLORS.length];
+    col.name = COLONY_NAMES[i % COLONY_NAMES.length];
   }
   const colonyOf = new Map();
   for (let i = 0; i < colonies.length; i++) for (const id of colonies[i].ids) colonyOf.set(id, i);
   societies = { colonies, allies, feuds, colonyOf };
 }
 
-/** Draw the colonies beneath the flies: a soft territory aura at each colony's LIVE centroid, gold
- *  bond filaments between allies, and dashed red rifts between nearby feuding flies. */
+/** Smooth organic boundary hugging a colony's living members: angular-bin the member radii around the
+ *  live centroid, interpolate + smooth the empty bins, pad outward, and return a closed point ring. */
+function colonyBlob(pts) {
+  let cx = 0, cy = 0; for (const p of pts) { cx += p.x; cy += p.y; } cx /= pts.length; cy /= pts.length;
+  const BINS = 28, MINR = 44, PAD = 30;
+  const rad = new Array(BINS).fill(0);
+  for (const p of pts) {
+    const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy);
+    let bi = Math.floor(((Math.atan2(dy, dx) + Math.PI) / TAU) * BINS) % BINS; if (bi < 0) bi += BINS;
+    if (d > rad[bi]) rad[bi] = d;
+  }
+  // fill empty angular bins from their neighbours so the outline stays closed and organic
+  for (let pass = 0; pass < 3; pass++) for (let i = 0; i < BINS; i++) if (rad[i] <= 0) rad[i] = Math.max(rad[(i - 1 + BINS) % BINS], rad[(i + 1) % BINS]) * 0.9 || MINR;
+  for (let i = 0; i < BINS; i++) rad[i] = Math.max(rad[i], MINR * 0.6);
+  // circular smoothing so the territory reads as one soft body, not a star
+  for (let pass = 0; pass < 2; pass++) {
+    const sm = rad.slice();
+    for (let i = 0; i < BINS; i++) rad[i] = (sm[(i - 1 + BINS) % BINS] + sm[i] * 2 + sm[(i + 1) % BINS]) / 4;
+  }
+  let rmax = 0;
+  const P = [];
+  for (let i = 0; i < BINS; i++) {
+    const a = (i / BINS) * TAU - Math.PI, r = rad[i] + PAD;
+    if (r > rmax) rmax = r;
+    P.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return { cx, cy, P, rmax };
+}
+
+/** Trace a smooth closed curve through a point ring (quadratic through edge midpoints) onto a target
+ *  (a CanvasRenderingContext2D or a Path2D). */
+function traceBlob(t, P) {
+  const n = P.length;
+  if (t.beginPath) t.beginPath();
+  t.moveTo((P[0][0] + P[n - 1][0]) / 2, (P[0][1] + P[n - 1][1]) / 2);
+  for (let i = 0; i < n; i++) { const cur = P[i], nxt = P[(i + 1) % n]; t.quadraticCurveTo(cur[0], cur[1], (cur[0] + nxt[0]) / 2, (cur[1] + nxt[1]) / 2); }
+  t.closePath();
+}
+
+/** A deterministic jagged "crack" polyline between two feuding flies (stable frame to frame). */
+function traceCrack(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+  const px = -dy / d, py = dx / d;
+  const segs = Math.max(4, Math.round(d / 26));
+  const seed = fnv1a("crack:" + Math.min(a.id, b.id) + ":" + Math.max(a.id, b.id));
+  ctx.beginPath(); ctx.moveTo(a.x, a.y);
+  for (let i = 1; i < segs; i++) {
+    const t = i / segs;
+    const j = ((((seed >>> (i % 24)) & 0xff) / 255) - 0.5) * 16;
+    ctx.lineTo(a.x + dx * t + px * j, a.y + dy * t + py * j);
+  }
+  ctx.lineTo(b.x, b.y);
+}
+
+/** Draw the societies: a clearly-bounded organic territory per colony (filled + outlined + labelled),
+ *  a gold bond web inside each colony, and red conflict cracks between feuding flies. Beneath the flies. */
 function renderSocieties(pal, now) {
   if (!showSocieties || !societies || !societies.colonies.length) return;
-  // territory auras — centred on where the members actually are, so the colony breathes with them
+  // 1) bounded territories hugging each colony's live members.
+  //    The outline geometry + glow gradient are CACHED as a Path2D and only rebuilt ~15Hz (or when the
+  //    centroid moves >3px), because members drift slowly — per-frame we just fill/stroke the cache.
   for (const c of societies.colonies) {
     const pts = [];
-    let sx = 0, sy = 0;
-    for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { pts.push(f); sx += f.x; sy += f.y; } }
+    for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) pts.push(f); }
     if (pts.length < 2) continue;
-    const cxp = sx / pts.length, cyp = sy / pts.length;
-    let rmax = 0; for (const f of pts) { const d = Math.hypot(f.x - cxp, f.y - cyp); if (d > rmax) rmax = d; }
-    const R = rmax + 34;
-    const g = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
-    g.addColorStop(0, rgba(c.color, 0.11));
-    g.addColorStop(0.6, rgba(c.color, 0.05));
-    g.addColorStop(1, rgba(c.color, 0));
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, TAU); ctx.fill();
-    ctx.strokeStyle = rgba(c.color, 0.10); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cxp, cyp, R * 0.92, 0, TAU); ctx.stroke();
+    let cx = 0, cy = 0; for (const p of pts) { cx += p.x; cy += p.y; } cx /= pts.length; cy /= pts.length;
+    let cache = c._blob;
+    if (!cache || (now - cache.t > 66) || Math.hypot(cx - cache.cx, cy - cache.cy) > 3) {
+      const blob = colonyBlob(pts);
+      const path = new Path2D(); traceBlob(path, blob.P);
+      const grad = ctx.createRadialGradient(blob.cx, blob.cy, 0, blob.cx, blob.cy, blob.rmax);
+      grad.addColorStop(0, rgba(c.color, 0.10)); grad.addColorStop(1, rgba(c.color, 0));
+      cache = c._blob = { path, grad, cx: blob.cx, cy: blob.cy, rmax: blob.rmax, t: now };
+    }
+    ctx.fillStyle = rgba(c.color, 0.13); ctx.fill(cache.path);
+    ctx.strokeStyle = rgba(c.color, 0.55); ctx.lineWidth = 1.4; ctx.stroke(cache.path);
+    // soft inner glow for depth (cached gradient)
+    ctx.fillStyle = cache.grad; ctx.fill(cache.path);
+    // label: colony name + headcount, above the territory
+    ctx.save();
+    ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.fillStyle = rgba(c.color, 0.9);
+    ctx.fillText(`${c.name} · ${pts.length}`, cache.cx, cache.cy - cache.rmax - 6);
+    ctx.restore();
   }
-  // bond filaments (allies) — tinted by the colony they belong to, brighter the stronger the bond
-  ctx.lineWidth = 0.9;
+  // 2) gold bond web inside colonies (the alliances that define each society)
+  ctx.lineWidth = 1.1;
   for (const p of societies.allies) {
     const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-    const ci = societies.colonyOf.get(p.a);
-    const col = (ci != null && societies.colonies[ci]) ? societies.colonies[ci].color : [180, 150, 90];
-    ctx.strokeStyle = rgba(col, 0.10 + p.w * 0.28);
+    ctx.strokeStyle = rgba(GOLD_THREAD, 0.30 + p.w * 0.35);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
-  // feud rifts — only when the two are near enough to see the tension
-  ctx.save(); ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+  // 3) red conflict cracks between feuding flies
+  ctx.lineWidth = 1.3;
   for (const p of societies.feuds) {
     const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-    if (Math.hypot(a.x - b.x, a.y - b.y) > 320) continue;
-    ctx.strokeStyle = rgba([176, 64, 48], 0.30);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    if (Math.hypot(a.x - b.x, a.y - b.y) > 380) continue;
+    ctx.strokeStyle = rgba(CRACK_RED, 0.5);
+    traceCrack(a, b); ctx.stroke();
   }
-  ctx.restore();
 }
 
 function render(pal, now) {
