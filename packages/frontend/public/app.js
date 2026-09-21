@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=52";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=53";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -786,6 +786,10 @@ const MONUMENT_MS = 42000;                // how long a stele lingers before it 
 const graveField = [];                    // stable, weathered stones scattered across the field's lower band
 let selectedGrave = null;                 // the stone whose epitaph card is open
 const GRAVE_CAP = 120;                    // most-recent stones kept on the field
+// A reused slot id (live-retirement recycles a dead fly's id for its offspring) means id alone no longer
+// identifies an individual — (id, bornTick) does. Stones + selection key on this composite so a new
+// occupant of an old id never aliases the grave of the fly that was buried in that slot before it.
+const graveUid = (id, bornTick) => id + ":" + (bornTick == null ? "" : bornTick);
 const GILT = [176, 138, 54];              // gold-leaf
 const GILT_HI = [214, 178, 92];           // gold highlight
 const INK = [40, 32, 24];                 // sepia ink for engraved text
@@ -824,7 +828,9 @@ function focusDim(id) {
 /** Plant a fading grave stele where a fly is observed dying (its death position). */
 function plantMonument(f, now) {
   f._mon = true;
-  if (graveField.some((g) => g.id === f.id)) return;   // the necropolis already keeps a stone for this id
+  // Dedup only against OTHER live transient steles of this id (an id may be recycled to a new fly after the
+  // dead one is memorialised as a permanent stone, so we never suppress a fresh death on an OLD grave's id).
+  if (monuments.some((m) => m.id === f.id && now - m.t0 < MONUMENT_MS)) return;
   const h = houseOf.get(f.id);
   monuments.push({ x: f.x, y: f.y, t0: now, id: f.id, sigil: (h && h.sigil) || "", color: (h && h.color) || [120, 120, 124], pulse: 0 });
   if (monuments.length > 48) monuments.shift();
@@ -957,13 +963,13 @@ function rebuildGraveField() {
   const span = Math.max(1, maxTick - minTick);
   for (let i = 0; i < n; i++) {
     const g = ordered[i], r = (i / cols) | 0, c = i % cols;
-    const h = fnv1a("grave:" + g.id);
+    const h = fnv1a("grave:" + g.id + ":" + (g.bornTick == null ? 0 : g.bornTick));   // (id,bornTick): a recycled id scatters to its OWN plot
     const jx = ((h % 1000) / 1000 - 0.5), jy = (((h >>> 10) % 1000) / 1000 - 0.5);
     const x = x0 + cw * (c + 0.5) + jx * cw * 0.34;
     const y = y0 + ch * (r + 0.5) + jy * ch * 0.28;
     const weather = clamp(((maxTick - (g.tick || 0)) / span) * 0.85 + ((h >>> 4) % 100) / 100 * 0.15);
     graveField.push({
-      id: g.id, x, y,
+      id: g.id, bornTick: g.bornTick == null ? null : g.bornTick, uid: graveUid(g.id, g.bornTick), x, y,
       houseName: g.houseName || "", cause: g.cause || "", deals: g.deals || 0,
       estateUsdc: Number(g.estateUsdc) || 0, heirIds: g.heirIds || [], age: g.age || 0, tick: g.tick || 0,
       color: houseColor(g.houseName) || [120, 116, 108],
@@ -972,7 +978,7 @@ function rebuildGraveField() {
       weather, seed: h,
     });
   }
-  if (selectedGrave) { const keep = graveField.find((g) => g.id === selectedGrave.id); selectedGrave = keep || null; }
+  if (selectedGrave) { const keep = graveField.find((g) => g.uid === selectedGrave.uid); selectedGrave = keep || null; }
 }
 
 /** An arched headstone silhouette centred on the origin: flat base at +h, rounded top at -h. */
@@ -1000,7 +1006,7 @@ function renderGraveyard(pal, now) {
   ctx.textAlign = "center";
   for (let i = 0; i < graveField.length; i += step) {
     const g = graveField[i], wx = g.weather, w = 8, h = 12;
-    const sel = selectedGrave && selectedGrave.id === g.id;
+    const sel = selectedGrave && selectedGrave.uid === g.uid;
     const stone = mix([151, 143, 129], INK, 0.18 + wx * 0.42);   // fresh warm stone → dark weathered
     ctx.save();
     ctx.translate(g.x, g.y); ctx.rotate(g.tilt);
@@ -1044,7 +1050,9 @@ function showEpitaph(g) {
   const card = $("epitaph"); if (!card) return;
   const head = $("epitaph-title");
   const house = g.houseName ? T("epitaph.house", { name: g.houseName }) : T("dyn.noHouse");
-  if (head) head.textContent = glyphFor(g) + " #" + g.id + " \u00b7 " + house;   // the mark matches the stone's own death-mark
+  // born# disambiguates two individuals that shared the SAME recycled slot id in different generations.
+  const born = g.bornTick == null ? "" : " \u00b7 born#" + g.bornTick;
+  if (head) head.textContent = glyphFor(g) + " #" + g.id + born + " \u00b7 " + house;   // the mark matches the stone's own death-mark
   const heirs = g.heirIds && g.heirIds.length ? g.heirIds.map((x) => "#" + x).join(", ") : T("dyn.theCommons");
   const cause = g.cause ? gl("cause", g.cause) : "\u2014";
   const lines = [
@@ -1053,8 +1061,9 @@ function showEpitaph(g) {
     ["\u23f3", T("epitaph.age", { age: g.age })],
     ["\u25c7", T("epitaph.estate", { amt: Number(g.estateUsdc).toFixed(4) })],
     ["\u2192", T("epitaph.heirs", { heirs })],
-    ["#", T("epitaph.tick", { tick: g.tick })],
   ];
+  if (g.bornTick != null) lines.push(["\u2600", T("epitaph.born", { tick: g.bornTick })]);
+  lines.push(["#", T("epitaph.tick", { tick: g.tick })]);
   const body = $("epitaph-body");
   if (body) {
     body.textContent = "";

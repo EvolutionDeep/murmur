@@ -139,6 +139,7 @@ export interface Env {
   EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
+  POP_LIVE_RETIRE?: string;             // "true"/"false" (default TRUE) — when a fly dies, RETIRE it from the live swarm (free its id/slot/shard brain) so the population reflects ONLY the living and a dead fly never holds a breeding slot. Reuses the vacated id (and its HD wallet + shard slice) for the next hatch, tombstoned so a cold boot can't resurrect the dead founder. false ⇒ the old behaviour: deaths close a wallet only, roster never shrinks, ids never recycle. Rollback switch.
   LAW_ENABLED?: string;                 // "true"/"false" (default TRUE) — ⑧ THE COMMONS: at each NEW era a deterministic assembly is convened from the swarm's own read-out condition (standing + stake of its wealthiest/honoured living flies) and votes — a pure function of (era, address, hashes) — to nudge TWO bounded institution knobs (the credit line and its interest). ECONOMIC-SIDE ONLY: it re-prices credit the economy already reads, moves no money and touches no neuron. A sub-switch of INSTITUTIONS — false (or institutions off) ⇒ no assembly, effective ≡ base config, byte-for-byte today.
   LAW_ASSEMBLY_SIZE?: string;           // seats in the commons (default 7; clamped 2..16 and to the living population).
   LAW_CREDIT_CAP_BAND?: string;         // "min,max" USDC the assembly may legislate the base credit line into (default "0.01,0.2"); a HARD clamp so self-legislation can never crash the ledger or mint.
@@ -201,6 +202,15 @@ export interface RuntimeConfig {
    * count), so an id's owning shard never changes as the population grows — no brain ever migrates.
    */
   maxLivePopulation: number;
+  /**
+   * Live-population RETIREMENT (POP_LIVE_RETIRE, default TRUE): when a fly dies it is removed from the
+   * swarm roster (freeing its id + HD wallet + shard brain), so size()/aliveCount track ONLY the living
+   * and a dead fly never squats a breeding slot. The vacated id is reused by the next hatch; the dead are
+   * tombstoned so a cold boot can't resurrect a retired founder. false ⇒ legacy behaviour (deaths close a
+   * wallet only; roster is monotonic; ids never recycle). Independent of hatchLive — retire just shrinks
+   * the live set; hatching refills it from the lowest vacant id.
+   */
+  liveRetire: boolean;
 
   // Stimulus
   stimulusCooldownSec: number;
@@ -422,6 +432,9 @@ export function loadConfig(env: Env): RuntimeConfig {
   const hatchLiveRequested = (env.EVOLUTION_HATCH_LIVE ?? "false").toLowerCase() === "true";
   const fliesPerShardAtCap = fliesPerShard(maxLivePopulation, shardCount);
   const hatchLive = hatchLiveRequested && fliesPerShardAtCap <= 2;
+  // LIVE-RETIRE (POP_LIVE_RETIRE, default TRUE). Independent of hatchLive: retiring the dead always keeps
+  // size()/aliveCount honest about who is actually alive; the freed slots simply become available again.
+  const liveRetire = (env.POP_LIVE_RETIRE ?? "true").toLowerCase() !== "false";
   if (hatchLiveRequested && !hatchLive) {
     console.error(
       `[config] EVOLUTION_HATCH_LIVE ignored: need SHARD_COUNT >= ceil(cap/2) so flies/shard <= 2 ` +
@@ -451,6 +464,7 @@ export function loadConfig(env: Env): RuntimeConfig {
     simStepsPerTick: Math.max(1, Number(env.SIM_STEPS_PER_TICK || "500")),
     shardCount,
     maxLivePopulation,
+    liveRetire,
 
     stimulusCooldownSec: Number(env.STIMULUS_COOLDOWN_SEC || "30"),
     frontendOrigin: env.FRONTEND_ORIGIN || "*",

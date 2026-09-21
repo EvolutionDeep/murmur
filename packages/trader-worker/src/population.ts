@@ -231,6 +231,21 @@ export class Population {
   }
 
   /**
+   * LIVE-RETIREMENT: remove a dead fly from the population, freeing its id/slot. Returns true when a fly
+   * with that id was present and dropped. The serialiser is LIST-driven (it stores exactly the living flies,
+   * in `id` order, no index==id assumption) and `deserialize` never re-derives a genesis roster, so a retired
+   * founder STAYS retired across an eviction. The vacated id is then reused by the next hatch.
+   */
+  retire(id: number): boolean {
+    const i = this.flies.findIndex((f) => f.id === id);
+    if (i < 0) return false;
+    this.flies.splice(i, 1);
+    // Purge it from the cached snapshot so a stale read-out (before the next step) never shows the retired fly.
+    if (this.lastSnapshot) this.lastSnapshot.flies = this.lastSnapshot.flies.filter((r) => r.id !== id);
+    return true;
+  }
+
+  /**
    * Advance one tick: drive every fly with the shared market pulse (+ any visitor stimuli), then
    * decode each fly RELATIVE to the population so the reaction is collective + individual.
    *
@@ -280,9 +295,11 @@ export class Population {
   /** Serialise for persistence into the Durable Object. */
   serialize(): string {
     return JSON.stringify({
-      // v5 = reactive population that MAY carry hatched offspring (vitals.genome); v4 was genesis-only
-      // (v1–v3 carried the old lineage/generations — dropped). vitals already includes genome when present.
-      version: 5,
+      // v6 = the roster may now contain HOLES / recycled genesis ids after live-retirement (a dead fly is
+      // removed and its id later reused by an offspring); the LIST-driven shape already encodes this
+      // (exactly the living flies, ascending). v5 = reactive population that MAY carry hatched offspring
+      // (vitals.genome); v4 was genesis-only (v1–v3 carried the old lineage/generations — dropped).
+      version: 6,
       tickIndex: this.tickIndex,
       vitality: this.vitality,
       flies: this.flies.map((f) => ({ vitals: f.vitals, brain: f.brain.serialize() })),
@@ -292,9 +309,10 @@ export class Population {
   static deserialize(data: string, cfg: RuntimeConfig): Population {
     const parsed = JSON.parse(data);
     const version = parsed?.version;
-    // v5 is native (may carry hatched offspring genomes); v4 is genesis-only; v3 is tolerated by stripping
-    // the old lineage fields (id/seed/temperament survive). A v5 fly with no genome rebuilds as genesis.
-    if (version === 5 || version === 4 || version === 3) {
+    // v6 (holes/recycled ids) and v5 (may carry hatched offspring genomes) are native; v4 is genesis-only;
+    // v3 is tolerated by stripping the old lineage fields (id/seed/temperament survive). A fly with no genome
+    // rebuilds as genesis. The reader is LIST-driven, so a sparser post-retirement roster restores verbatim.
+    if (version === 6 || version === 5 || version === 4 || version === 3) {
       return new Population(cfg, {
         flies: parsed.flies.map((x: any) => ({
           id: Number(x.vitals.id),

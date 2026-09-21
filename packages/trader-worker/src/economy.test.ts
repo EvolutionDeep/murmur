@@ -780,3 +780,77 @@ test("commons wiring: applyLaw is runtime-only yet its legislated rate rides the
   const offIou = JSON.parse(off.serialize()).market.ious.find((i: { ratePer10: number }) => i.ratePer10 != null);
   assert.equal(offIou.ratePer10, 0.002, "null law ⇒ the base config, byte-for-byte");
 });
+
+// ================= LIVE-RETIREMENT: id reuse + (id, bornTick) individual identity =================
+// When a fly dies it now leaves the SWARM (not just the wallet) and its id/slot is recycled by the next
+// birth. The economy must treat (id, bornTick) as the individual: reopening a retired slot births a
+// ledger-CLEAN newborn (wallet reset, tombstone lifted, severed from its PREVIOUS house/children) so the
+// reborn fly is never conflated with the founder that once bore the same id. KEY_VERSION stays economy:v1 —
+// `bornTick` on graves is purely additive, and an old payload re-derives it from (tick − age).
+
+test("live-retirement: a grave carries bornTick, round-trips through serialize, and an old payload re-derives it", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);        // tick 10 — #0 is "born" at 10
+  econ.noteHatch(0, 24, HASH_A);
+  await econ.step([...population("EXPLORE"), reading(24, "EXPLORE")], collective(0.3), 10);
+  econ.getAgent(0)!.balance = "900";
+  const graves = econ.noteMortality(16, 0.3);                          // #0 eldest → aged burial
+  assert.equal(graves.length, 1);
+  assert.equal(Number.isInteger(graves[0].bornTick) && graves[0].bornTick >= 0, true, "the grave stamps when the individual was born");
+  assert.equal(graves[0].tick - graves[0].bornTick, graves[0].age, "bornTick is consistent with age = tick − bornTick");
+
+  // Round-trips through the additive dynasty block (KEY_VERSION untouched).
+  const b = new AgentEconomy(cfg({ dynasty: {} }), econ.serialize());
+  assert.deepEqual(b.dynastyReadout(), econ.dynastyReadout(), "bornTick survives eviction verbatim");
+
+  // A PRE-RETIREMENT payload has no bornTick on its graves — applySerialized re-derives it from (tick − age).
+  const p = JSON.parse(econ.serialize());
+  for (const g of p.dynasty.graves) delete g.bornTick;
+  const c = new AgentEconomy(cfg({ dynasty: {} }), JSON.stringify(p));
+  const cg = c.dynastyReadout().graves.find((g) => g.id === 0)!;
+  assert.equal(cg.bornTick, graves[0].bornTick, "an old blob still yields the right (id, bornTick) key");
+});
+
+test("reopenSlot: resets a retired wallet to a fresh newborn and severs its previous house membership", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: {} }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);
+  const founded = econ.noteHatch(5, 6, HASH_A);                        // #5 founds a house, #6 the heir
+  assert.ok(founded?.founded);
+  const houseId = founded!.houseId;
+  const a5 = econ.getAgent(5)!;
+  a5.balance = "123450"; a5.deals = 7; a5.sales = 3; a5.paid = "900"; a5.earned = "1500"; a5.lastTick = 9;
+
+  econ.reopenSlot(5, 0.002);
+
+  assert.equal(a5.balance, usdcToAtomic(0.002).toString(), "the wallet reopens at the newborn bootstrap");
+  assert.equal(a5.deals, 0); assert.equal(a5.sales, 0); assert.equal(a5.paid, "0"); assert.equal(a5.earned, "0");
+  assert.equal(a5.lastTick, -1, "every lifetime counter starts clean — the reborn fly has no past");
+  assert.equal(econ.houseOf(5), null, "the reborn id is severed from the house it once bore");
+  const house = econ.dynastyReadout().houses.find((h) => h.id === houseId)!;
+  assert.equal(house.members, 1, "the old house roster dropped the retired founder (only the heir remains)");
+  assert.equal(house.live, 1, "the heir still counts; a severed reborn id can never be claimed by its old house");
+});
+
+test("live-retirement: a hatch onto a retired id reopens it and births the newborn into its NEW parent's line", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 } }));
+  await econ.step(population("EXPLORE"), collective(0.3), 10);
+  const first = econ.noteHatch(0, 24, HASH_A);                           // #0 founds its first house
+  await econ.step([...population("EXPLORE"), reading(24, "EXPLORE")], collective(0.3), 10);
+  econ.getAgent(0)!.balance = "900";
+  econ.noteMortality(16, 0.3);                                           // #0 (eldest) is buried
+  assert.equal(econ.dynastyReadout().dead, 1, "the founder is dead + tombstoned");
+
+  // The slot is reclaimed: a NEW parent (#1) hatches a child into retired id 0.
+  const second = econ.noteHatch(1, 0, HASH_B);
+  assert.ok(second, "the recycled hatch still books in the dynasty");
+  assert.equal(econ.dynastyReadout().dead, 0, "reopening lifted the tombstone — #0 lives again as a NEW fly");
+  const reborn = econ.getAgent(0)!;
+  assert.equal(reborn.balance, usdcToAtomic(0.002).toString(), "reborn at the bootstrap, not the old estate");
+  assert.equal(reborn.deals, 0);
+  const rebornHouse = econ.houseOf(0);
+  assert.ok(rebornHouse, "the reborn fly belongs to its NEW parent's line");
+  assert.equal(rebornHouse!.id, 1, "it is inducted under #1's house, not the house #0 founded in its past life");
+  // The OLD house (#0's first life) never counts the reborn #0 among its living members.
+  const oldHouse = econ.dynastyReadout().houses.find((h) => h.id === 0);
+  assert.ok(!oldHouse || oldHouse.members < 2, "the buried founder's old house does not resurrect him as a member");
+});

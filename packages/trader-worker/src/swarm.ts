@@ -40,6 +40,7 @@ import {
 export const KEY_POPULATION = "population:v3";   // LocalSwarm: the whole single-DO Population.serialize()
 export const KEY_COORDINATOR = "coordinator:v1"; // ShardedSwarm: the {tickIndex, vitality} counter (brains live in shards)
 export const KEY_ROSTER = "coordinatorRoster:v1"; // ShardedSwarm: hatched offspring (id + seed + genome) beyond the config-derived genesis roster — NOT derivable from config, so persisted
+export const KEY_RETIRED = "coordinatorRetired:v1"; // ShardedSwarm: tombstoned ids (retired dead flies), so a cold boot rebuilds the genesis roster WITHOUT resurrecting them
 
 /** The full neural read-out of one fly, for GET /snapshot (the generative inspector view). */
 export interface FlyNeuralSnapshot {
@@ -85,6 +86,15 @@ export interface SwarmBackend {
   getTickIndex(): number;
   getVitality(): number;
   size(): number;
+  /** The ids of the CURRENTLY LIVE flies (retired/dead ids are absent). Drives the coordinator's
+   *  vacant-slot allocation + live-count gate; length === size(). */
+  liveIds(): number[];
+  /**
+   * Retire a dead fly (live-retirement): remove it from the live population and free its id/slot, so the
+   * swarm holds ONLY the living. Persisted (a tombstone when sharded) so an eviction can't resurrect it.
+   * Returns true when a live fly with that id was removed, false when it was already absent.
+   */
+  retireFly(id: number, storage: DurableObjectStorage): Promise<boolean>;
   /** Full neural snapshot of one fly (routed to its owning shard when sharded); null if unknown. */
   snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null>;
   /** Motor + identity + last behaviour of one fly; null if unknown. */
@@ -166,6 +176,15 @@ export class LocalSwarm implements SwarmBackend {
   getTickIndex(): number { return this.population.getTickIndex(); }
   getVitality(): number { return this.population.getVitality(); }
   size(): number { return this.population.flies.length; }
+  liveIds(): number[] { return this.population.flies.map((f) => f.id); }
+
+  async retireFly(id: number, storage: DurableObjectStorage): Promise<boolean> {
+    // The list-driven population stores exactly the living flies, so removing one frees its id and a
+    // reload never re-adds it — a retired founder (even a genesis id) STAYS retired. No tombstone needed.
+    if (!this.population.retire(id)) return false;
+    await storage.put(KEY_POPULATION, this.population.serialize());
+    return true;
+  }
 
   async snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null> {
     const fly = this.population.flies.find((f) => f.id === flyId);
@@ -185,7 +204,10 @@ export class LocalSwarm implements SwarmBackend {
   }
 
   async hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean> {
-    if (id < this.cfg.populationSize || id >= this.cfg.maxLivePopulation) return false;
+    // With live-retirement a hatch may land on ANY in-capacity slot, including a freed genesis id, so the
+    // old `id < populationSize` genesis-refusal is relaxed to the hard cap bounds. The caller allocates only
+    // VACANT ids, and spawnFromGenome is idempotent (a live fly already at `id` returns null ⇒ success).
+    if (id < 0 || id >= this.cfg.maxLivePopulation) return false;
     const inst = this.population.spawnFromGenome(genome, id);
     if (!inst) return true;                       // already live — idempotent success
     await storage.put(KEY_POPULATION, this.population.serialize());
@@ -216,6 +238,11 @@ export class ShardedSwarm implements SwarmBackend {
    *  (unlike genesis), so persisted to KEY_ROSTER and recovered in load(); the reduce roster is rebuilt
    *  from it. Each entry keeps the genome so a shard that lost its state could be re-seeded if needed. */
   private bred: Array<{ id: number; seed: number; genome: Genome }> = [];
+  /** Tombstoned ids: flies RETIRED on death (live-retirement). Genesis ids live here too once their founder
+   *  dies, so a cold-boot roster rebuild (which otherwise re-derives genesis 0..populationSize-1 from config)
+   *  never resurrects a buried founder. A recycled id is REMOVED from this set the moment a new offspring
+   *  hatches back into its slot (it then lives in `bred` with a fresh genome instead). Persisted to KEY_RETIRED. */
+  private retired = new Set<number>();
   private stubs: DurableObjectStub[];
   private tickIndex = 0;
   private vitality = 0.5;
@@ -262,24 +289,80 @@ export class ShardedSwarm implements SwarmBackend {
         }
       }
     }
-    // Recover any hatched offspring into the live roster (genesis is already there from the constructor).
+    // Recover the tombstones (retired-dead ids) + any hatched offspring, then rebuild the LIVE roster so it
+    // holds ONLY the living. A recycled genesis id is present in `bred` (its offspring genome) AND absent
+    // from `retired`, so it re-joins as the NEW individual — not the founder that was buried in its slot.
+    const retiredIds = await storage.get<number[]>(KEY_RETIRED);
+    if (Array.isArray(retiredIds)) {
+      swarm.retired = new Set(retiredIds.map(Number).filter((n) => Number.isInteger(n)));
+    }
     const bred = await storage.get<Array<{ id: number; seed: number; genome: Genome }>>(KEY_ROSTER);
     if (Array.isArray(bred)) {
       for (const b of bred) {
-        if (!b || !Number.isInteger(b.id) || b.id < cfg.populationSize || b.id >= cfg.maxLivePopulation || !b.genome) continue;
-        if (swarm.roster.some((r) => r.id === b.id)) continue;
+        if (!b || !Number.isInteger(b.id) || b.id < 0 || b.id >= cfg.maxLivePopulation || !b.genome) continue;
+        if (swarm.bred.some((x) => x.id === b.id)) continue;
         const seed = Number.isFinite(b.seed) ? b.seed : b.genome.seed;
         swarm.bred.push({ id: b.id, seed, genome: b.genome });
-        swarm.roster.push({ id: b.id, temperament: flyTemperament(seed), decoder: swarm.makeDecoder() });
       }
-      swarm.roster.sort((x, y) => x.id - y.id);
     }
+    swarm.rebuildRosterFromState();
     return swarm;
+  }
+
+  /**
+   * Recompose the reduce roster from the coordinator's own truth (config genesis + persisted bred − tombstones),
+   * so a cold boot that re-derived a full genesis roster in the constructor drops every retired founder and
+   * swaps a recycled slot for its offspring. Used on load; decoders are legitimately fresh at startup.
+   */
+  private rebuildRosterFromState(): void {
+    const byId = new Map<number, number>();   // id → seed (temperament source)
+    for (let id = 0; id < this.cfg.populationSize; id++) byId.set(id, this.cfg.populationSeeds[id]);
+    for (const b of this.bred) byId.set(b.id, b.seed);   // hatched/recycled overrides genesis at that id
+    const roster: ReduceRosterEntry[] = [];
+    for (const [id, seed] of byId) {
+      if (this.retired.has(id)) continue;                 // a retired-and-not-recycled fly is NOT live
+      roster.push({ id, temperament: flyTemperament(seed), decoder: this.makeDecoder() });
+    }
+    roster.sort((a, b) => a.id - b.id);
+    this.roster = roster;
   }
 
   size(): number { return this.roster.length; }
   getTickIndex(): number { return this.tickIndex; }
   getVitality(): number { return clamp01(this.vitality); }
+  liveIds(): number[] { return this.roster.map((r) => r.id); }
+
+  /**
+   * Retire a dead fly from the SHARDED swarm: drop it from the reduce roster + the bred list, tombstone its
+   * id (so a cold boot never re-derives it from the config genesis roster), tell the owning shard to delete
+   * its brain + tombstone it there, then persist the roster + tombstone immediately (an eviction can't
+   * un-retire it). Idempotent: a unknown/already-retired id is a no-op returning false.
+   */
+  async retireFly(id: number, storage: DurableObjectStorage): Promise<boolean> {
+    if (this.retired.has(id)) return false;
+    const ri = this.roster.findIndex((r) => r.id === id);
+    if (ri < 0) return false;                 // not currently live — nothing to retire
+    this.roster.splice(ri, 1);
+    this.bred = this.bred.filter((b) => b.id !== id);
+    this.lastBehavior.delete(id);
+    this.retired.add(id);
+    // Tell the shard that owns this id (derived from the STABLE cap) to drop the brain and tombstone it.
+    const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, id)];
+    if (stub) {
+      try {
+        await stub.fetch(new Request("https://shard.internal/retire", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        }));
+      } catch (e) {
+        console.warn(`[swarm] shard retire #${id} failed (coordinator roster already updated):`, (e as Error).message);
+      }
+    }
+    await storage.put(KEY_ROSTER, this.bred);
+    await storage.put(KEY_RETIRED, Array.from(this.retired).sort((a, b) => a - b));
+    return true;
+  }
 
   async step(
     pulse: MarketPulse,
@@ -346,9 +429,11 @@ export class ShardedSwarm implements SwarmBackend {
   }
 
   async hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean> {
-    // Only growth-slot ids hatch; genesis ids are config-owned. Refuse past the hard cap (belt-and-suspenders
-    // — the caller checks the live count first, but never grow beyond maxLivePopulation).
-    if (id < this.cfg.populationSize || id >= this.cfg.maxLivePopulation) return false;
+    // Any in-capacity slot may receive a hatch once the dead retire — INCLUDING a freed genesis id reused by
+    // a new offspring (which is why the old `id < populationSize` genesis-refusal is gone). The caller only
+    // allocates VACANT ids; a still-live fly at `id` is left untouched (idempotent), and a retired id being
+    // reclaimed is lifted from the tombstone so a cold boot keeps the NEW individual, not the buried founder.
+    if (id < 0 || id >= this.cfg.maxLivePopulation) return false;
     if (this.roster.some((r) => r.id === id)) return true;        // already live — idempotent success
     // Ship the genome to the shard that owns this id (derived from the STABLE cap, so it never moves); the
     // shard builds + persists the brain. Only grow the roster once the shard confirms it hosts the fly.
@@ -365,24 +450,28 @@ export class ShardedSwarm implements SwarmBackend {
     this.bred.push({ id, seed: genome.seed, genome });
     this.roster.push({ id, temperament: flyTemperament(genome.seed), decoder: this.makeDecoder() });
     this.roster.sort((a, b) => a.id - b.id);
+    this.retired.delete(id);   // reclaiming a retired slot: the offspring is live, lift its tombstone
     await storage.put(KEY_ROSTER, this.bred);   // persist immediately so an eviction can't drop the new live fly
+    await storage.put(KEY_RETIRED, Array.from(this.retired).sort((a, b) => a - b));
     return true;
   }
 
   async persist(storage: DurableObjectStorage): Promise<void> {
     // Brains already persisted inside the shards on the commit sub-tick; the counter AND the hatched-offspring
-    // roster (not derivable from config) live here.
+    // roster (not derivable from config) live here, alongside the retired-id tombstone.
     await storage.put(KEY_COORDINATOR, { tickIndex: this.tickIndex, vitality: this.vitality });
     await storage.put(KEY_ROSTER, this.bred);
+    await storage.put(KEY_RETIRED, Array.from(this.retired).sort((a, b) => a - b));
   }
 
   async reset(storage: DurableObjectStorage): Promise<void> {
     this.tickIndex = 0;
     this.vitality = 0.5;
     this.lastBehavior.clear();
-    // Reset returns the swarm to its FOUNDING state: drop every hatched offspring (the shards wipe theirs
-    // too) and rebuild the genesis-only roster from config, then persist the now-empty bred list.
+    // Reset returns the swarm to its FOUNDING state: drop every hatched offspring AND every tombstone (the
+    // shards wipe theirs too) and rebuild the genesis-only roster from config, then persist the cleared lists.
     this.bred = [];
+    this.retired = new Set();
     this.roster = this.cfg.populationSeeds.slice(0, this.cfg.populationSize).map((seed, id) => ({
       id,
       temperament: flyTemperament(seed),

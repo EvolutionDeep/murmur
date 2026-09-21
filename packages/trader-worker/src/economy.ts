@@ -220,6 +220,7 @@ export interface GraveRecord {
   cause: "aged" | "penury" | "plague";
   deals: number;              // lifetime settlements (deals + sales) — the epitaph's "4207 dealings"
   age: number;                // sub-ticks lived (tick − bornTick)
+  bornTick: number;           // sub-tick this individual was born — with id-reuse, (id, bornTick) is the unique key
   estate: string;             // atomic USDC in the wallet at death (the inheritance)
   heirIds: number[];          // who received it (living children; empty ⇒ house treasury or pauper's dole)
   house: number | null;       // the house the dead belonged to, for "of the House of X"
@@ -228,7 +229,7 @@ export interface GraveRecord {
 /** Bounded dynasty read-out for the frontend panel + the historian (pure read-out, never feeds back). */
 export interface DynastyReadout {
   houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null }[];
-  graves: { id: number; tick: number; cause: string; deals: number; age: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
+  graves: { id: number; tick: number; cause: string; deals: number; age: number; bornTick: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
   living: number;
   dead: number;
 }
@@ -1628,6 +1629,41 @@ export class AgentEconomy {
   }
 
   /**
+   * Reclaim a RETIRED slot for a NEW individual (live-retirement id reuse). Called by noteHatch when a
+   * hatch lands on an id that had previously died. This:
+   *   · clears the tombstone (`dead.delete`) so the wallet is live again and the treasury may top it up;
+   *   · resets the wallet to a fresh newborn at `openingUsdc` (its parent-funded bootstrap) — the reused
+   *     HD address keeps the SAME on-chain purse, but every lifetime counter starts clean;
+   *   · SEVERS the id from its previous life (removed from every house roster + every parent's child list),
+   *     then resets its own kin record — so the (id, bornTick) individual is ledger-isolated from the dead
+   *     fly that once bore this id. Known trade-off: SOCIAL memory (rep/bonds/grudges) and institutions
+   *     stay keyed by the reused id/address — a deliberate scope cut, since those are trust-scores on the
+   *     SAME purse and this ledger never mints; a full per-(id,bornTick) social split is a future step.
+   */
+  reopenSlot(id: number, openingUsdc: number): void {
+    const opening = usdcToAtomic(openingUsdc);
+    const idx = this.indexOfId.get(id);
+    if (idx == null) {
+      this.agents.push({ id, address: this.addressOf(id), balance: opening, paid: "0", earned: "0", deals: 0, sales: 0, lastTick: -1 });
+      this.indexOfId.set(id, this.agents.length - 1);
+    } else {
+      const a = this.agents[idx];
+      a.address = this.addressOf(id);   // same HD path ⇒ the same on-chain wallet (a reborn purse, not new funds)
+      a.balance = opening; a.paid = "0"; a.earned = "0"; a.deals = 0; a.sales = 0; a.lastTick = -1;
+    }
+    this.dead.delete(id);
+    for (const h of this.houses.values()) {
+      const mi = h.members.indexOf(id);
+      if (mi >= 0) h.members.splice(mi, 1);
+    }
+    for (const k of this.kin.values()) {
+      const ci = k.children.indexOf(id);
+      if (ci >= 0) k.children.splice(ci, 1);
+    }
+    this.kin.set(id, { bornTick: this.tickIndex, house: null, children: [], gen: 0 });
+  }
+
+  /**
    * Deterministic house seed: the offspring's genome hash IS the bloodline — its first 16 hex folds into a
    * 32-bit seed alongside the founder id and the protocol seedBase, so the same lineage always bears the
    * same name and sigil (verifiable by re-hashing the genome; no RNG, no table). Fallback without a hash:
@@ -1653,6 +1689,11 @@ export class AgentEconomy {
     { houseId: number; name: string; sigil: string; childId: number; founded: boolean } | null {
     const d = this.dcfg();
     if (!d) return null;
+    // ID-REUSE (live-retirement): this slot may be a retired fly's vacated id being recolonised by a new
+    // birth. Reopen it FIRST — clear its tombstone, reset its wallet to a fresh newborn, and sever it from
+    // its PREVIOUS house/children — so the reborn individual is ledger-clean before it is born into the NEW
+    // parent's line below. A brand-new offspring id was never dead, so this is a no-op on the normal path.
+    if (this.dead.has(childId)) this.reopenSlot(childId, this.cfg.hatchSeedUsdc);
     const parent = this.kinOf(parentId);
     const child = this.kinOf(childId);
     child.bornTick = this.tickIndex;
@@ -1825,6 +1866,7 @@ export class AgentEconomy {
       cause,
       deals: (a?.deals ?? 0) + (a?.sales ?? 0),
       age: tick - (kin?.bornTick ?? tick),
+      bornTick: kin?.bornTick ?? tick,
       estate: estate.toString(),
       heirIds,
       house: kin?.house ?? null,
@@ -1846,6 +1888,10 @@ export class AgentEconomy {
       let memberBal = 0n;
       for (const m of h.members) {
         if (this.dead.has(m)) continue;
+        // Reborn-slot guard: with id-reuse a retired fly's old id may now be a DIFFERENT individual (its
+        // kin.house was reset on reopen). Count it for this house only if its CURRENT kin record still
+        // belongs here — otherwise a reborn commoner would be claimed as a living member of a dead member's house.
+        if (this.kin.get(m)?.house !== h.id) continue;
         const i = this.indexOfId.get(m);
         if (i == null) continue;
         live++;
@@ -1865,7 +1911,7 @@ export class AgentEconomy {
     // Prestige order: lifetime tithed gross first, treasury second, founder id to break ties.
     houses.sort((x, y) => y.earnedUsdc - x.earnedUsdc || y.treasuryUsdc - x.treasuryUsdc || x.id - y.id);
     const graves = this.graves.slice(0, 12).map((g) => ({
-      id: g.id, tick: g.tick, cause: g.cause, deals: g.deals, age: g.age,
+      id: g.id, tick: g.tick, cause: g.cause, deals: g.deals, age: g.age, bornTick: g.bornTick,
       estateUsdc: atomicToUsdc(g.estate), heirIds: g.heirIds,
       houseName: g.house != null ? this.houses.get(g.house)?.name ?? null : null,
     }));
@@ -2520,7 +2566,7 @@ export class AgentEconomy {
           if (!Number.isFinite(id)) continue;
           this.kin.set(id, {
             bornTick: Number(e.bornTick ?? 0) || 0,
-            house: e.house == null ? null : Number(e.house) || null,
+            house: e.house == null || !Number.isFinite(Number(e.house)) ? null : Number(e.house),
             children: (Array.isArray(e.children) ? e.children : [])
               .slice(0, CHILD_CAP).map((c: unknown) => Number(c) || 0).filter((c: number) => Number.isFinite(c)),
             gen: Math.max(0, Number(e.gen ?? 0) || 0),
@@ -2559,9 +2605,12 @@ export class AgentEconomy {
             cause: (g.cause === "penury" || g.cause === "plague" ? g.cause : "aged") as GraveRecord["cause"],
             deals: Math.max(0, Number(g.deals ?? 0) || 0),
             age: Math.max(0, Number(g.age ?? 0) || 0),
+            // additive: a pre-retirement payload has no bornTick on its graves — recover it from tick−age
+            // (exactly what entomb wrote), so (id, bornTick) stays a unique key across the schema bump.
+            bornTick: Number.isFinite(Number(g.bornTick)) ? Number(g.bornTick) : (Number(g.tick ?? 0) || 0) - (Math.max(0, Number(g.age ?? 0) || 0)),
             estate: /^\d+$/.test(String(g.estate ?? "")) ? String(g.estate) : "0",
             heirIds: (Array.isArray(g.heirIds) ? g.heirIds : []).slice(0, CHILD_CAP).map((h: unknown) => Number(h) || 0),
-            house: g.house == null ? null : Number(g.house) || null,
+            house: g.house == null || !Number.isFinite(Number(g.house)) ? null : Number(g.house),
           }));
       }
       if (Array.isArray(dyn.dead)) {

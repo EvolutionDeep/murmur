@@ -123,6 +123,17 @@ interface EvolutionGuard {
   perAgent: Record<number, number>;  // offspring funded per agent id today
 }
 
+/**
+ * Lowest VACANT live-population id in [0, cap): the first slot not held by a currently-live fly. With
+ * live-retirement this RECYCLES the smallest freed id (reusing its HD wallet + shard slice); when nothing
+ * has retired yet it returns the contiguous next id (== the old `size`-based allocation, floored at the first
+ * free slot). Returns -1 only when every slot in [0, cap) is occupied (the gate normally catches this first).
+ */
+export function nextVacantId(occupied: ReadonlySet<number>, cap: number): number {
+  for (let id = 0; id < cap; id++) if (!occupied.has(id)) return id;
+  return -1;
+}
+
 export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
@@ -480,40 +491,47 @@ export class FlyStateDO {
     try {
       const swarm = this.swarm;
       if (ev.hatchLive && swarm) {
-        if (swarm.size() >= this.cfg.maxLivePopulation) {
+        // Occupancy is the set of CURRENTLY-LIVE ids. After live-retirement the dead have left the swarm, so
+        // liveCount tracks the living only and a freed slot re-opens breeding — the gate reads liveCount, and
+        // the child claims the LOWEST vacant id in [0, cap) (recycling a genesis founder's slot + its HD wallet).
+        const occupied = new Set(swarm.liveIds());
+        const liveCount = occupied.size;
+        if (liveCount >= this.cfg.maxLivePopulation) {
           console.log(`[DO] evolution: live cap ${this.cfg.maxLivePopulation} reached — lineage kept, no hatch`);
         } else if (!genomeWithinBudget(child.genome, hatchBudgetFromGenesis(this.cfg.brainOpts))) {
           console.log(
             `[DO] evolution: genome over memory budget — lineage kept, no hatch (child=${child.genomeHash.slice(0, 12)})`,
           );
         } else {
-          // Genesis ids are 0..populationSize-1 and hatched ids are contiguous above them (no retirement/id
-          // recycling), so the next free live id is the current size, floored at populationSize.
-          const childId = Math.max(this.cfg.populationSize, swarm.size());
-          const seed = await economy.fundOffspring(
-            plan.payerId, childId, economy.deriveAddress(childId), ev.hatchSeedUsdc, tickIndex,
-          );
-          if (!seed?.valid) {
-            console.warn(`[DO] evolution: offspring bootstrap not settled — no hatch:`, seed?.reason ?? "unarmed");
+          const childId = nextVacantId(occupied, this.cfg.maxLivePopulation);
+          if (childId < 0) {
+            console.log(`[DO] evolution: no vacant live slot under cap ${this.cfg.maxLivePopulation} — lineage kept, no hatch`);
           } else {
-            const ok = await swarm.hatchLiveFly(childId, child.genome, this.state.storage);
-            if (ok) {
-              // DYNASTY: the live child enters the kinship ledger — it is born into its parent's house, or
-              // this very hatch FLAGS a new one (name + sigil fold from the child's genome hash). Pure
-              // ledger bookkeeping inside the hatch block's existing try/catch: it can never un-hatch a fly.
-              // CULTURE: the founder's creed AT FOUNDING (the parent's current belief, culture-overridden
-              // readings included — tradition is Lamarckian by design) becomes the house's old way.
-              economy.noteHatch(plan.payerId, childId, child.genomeHash, flies?.find((f) => f.id === plan.payerId)?.fap);
-              console.log(
-                `[DO] evolution hatched #${childId} gen=${child.generation} funded by #${plan.payerId} ` +
-                  `${ev.hatchSeedUsdc}USDC tx=${seed.txHash.slice(0, 10)} live=${swarm.size()}/${this.cfg.maxLivePopulation}`,
-              );
+            const seed = await economy.fundOffspring(
+              plan.payerId, childId, economy.deriveAddress(childId), ev.hatchSeedUsdc, tickIndex,
+            );
+            if (!seed?.valid) {
+              console.warn(`[DO] evolution: offspring bootstrap not settled — no hatch:`, seed?.reason ?? "unarmed");
             } else {
-              // Funds landed but the live fly could not be created (cap/route). Extremely rare — both were
-              // checked before paying. Log loudly so the funded-but-absent child can be reconciled manually.
-              console.error(
-                `[DO] evolution: bootstrap MINED for #${childId} but hatchLiveFly failed — child wallet funded, no live fly`,
-              );
+              const ok = await swarm.hatchLiveFly(childId, child.genome, this.state.storage);
+              if (ok) {
+                // DYNASTY: the live child enters the kinship ledger — it is born into its parent's house, or
+                // this very hatch FLAGS a new one (name + sigil fold from the child's genome hash). When the
+                // slot was a RECYCLED one (a retired fly's id), noteHatch reopens it (resets the wallet +
+                // severs the previous lineage) before inducting the newborn — pure ledger-side, it can never
+                // un-hatch a fly. CULTURE: the founder's creed AT FOUNDING becomes the house's old way.
+                economy.noteHatch(plan.payerId, childId, child.genomeHash, flies?.find((f) => f.id === plan.payerId)?.fap);
+                console.log(
+                  `[DO] evolution hatched #${childId} gen=${child.generation} funded by #${plan.payerId} ` +
+                    `${ev.hatchSeedUsdc}USDC tx=${seed.txHash.slice(0, 10)} live=${swarm.size()}/${this.cfg.maxLivePopulation}`,
+                );
+              } else {
+                // Funds landed but the live fly could not be created (cap/route). Extremely rare — both were
+                // checked before paying. Log loudly so the funded-but-absent child can be reconciled manually.
+                console.error(
+                  `[DO] evolution: bootstrap MINED for #${childId} but hatchLiveFly failed — child wallet funded, no live fly`,
+                );
+              }
             }
           }
         }
@@ -1166,6 +1184,21 @@ export class FlyStateDO {
       const graves = economy.noteMortality(swarm.getTickIndex(), temperature);
       if (graves.length) {
         console.log(`[DO] dynasty buried ${graves.map((g) => `#${g.id}(${g.cause})`).join(" ")}`);
+        // LIVE-RETIRE (POP_LIVE_RETIRE, default on): a dead fly leaves the SWARM too, not just the wallet.
+        // Retiring frees its id/slot/shard brain so size()/aliveCount hold ONLY the living and the vacated
+        // slot can hatch again — the fix for "越养越少、到顶卡死". Best-effort per id; a shard fetch failure is
+        // logged and the next cron retries (the roster already dropped it). Off ⇒ the legacy wallet-only death.
+        if (this.cfg.liveRetire) {
+          for (const g of graves) {
+            try {
+              if (await swarm.retireFly(g.id, this.state.storage)) {
+                console.log(`[DO] live-retire: retired #${g.id} from the swarm (slot freed, live=${swarm.size()})`);
+              }
+            } catch (e) {
+              console.warn(`[DO] live-retire #${g.id} failed (wallet already buried, roster may retry):`, (e as Error).message);
+            }
+          }
+        }
       }
       this.lastEconomy = economy.snapshot();
     }
@@ -1330,8 +1363,13 @@ export class FlyStateDO {
     return json({
       name: "murmur",
       tickIndex: swarm.getTickIndex(),
+      // LIVE-ONLY counts: with POP_LIVE_RETIRE on, retired dead have left the swarm, so size() is the number
+      // of FLYING flies (aliveCount === totalCount === living). With it off, size() is the legacy monotonic
+      // roster. `cap` lets the frontend render "N / cap"; `liveRetire` reports which semantics are active.
       aliveCount: swarm.size(),
       totalCount: swarm.size(),
+      cap: this.cfg.maxLivePopulation,
+      liveRetire: this.cfg.liveRetire,
       vitality: swarm.getVitality(),
       collective: snap?.collective ?? null,
       economy: econTotals
@@ -1360,6 +1398,8 @@ export class FlyStateDO {
         isTestnet: this.cfg.isTestnet,
         rpcUrl: this.cfg.rpcUrl,
         populationSize: this.cfg.populationSize,
+        maxLivePopulation: this.cfg.maxLivePopulation,
+        liveRetire: this.cfg.liveRetire,
         ticksPerCron: this.cfg.ticksPerCron,
         simStepsPerTick: this.cfg.simStepsPerTick,
         marketSampleBlocks: this.cfg.marketSampleBlocks,

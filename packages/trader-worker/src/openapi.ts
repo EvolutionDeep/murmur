@@ -495,8 +495,10 @@ export const OPENAPI_SPEC = {
           obj({
             name: { type: "string" },
             tickIndex: { type: "integer", description: "Monotonic cron tick counter." },
-            aliveCount: { type: "integer" },
-            totalCount: { type: "integer" },
+            aliveCount: { type: "integer", description: "Number of LIVING flies in the swarm. With live-retirement (POP_LIVE_RETIRE, the default) the dead have left the roster, so this counts ONLY the flying — a retired fly never holds a breeding slot." },
+            totalCount: { type: "integer", description: "Total roster size — equal to aliveCount under live-retirement (the roster holds only the living); the monotonic ever-present roster when retirement is off." },
+            cap: { type: "integer", description: "Live-population growth ceiling (maxLivePopulation): the \"N / cap\" breeding headroom the swarm counts against." },
+            liveRetire: { type: "boolean", description: "Whether live-retirement is active (true ⇒ aliveCount/totalCount are the living only; false ⇒ legacy wallet-only deaths)." },
             vitality: { type: "number" },
             collective: { $ref: "#/components/schemas/Collective" },
             economy: { type: "object", additionalProperties: true, description: "Economy summary (enabled/mode/network + totals)." },
