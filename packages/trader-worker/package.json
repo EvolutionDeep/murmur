@@ -20,6 +20,8 @@
     "deploy:arena": "node scripts/deploy-arena-auto.mjs",
     "compile:lineage": "node scripts/compile-lineage.mjs",
     "deploy:lineage": "node scripts/deploy-lineage-auto.mjs",
+    "compile:war": "node scripts/compile-war.mjs",
+    "deploy:war": "node scripts/deploy-war-auto.mjs",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {

@@ -65,7 +65,12 @@ export type ChronicleKind =
   | "CLASS"
   // ⑧ THE COMMONS narrative kinds (self-legislation detectors off the commons read-out):
   | "ASSEMBLY"
-  | "DECREE";
+  | "DECREE"
+  // ⑨ WAR + TAXATION narrative kinds (on-chain coffer detectors off the war read-out — real USDC escrowed
+  //     and moved inside WarCoffer.sol; only ever folded into the context while WAR_ENABLED):
+  | "WAR_DECLARED"
+  | "WAR_RESOLVED"
+  | "TAX_LEVIED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -141,6 +146,10 @@ export interface ChronicleContext {
   /** ⑧ THE COMMONS read-out (commons.ts readout): the seated assembly and the law it passes. Absent ⇒ no
    *  ASSEMBLY/DECREE (LAW_ENABLED=false, or institutions/economy off, keeps it out of the context). */
   commons?: ChronicleCommons | null;
+  /** ⑨ WAR + TAXATION read-out (state.ts driveWar's transient cron events): a war declared/resolved on-chain
+   *  and the extra tax levied. Absent ⇒ no WAR/TAX line (WAR_ENABLED=false never folds it in — the events
+   *  array stays empty, so the chronicle is byte-for-byte the pre-war build). Pure read-out, never feeds back. */
+  war?: ChronicleWar | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -165,6 +174,15 @@ export interface ChronicleCommons {
   seatedEra: number;
   seats: number;
   decrees: { param: string; target: number }[];
+}
+
+/** ⑨ the war coffer's chronicle signals — the bouts this cron saw settle on-chain and the tax it drew. Each
+ *  facet is present only when that event actually mined THIS cron (state.ts's transient warEvents), so a
+ *  standing war is never re-declared; the historian just writes the line the coffer already made real. */
+export interface ChronicleWar {
+  declared: { attackerId: number; defenderId: number; attackerName: string; defenderName: string; stakeUsdc: number; potUsdc: number } | null;
+  resolved: { attackerId: number; defenderId: number; attackerName: string; defenderName: string; winnerId: number | null; potUsdc: number; stakeUsdc: number } | null;
+  tax: { houseCount: number; taxUsdc: number } | null;
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -265,6 +283,7 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   EPOCH_OPEN: 200, EPOCH_CLOSE: 200,
   TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24,
   ASSEMBLY: 8, DECREE: 6,
+  WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -302,6 +321,12 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
   ASSEMBLY: "A commons sits in Era {era~roman} — {seats} of the swarm's honoured and propertied take the seats; the age will now write its own law.",
   DECREE: "The commons decrees in Era {era~roman}: {what} shall stand at {value}. The swarm has rewritten its own rule.",
+  // ⑨ WAR + TAXATION — the on-chain coffer's three moments. Real USDC is escrowed per house vault and moved
+  //     only inside WarCoffer.sol (never minted); the winner is derived in-contract from powers committed at
+  //     declare, so the Worker only narrates what the ledger mirror saw. Mirrored byte-for-byte in CHRON_.
+  WAR_DECLARED: "War is declared between the House of {attacker} and the House of {defender} — {stakeUsdc} USDC a side stands escrowed on-chain behind the coffer.",
+  WAR_RESOLVED: "The coffer renders its verdict — the House of {winner} takes the {potUsdc} USDC pot from the House of {loser}; the feud is settled in coin, not in word.",
+  TAX_LEVIED: "Beyond the swarm's own tithe, the coffer levies its tax — {taxUsdc} USDC drawn from {houseCount} houses' on-chain vaults into the commons purse.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -715,6 +740,34 @@ export class Chronicler {
             { era: com.seatedEra, what, value: `${round(d.target)}` },
             { target: d.target }));
         }
+      }
+    }
+
+    // --- ⑨ WAR + TAXATION: the on-chain coffer's moments this cron. Each facet is present ONLY when that
+    //     op actually mined (state.ts folds its transient warEvents in, empty while WAR_ENABLED=false), so a
+    //     standing war is never re-told and the chronicle stays byte-for-byte the pre-war build when off. A
+    //     pure read-out of the ledger mirror — the winner was already derived inside the contract, not here. ---
+    const war = ctx.war;
+    if (war) {
+      if (war.declared && this.ready("WAR_DECLARED", ctx)) {
+        const d = war.declared;
+        out.push(await this.emit(ctx, "WAR_DECLARED", 3, [d.attackerId, d.defenderId],
+          { attacker: d.attackerName, defender: d.defenderName, stakeUsdc: round(d.stakeUsdc), potUsdc: round(d.potUsdc) },
+          { attackerId: d.attackerId, defenderId: d.defenderId, stakeUsdc: d.stakeUsdc, potUsdc: d.potUsdc }));
+      }
+      if (war.resolved && this.ready("WAR_RESOLVED", ctx)) {
+        const r = war.resolved;
+        const winnerIsAttacker = r.winnerId == null ? true : r.winnerId === r.attackerId;
+        const winnerName = r.winnerId == null ? "no one" : winnerIsAttacker ? r.attackerName : r.defenderName;
+        const loserName = winnerIsAttacker ? r.defenderName : r.attackerName;
+        out.push(await this.emit(ctx, "WAR_RESOLVED", 4, r.winnerId != null ? [r.winnerId] : [r.attackerId, r.defenderId],
+          { winner: winnerName, loser: loserName, potUsdc: round(r.potUsdc), stakeUsdc: round(r.stakeUsdc) },
+          { winnerId: r.winnerId ?? 0, attackerId: r.attackerId, defenderId: r.defenderId, potUsdc: r.potUsdc }));
+      }
+      if (war.tax && war.tax.houseCount > 0 && war.tax.taxUsdc > 0 && this.ready("TAX_LEVIED", ctx)) {
+        out.push(await this.emit(ctx, "TAX_LEVIED", 2, [],
+          { taxUsdc: round(war.tax.taxUsdc), houseCount: war.tax.houseCount },
+          { taxUsdc: war.tax.taxUsdc, houseCount: war.tax.houseCount }));
       }
     }
 

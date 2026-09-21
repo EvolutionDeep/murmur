@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=53";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=54";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -304,6 +304,7 @@ let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dea
 let econMarket = null;      // ⑥ institutions read-out {marks, professions, classes, openIous, debt, run, …} — the tape
 let econCulture = null;     // ⑤ culture read-out {trend, tradition} — the passing fashion & the houses holding the old way
 let econCommons = null;     // ⑧ commons read-out {seatedEra, seats[], decrees[], effective} — the swarm's self-legislation
+let econWar = null;         // ⑨ war coffer read-out from /war {houses[], wars[], stats, …} — on-chain vaults, bouts, tax purse
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -2486,6 +2487,74 @@ function renderCommonsSection() {
   body.appendChild(eRow);
 }
 
+// ================= ⑨ the war coffer section (in the chronicle panel) =================
+// The on-chain WarCoffer: which houses hold a real-USDC vault, the live + just-closed bouts (winner derived
+// inside the contract, cross-checked independently here), and the extra tax purse. A pure read-out of /war —
+// it moves no money and reflects no decision; it only makes the coffer's ledger visible. Hidden while WAR is off.
+function renderWarSection() {
+  const host = $("chron-war");
+  if (!host) return;
+  const w = econWar;
+  if (!w || !w.enabled) { host.hidden = true; return; }
+  const houses = (w.houses || []).filter((h) => Number(h.vaultOnchainUsdc) > 0);
+  const wars = w.wars || [];
+  if (!houses.length && !wars.length && !w.stats) { host.hidden = true; return; }
+  host.hidden = false;
+  // header: escrow / cap · the tax purse · wars settled on-chain.
+  const head = $("war-head");
+  if (head) {
+    const s = w.stats || {};
+    const escrow = atomicToUsdc(s.totalEscrow || "0");
+    const cap = Number(w.maxEscrowUsdc || 0);
+    const purse = atomicToUsdc(s.commonsPurse || "0");
+    const count = Number(s.warCount || 0);
+    head.textContent = `${T("war.escrow", { escrow: escrow.toFixed(4), cap: cap.toFixed(2) })} · ${T("war.purse", { purse: purse.toFixed(4) })} · ${T("war.wars", { n: count })}`;
+    head.title = T("war.headTitle");
+  }
+  // live + just-closed bouts.
+  const wb = $("war-wars");
+  if (wb) {
+    wb.textContent = "";
+    for (const war of wars.slice(0, 6)) {
+      const row = document.createElement("div");
+      row.className = "war-row" + (war.resolved ? " resolved" : " open");
+      const an = war.attackerName || ("#" + war.attacker);
+      const dn = war.defenderName || ("#" + war.defender);
+      let line = T("war.bout", { atk: an, def: dn, pot: Number(war.potUsdc).toFixed(4) });
+      if (war.resolved) {
+        const win = Number(war.onChainWinner);   // 0 none/refund, 1 attacker, 2 defender
+        line += win === 1 ? T("war.take", { winner: an }) : win === 2 ? T("war.take", { winner: dn }) : T("war.refund");
+      } else {
+        line += T("war.in", { secs: Math.round(Number(war.secondsToDeadline) || 0) });
+      }
+      row.textContent = line;
+      row.title = T("war.boutTitle", { powerA: war.powerA, powerB: war.powerB, stake: Number(war.stakeUsdc).toFixed(4) });
+      wb.appendChild(row);
+    }
+    if (!wars.length) {
+      const row = document.createElement("div");
+      row.className = "war-empty";
+      row.textContent = T("war.noBouts");
+      wb.appendChild(row);
+    }
+  }
+  // houses holding an on-chain vault, richest vault first.
+  const vhead = $("war-vaults-head");
+  const vb = $("war-vaults");
+  if (vhead && vb) {
+    vb.textContent = "";
+    vhead.hidden = houses.length === 0;
+    const sorted = houses.slice().sort((a, b) => Number(b.vaultOnchainUsdc) - Number(a.vaultOnchainUsdc));
+    for (const h of sorted.slice(0, 8)) {
+      const row = document.createElement("div");
+      row.className = "war-vault";
+      row.textContent = T("war.vault", { name: h.name || ("House " + h.id), vault: Number(h.vaultOnchainUsdc).toFixed(4), power: h.power });
+      row.title = T("war.vaultTitle", { share: (Number(h.capitalShare) * 100).toFixed(1), gen: h.gen, live: h.live });
+      vb.appendChild(row);
+    }
+  }
+}
+
 function openWallets() {
   walletsOpen = true;
   if (brainOpen) closeBrain();
@@ -2952,6 +3021,16 @@ async function pollChron() {
   } catch { /* best-effort: the chronicle is a nicety, never block the scene */ }
 }
 
+// Poll /war — the on-chain coffer read-out (vaults, live bouts, tax purse). Gated client-side on `enabled`,
+// so while WAR_ENABLED=false it renders nothing and costs nothing beyond one cheap fetch. Best-effort.
+async function pollWar() {
+  try {
+    const r = await getJSON("/war", 6000);
+    if (r && r.enabled) { econWar = r; renderWarSection(); }
+    else { econWar = null; renderWarSection(); }
+  } catch { econWar = null; renderWarSection(); }
+}
+
 function chronTimeAgo(ts) {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (s < 60) return s + "s";
@@ -2969,6 +3048,7 @@ const CHRON_ICONS = {
   EPOCH_OPEN: "✷", EPOCH_CLOSE: "✥", TREND: "≈", TRADITION: "⚜",
   MARKET_SHIFT: "↕", CREDIT: "⛁", RUN: "⇊", CLASS: "☰",
   ASSEMBLY: "⛬", DECREE: "✎",
+  WAR_DECLARED: "⚔", WAR_RESOLVED: "⚑", TAX_LEVIED: "⛃",
 };
 
 function renderChron() {
@@ -3087,13 +3167,16 @@ const CHRON_ = {
     CLASS: "A class is counted into history — the creditor purse now grips {creditorShare} of the swarm's whole net capital.",
     ASSEMBLY: "A commons sits in Era {era~roman} — {seats} of the swarm's honoured and propertied take the seats; the age will now write its own law.",
     DECREE: "The commons decrees in Era {era~roman}: {what} shall stand at {value}. The swarm has rewritten its own rule.",
+    WAR_DECLARED: "War is declared between the House of {attacker} and the House of {defender} — {stakeUsdc} USDC a side stands escrowed on-chain behind the coffer.",
+    WAR_RESOLVED: "The coffer renders its verdict — the House of {winner} takes the {potUsdc} USDC pot from the House of {loser}; the feud is settled in coin, not in word.",
+    TAX_LEVIED: "Beyond the swarm's own tithe, the coffer levies its tax — {taxUsdc} USDC drawn from {houseCount} houses' on-chain vaults into the commons purse.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -5798,6 +5881,8 @@ function boot() {
   setInterval(pollHistory, HIST_POLL_MS);     // the archive advances ~1×/min; a slow poll keeps it fresh
   pollChron();                                // seed the chronicle panel so it is live on load
   setInterval(pollChron, CHRON_POLL_MS);      // chronicle advances on threshold events; 25s keeps it fresh
+  pollWar();                                  // seed the on-chain war coffer section (inert while WAR off)
+  setInterval(pollWar, CHRON_POLL_MS);        // coffer vaults/bouts/purse refresh on the same slow cadence
   requestAnimationFrame(loop);
 }
 boot();

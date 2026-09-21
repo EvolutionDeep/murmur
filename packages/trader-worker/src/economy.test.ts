@@ -875,3 +875,84 @@ test("liveAgents counts only the LIVING: a buried fly drops out of the total, a 
   assert.equal(econ.isDead(0), false, "reopening #0 lifts its tombstone");
   assert.equal(econ.snapshot().totals.liveAgents, 25, "the reborn fly counts as living again");
 });
+
+// ---------- WAR: the on-chain vault / tax MIRROR (additive on the dynasty blob) ----------
+// The war layer only ever MIRRORS what the WarCoffer contract moved on-chain; it never spends from these
+// fields and never mints. So the two laws these tests pin are: (1) the mirror survives a DO eviction with
+// KEY_VERSION still "economy:v1" (a version bump would wipe the whole ledger); (2) touching the mirror can
+// never change a member's own balance or the documented ledger liquidity — value only moves inside coffer.
+
+test("war: a house's on-chain vault mirror round-trips through serialize WITHOUT bumping KEY_VERSION", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: {} }));
+  await econ.step(population("AGITATE"), collective(0.8), 100);
+  const founding = econ.noteHatch(3, 24, HASH_A);
+  assert.ok(founding?.founded, "a house is founded to carry a vault");
+
+  econ.setVaultOnchain(3, "1500000");                                     // 1.5 USDC escrowed on-chain
+  assert.equal(econ.dynastyReadout().houses.find((h) => h.id === 3)!.vaultOnchainUsdc, 1.5,
+    "the read-out folds the vault mirror when one exists");
+
+  const blob = econ.serialize();
+  const p = JSON.parse(blob);
+  assert.equal(p.version, "economy:v1", "the war mirror is additive — KEY_VERSION is NEVER bumped");
+  assert.equal(p.dynasty.houses.find((h: { id: number }) => h.id === 3).vaultOnchainAtomic, "1500000",
+    "the atomic mirror is persisted on the house record");
+
+  // Survives a DO eviction verbatim.
+  const restored = new AgentEconomy(cfg({ dynasty: {} }), blob);
+  assert.equal(restored.dynastyReadout().houses.find((h) => h.id === 3)!.vaultOnchainUsdc, 1.5,
+    "the vault mirror round-trips intact");
+});
+
+test("war: a pre-war house record (no vault key) round-trips byte-identically and shows no `war` read-out", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: {} }));
+  await econ.step(population("AGITATE"), collective(0.8), 100);
+  econ.noteHatch(3, 24, HASH_A);
+
+  // No vault, no tax: the dynasty read-out carries NO `war` key and the house row no `vaultOnchainUsdc`.
+  assert.equal(econ.dynastyReadout().war, undefined, "war untouched ⇒ no war summary (byte-identical to pre-war)");
+  assert.equal(econ.dynastyReadout().houses.find((h) => h.id === 3)!.vaultOnchainUsdc, undefined,
+    "a house without an on-chain vault emits no vault key at all");
+
+  const blob = econ.serialize();
+  const house = JSON.parse(blob).dynasty.houses.find((h: { id: number }) => h.id === 3);
+  assert.ok(!("vaultOnchainAtomic" in house), "an untouched house serializes with NO vaultOnchainAtomic key");
+  // Restoring an old payload that stripped the (never-present) key is a no-op, and stays byte-identical.
+  const restored = new AgentEconomy(cfg({ dynasty: {} }), blob);
+  assert.equal(restored.serialize(), blob, "a war-free economy round-trips byte-for-byte");
+  assert.equal(restored.dynastyReadout().war, undefined, "and still shows no war summary after restore");
+});
+
+test("war: mirroring a vault + levying tax NEVER mints — member balances and ledger liquidity are untouched", async () => {
+  const econ = new AgentEconomy(cfg({ dynasty: { tithePct: 0.02 } }));
+  const readings = population("AGITATE");
+  for (let tick = 0; tick < 12; tick++) await econ.step(readings, collective(0.85), tick);
+  econ.noteHatch(3, 24, HASH_A);
+
+  const before = econ.snapshot();
+  const balBefore = before.agents.reduce((s, a) => s + BigInt(a.balance), 0n);
+  const volBefore = BigInt(before.totals.volumeAtomic);
+  const treasuryBefore = BigInt(before.totals.treasuryOutAtomic);
+
+  // Simulate the coffer having moved real USDC: mirror a deposit/resolve and fold a tax levy.
+  econ.setVaultOnchain(3, "5000000");                                     // 5 USDC now escrowed on-chain
+  econ.addWarTax("120000");                                               // 0.12 USDC tax into the commons purse
+  econ.addWarTax("not-a-number");                                         // a malformed levy is ignored
+
+  const after = econ.snapshot();
+  const balAfter = after.agents.reduce((s, a) => s + BigInt(a.balance), 0n);
+  assert.equal(balAfter, balBefore, "war mirror moves NOTHING in any member's own wallet (no mint, no spend)");
+  assert.equal(BigInt(after.totals.volumeAtomic), volBefore, "settled volume is untouched by the mirror");
+  assert.equal(BigInt(after.totals.treasuryOutAtomic), treasuryBefore, "the ONLY mint source stays documented top-ups");
+
+  assert.equal(econ.warTaxCollectedUsdc(), 0.12, "the tax mirror accumulated exactly the valid levy");
+  const war = after.dynasty?.war;
+  assert.ok(war, "the war summary folds once a vault mirror + tax exist");
+  assert.equal(war.housesWithVault, 1, "the summary counts the one house holding a vault");
+  assert.equal(war.taxCollectedUsdc, 0.12, "and reports the tax purse from the mirror");
+
+  // The ledger conservation identity still holds after war touches the mirrors.
+  const founding = BigInt(usdcToAtomic(cfg().initialBalanceUsdc)) * BigInt(after.agents.length);
+  assert.equal(balAfter, founding + BigInt(after.totals.treasuryOutAtomic),
+    "money is still conserved: war never created or destroyed a single atomic unit");
+});

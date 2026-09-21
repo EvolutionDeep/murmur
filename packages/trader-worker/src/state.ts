@@ -64,7 +64,11 @@ import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./common
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
-import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo } from "./x402.js";
+import {
+  planWar, cursorAfterWarOpen, housePower, stakeOf, taxLevy, feudPairs, winnerOf, pairKey,
+  WIN_ATTACKER, WIN_NONE, type WarCursor,
+} from "./war.js";
+import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo, type WarInfo } from "./x402.js";
 import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -84,6 +88,7 @@ const KEY_COMMONS = "commons:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
+const KEY_WAR = "war:v1";
 const KEY_LINEAGE = "lineage:v1";
 const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
@@ -111,6 +116,17 @@ interface PulseSales {
 interface ArenaState {
   openedRound: number;    // last arena roundId openRound() succeeded for (-1 ⇒ none yet)
   resolvedRound: number;  // last arena roundId resolve() succeeded for (-1 ⇒ none yet)
+}
+
+/**
+ * Worker-side resolver cursor for the on-chain WAR coffer + a per-pair cooldown map, persisted together so a
+ * mid-cron DO eviction resumes wars exactly where it left off (never re-declares a bucket, never re-resolves a
+ * war, and never lets a freshly-fought pair immediately re-fund). The cursor is war.ts's pure WarCursor; the
+ * map keys a canonical "loId-hiId" pair to the unix seconds of its last declaration.
+ */
+interface WarRuntime {
+  cursor: WarCursor;                        // openedWar / resolvedWar high-water marks (-1 ⇒ none yet)
+  lastByPair: Record<string, number>;       // pairKey(houseA, houseB) → unix sec of the last declareWar
 }
 
 /**
@@ -149,6 +165,18 @@ export class FlyStateDO {
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
   private arenaState: ArenaState | null = null;
+  /** The on-chain WAR coffer resolver cursor + per-pair cooldowns (persisted under KEY_WAR; null while war is inert). */
+  private warRuntime: WarRuntime | null = null;
+  /**
+   * War/tax events the CURRENT cron raised, consumed by observeChronicle (step 7) and cleared each tick.
+   * Transient (never persisted): a chronicle line is told once from the cron that saw it, and a miss is not
+   * worth replaying. Empty while the war layer is inert, so the chronicle context stays exactly today's.
+   */
+  private warEvents: {
+    kind: "declared" | "resolved" | "taxed";
+    houseId: number; attackerId: number; defenderId: number; attackerName: string; defenderName: string;
+    winnerId: number | null; stakeUsdc: number; potUsdc: number; taxUsdc: number;
+  }[] = [];
   /** The breeding-market lineage store (genesis roots + every bred individual), lazily loaded from DO storage. */
   private lineage: LineageEntry[] | null = null;
   /** Per-day autonomous-evolution breeding budget (persisted so an eviction can't reset it). */
@@ -361,6 +389,150 @@ export class FlyStateDO {
       // cursorAfterOpen also baselines resolvedRound on a fresh mid-stream start, so we never chase a prev we
       // didn't open (see arena.ts) — otherwise every cron this hour re-attempts a reverting resolve(prev).
       if (tx) { const c = cursorAfterOpen(st, plan.openRound); st.openedRound = c.openedRound; st.resolvedRound = c.resolvedRound; }
+    }
+  }
+
+  /** Load (or initialise) the persisted WAR resolver cursor + per-pair cooldowns (inert until war is armed). */
+  private async ensureWarState(): Promise<WarRuntime> {
+    if (this.warRuntime) return this.warRuntime;
+    const stored = await this.state.storage.get<WarRuntime>(KEY_WAR);
+    this.warRuntime = stored ?? { cursor: { openedWar: -1, resolvedWar: -1 }, lastByPair: {} };
+    // Normalize a partial/legacy blob so a missing sub-field can never NPE the cron.
+    if (!this.warRuntime.cursor) this.warRuntime.cursor = { openedWar: -1, resolvedWar: -1 };
+    if (!this.warRuntime.lastByPair) this.warRuntime.lastByPair = {};
+    return this.warRuntime;
+  }
+
+  /**
+   * Drive the on-chain WAR + TAXATION coffer as its authorized resolver — the war sibling of driveArena, and
+   * gated on EXACTLY the same real-money rails (enabled + a deployed coffer + onchain facilitator + real spend
+   * on + not shadow-only), because every step moves REAL USDC and pays gas. Each cron it may, best-effort:
+   *   (1) RESOLVE the war whose bucket just closed — the coffer derives the winner from the powers committed
+   *       at declare, so the Worker supplies nothing and cannot steer it; war.ts `winnerOf` (byte-identical to
+   *       the contract) is used only to narrate the result for the chronicle;
+   *   (2) DECLARE the deepest due feud, first topping both houses' vaults with treasury USDC (under the
+   *       coffer's hard cap) so the bounded stake + tax are covered, then committing both powers on-chain;
+   *   (3) LEVY the extra on-chain tax from every vault-holding house, and sweep the purse to the dominant
+   *       house when taxDest === "dominant".
+   * After any mined op it re-reads every house's live vault so the ledger MIRROR tracks the coffer exactly
+   * (money is only ever moved inside the contract, never minted). Any throw is swallowed by the caller; a
+   * move that never mines degrades to null and changes no mirror.
+   */
+  private async driveWar(economy: AgentEconomy): Promise<void> {
+    const w = this.cfg.war;
+    if (!w.enabled || !w.address) return;
+    if (economy.facilitatorMode !== "onchain") return;                                 // no resolver key
+    if (!this.cfg.economy.realSpendEnabled || this.cfg.economy.shadowOnly) return;     // master safety rails
+
+    const rt = await this.ensureWarState();
+    const now = Math.floor(Date.now() / 1000);
+    const plan = planWar(now, w.warCadenceSec, rt.cursor);
+    const freshBucket = plan.declareWar != null;   // cur not yet opened ⇒ a new war/tax window just began
+    const houses = economy.warHouses();
+    const byId = new Map(houses.map((h) => [h.id, h]));
+    const nameOf = (id: number): string => economy.houseNameById(id) ?? `House ${id}`;
+    let anyTx = false;
+
+    // 1) RESOLVE the war whose bucket just closed (the coffer derives the winner; we only trigger + mirror).
+    if (plan.resolveWar != null) {
+      const info = await economy.warInfoOnchain(plan.resolveWar);
+      const tx = await economy.resolveWarOnchain(plan.resolveWar);
+      if (tx) {
+        rt.cursor.resolvedWar = plan.resolveWar;   // on failure leave the cursor put; retried next cron in the grace
+        anyTx = true;
+        if (info && info.opened && !info.resolved) {
+          const att = Number(info.attacker);
+          const def = Number(info.defender);
+          // Recompute the winner the SAME way the contract does — this is the runtime lock-step check.
+          const { winner } = winnerOf(BigInt(plan.resolveWar), BigInt(info.attacker), BigInt(info.defender), BigInt(info.powerA), BigInt(info.powerB));
+          const winnerId = winner === WIN_NONE ? null : winner === WIN_ATTACKER ? att : def;
+          this.warEvents.push({
+            kind: "resolved", houseId: winnerId ?? att, attackerId: att, defenderId: def,
+            attackerName: nameOf(att), defenderName: nameOf(def), winnerId,
+            stakeUsdc: atomicToUsdc(info.stake), potUsdc: atomicToUsdc(info.pot), taxUsdc: 0,
+          });
+        }
+      }
+    }
+
+    // 2) DECLARE the deepest due feud, funding both vaults first so the bounded stake + tax are covered.
+    if (plan.declareWar != null) {
+      const candidates = feudPairs(houses, economy.houseFeuds(), w, now, rt.lastByPair);
+      const pair = candidates[0];
+      const ha = pair ? byId.get(pair.attacker) : undefined;
+      const hb = pair ? byId.get(pair.defender) : undefined;
+      if (ha && hb) {
+        // A vault target that yields a full (capped) stake, bounded so two houses still fit under the cap.
+        const target = Math.min(Math.max(w.minVaultUsdc, w.perWarCapUsdc / w.stakePct), w.maxEscrowUsdc / 2);
+        for (const h of [ha, hb]) {
+          const need = target - h.vaultOnchainUsdc;
+          if (need > 0) {
+            const dtx = await economy.cofferDeposit(h.id, usdcToAtomic(need));
+            if (dtx) anyTx = true;
+          }
+        }
+        // Size the stake off the FUNDED vaults (re-read so a capped/partial deposit is respected).
+        const va = await economy.cofferVaultOnchain(ha.id);
+        const vb = await economy.cofferVaultOnchain(hb.id);
+        const av = va != null ? atomicToUsdc(va) : ha.vaultOnchainUsdc;
+        const bv = vb != null ? atomicToUsdc(vb) : hb.vaultOnchainUsdc;
+        const stake = stakeOf(av, bv, w);
+        const powerA = housePower(ha);
+        const powerB = housePower(hb);
+        if (stake > 0 && powerA + powerB > 0) {
+          const tx = await economy.declareWarOnchain({
+            warId: plan.declareWar, attacker: ha.id, defender: hb.id,
+            stakeAtomic: usdcToAtomic(stake), powerA, powerB, deadline: plan.declareDeadline,
+          });
+          if (tx) {
+            // cursorAfterWarOpen also baselines resolvedWar on a fresh mid-stream start, so we never chase a
+            // prev we never declared (see war.ts) — mirroring arena's cursorAfterOpen discipline.
+            const c = cursorAfterWarOpen(rt.cursor, plan.declareWar);
+            rt.cursor.openedWar = c.openedWar;
+            rt.cursor.resolvedWar = c.resolvedWar;
+            rt.lastByPair[pairKey(ha.id, hb.id)] = now;   // per-pair cooldown against an immediate re-fund
+            anyTx = true;
+            this.warEvents.push({
+              kind: "declared", houseId: ha.id, attackerId: ha.id, defenderId: hb.id,
+              attackerName: nameOf(ha.id), defenderName: nameOf(hb.id), winnerId: null,
+              stakeUsdc: stake, potUsdc: stake * 2, taxUsdc: 0,
+            });
+          }
+        }
+      }
+    }
+
+    // 3) LEVY the extra on-chain tax — at most once per bucket, from every house that holds a vault.
+    if (freshBucket) {
+      for (const h of houses) {
+        if (h.vaultOnchainUsdc <= 0) continue;
+        const levy = taxLevy(h.vaultOnchainUsdc, w);
+        const amtAtomic = usdcToAtomic(levy);
+        if (levy <= 0 || amtAtomic === "0") continue;
+        const tx = await economy.levyTaxOnchain(h.id, amtAtomic);
+        if (tx) {
+          economy.addWarTax(amtAtomic);   // ledger MIRROR only; the real USDC stayed inside the coffer
+          anyTx = true;
+          this.warEvents.push({
+            kind: "taxed", houseId: h.id, attackerId: h.id, defenderId: h.id,
+            attackerName: nameOf(h.id), defenderName: nameOf(h.id), winnerId: null,
+            stakeUsdc: 0, potUsdc: 0, taxUsdc: levy,
+          });
+        }
+      }
+      // Route the purse to the dominant house when configured to (otherwise it stays the commons purse).
+      if (w.taxDest === "dominant") {
+        const dom = houses.slice().sort((a, b) => b.capitalShare - a.capitalShare || a.id - b.id)[0];
+        if (dom) { const stx = await economy.sweepTaxOnchain(dom.id); if (stx) anyTx = true; }
+      }
+    }
+
+    // Refresh every vault MIRROR from the live coffer after any mined op, so the ledger tracks the contract.
+    if (anyTx) {
+      for (const h of houses) {
+        const v = await economy.cofferVaultOnchain(h.id);
+        if (v != null) economy.setVaultOnchain(h.id, v);
+      }
     }
   }
 
@@ -664,6 +836,7 @@ export class FlyStateDO {
       gasPrice: e.gasPriceGwei != null ? BigInt(Math.round(e.gasPriceGwei * 1e9)) : undefined,
       registryAddress: e.registryAddress ? (e.registryAddress as Address) : undefined,
       arenaAddress: this.cfg.arena.address ? (this.cfg.arena.address as Address) : undefined,
+      warAddress: this.cfg.war.address ? (this.cfg.war.address as Address) : undefined,
       lineageAddress: this.cfg.lineageAddress ? (this.cfg.lineageAddress as Address) : undefined,
       circle: circleOpts,
     });
@@ -721,6 +894,7 @@ export class FlyStateDO {
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
+    if (this.warRuntime) await this.state.storage.put(KEY_WAR, this.warRuntime);
     await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
     if (market) await this.state.storage.put(KEY_MARKET, market);
     if (snapshot) {
@@ -922,6 +1096,25 @@ export class FlyStateDO {
             decrees: comRo.decrees.map((d) => ({ param: d.param, target: d.target })),
           }
         : null;
+      // ⑨ fold driveWar's transient cron events into the historian ONLY while WAR is on. Off (or a cron that
+      // mined nothing) ⇒ warEvents is empty ⇒ war stays null ⇒ no WAR/TAX line, byte-for-byte the pre-war build.
+      // Declared/resolved take the single bout this cron saw; tax aggregates every vault-holding house's levy.
+      const warDeclared = this.warEvents.find((e) => e.kind === "declared") ?? null;
+      const warResolved = this.warEvents.find((e) => e.kind === "resolved") ?? null;
+      const taxedEvents = this.warEvents.filter((e) => e.kind === "taxed");
+      const war = this.cfg.war.enabled && this.warEvents.length
+        ? {
+            declared: warDeclared
+              ? { attackerId: warDeclared.attackerId, defenderId: warDeclared.defenderId, attackerName: warDeclared.attackerName, defenderName: warDeclared.defenderName, stakeUsdc: warDeclared.stakeUsdc, potUsdc: warDeclared.potUsdc }
+              : null,
+            resolved: warResolved
+              ? { attackerId: warResolved.attackerId, defenderId: warResolved.defenderId, attackerName: warResolved.attackerName, defenderName: warResolved.defenderName, winnerId: warResolved.winnerId, potUsdc: warResolved.potUsdc, stakeUsdc: warResolved.stakeUsdc }
+              : null,
+            tax: taxedEvents.length
+              ? { houseCount: taxedEvents.length, taxUsdc: taxedEvents.reduce((a, e) => a + e.taxUsdc, 0) }
+              : null,
+          }
+        : null;
       const ctx: ChronicleContext = {
         tick,
         ts: Date.now(),
@@ -955,6 +1148,7 @@ export class FlyStateDO {
         culture,
         market,
         commons,
+        war,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1018,6 +1212,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
       if (req.method === "GET" && path === "/arena") return await this.getArena();
+      if (req.method === "GET" && path === "/war") return await this.getWar();
       if (req.method === "GET" && path === "/lineage") return await this.getLineage(url);
       if (req.method === "GET" && path === "/lineage/verify") return await this.getLineageVerify(url);
       if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
@@ -1255,6 +1450,19 @@ export class FlyStateDO {
       }
     }
 
+    // WAR + TAXATION — drive the on-chain WarCoffer as its resolver (fund vaults, resolve the war whose
+    //    bucket closed, declare the deepest due feud, levy the extra tax). Gated behind the SAME real-money
+    //    rails as the arena; best-effort — a throw never blocks the tick. warEvents is cleared every cron
+    //    here (before the gated drive) so an inert cron leaves it empty and the chronicle context stays today's.
+    this.warEvents = [];
+    if (economy) {
+      try {
+        await this.driveWar(economy);
+      } catch (e) {
+        console.warn("[DO] war drive failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // AUTONOMOUS EVOLUTION — let the fittest agents found the next generation, self-funded from their OWN
     //    wallets. Best-effort and gated behind the same real-money rails; never blocks the live tick.
     if (economy) {
@@ -1296,6 +1504,81 @@ export class FlyStateDO {
   }
 
   // ---------- Endpoint implementations ----------
+
+  /**
+   * GET /war — the on-chain house WAR + TAXATION coffer: static wiring (coffer/usdc/treasury/resolver/caps),
+   * every house's live on-chain vault mirror, the aggregate coffer totals (commons purse / escrow / cap) read
+   * straight from the contract, and the open + just-resolved wars (with the winner recomputed independently in
+   * war.ts so a reader can confirm the payout was not steered). Inert (enabled:false) until WAR_ENABLED +
+   * WAR_ADDRESS are set and the onchain facilitator is armed.
+   */
+  private async getWar() {
+    const w = this.cfg.war;
+    const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    const base = {
+      enabled: w.enabled && w.address != null,
+      network: arcNetworkTag(this.cfg.isTestnet),
+      chainId: this.cfg.chainId,
+      usdc: w.usdc,
+      cofferAddress: w.address,
+      treasury: w.treasury ?? economy?.relayAddress() ?? null,
+      resolver: economy?.relayAddress() ?? null,
+      warCadenceSec: w.warCadenceSec,
+      stakePct: w.stakePct,
+      minVaultUsdc: w.minVaultUsdc,
+      perWarCapUsdc: w.perWarCapUsdc,
+      maxEscrowUsdc: w.maxEscrowUsdc,
+      feudThreshold: w.feudThreshold,
+      taxPct: w.taxPct,
+      taxDest: w.taxDest,
+      armed: economy?.facilitatorMode === "onchain",
+    };
+    if (!base.enabled || !economy) return json({ ...base, houses: [], stats: null, wars: [], state: null });
+
+    const rt = await this.ensureWarState();
+    // Houses + their on-chain vault mirrors (only those that actually carry a vault are worth listing).
+    const houses = economy.warHouses().map((h) => ({
+      id: h.id, name: economy.houseNameById(h.id), vaultOnchainUsdc: h.vaultOnchainUsdc,
+      capitalShare: h.capitalShare, live: h.live, gen: h.gen, power: housePower(h),
+    }));
+    const stats = await economy.cofferStatsOnchain();
+
+    // The live + just-closed war buckets, with an INDEPENDENT winner recompute (the trustless cross-check).
+    const now = Math.floor(Date.now() / 1000);
+    const cur = Math.floor(now / w.warCadenceSec);
+    const wars: Record<string, unknown>[] = [];
+    for (const id of [cur, cur - 1]) {
+      if (id < 0) continue;
+      const info = await economy.warInfoOnchain(id);
+      if (!info || !info.opened) continue;
+      const { winner, roll, total } = winnerOf(BigInt(id), BigInt(info.attacker), BigInt(info.defender), BigInt(info.powerA), BigInt(info.powerB));
+      wars.push({
+        warId: id,
+        opened: info.opened,
+        resolved: info.resolved,
+        onChainWinner: info.winner,
+        predictedWinner: winner,          // recomputed from committed powers: must equal onChainWinner once resolved
+        roll: roll.toString(),
+        totalPower: total.toString(),
+        attacker: Number(info.attacker),
+        defender: Number(info.defender),
+        attackerName: economy.houseNameById(Number(info.attacker)),
+        defenderName: economy.houseNameById(Number(info.defender)),
+        stakeUsdc: atomicToUsdc(info.stake),
+        potUsdc: atomicToUsdc(info.pot),
+        powerA: Number(info.powerA),
+        powerB: Number(info.powerB),
+        deadline: info.deadline,
+        openedAt: info.openedAt,
+        resolvedAt: info.resolvedAt,
+        secondsToDeadline: Math.max(0, info.deadline - now),
+      });
+    }
+    return json({
+      ...base, houses, stats, wars,
+      state: { openedWar: rt.cursor.openedWar, resolvedWar: rt.cursor.resolvedWar, pairsInCooldown: Object.keys(rt.lastByPair).length },
+    });
+  }
 
   /**
    * GET /arena — the human-vs-swarm prediction arena: static wiring (token/arena/resolver/cadence), the

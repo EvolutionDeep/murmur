@@ -123,6 +123,25 @@ export interface Env {
   ARENA_FLAT_BAND?: string;             // |Δtemperature| ≤ this ⇒ FLAT refund (default = PREDICT_FLAT_BAND)
   ARENA_STALE_GRACE_SEC?: string;       // seconds past a round's deadline after which anyone may expire it for a refund (default 259200 = 3d)
 
+  // --- On-chain house WAR + TAXATION: feuding houses stake real USDC in a dedicated coffer; every house pays an EXTRA on-chain tax ---
+  //     A dedicated WarCoffer contract escrows REAL USDC per house vault and settles both the war payout and the
+  //     tax levy ITSELF. The winner is derived IN-CONTRACT from the powers committed at declare (the resolver
+  //     supplies nothing at resolve, so it cannot steer a result). ALL of it is inert unless WAR_ENABLED="true"
+  //     AND WAR_ADDRESS + WAR_TREASURY are set AND the onchain facilitator is armed with real spend on (it moves
+  //     real USDC + pays gas). Bounded stake only — whole-vault annexation is a deliberate non-goal of this layer.
+  WAR_ENABLED?: string;                 // "true"/"false" (default false) — drive the on-chain war + tax coffer
+  WAR_ADDRESS?: string;                 // deployed WarCoffer (0x…40); absent ⇒ the war step is skipped entirely
+  WAR_USDC?: string;                    // the escrowed ERC-20 (default = the Arc USDC precompile 0x3600..0000)
+  WAR_TREASURY?: string;               // the wallet whose USDC backs house vaults (REQUIRED; absent ⇒ step skipped)
+  WAR_STAKE_PCT?: string;               // fraction of the smaller vault posted by EACH side (default 0.05)
+  WAR_MIN_VAULT_USDC?: string;          // both houses need at least this on-chain vault to feud (default 1)
+  WAR_PER_WAR_CAP_USDC?: string;        // hard ceiling on one side's stake regardless of vault size (default 5)
+  WAR_MAX_ESCROW_USDC?: string;         // ceiling the Worker tops vaults up to; must be <= the coffer's on-chain hard cap (default 50)
+  WAR_CADENCE_SEC?: string;             // seconds per war bucket == the commit/resolve window + the per-pair cooldown (default 3600)
+  WAR_FEUD_THRESHOLD?: string;          // a cross-house bond <= this (negative) may go to war (default -0.6)
+  WAR_TAX_PCT?: string;                 // fraction of a house vault levied as EXTRA on-chain tax per cron (default 0.01)
+  WAR_TAX_DEST?: string;                // "coffer" (commons purse, default) | "dominant" (sweep to the wealthiest house)
+
   // --- Autonomous evolution: profitable agents self-fund breeding from their OWN wallets ---
   //     Each cron, the top agents by realized PnL (netUsdc>0) may autonomously initiate a mutate/cross over
   //     the SAME x402/EIP-3009 rails, paying the breeding fee from the parent's own HD wallet (the
@@ -294,6 +313,23 @@ export interface RuntimeConfig {
     roundLenSec: number;        // seconds per arena round (== the betting window)
     flatBand: number;           // |Δtemperature| ≤ this ⇒ FLAT (refund); matches the swarm for a fair comparison
     staleGraceSec: number;      // seconds past deadline before an unresolved round is refundable by anyone
+  };
+
+  // On-chain house war + taxation (a dedicated WarCoffer escrows real USDC per house vault; the coffer
+  // derives the war winner itself and levies an extra on-chain tax beyond the internal 2% tithe).
+  war: {
+    enabled: boolean;
+    address: string | null;      // deployed WarCoffer, or null (war step skipped — zero behaviour change)
+    usdc: string;                // the escrowed ERC-20 (default = the Arc USDC precompile)
+    treasury: string | null;     // the wallet whose USDC backs vaults; null ⇒ the whole step is skipped
+    stakePct: number;            // fraction of the smaller vault posted by EACH side
+    minVaultUsdc: number;        // both houses need at least this on-chain vault to feud
+    perWarCapUsdc: number;       // hard ceiling on one side's stake
+    maxEscrowUsdc: number;       // the Worker's own top-up ceiling (must be <= the coffer's on-chain cap)
+    warCadenceSec: number;       // seconds per war bucket (== the commit window + per-pair cooldown)
+    feudThreshold: number;       // cross-house bond <= this (negative) may go to war
+    taxPct: number;              // fraction of a house vault levied as extra on-chain tax per cron
+    taxDest: "coffer" | "dominant";  // commons purse, or swept to the dominant house
   };
 
   // Community governance page (off-chain token-gated forum + weighted voting; D1-backed, read-only on-chain)
@@ -537,6 +573,25 @@ export function loadConfig(env: Env): RuntimeConfig {
       // Default to the swarm's flat band so both markets resolve the same temperature move identically.
       flatBand: clamp(Number(env.ARENA_FLAT_BAND ?? env.PREDICT_FLAT_BAND ?? "0.008"), 0, 1),
       staleGraceSec: clampInt(Number(env.ARENA_STALE_GRACE_SEC ?? "259200"), 3600, 30 * 86400),
+    },
+
+    war: {
+      // OFF by default and inert until BOTH WAR_ADDRESS and WAR_TREASURY are set AND the onchain facilitator
+      // is armed with real spend on — a simulated/keyless Worker has no vault-funding wallet, so it never moves
+      // the escrow. The step is additionally gated in state.ts on the same master rails as the arena.
+      enabled: (env.WAR_ENABLED ?? "false").toLowerCase() === "true",
+      address: (env.WAR_ADDRESS ?? "").trim() || null,
+      // The Arc USDC precompile (6-dec FiatTokenV2) is the default escrow asset; override for a drill chain.
+      usdc: (env.WAR_USDC ?? "").trim() || "0x3600000000000000000000000000000000000000",
+      treasury: (env.WAR_TREASURY ?? "").trim() || null,
+      stakePct: clamp(Number(env.WAR_STAKE_PCT ?? "0.05"), 0.0001, 1),
+      minVaultUsdc: clamp(Number(env.WAR_MIN_VAULT_USDC ?? "1"), 0, 100_000),
+      perWarCapUsdc: clamp(Number(env.WAR_PER_WAR_CAP_USDC ?? "5"), 0.0001, 100_000),
+      maxEscrowUsdc: clamp(Number(env.WAR_MAX_ESCROW_USDC ?? "50"), 0.0001, 1_000_000),
+      warCadenceSec: clampInt(Number(env.WAR_CADENCE_SEC ?? "3600"), 300, 7 * 86400),
+      feudThreshold: clamp(Number(env.WAR_FEUD_THRESHOLD ?? "-0.6"), -1, 1),
+      taxPct: clamp(Number(env.WAR_TAX_PCT ?? "0.01"), 0, 1),
+      taxDest: (env.WAR_TAX_DEST ?? "").trim().toLowerCase() === "dominant" ? "dominant" : "coffer",
     },
 
     community: {

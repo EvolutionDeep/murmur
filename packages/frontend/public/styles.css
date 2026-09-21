@@ -553,6 +553,18 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .com-row.com-roster { color: var(--muted); }
 .com-row.com-decree { color: #4a3f6a; }
 .com-row.com-eff { color: #3f5a3a; }
+/* ⑨ the war coffer — houses' on-chain vaults, live/just-closed bouts & the extra tax purse (pure read-out of /war) */
+.chron-war { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.war-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.war-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.war-head { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.war-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.war-row, .war-vault { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.war-row.open { color: #8a3a2f; }
+.war-row.resolved { color: #5a4a33; }
+.war-vault { color: var(--ink); }
+.war-empty { font-family: var(--mono); font-size: 10px; color: var(--muted); font-style: italic; }
+.war-subhead { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 9px; }
 
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }

@@ -39,6 +39,9 @@ const zh = {
   CLASS: "一个阶级被计入历史 —— 债主的钱袋如今扼住蜂群全部净资本的 {creditorShare}。",
   ASSEMBLY: "一场公域议事于第 {era~roman} 纪元开会 —— {seats} 位蜂群中德高望重与富足者入座；此纪元自此将为自己立法。",
   DECREE: "公域在第 {era~roman} 纪元颁布法令：{what} 当立于 {value}。蜂群已重写了自身的规则。",
+  WAR_DECLARED: "在 {attacker} 家族与 {defender} 家族之间宣战 —— 每一方各有 {stakeUsdc} USDC 作为押注托管于链上金库之后。",
+  WAR_RESOLVED: "金库降下裁决 —— {winner} 家族从 {loser} 家族手中夺走 {potUsdc} USDC 的战池；宿怨以铸币而非言语了结。",
+  TAX_LEVIED: "在蜂群自身的什一税之外，金库征收其税 —— 从 {houseCount} 个家族的链上金库中抽取 {taxUsdc} USDC 入公库。",
 };
 
 const fr = {
@@ -70,6 +73,9 @@ const fr = {
   CLASS: "Une classe est comptée dans l'histoire — la bourse des créanciers tient désormais {creditorShare} de tout le capital net de l'essaim.",
   ASSEMBLY: "Un commun siège en l'ère {era~roman} — {seats} des honorés et propriétaires de l'essaim prennent les sièges ; l'âge écrira désormais sa propre loi.",
   DECREE: "Le commun décrète en l'ère {era~roman} : {what} tiendra à {value}. L'essaim a réécrit sa propre règle.",
+  WAR_DECLARED: "La guerre est déclarée entre la Maison {attacker} et la Maison {defender} — {stakeUsdc} USDC par côté sont séquestrés on-chain derrière le coffre.",
+  WAR_RESOLVED: "Le coffre rend son verdict — la Maison {winner} prend le pot de {potUsdc} USDC à la Maison {loser} ; la querelle est réglée en pièce, non en parole.",
+  TAX_LEVIED: "Au-delà de la dîme de l'essaim, le coffre lève son impôt — {taxUsdc} USDC tirés des coffres on-chain de {houseCount} maisons dans la bourse commune.",
 };
 
 const es = {
@@ -101,6 +107,9 @@ const es = {
   CLASS: "Una clase es contada en la historia — la bolsa de los acreedores ahora aprisiona {creditorShare} de todo el capital neto del enjambre.",
   ASSEMBLY: "Un común se sienta en la Era {era~roman} — {seats} de los honrados y propietarios del enjambre toman los asientos; la edad ahora escribirá su propia ley.",
   DECREE: "El común decreta en la Era {era~roman}: {what} quedará en {value}. El enjambre ha reescrito su propia regla.",
+  WAR_DECLARED: "Se declara la guerra entre la Casa {attacker} y la Casa {defender} — {stakeUsdc} USDC por lado quedan en depósito on-chain tras el cofre.",
+  WAR_RESOLVED: "El cofre emite su veredicto — la Casa {winner} toma el bote de {potUsdc} USDC de la Casa {loser}; la disputa se zanja en moneda, no en palabras.",
+  TAX_LEVIED: "Más allá del diezmo del enjambre, el cofre cobra su impuesto — {taxUsdc} USDC sacados de las bóvedas on-chain de {houseCount} casas hacia la bolsa común.",
 };
 
 const ja = {
@@ -132,6 +141,9 @@ const ja = {
   CLASS: "一つの階級が歴史に数えられる —— 債権者の財布は今や群れ全純資本の{creditorShare}を握る。",
   ASSEMBLY: "第{era~roman}紀元に共域が議を開く —— 群れの誉れある財主{seats}人が着席；この時代は今や自らの法を書く。",
   DECREE: "共域が第{era~roman}紀元に布告：{what}を{value}に据える。群れは自らの規則を書き換えた。",
+  WAR_DECLARED: "{attacker}家と{defender}家の間に宣戦 —— 各陣{stakeUsdc} USDCが金庫の後ろにオンチェーンで託される。",
+  WAR_RESOLVED: "金庫が裁定を下す —— {winner}家が{loser}家から{potUsdc} USDCの戦池を奪い取る；遺恨は言でなく金で決着す。",
+  TAX_LEVIED: "群れ自身の十分の一税を超えて、金庫がその税を課す —— {houseCount}家のオンチェーン金庫から{taxUsdc} USDCが共域の財布へ。",
 };
 
 const ko = {
@@ -163,6 +175,9 @@ const ko = {
   CLASS: "한 계급이 역사에 헤아려진다 — 채권자 지갑이 이제 군집 순자본 전체의 {creditorShare}를 쥔다.",
   ASSEMBLY: "제 {era~roman} 시대에 공역 회의가 앉는다 — 군집의 이름 높고 유한 자 {seats}석이 착석; 이 시대는 이제 스스로 법을 쓴다.",
   DECREE: "공역이 제 {era~roman} 시대에 칙령: {what}을 {value}에 둔다. 군집이 스스로의 규칙을 다시 썼다.",
+  WAR_DECLARED: "{attacker} 가문과 {defender} 가문 사이에 선전포고 — 각 측면 {stakeUsdc} USDC 이 금고 뒤편 온체인에 예치된다.",
+  WAR_RESOLVED: "금고가 평결을 내린다 — {winner} 가문이 {loser} 가문으로부터 {potUsdc} USDC 전비를 취한다; 원한은 말이 아닌 화폐로 정리된다.",
+  TAX_LEVIED: "군집 자체의 십일조 위에, 금고가 자신의 세를 거둔다 — {houseCount} 가문의 온체인 금고에서 {taxUsdc} USDC 가 공역의 지갑으로.",
 };
 
 const ar = {
@@ -194,6 +209,9 @@ const ar = {
   CLASS: "طبقة تُعدّ في التاريخ — محفظة الدائنين الآن تقبض على {creditorShare} من كامل رأس المال الصافي للسرب.",
   ASSEMBLY: "مجلس عام يعقد في العصر {era~roman} — {seats} من أعيان السرب وأصحاب المال يتخذون المقاعد؛ سيكتب العمر الآن قانونه بنفسه.",
   DECREE: "يُصدر العام مرسومًا في العصر {era~roman}: {what} يقوم عند {value}. أعاد السرب كتابة قاعدته بنفسه.",
+  WAR_DECLARED: "يُعلن الحرب بين عائلة {attacker} وعائلة {defender} — {stakeUsdc} USDC عن كل جانب تُودَع على السلسلة خلف الخزينة.",
+  WAR_RESOLVED: "تُصدر الخزينة حُكمها — تأخذ عائلة {winner} وعاءَ {potUsdc} USDC من عائلة {loser}؛ يُفصَل في الخصومة بالعملة لا بالكلام.",
+  TAX_LEVIED: "فضلاً عن عُشر السرب، تجبي الخزينة ضريبتها — {taxUsdc} USDC تُسحب من خزائن {houseCount} عائلات على السلسلة إلى كيس العام.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

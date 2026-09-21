@@ -210,6 +210,64 @@ export interface ArenaRoundInfo {
 }
 
 /**
+ * murmur's on-chain house WAR + TAXATION coffer (contracts/WarCoffer.sol). It escrows REAL USDC per house
+ * vault and settles BOTH the war payout and the extra on-chain tax ITSELF: a war commits each house's power
+ * at declare, and the winner is derived IN-CONTRACT from those committed inputs, so the resolver (the
+ * Worker's facilitator wallet) cannot steer a result — it only triggers declare/resolve/levy and funds the
+ * vaults. Every amount crossing this boundary is 6-dec USDC (atomic); the Worker sizes each under the
+ * coffer's on-chain hard cap, and each call degrades to null so a war can never block or fail a live tick.
+ */
+export const warCofferAbi = parseAbi([
+  "function deposit(uint256 houseId, uint256 amount)",
+  "function declareWar(uint256 warId, uint256 attacker, uint256 defender, uint256 stake, uint256 powerA, uint256 powerB, uint64 deadline)",
+  "function resolveWar(uint256 warId)",
+  "function expireStaleWar(uint256 warId)",
+  "function levyTax(uint256 houseId, uint256 amount)",
+  "function sweepTo(uint256 houseId)",
+  "function vault(uint256 houseId) view returns (uint256)",
+  "function previewWinner(uint256 warId) view returns (uint8 winner, uint256 roll, uint256 total)",
+  "function warInfo(uint256 warId) view returns (bool opened, bool resolved, uint8 winner, uint256 attacker, uint256 defender, uint256 stake, uint256 powerA, uint256 powerB, uint256 pot, uint64 deadline, uint64 openedAt, uint64 resolvedAt)",
+  "function commonsPurse() view returns (uint256)",
+  "function totalEscrow() view returns (uint256)",
+  "function warCount() view returns (uint256)",
+  "function escrow() view returns (uint256)",
+  "function maxEscrow() view returns (uint256)",
+  "function resolver() view returns (address)",
+]);
+
+/** The minimal ERC-20 surface the coffer needs the facilitator to drive (approve before each deposit pull). */
+export const usdcErc20Abi = parseAbi([
+  "function approve(address spender, uint256 value) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+]);
+
+/** A decoded war: ids/pot/stake as decimal strings (uint256 / atomic 6-dec USDC); winner 0 none / 1 att / 2 def. */
+export interface WarInfo {
+  opened: boolean;
+  resolved: boolean;
+  winner: number;        // 0 none/refund, 1 attacker, 2 defender
+  attacker: string;      // house id (decimal string)
+  defender: string;
+  stake: string;         // atomic USDC posted by EACH side (pot == 2*stake)
+  powerA: string;        // attacker power committed at declare
+  powerB: string;        // defender power committed at declare
+  pot: string;           // atomic USDC escrowed for this war (0 after resolve/expire)
+  deadline: number;      // unix seconds at/after which the war may be resolved
+  openedAt: number;
+  resolvedAt: number;
+}
+
+/** The coffer's aggregate on-chain totals for the /war read-out (all atomic 6-dec USDC strings). */
+export interface WarCofferStats {
+  commonsPurse: string;   // tax collected and held for the swarm
+  totalEscrow: string;    // total USDC ever deposited (== the coffer's real balance)
+  warCount: string;       // number of wars declared (liveness counter)
+  escrow: string;         // USDC the coffer currently holds (balanceOf)
+  maxEscrow: string;      // the coffer's hard cap
+}
+
+
+/**
  * murmur's connectome BREEDING-market ancestry log (contracts/ConnectomeLineage.sol). Each bred genome
  * (sha256 of its canonical Genome body) is committed here with its parents, operator and generation, so
  * "who bred whom, from whom" is a public, tamper-evident fact re-derivable from Arc RPC events alone —
@@ -615,6 +673,11 @@ export interface OnChainFacilitatorOpts {
    * arena step; the resolver calls are silently skipped (zero behaviour change).
    */
   arenaAddress?: Address;
+  /**
+   * Deployed WarCoffer to drive as the authorized resolver (fund vaults, declare/resolve wars, levy the
+   * extra on-chain tax). Absent ⇒ no war step; every coffer call is silently skipped (zero behaviour change).
+   */
+  warAddress?: Address;
   /**
    * Deployed ConnectomeLineage to mirror each bred genome onto (makes breeding ancestry a public,
    * tamper-evident on-chain fact). Absent ⇒ no lineage step; commits are silently skipped (zero change).
@@ -1145,6 +1208,194 @@ export class OnChainFacilitator implements Facilitator {
       return null;
     }
   }
+
+  // ---------- on-chain house WAR + TAXATION (real-USDC escrow; the coffer derives the winner) ----------
+  //
+  // Thin, best-effort delegators to the facilitator's WarCoffer wiring. The Worker is only the authorized
+  // resolver that funds vaults, triggers declare/resolve and posts the tax levy — the coffer escrows the
+  // stakes, derives the winner from the committed powers and moves the money itself. Every call returns the
+  // tx hash on a MINED success or null (unwired / reverted / shadow), so a move that never lands changes
+  // nothing on the ledger mirror (mirrors fundOffspring's degrade-to-null discipline).
+
+  /**
+   * Back a house's on-chain vault with real USDC, up to the coffer's hard cap. The facilitator wallet must
+   * first grant the coffer an allowance, so this best-effort ensures it (one approve tx when short) then
+   * calls deposit(). Returns the deposit tx hash on success, or null when unwired / capped / failed.
+   */
+  async cofferDeposit(houseId: number, amountAtomic: bigint): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr || amountAtomic <= 0n) return null;
+    try {
+      const owner = this.o.wallet.account.address;
+      const gas = this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {};
+      const allow = (await this.o.publicClient.readContract({
+        address: this.o.asset, abi: usdcErc20Abi, functionName: "allowance", args: [owner, addr],
+      })) as bigint;
+      if (allow < amountAtomic) {
+        const ah = await this.o.wallet.writeContract({
+          address: this.o.asset, abi: usdcErc20Abi, functionName: "approve", args: [addr, amountAtomic], ...gas,
+        });
+        const ar = await this.o.publicClient.waitForTransactionReceipt({
+          hash: ah, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+        });
+        if (ar.status !== "success") return null;
+      }
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: warCofferAbi, functionName: "deposit",
+        args: [BigInt(houseId), amountAtomic], ...gas,
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Declare a war: escrow both stakes and COMMIT the two houses' powers + a resolve deadline on-chain, before
+   * any outcome exists. The winner is later derived by the coffer purely from these inputs, so this is the
+   * one moment the resolver influences a war — and only by reporting public read-outs, never a choice. All
+   * amounts are atomic 6-dec USDC; powers are the integers from war.ts housePower. Returns the tx hash or null.
+   */
+  async declareWar(a: {
+    warId: number; attacker: number; defender: number;
+    stakeAtomic: bigint; powerA: number; powerB: number; deadline: number;
+  }): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: warCofferAbi, functionName: "declareWar",
+        args: [BigInt(a.warId), BigInt(a.attacker), BigInt(a.defender), a.stakeAtomic, BigInt(a.powerA), BigInt(a.powerB), BigInt(a.deadline)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve a declared war once its deadline passed — supplies NOTHING, the coffer derives the winner. */
+  async resolveWar(warId: number): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: warCofferAbi, functionName: "resolveWar", args: [BigInt(warId)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Levy an extra on-chain tax from a house vault into the commons purse (internal move; no USDC crosses). */
+  async levyTax(houseId: number, amountAtomic: bigint): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr || amountAtomic <= 0n) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: warCofferAbi, functionName: "levyTax", args: [BigInt(houseId), amountAtomic],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Sweep the accumulated commons purse into a house vault (used when taxDest === "dominant"). */
+  async sweepTax(houseId: number): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: warCofferAbi, functionName: "sweepTo", args: [BigInt(houseId)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read one war's live on-chain state (committed powers / pot / winner) for the /war endpoint; null if unwired. */
+  async warInfo(warId: number): Promise<WarInfo | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const r = (await this.o.publicClient.readContract({
+        address: addr, abi: warCofferAbi, functionName: "warInfo", args: [BigInt(warId)],
+      })) as readonly [boolean, boolean, number, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
+      return {
+        opened: r[0],
+        resolved: r[1],
+        winner: Number(r[2]),
+        attacker: r[3].toString(),
+        defender: r[4].toString(),
+        stake: r[5].toString(),
+        powerA: r[6].toString(),
+        powerB: r[7].toString(),
+        pot: r[8].toString(),
+        deadline: Number(r[9]),
+        openedAt: Number(r[10]),
+        resolvedAt: Number(r[11]),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read a house's on-chain vault (atomic USDC string) for the /war endpoint; null when unwired/unreadable. */
+  async cofferVault(houseId: number): Promise<string | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const v = (await this.o.publicClient.readContract({
+        address: addr, abi: warCofferAbi, functionName: "vault", args: [BigInt(houseId)],
+      })) as bigint;
+      return v.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read the coffer's aggregate totals (purse / escrow / cap / counter) for the /war endpoint; null if unwired. */
+  async cofferStats(): Promise<WarCofferStats | null> {
+    const addr = this.o.warAddress;
+    if (!addr) return null;
+    try {
+      const read = async (fn: "commonsPurse" | "totalEscrow" | "warCount" | "escrow" | "maxEscrow") =>
+        ((await this.o.publicClient.readContract({
+          address: addr, abi: warCofferAbi, functionName: fn,
+        })) as bigint).toString();
+      return {
+        commonsPurse: await read("commonsPurse"),
+        totalEscrow: await read("totalEscrow"),
+        warCount: await read("warCount"),
+        escrow: await read("escrow"),
+        maxEscrow: await read("maxEscrow"),
+      };
+    } catch {
+      return null;
+    }
+  }
+
 
   /**
    * Commit one bred connectome genome + its ancestry to the ConnectomeLineage log. Mirrors commitReceipt:

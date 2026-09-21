@@ -50,7 +50,10 @@ import {
   type SettleResponse,
   type RegistryCommit,
   type ArenaRoundInfo,
+  type WarInfo,
+  type WarCofferStats,
 } from "./x402.js";
+import type { WarHouse, HouseFeud } from "./war.js";
 import type { Fap } from "@fly/fly-brain";
 import type { FlyReading, CollectiveState } from "./population.js";
 import type { PredictFlow } from "./prediction.js";
@@ -211,6 +214,15 @@ export interface HouseRecord {
   gen: number;                // highest generation reached under this name
   /** culture: the founder's creed FAP frozen at founding — the house's old way (absent ⇒ pre-culture house or unknown). */
   tradition?: string;
+  /**
+   * WAR (additive on-chain mirror): the atomic USDC the WarCoffer contract actually escrows FOR this house,
+   * refreshed from a live `vault(houseId)` read after any mined deposit/declare/resolve/levy. ABSENT ⇒ the
+   * house has no on-chain vault (pre-war payload, or war never touched it) — so a round-trip of an old
+   * record stays byte-identical and KEY_VERSION stays "economy:v1". This is a MIRROR of the coffer, never a
+   * source of truth the ledger spends from: the members' own balances are untouched by war (only the shared
+   * vault the project treasury funded is at stake).
+   */
+  vaultOnchainAtomic?: string;
 }
 
 /** One burial: cause, lifetime dealings, the estate and who took it. The chronicle's epitaph source. */
@@ -228,10 +240,17 @@ export interface GraveRecord {
 
 /** Bounded dynasty read-out for the frontend panel + the historian (pure read-out, never feeds back). */
 export interface DynastyReadout {
-  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null }[];
+  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null; vaultOnchainUsdc?: number }[];
   graves: { id: number; tick: number; cause: string; deals: number; age: number; bornTick: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
   living: number;
   dead: number;
+  /**
+   * WAR (additive, read-only): the ledger-side MIRROR totals for the frontend panel — how many houses carry
+   * an on-chain vault and the cumulative EXTRA on-chain tax levied (USDC). The live coffer totals (escrow,
+   * commons purse, cap) are read async from the contract in the /war endpoint, not folded in here (this
+   * read-out stays synchronous + pure). Absent on a pre-war read-out ⇒ no vaults, no tax mirror.
+   */
+  war?: { housesWithVault: number; taxCollectedUsdc: number };
 }
 
 /**
@@ -490,6 +509,13 @@ export class AgentEconomy {
   private settleOk = 0;
   private settleFail = 0;
   private treasuryOutAtomic = "0";
+  /**
+   * WAR mirror (additive): cumulative EXTRA on-chain USDC levied as tax into the coffer's commons purse,
+   * bumped only after a MINED levyTax. A ledger-side MIRROR of the contract, never a spendable balance — the
+   * real tax already moved inside the coffer (no USDC ever crossed its boundary here). Persisted so the /war
+   * read-out survives a DO eviction; stays "0" while the war layer is off, so behaviour is unchanged.
+   */
+  private warTaxAtomic = "0";
   /**
    * Real-spend guardrails, persisted so a mid-day DO eviction can't reset the daily budget. ONCHAIN
    * ONLY — never mutated in simulated mode (stays empty), so it can't affect the default deployment.
@@ -1744,6 +1770,11 @@ export class AgentEconomy {
     return { id: h.id, name: h.name, sigil: h.sigil, tradition: h.tradition ?? null };
   }
 
+  /** A house's name by its own id (a direct map read, independent of any member's living kin record). */
+  houseNameById(houseId: number): string | null {
+    return this.houses.get(houseId)?.name ?? null;
+  }
+
   /**
    * The house tithe: a fixed share of a member's SETTLED income flows into the common treasury, paid out
    * of the balance the member just grew (per-mille BigInt maths — exact, no float dust). Skips, never
@@ -1877,36 +1908,54 @@ export class AgentEconomy {
     return grave;
   }
 
-  /** Bounded dynasty read-out for the frontend: notable houses, newest graves, living/dead counts. */
-  dynastyReadout(): DynastyReadout {
+  /** Total swarm capital (living member balances + every house treasury), the base for capitalShare. */
+  private swarmPot(): bigint {
     let pot = 0n;
     for (const a of this.agents) if (!this.dead.has(a.id)) pot += BigInt(a.balance);
     for (const h of this.houses.values()) pot += BigInt(h.treasury);
+    return pot;
+  }
+
+  /**
+   * Build one house's read-out row from a pre-computed swarm pot. Shared by dynastyReadout (which sorts +
+   * slices to the top 8) and warHouses (which needs EVERY house, since a poor-but-feuding house outside the
+   * prestige top-8 may still be a legitimate war target). Byte-for-byte the row the readout always emitted.
+   */
+  private houseRowFor(h: HouseRecord, pot: bigint): DynastyReadout["houses"][number] {
+    let live = 0;
+    let memberBal = 0n;
+    for (const m of h.members) {
+      if (this.dead.has(m)) continue;
+      // Reborn-slot guard: with id-reuse a retired fly's old id may now be a DIFFERENT individual (its
+      // kin.house was reset on reopen). Count it for this house only if its CURRENT kin record still
+      // belongs here — otherwise a reborn commoner would be claimed as a living member of a dead member's house.
+      if (this.kin.get(m)?.house !== h.id) continue;
+      const i = this.indexOfId.get(m);
+      if (i == null) continue;
+      live++;
+      memberBal += BigInt(this.agents[i].balance);
+    }
+    return {
+      id: h.id, name: h.name, sigil: h.sigil, gen: h.gen, foundedTick: h.foundedTick,
+      members: h.members.length, live, deaths: h.members.length - live,
+      treasuryUsdc: atomicToUsdc(h.treasury),
+      earnedUsdc: atomicToUsdc(h.earnedAtomic),
+      tradition: h.tradition ?? null,
+      // war-additive: only emit the on-chain vault mirror when this house actually has one, so a pre-war
+      // read-out is byte-identical to today's (no spurious vaultOnchainUsdc: 0 on untouched houses).
+      ...(h.vaultOnchainAtomic != null ? { vaultOnchainUsdc: atomicToUsdc(h.vaultOnchainAtomic) } : {}),
+      capitalShare: pot > 0n
+        ? Math.round((Number(memberBal + BigInt(h.treasury)) * 10000) / Number(pot)) / 10000
+        : 0,
+    };
+  }
+
+  /** Bounded dynasty read-out for the frontend: notable houses, newest graves, living/dead counts. */
+  dynastyReadout(): DynastyReadout {
+    const pot = this.swarmPot();
     const houses: DynastyReadout["houses"] = [];
     for (const h of Array.from(this.houses.values()).sort((x, y) => x.id - y.id)) {
-      let live = 0;
-      let memberBal = 0n;
-      for (const m of h.members) {
-        if (this.dead.has(m)) continue;
-        // Reborn-slot guard: with id-reuse a retired fly's old id may now be a DIFFERENT individual (its
-        // kin.house was reset on reopen). Count it for this house only if its CURRENT kin record still
-        // belongs here — otherwise a reborn commoner would be claimed as a living member of a dead member's house.
-        if (this.kin.get(m)?.house !== h.id) continue;
-        const i = this.indexOfId.get(m);
-        if (i == null) continue;
-        live++;
-        memberBal += BigInt(this.agents[i].balance);
-      }
-      houses.push({
-        id: h.id, name: h.name, sigil: h.sigil, gen: h.gen, foundedTick: h.foundedTick,
-        members: h.members.length, live, deaths: h.members.length - live,
-        treasuryUsdc: atomicToUsdc(h.treasury),
-        earnedUsdc: atomicToUsdc(h.earnedAtomic),
-        tradition: h.tradition ?? null,
-        capitalShare: pot > 0n
-          ? Math.round((Number(memberBal + BigInt(h.treasury)) * 10000) / Number(pot)) / 10000
-          : 0,
-      });
+      houses.push(this.houseRowFor(h, pot));
     }
     // Prestige order: lifetime tithed gross first, treasury second, founder id to break ties.
     houses.sort((x, y) => y.earnedUsdc - x.earnedUsdc || y.treasuryUsdc - x.treasuryUsdc || x.id - y.id);
@@ -1917,7 +1966,14 @@ export class AgentEconomy {
     }));
     let living = 0;
     for (const a of this.agents) if (!this.dead.has(a.id)) living++;
-    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size };
+    let housesWithVault = 0;
+    for (const h of this.houses.values()) if (h.vaultOnchainAtomic != null && BigInt(h.vaultOnchainAtomic) > 0n) housesWithVault++;
+    // war-additive: fold a mirror summary ONLY when the war layer has actually moved something, so a pre-war
+    // (or war-off) read-out has no `war` key at all and is byte-for-byte today's shape.
+    const war = housesWithVault > 0 || this.warTaxAtomic !== "0"
+      ? { housesWithVault, taxCollectedUsdc: atomicToUsdc(this.warTaxAtomic) }
+      : undefined;
+    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size, ...(war ? { war } : {}) };
   }
 
   /**
@@ -2433,6 +2489,7 @@ export class AgentEconomy {
       settleOk: this.settleOk,
       settleFail: this.settleFail,
       treasuryOutAtomic: this.treasuryOutAtomic,
+      warTaxAtomic: this.warTaxAtomic,
       recent: this.recent,
       agents: this.agents,
       // Real-spend guard counters (empty in simulated mode). Persisted so a mid-day DO eviction can't
@@ -2491,6 +2548,8 @@ export class AgentEconomy {
     this.settleOk = Number(p.settleOk ?? 0);
     this.settleFail = Number(p.settleFail ?? 0);
     this.treasuryOutAtomic = String(p.treasuryOutAtomic ?? "0");
+    // WAR mirror: an older payload has no warTaxAtomic ⇒ "0" (no tax ever levied), KEY_VERSION stays v1.
+    this.warTaxAtomic = /^\d+$/.test(String(p.warTaxAtomic ?? "")) ? String(p.warTaxAtomic) : "0";
     this.recent = Array.isArray(p.recent) ? p.recent : [];
     this.agents = Array.isArray(p.agents) ? p.agents : [];
     this.indexOfId = new Map();
@@ -2609,6 +2668,9 @@ export class AgentEconomy {
             // culture-additive: a pre-culture house record simply carries no tradition (key absent,
             // never `tradition: undefined`, so a round-trip of an old payload stays byte-identical).
             ...(typeof e.tradition === "string" && /^[A-Z]{2,12}$/.test(e.tradition) ? { tradition: e.tradition } : {}),
+            // war-additive: a pre-war house carries no on-chain vault mirror (key absent ⇒ treated as no
+            // vault), so an old payload round-trips byte-identically and KEY_VERSION stays "economy:v1".
+            ...(/^\d+$/.test(String(e.vaultOnchainAtomic ?? "")) ? { vaultOnchainAtomic: String(e.vaultOnchainAtomic) } : {}),
           });
         }
       }
@@ -2841,6 +2903,148 @@ export class AgentEconomy {
     const f = this.facilitator as { arenaRoundInfo?: (id: number) => Promise<ArenaRoundInfo | null> };
     if (typeof f.arenaRoundInfo !== "function") return null;
     try { return await f.arenaRoundInfo(roundId); } catch { return null; }
+  }
+
+  // ---------- on-chain house WAR + TAXATION (real-USDC coffer; the contract derives the winner) ----------
+  //
+  // Thin, best-effort delegators to the facilitator's WarCoffer wiring (see x402.ts) + the ledger-side MIRROR
+  // of the coffer. The Worker is only the authorized resolver: it funds vaults, triggers declare/resolve and
+  // posts the extra tax levy, and the coffer escrows the stakes, derives the winner from committed powers and
+  // moves the money itself. Every delegator degrades to null when no coffer is wired (simulated mode) or the
+  // chain call fails, so a war can NEVER block or fail a live tick — exactly the arenaOpen discipline. The
+  // mirrors (vaultOnchainAtomic / warTaxAtomic) are refreshed only from a MINED op's live contract read, so
+  // they track the coffer and never invent spendable balance; members' own wallets are untouched by war.
+
+  /** Fund a house's on-chain vault (atomic USDC); null when unwired / capped / failed. */
+  async cofferDeposit(houseId: number, amountAtomic: string): Promise<string | null> {
+    const f = this.facilitator as { cofferDeposit?: (id: number, amt: bigint) => Promise<string | null> };
+    if (typeof f.cofferDeposit !== "function") return null;
+    let amt: bigint;
+    try { amt = BigInt(amountAtomic); } catch { return null; }
+    try { return await f.cofferDeposit(houseId, amt); } catch { return null; }
+  }
+
+  /** Declare a war on-chain (escrow both stakes + commit powers); null when unwired / reverted / failed. */
+  async declareWarOnchain(a: {
+    warId: number; attacker: number; defender: number; stakeAtomic: string; powerA: number; powerB: number; deadline: number;
+  }): Promise<string | null> {
+    const f = this.facilitator as {
+      declareWar?: (x: { warId: number; attacker: number; defender: number; stakeAtomic: bigint; powerA: number; powerB: number; deadline: number }) => Promise<string | null>;
+    };
+    if (typeof f.declareWar !== "function") return null;
+    let stake: bigint;
+    try { stake = BigInt(a.stakeAtomic); } catch { return null; }
+    try {
+      return await f.declareWar({ warId: a.warId, attacker: a.attacker, defender: a.defender, stakeAtomic: stake, powerA: a.powerA, powerB: a.powerB, deadline: a.deadline });
+    } catch { return null; }
+  }
+
+  /** Resolve a due war on-chain (the coffer derives the winner); null when unwired / reverted / failed. */
+  async resolveWarOnchain(warId: number): Promise<string | null> {
+    const f = this.facilitator as { resolveWar?: (id: number) => Promise<string | null> };
+    if (typeof f.resolveWar !== "function") return null;
+    try { return await f.resolveWar(warId); } catch { return null; }
+  }
+
+  /** Levy an extra on-chain tax from a house vault into the commons purse; null when unwired / failed. */
+  async levyTaxOnchain(houseId: number, amountAtomic: string): Promise<string | null> {
+    const f = this.facilitator as { levyTax?: (id: number, amt: bigint) => Promise<string | null> };
+    if (typeof f.levyTax !== "function") return null;
+    let amt: bigint;
+    try { amt = BigInt(amountAtomic); } catch { return null; }
+    try { return await f.levyTax(houseId, amt); } catch { return null; }
+  }
+
+  /** Sweep the commons purse into the dominant house vault (taxDest === "dominant"); null when unwired / failed. */
+  async sweepTaxOnchain(houseId: number): Promise<string | null> {
+    const f = this.facilitator as { sweepTax?: (id: number) => Promise<string | null> };
+    if (typeof f.sweepTax !== "function") return null;
+    try { return await f.sweepTax(houseId); } catch { return null; }
+  }
+
+  /** Read a war's live on-chain state for the /war endpoint; null when unwired / unreadable. */
+  async warInfoOnchain(warId: number): Promise<WarInfo | null> {
+    const f = this.facilitator as { warInfo?: (id: number) => Promise<WarInfo | null> };
+    if (typeof f.warInfo !== "function") return null;
+    try { return await f.warInfo(warId); } catch { return null; }
+  }
+
+  /** Read a house's on-chain vault (atomic USDC string) to refresh the ledger mirror; null when unwired. */
+  async cofferVaultOnchain(houseId: number): Promise<string | null> {
+    const f = this.facilitator as { cofferVault?: (id: number) => Promise<string | null> };
+    if (typeof f.cofferVault !== "function") return null;
+    try { return await f.cofferVault(houseId); } catch { return null; }
+  }
+
+  /** Read the coffer's aggregate totals for the /war endpoint; null when unwired / unreadable. */
+  async cofferStatsOnchain(): Promise<WarCofferStats | null> {
+    const f = this.facilitator as { cofferStats?: () => Promise<WarCofferStats | null> };
+    if (typeof f.cofferStats !== "function") return null;
+    try { return await f.cofferStats(); } catch { return null; }
+  }
+
+  /**
+   * Refresh a house's on-chain vault MIRROR from a live coffer read after a mined war op. A no-op when the
+   * house is unknown or the read failed (null), so a non-landed move leaves the ledger exactly as it was.
+   */
+  setVaultOnchain(houseId: number, atomic: string | null): void {
+    const h = this.houses.get(houseId);
+    if (!h) return;
+    if (atomic == null || !/^\d+$/.test(atomic)) return;
+    h.vaultOnchainAtomic = atomic;
+  }
+
+  /** Bump the cumulative extra-tax MIRROR after a MINED levy (the real USDC already moved inside the coffer). */
+  addWarTax(atomic: string): void {
+    if (!/^\d+$/.test(atomic)) return;
+    this.warTaxAtomic = addAtomic(this.warTaxAtomic, atomic);
+  }
+
+  /** The persisted cumulative extra-tax mirror (USDC) for the /war endpoint. */
+  warTaxCollectedUsdc(): number {
+    return atomicToUsdc(this.warTaxAtomic);
+  }
+
+  /**
+   * Every house reduced to war.ts's WarHouse read-out (never a neuron/genome). Unlike the prestige-sliced
+   * dynasty read-out this returns ALL houses, since a feuding house outside the top-8 is still a valid target.
+   */
+  warHouses(): WarHouse[] {
+    const pot = this.swarmPot();
+    return Array.from(this.houses.values())
+      .sort((x, y) => x.id - y.id)
+      .map((h) => {
+        const r = this.houseRowFor(h, pot);
+        return { id: r.id, live: r.live, gen: r.gen, earnedUsdc: r.earnedUsdc, capitalShare: r.capitalShare, vaultOnchainUsdc: r.vaultOnchainUsdc ?? 0 };
+      });
+  }
+
+  /**
+   * Aggregate the swarm's directed member bonds into CROSS-house feud scores (mean bond across every member
+   * pair straddling two houses), deepest feud first. A pure read-out of persisted social memory + kinship; it
+   * never feeds back. Same-house and commoner links are ignored, so only genuine house-vs-house animosity shows.
+   */
+  houseFeuds(): HouseFeud[] {
+    const agg = new Map<string, { a: number; b: number; sum: number; n: number }>();
+    for (const [id, mem] of this.social.entries()) {
+      const houseA = this.kin.get(id)?.house;
+      if (houseA == null) continue;
+      for (const b of mem.bonds) {
+        const houseB = this.kin.get(b.other)?.house;
+        if (houseB == null || houseB === houseA) continue;
+        const lo = Math.min(houseA, houseB);
+        const hi = Math.max(houseA, houseB);
+        const key = `${lo}-${hi}`;
+        const cur = agg.get(key) ?? { a: lo, b: hi, sum: 0, n: 0 };
+        cur.sum += b.score;
+        cur.n++;
+        agg.set(key, cur);
+      }
+    }
+    const out: HouseFeud[] = [];
+    for (const v of agg.values()) out.push({ a: v.a, b: v.b, score: v.n > 0 ? v.sum / v.n : 0 });
+    out.sort((x, y) => x.score - y.score || x.a - y.a || x.b - y.b);
+    return out;
   }
 
   /**
