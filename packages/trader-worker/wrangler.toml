@@ -229,6 +229,7 @@ WAR_CADENCE_SEC = "3600"                      # one war/tax bucket per N seconds
 WAR_FEUD_THRESHOLD = "-0.6"                   # cross-house mean bond at or below this is feud-worthy (war.ts ties this to the social-memory blacklist line)
 WAR_TAX_PCT = "0.01"                          # extra on-chain tax per bucket as a fraction of a house's on-chain vault (bounded)
 WAR_TAX_DEST = "coffer"                       # "coffer" = tax stays in the coffer's commons purse (default); "dominant" sweeps it to the leading house
+WAR_BOOTSTRAP = "true"                        # COLD-START, ARMED: the ONLY switch that lets the first war move REAL operator USDC — it lifts feudPairs' vault gate so driveWar funds the deepest feud's empty vaults from WAR_TREASURY (≤ WAR_MAX_ESCROW_USDC) and a war can begin. The first real war now moves operator USDC (bounded ≤50 escrow, ≤5/war stake).
 
 # ===== ORGANIC CONFLICT (deterministic negative social events that let genuine feuds surface, then war) =====
 # The ONLY historical betrayal path (rememberBetrayal) is structurally dead ON-CHAIN (the facilitator re-checks
@@ -247,6 +248,25 @@ CONFLICT_EMBARGO_STEP = "0.05"                # grievance a shunned seller accru
 CONFLICT_RAID_STEP = "0.40"                   # heavy social grudge the raided (weakest) house holds against the raider (Phase 1: no money moves)
 CONFLICT_RAID_PROB = "0.0003"                 # per-cron hash-gated chance a raid is attempted (~0.43/day ⇒ one every 2–3 days; the gate now rolls ONCE per cron, not per sub-tick)
 FEUD_BLEND = "0.55"                           # 0 ⇒ pure-mean houseFeuds (byte-identical to today); >0 weights the K=3 deepest grudges toward the -0.6 war line
+
+# ===== TERRITORY & CONQUEST (fixed zone grid; each house holds ONE home zone; cross-zone trade pays a toll) =====
+# Every house is granted ONE fixed home zone on a ZONE_COUNT grid at founding. A deal inside the buyer's own
+# controlled zone is discounted (TERR_HOME_DISCOUNT_PCT); a deal reaching into another house's zone pays a TOLL
+# (TERR_TOLL_PCT), a slice of which (TERR_TRIBUTE_PCT) is tributed to that zone's controller. A house whose home
+# zone is CONQUERED (Phase 2, on a war win) is EXILED: landless, it pays toll everywhere (amplified by
+# TERR_EXILE_SEVERITY) until it wins a counter-war. Economic-side ONLY: applyTerritory re-prices a deal AFTER the
+# neurons picked it, so it NEVER touches a neuron/genome/manifestHash, moves no money outside the deal itself,
+# and KEY_VERSION stays "economy:v1". Additive: with the switch off the payload is byte-for-byte today's.
+# ROLLOUT: shipped OFF (TERRITORY_ENABLED="false" ⇒ applyTerritory is a pure passthrough, no zone state written).
+# Dark-deploy first, verify /economy is byte-for-byte unchanged, then flip to "true" to arm the grid.
+TERRITORY_ENABLED = "true"                    # master switch — ARMED: fixed home zones + toll/discount re-pricing now live on real deals (economic-side only, never touches a neuron/genome/manifestHash)
+ZONE_COUNT = "16"                             # grid size = HOUSE_CAP ⇒ one unique home zone per house (raise together if HOUSE_CAP ever grows)
+TERR_TOLL_PCT = "0.12"                        # surcharge on a cross-zone (foreign) deal
+TERR_HOME_DISCOUNT_PCT = "0.05"               # discount on a deal inside the buyer's own controlled zone
+TERR_TRIBUTE_PCT = "0.5"                      # fraction of the toll tributed to the zone controller's treasury
+TERR_EXILE_SEVERITY = "0.5"                   # extra toll multiplier on a landless (conquered) buyer, bounded
+TERR_POWER_PER_ZONE = "10"                    # war power per controlled zone — ARMED at a modest 10/zone (base power ~332 ⇒ ~+3% per held zone); held land now feeds war strength
+TERR_SEIZE_ON_WIN = "true"                    # ON-WIN CONQUEST, ARMED: a war winner seizes the loser's controlled zones on resolve (ledger-only land transfer — moves NO money; needs TERRITORY_ENABLED="true" + the war layer armed). Winners now take land, not just the pot.
 
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's

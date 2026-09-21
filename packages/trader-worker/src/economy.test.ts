@@ -11,7 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AgentEconomy, type EconomyConfig, type GoodKind } from "./economy.js";
+import { AgentEconomy, type EconomyConfig, type GoodKind, type Settlement } from "./economy.js";
 import type { FlyReading, CollectiveState } from "./population.js";
 import { usdcToAtomic, atomicToUsdc } from "./x402.js";
 
@@ -1093,4 +1093,288 @@ test("houseFeuds blend: a diluted cluster of deep grudges stays above -0.6 on th
   const bl = blendEcon.houseFeuds().find((f) => f.a === 2 && f.b === 5)!;
   assert.ok(m.score > -0.6 && m.score < -0.3, `pure mean stays above the war line (got ${m.score})`);
   assert.ok(bl.score <= -0.6, `blending the deepest grudges crosses the -0.6 war line (got ${bl.score})`);
+});
+
+// ================= TERRITORY: fixed home zones, cross-zone tolls, conquest-driven exile =================
+// The newest social layer, and the same one-way law as every other: territory RE-PRICES a deal the neurons
+// already picked — a discount inside the buyer's own home zone, a toll (part-tributed to the zone's controller)
+// reaching into another house's zone, an amplified toll on a landless house whose zone was conquered — and it
+// NEVER touches a neuron, a genome or a manifestHash. OFF ⇒ applyTerritory is a byte-for-byte passthrough and no
+// zone state is written, so the payload is identical to today's and KEY_VERSION stays "economy:v1".
+
+const TERR: NonNullable<EconomyConfig["territory"]> = {
+  enabled: true, zoneCount: 16, tollPct: 0.12, homeDiscountPct: 0.05, tributePct: 0.5, exileSeverity: 0.5, powerPerZone: 0,
+};
+
+// The re-priced value of a baseline `g` (atomic USDC) at `permille` (120 ⇒ +12%, 50 ⇒ −5%, 180 ⇒ +18%), computed
+// EXACTLY as applyTerritory does: a positive floor delta, then added or subtracted.
+const reprice = (g: string, permille: bigint, sign: 1n | -1n): string => {
+  const delta = (BigInt(g) * permille) / 1000n;
+  return (BigInt(g) + sign * delta).toString();
+};
+
+// A minimal 2-agent swarm (ids 0,1) so the ONLY possible trades are 0↔1: this pins the buyer/seller pair and lets
+// us assert the exact territory re-price against the no-territory baseline for the very same deal. The 6 pre-
+// founding ticks are commoner passthrough in BOTH economies, so the wallets entering the first housed tick are
+// identical and the two deal flows differ ONLY in price — precisely the territory contract.
+async function seedPair(
+  c: EconomyConfig, house: (e: AgentEconomy) => void, ticks: number,
+): Promise<{ econ: AgentEconomy; deals: Settlement[] }> {
+  const econ = new AgentEconomy(c);
+  const pop = population("AGITATE", 2);
+  for (let t = 0; t < 6; t++) await econ.step(pop, collective(0.9), t);
+  house(econ);
+  const deals: Settlement[] = [];
+  for (let t = 6; t < 6 + ticks; t++) deals.push(...(await econ.step(pop, collective(0.9), t)));
+  return { econ, deals };
+}
+
+// The deal flow (who trades what, and whether it settled) must be IDENTICAL with and without territory — only the
+// price moves. Asserted before any per-deal amount check so a re-route would fail loudly, not silently.
+function assertSameFlow(on: Settlement[], off: Settlement[], label: string): void {
+  assert.deepEqual(
+    on.map((d) => `${d.tick}:${d.fromId}>${d.toId}:${d.good}:${d.valid}`),
+    off.map((d) => `${d.tick}:${d.fromId}>${d.toId}:${d.good}:${d.valid}`),
+    `${label}: territory re-prices, never re-routes`,
+  );
+}
+
+test("territory: OFF ⇒ applyTerritory is a byte-for-byte passthrough and no zone state is written", async () => {
+  const houseTwo = (e: AgentEconomy) => { e.noteHatch(0, 100, HASH_A); e.noteHatch(1, 101, HASH_B); };
+  const absent = await seedPair(cfg({ dynasty: {} }), houseTwo, 6);
+  const off = await seedPair(cfg({ dynasty: {}, territory: { ...TERR, enabled: false } }), houseTwo, 6);
+  assert.deepEqual(
+    off.deals.map((d) => `${d.fromId}>${d.toId}:${d.amount}`),
+    absent.deals.map((d) => `${d.fromId}>${d.toId}:${d.amount}`),
+    "enabled:false ≡ absent: every deal prices byte-for-byte with the layer off",
+  );
+  assert.equal(stable(off.econ), stable(absent.econ), "the whole ledger is identical with the switch off");
+  const p = JSON.parse(off.econ.serialize());
+  assert.equal(p.zoneControl, undefined, "OFF writes no top-level zoneControl block");
+  assert.ok(p.dynasty.houses.every((h: Record<string, unknown>) => !("homeZone" in h)), "OFF writes no homeZone on any house");
+});
+
+test("territory: ON ⇒ each house holds a unique home zone it controls, surfaced on the read-out", async () => {
+  const houseTwo = (e: AgentEconomy) => { e.noteHatch(0, 100, HASH_A); e.noteHatch(1, 101, HASH_B); };
+  const { econ } = await seedPair(cfg({ dynasty: {}, territory: TERR }), houseTwo, 1);
+  const rd = econ.dynastyReadout();
+  const h0 = rd.houses.find((h) => h.id === 0)!, h1 = rd.houses.find((h) => h.id === 1)!;
+  assert.ok(h0.homeZone != null && h1.homeZone != null, "both houses hold a home zone");
+  assert.notEqual(h0.homeZone, h1.homeZone, "distinct houses get distinct home zones on the 16-grid");
+  assert.deepEqual(h0.controlsZones, [h0.homeZone], "a founder controls exactly its own home zone (house id 0 included)");
+  assert.deepEqual(h1.controlsZones, [h1.homeZone], "and so does the other");
+  const p = JSON.parse(econ.serialize());
+  assert.ok(Array.isArray(p.zoneControl) && p.zoneControl.length === 2, "ON persists the zone grid");
+});
+
+test("territory: a cross-zone deal pays a 12% toll, tributed to the zone's controller", async () => {
+  const houseTwo = (e: AgentEconomy) => { e.noteHatch(0, 100, HASH_A); e.noteHatch(1, 101, HASH_B); };
+  const off = await seedPair(cfg({ dynasty: {} }), houseTwo, 6);
+  const on = await seedPair(cfg({ dynasty: {}, territory: TERR }), houseTwo, 6);
+  assert.ok(on.deals.length > 0, "the two housed agents trade");
+  assertSameFlow(on.deals, off.deals, "cross-zone");
+  on.deals.forEach((d, i) => {
+    if (!d.valid) return;
+    // 0 and 1 are in DIFFERENT houses ⇒ different zones ⇒ every 0↔1 deal is foreign ⇒ +12% toll.
+    assert.equal(d.amount, reprice(off.deals[i].amount, 120n, 1n), `cross-zone ${d.fromId}>${d.toId} pays the toll`);
+    assert.ok(BigInt(d.amount) > BigInt(off.deals[i].amount), "the toll raises what the buyer pays");
+  });
+  // The seller-zone controller's treasury caught tithe + tribute — strictly more than the untolled baseline.
+  const sum = (e: AgentEconomy) => e.dynastyReadout().houses.reduce((s, h) => s + h.treasuryUsdc, 0);
+  assert.ok(sum(on.econ) > sum(off.econ), "the toll's tribute lands in the controller's treasury on top of the tithe");
+  const twin = await seedPair(cfg({ dynasty: {}, territory: TERR }), houseTwo, 6);
+  assert.deepEqual(twin.deals.map((d) => d.amount), on.deals.map((d) => d.amount), "twins toll identically (no RNG)");
+});
+
+test("territory: a deal inside the buyer's own zone is discounted 5%", async () => {
+  const sameHouse = (e: AgentEconomy) => { e.noteHatch(0, 1, HASH_A); };   // house 0 ⇒ {0,1}: both in one zone
+  const off = await seedPair(cfg({ dynasty: {} }), sameHouse, 6);
+  const on = await seedPair(cfg({ dynasty: {}, territory: TERR }), sameHouse, 6);
+  assert.ok(on.deals.length > 0, "the two same-house agents trade");
+  assertSameFlow(on.deals, off.deals, "home-zone");
+  on.deals.forEach((d, i) => {
+    if (!d.valid) return;
+    // Buyer and seller share a house ⇒ the buyer's house controls the seller's zone ⇒ domestic ⇒ −5%.
+    assert.equal(d.amount, reprice(off.deals[i].amount, 50n, -1n), `home-zone ${d.fromId}>${d.toId} is discounted`);
+    assert.ok(BigInt(d.amount) < BigInt(off.deals[i].amount), "the discount lowers what the buyer pays");
+  });
+});
+
+test("territory: a commoner is outside the grid — a deal touching one is byte-for-byte untolled", async () => {
+  const oneHouse = (e: AgentEconomy) => { e.noteHatch(0, 100, HASH_A); };  // house 0 ⇒ {0,100}; agent 1 a commoner
+  const off = await seedPair(cfg({ dynasty: {} }), oneHouse, 6);
+  const on = await seedPair(cfg({ dynasty: {}, territory: TERR }), oneHouse, 6);
+  assert.ok(on.deals.length > 0, "the housed agent and the commoner trade");
+  assertSameFlow(on.deals, off.deals, "commoner");
+  on.deals.forEach((d, i) => {
+    // One endpoint (agent 1) has no house ⇒ zoneOf is null ⇒ applyTerritory is a pure passthrough.
+    assert.equal(d.amount, off.deals[i].amount, `a deal touching commoner 1 (${d.fromId}>${d.toId}) is untolled`);
+  });
+});
+
+test("territory: a landless (conquered) house is exiled — it pays the amplified toll, its occupier the discount", async () => {
+  // zoneCount 1 with two houses ⇒ house 0 claims the only zone; house 1 keeps a home it does NOT control, i.e. it
+  // is landless/exiled — exactly the state a conquest leaves. House 0 buying is domestic (it owns the zone); house
+  // 1 buying is a foreign deal by an exile ⇒ the toll is amplified by exileSeverity (0.12 × 1.5 = 0.18).
+  const ONE = { ...TERR, zoneCount: 1 };
+  const houseTwo = (e: AgentEconomy) => { e.noteHatch(0, 100, HASH_A); e.noteHatch(1, 101, HASH_B); };
+  const off = await seedPair(cfg({ dynasty: {} }), houseTwo, 6);
+  const on = await seedPair(cfg({ dynasty: {}, territory: ONE }), houseTwo, 6);
+  const rd = on.econ.dynastyReadout();
+  assert.deepEqual(rd.houses.find((h) => h.id === 0)!.controlsZones, [0], "house 0 controls the only zone");
+  assert.deepEqual(rd.houses.find((h) => h.id === 1)!.controlsZones, [], "house 1 is landless — exiled");
+  assertSameFlow(on.deals, off.deals, "exile");
+  let sawExile = false, sawOccupier = false;
+  on.deals.forEach((d, i) => {
+    if (!d.valid) return;
+    const g = off.deals[i].amount;
+    if (d.fromId === 1) { assert.equal(d.amount, reprice(g, 180n, 1n), "the exiled buyer pays the amplified toll"); sawExile = true; }
+    else { assert.equal(d.amount, reprice(g, 50n, -1n), "the occupier buys inside its own zone at the discount"); sawOccupier = true; }
+  });
+  assert.ok(sawExile || sawOccupier, "the pair traded in at least one direction");
+});
+
+test("territory: the zone grid round-trips through serialize; a stripped payload re-derives homes deterministically", async () => {
+  const c = cfg({ dynasty: {}, territory: TERR });
+  const pop = population("AGITATE", 12);
+  const a = new AgentEconomy(c);
+  for (let t = 0; t < 8; t++) await a.step(pop, collective(0.9), t);
+  a.noteHatch(2, 3, HASH_A); a.noteHatch(7, 8, HASH_B);
+  await a.step(pop, collective(0.9), 8);
+  const b = new AgentEconomy(c, a.serialize());
+  assert.deepEqual(
+    b.dynastyReadout().houses.map((h) => [h.id, h.homeZone, h.controlsZones]),
+    a.dynastyReadout().houses.map((h) => [h.id, h.homeZone, h.controlsZones]),
+    "home zones and control survive eviction verbatim",
+  );
+  // A PRE-TERRITORY payload has neither zoneControl nor homeZone: ensureTerritory lazily re-derives a
+  // deterministic, UNIQUE home per house on the next tick. It cannot match the hash-seeded original (the genome
+  // hash is not stored on the house), but stability + uniqueness is all the fixed grid needs.
+  const p = JSON.parse(a.serialize());
+  delete p.zoneControl;
+  for (const h of p.dynasty.houses) delete h.homeZone;
+  const blob = JSON.stringify(p);
+  const old1 = new AgentEconomy(c, blob);
+  const old2 = new AgentEconomy(c, blob);
+  await old1.step(pop, collective(0.9), 9);
+  await old2.step(pop, collective(0.9), 9);
+  const z1 = old1.dynastyReadout().houses.map((h) => h.homeZone);
+  assert.deepEqual(old2.dynastyReadout().houses.map((h) => h.homeZone), z1, "re-derivation is deterministic");
+  assert.ok(z1.every((z) => typeof z === "number"), "every house re-derives a home zone");
+  assert.equal(new Set(z1).size, z1.length, "re-derived homes are unique — no two houses share a zone");
+});
+
+test("territory: tolls and tribute never inflate total supply — tribute is a scoreboard, not minted money", async () => {
+  const pop = population("AGITATE", 12);
+  const econ = new AgentEconomy(cfg({ dynasty: {}, territory: TERR }));
+  for (let t = 0; t < 8; t++) await econ.step(pop, collective(0.9), t);
+  econ.noteHatch(2, 3, HASH_A); econ.noteHatch(7, 8, HASH_B);
+  for (let t = 8; t < 20; t++) await econ.step(pop, collective(0.9), t);
+  const snap = econ.snapshot();
+  const bal = snap.agents.reduce((s, x) => s + BigInt(x.balance), 0n);
+  const minted = BigInt(usdcToAtomic(cfg().initialBalanceUsdc)) * BigInt(snap.agents.length) + BigInt(snap.totals.treasuryOutAtomic);
+  assert.ok(bal <= minted, "a toll moves money buyer→seller and scores the controller's treasury; nothing is minted");
+});
+
+test("territory: the read-out exposes each fly's home zone (agents[].zone + summary().zones), and nothing while off", async () => {
+  const pop = population("AGITATE", 12);
+  const build = async (c: EconomyConfig) => {
+    const e = new AgentEconomy(c);
+    for (let t = 0; t < 6; t++) await e.step(pop, collective(0.9), t);
+    e.noteHatch(2, 3, HASH_A);                                    // house 2 ⇒ members {2,3}; everyone else a commoner
+    for (let t = 6; t < 10; t++) await e.step(pop, collective(0.9), t);
+    return e;
+  };
+  // OFF: the roster grows no `zone` key and the /population summary no `zones` map — byte-for-byte today's read-out.
+  const off = await build(cfg({ dynasty: {} }));
+  assert.ok(off.snapshot().agents.every((a) => !("zone" in a)), "OFF exposes no per-agent zone");
+  assert.equal(off.summary().zones, undefined, "OFF folds no zones map into /population");
+  // ON: every member of house 2 is reported in its home zone; a commoner carries no zone; the summary map matches.
+  const on = await build(cfg({ dynasty: {}, territory: TERR }));
+  const home = on.dynastyReadout().houses.find((h) => h.id === 2)!.homeZone!;
+  const snap = on.snapshot();
+  for (const id of [2, 3]) {
+    assert.equal(snap.agents.find((a) => a.id === id)!.zone, home, `house member ${id} sits in its house's home zone`);
+  }
+  const commoner = snap.agents.find((a) => a.id === 0)!;
+  assert.ok(commoner.house == null && !("zone" in commoner), "a commoner (no house) carries no zone");
+  const zones = on.summary().zones!;
+  assert.ok(zones && typeof zones === "object", "ON folds a zones map into the /population summary");
+  assert.equal(zones[2], home, "the summary map keys flyId → home zone");
+  // The map covers exactly the LIVING, HOUSED flies — and agrees with each row's own per-agent zone.
+  assert.ok(Object.keys(zones).length >= 2, "both house members are in the map");
+  for (const [idStr, z] of Object.entries(zones)) {
+    const row = snap.agents.find((a) => a.id === Number(idStr))!;
+    assert.equal(row.zone, z, "the summary map agrees with the per-agent zone");
+    assert.ok(row.house != null && !row.dead, "only living, housed flies appear in the zones map");
+  }
+});
+
+// ================= CONQUEST: the war↔territory bridge — seizeZones rewrites the grid on a resolved war =================
+// seizeZones is the LEDGER-ONLY write side driveWar calls when a war resolves (behind TERR_SEIZE_ON_WIN). It moves NO
+// money — the war pot already settled on-chain — it only re-points zoneControl, so the loser is left landless (exiled:
+// applyTerritory then charges it the amplified toll everywhere) while the winner enjoys the annexed ground. It must be
+// a no-op with the layer OFF, idempotent within a cron, guarded against orphaning control to a non-house, and stable
+// across a restart (ensureTerritory never re-grants a zone another house holds).
+
+test("conquest: seizeZones re-points every zone the loser held to the winner, exiling the loser", async () => {
+  const pop = population("AGITATE", 12);
+  const econ = new AgentEconomy(cfg({ dynasty: {}, territory: TERR }));
+  for (let t = 0; t < 6; t++) await econ.step(pop, collective(0.9), t);
+  econ.noteHatch(0, 100, HASH_A);                                    // house 0 ⇒ members {0,100}
+  econ.noteHatch(1, 101, HASH_B);                                    // house 1 ⇒ members {1,101}
+  await econ.step(pop, collective(0.9), 6);                          // ensureTerritory arms both home zones
+
+  const ctrl = (id: number) => econ.dynastyReadout().houses.find((h) => h.id === id)!.controlsZones!;
+  const z0 = ctrl(0), z1 = ctrl(1);
+  assert.equal(z0.length, 1, "house 0 holds its home zone (house id 0 included)");
+  assert.equal(z1.length, 1, "house 1 holds its home zone");
+  assert.notDeepEqual(z0, z1, "distinct home zones on the 16-grid");
+
+  // House 1 conquers house 0: every zone house 0 held flips to house 1, and the changed list is returned sorted.
+  const seized = econ.seizeZones(0, 1);
+  assert.deepEqual(seized, z0, "seizeZones returns the sorted list of zones that changed hands");
+  assert.deepEqual(ctrl(0), [], "the loser is stripped of all ground — landless/exiled");
+  assert.deepEqual(ctrl(1), [...z0, ...z1].sort((a, b) => a - b), "the winner now controls both zones");
+  // The loser still REMEMBERS its home (HouseRecord.homeZone); only its control was taken.
+  assert.equal(econ.dynastyReadout().houses.find((h) => h.id === 0)!.homeZone, z0[0], "the conquered house keeps its home-zone memory");
+
+  // Idempotent + guards: a landless loser, an unknown winner, and a self-seize all move nothing.
+  assert.deepEqual(econ.seizeZones(0, 1), [], "a double-seize of a landless house is a no-op");
+  assert.deepEqual(econ.seizeZones(1, 999), [], "an unknown winner cannot inherit control");
+  assert.deepEqual(econ.seizeZones(1, 1), [], "a house cannot seize onto itself");
+  assert.deepEqual(ctrl(1), [...z0, ...z1].sort((a, b) => a - b), "the guarded calls left control untouched");
+});
+
+test("conquest: a seizure survives serialize/restore — ensureTerritory never re-grants the loser its lost ground", async () => {
+  const pop = population("AGITATE", 12);
+  const econ = new AgentEconomy(cfg({ dynasty: {}, territory: TERR }));
+  for (let t = 0; t < 6; t++) await econ.step(pop, collective(0.9), t);
+  econ.noteHatch(0, 100, HASH_A); econ.noteHatch(1, 101, HASH_B);
+  await econ.step(pop, collective(0.9), 6);
+  const ctrl = (e: AgentEconomy, id: number) => e.dynastyReadout().houses.find((h) => h.id === id)!.controlsZones!;
+  const z0 = ctrl(econ, 0), z1 = ctrl(econ, 1), both = [...z0, ...z1].sort((a, b) => a - b);
+  econ.seizeZones(0, 1);
+
+  // Evict + reload: the annexed grid is restored verbatim from the persisted zoneControl, NOT re-derived from homeZone.
+  const restored = new AgentEconomy(cfg({ dynasty: {}, territory: TERR }), econ.serialize());
+  assert.deepEqual(ctrl(restored, 0), [], "the conquered house is still landless after a restart");
+  assert.deepEqual(ctrl(restored, 1), both, "the winner still holds both zones after a restart");
+
+  // Stepping the restored economy re-runs ensureTerritory: it must NOT hand house 0 its old zone back.
+  await restored.step(pop, collective(0.9), 7);
+  assert.deepEqual(ctrl(restored, 0), [], "ensureTerritory never re-grants a zone another house holds ⇒ conquest is stable");
+  assert.deepEqual(ctrl(restored, 1), both, "the winner's control is untouched by the re-arm");
+});
+
+test("conquest: OFF ⇒ seizeZones is a no-op that returns [] and writes no zone state", async () => {
+  const pop = population("AGITATE", 12);
+  const econ = new AgentEconomy(cfg({ dynasty: {}, territory: { ...TERR, enabled: false } }));
+  for (let t = 0; t < 6; t++) await econ.step(pop, collective(0.9), t);
+  econ.noteHatch(0, 100, HASH_A); econ.noteHatch(1, 101, HASH_B);
+  await econ.step(pop, collective(0.9), 6);
+  assert.deepEqual(econ.seizeZones(0, 1), [], "the layer off ⇒ no conquest, byte-for-byte the pre-territory ledger");
+  const p = JSON.parse(econ.serialize());
+  assert.equal(p.zoneControl, undefined, "OFF writes no top-level zoneControl block");
+  assert.ok(p.dynasty.houses.every((h: Record<string, unknown>) => !("controlsZones" in h)), "OFF exposes no controlsZones on any house");
 });

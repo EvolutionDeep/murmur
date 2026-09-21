@@ -42,6 +42,7 @@ const zh = {
   WAR_DECLARED: "在 {attacker} 家族与 {defender} 家族之间宣战 —— 每一方各有 {stakeUsdc} USDC 作为押注托管于链上金库之后。",
   WAR_RESOLVED: "金库降下裁决 —— {winner} 家族从 {loser} 家族手中夺走 {potUsdc} USDC 的战池；宿怨以铸币而非言语了结。",
   TAX_LEVIED: "在蜂群自身的什一税之外，金库征收其税 —— 从 {houseCount} 个家族的链上金库中抽取 {taxUsdc} USDC 入公库。",
+  TERRITORY_SEIZED: "征服紧随裁决 —— {winner} 家族吞并被征服的 {loser} 家族所据的 {zones} 块领地；后者被剥去地盘、逐出流放，无立锥之地，处处须缴过路费。",
 };
 
 const fr = {
@@ -76,6 +77,7 @@ const fr = {
   WAR_DECLARED: "La guerre est déclarée entre la Maison {attacker} et la Maison {defender} — {stakeUsdc} USDC par côté sont séquestrés on-chain derrière le coffre.",
   WAR_RESOLVED: "Le coffre rend son verdict — la Maison {winner} prend le pot de {potUsdc} USDC à la Maison {loser} ; la querelle est réglée en pièce, non en parole.",
   TAX_LEVIED: "Au-delà de la dîme de l'essaim, le coffre lève son impôt — {taxUsdc} USDC tirés des coffres on-chain de {houseCount} maisons dans la bourse commune.",
+  TERRITORY_SEIZED: "La conquête suit le verdict — la Maison {winner} annexe {zones} zone(s) tenues par la Maison {loser} vaincue, qui est dépouillée de son sol et chassée, sans terre et soumise au péage en exil.",
 };
 
 const es = {
@@ -110,6 +112,7 @@ const es = {
   WAR_DECLARED: "Se declara la guerra entre la Casa {attacker} y la Casa {defender} — {stakeUsdc} USDC por lado quedan en depósito on-chain tras el cofre.",
   WAR_RESOLVED: "El cofre emite su veredicto — la Casa {winner} toma el bote de {potUsdc} USDC de la Casa {loser}; la disputa se zanja en moneda, no en palabras.",
   TAX_LEVIED: "Más allá del diezmo del enjambre, el cofre cobra su impuesto — {taxUsdc} USDC sacados de las bóvedas on-chain de {houseCount} casas hacia la bolsa común.",
+  TERRITORY_SEIZED: "La conquista sigue al veredicto — la Casa {winner} anexa {zones} zona(s) en poder de la vencida Casa {loser}, que es despojada de su suelo y expulsada, sin tierra y sujeta al peaje en el exilio.",
 };
 
 const ja = {
@@ -144,6 +147,7 @@ const ja = {
   WAR_DECLARED: "{attacker}家と{defender}家の間に宣戦 —— 各陣{stakeUsdc} USDCが金庫の後ろにオンチェーンで託される。",
   WAR_RESOLVED: "金庫が裁定を下す —— {winner}家が{loser}家から{potUsdc} USDCの戦池を奪い取る；遺恨は言でなく金で決着す。",
   TAX_LEVIED: "群れ自身の十分の一税を超えて、金庫がその税を課す —— {houseCount}家のオンチェーン金庫から{taxUsdc} USDCが共域の財布へ。",
+  TERRITORY_SEIZED: "征服は裁定に続く —— {winner}家が、敗れた{loser}家の保持する{zones}の領域を併合；敗者は地を剥がれ追放され、所領なく流謫の身で至る所で関銭を課される。",
 };
 
 const ko = {
@@ -178,6 +182,7 @@ const ko = {
   WAR_DECLARED: "{attacker} 가문과 {defender} 가문 사이에 선전포고 — 각 측면 {stakeUsdc} USDC 이 금고 뒤편 온체인에 예치된다.",
   WAR_RESOLVED: "금고가 평결을 내린다 — {winner} 가문이 {loser} 가문으로부터 {potUsdc} USDC 전비를 취한다; 원한은 말이 아닌 화폐로 정리된다.",
   TAX_LEVIED: "군집 자체의 십일조 위에, 금고가 자신의 세를 거둔다 — {houseCount} 가문의 온체인 금고에서 {taxUsdc} USDC 가 공역의 지갑으로.",
+  TERRITORY_SEIZED: "정복은 평결을 잇는다 — {winner} 가문이 패배한 {loser} 가문이 보유하던 {zones}개 구역을 병합한다; 패자는 땅을 박탈당하고 쫓겨나, 영지 없이 유배지에서 통행세에 매인다.",
 };
 
 const ar = {
@@ -212,6 +217,7 @@ const ar = {
   WAR_DECLARED: "يُعلن الحرب بين عائلة {attacker} وعائلة {defender} — {stakeUsdc} USDC عن كل جانب تُودَع على السلسلة خلف الخزينة.",
   WAR_RESOLVED: "تُصدر الخزينة حُكمها — تأخذ عائلة {winner} وعاءَ {potUsdc} USDC من عائلة {loser}؛ يُفصَل في الخصومة بالعملة لا بالكلام.",
   TAX_LEVIED: "فضلاً عن عُشر السرب، تجبي الخزينة ضريبتها — {taxUsdc} USDC تُسحب من خزائن {houseCount} عائلات على السلسلة إلى كيس العام.",
+  TERRITORY_SEIZED: "الفتح يعقب الحُكم — تضمّ عائلة {winner} إليها {zones} منطقةً كانت بيد عائلة {loser} المهزومة، التي تُجرّد من أرضها وتُطرَد، بلا أرضٍ وقد لزمها الجزيةُ في المنفى.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

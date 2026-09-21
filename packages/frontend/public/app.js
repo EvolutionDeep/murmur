@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=55";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=61";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -301,6 +301,7 @@ const SEEN_CAP = 400;                                 // bounded: trim oldest ha
 let econAgents = [];                                  // full roster from /economy: {id, address, balance, paid, earned, deals, sales}
 let econSocial = null;      // social-memory read-out {rep[], bonds[], grudges[]} — who owes whom a grudge
 let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dead} — names, treasuries, monuments
+let econZones = null;       // territory read-out {flyId: homeZone} — the server-authoritative fixed zone grid (null ⇒ layer off)
 let econMarket = null;      // ⑥ institutions read-out {marks, professions, classes, openIous, debt, run, …} — the tape
 let econCulture = null;     // ⑤ culture read-out {trend, tradition} — the passing fashion & the houses holding the old way
 let econCommons = null;     // ⑧ commons read-out {seatedEra, seats[], decrees[], effective} — the swarm's self-legislation
@@ -362,7 +363,7 @@ let lastHistSample = 0;
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
-let showMind = false, showShards = false, showSocieties = true, showGraves = true;
+let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
@@ -736,6 +737,7 @@ function renderShards(pal, now) {
 // colony gets a soft territory aura + bond filaments. Never touches the server drives, the connectome,
 // or the economy — showSocieties=false (or no social data) ⇒ zero force ⇒ byte-for-byte today's boids.
 let societies = null;   // { colonies:[{ids,ax,ay,color,founder}], allies:[{a,b,w}], feuds:[{a,b,w}], colonyOf:Map<id,idx> }
+let territories = null; // the house-territory MAP partition: [{name,sigil,color,ids,_scr,_pts,_hatch,_blob}] — rebuilt on each roster poll (null ⇒ no houses)
 
 const SOCIETY_BOND_MIN = 0.25;     // min bond score to count as an alliance edge
 const SOCIETY_FEUD_MAX = -0.6;     // bond score at/under which two flies actively shun each other
@@ -803,6 +805,7 @@ function rebuildHouseMap() {
   for (const ag of econAgents) {
     if (ag && ag.house) houseOf.set(ag.id, { name: ag.house, sigil: ag.sigil || "", color: houseColor(ag.house) });
   }
+  rebuildTerritoryPolities();             // house membership changed → refresh the territory-map partition
   focusCacheId = null;                    // house tints feed the focus set; invalidate the cache
 }
 
@@ -1274,6 +1277,61 @@ function louvainCommunities(nodes, edges) {
   return comm;
 }
 
+/** TERRITORY (server-authoritative): the fixed 4×4 zone grid that REPLACES the client-side Louvain guess
+ *  while the territory layer is on. Groups the living swarm by the home zone each fly sits in (the
+ *  /population `zones` map: flyId → zone) and anchors every zone deterministically — zone z at column
+ *  z mod 4, row ⌊z/4⌋ — so each house holds ONE fixed territory. Zone→house name/sigil/colour comes from
+ *  the dynasty read-out (authoritative, every poll); a zone whose controller differs from the house whose
+ *  members sit in it has been SEIZED (contested — only ever true after a Phase-2 conquest). Returns null
+ *  when the layer is off (no zone map) so rebuildSocieties falls through to the byte-for-byte old path. */
+function territoryColonies() {
+  if (!econZones) return null;
+  const byZone = new Map();
+  for (const key of Object.keys(econZones)) {
+    const z = econZones[key];
+    if (z == null || !Number.isFinite(z)) continue;
+    const id = Number(key);
+    if (!Number.isFinite(id)) continue;
+    const zi = z | 0;
+    let arr = byZone.get(zi); if (!arr) { arr = []; byZone.set(zi, arr); }
+    arr.push(id);
+  }
+  if (!byZone.size) return null;
+  // zone → the house that CONTROLS it, and zone → the house whose HOME it is, from the dynasty read-out
+  const ctrl = new Map(), home = new Map();
+  if (econDynasty && Array.isArray(econDynasty.houses)) {
+    for (const h of econDynasty.houses) {
+      if (!h) continue;
+      if (Array.isArray(h.controlsZones)) for (const z of h.controlsZones) if (z != null) ctrl.set(z | 0, h);
+      if (h.homeZone != null) home.set(h.homeZone | 0, h);
+    }
+  }
+  const zoneKeys = [...byZone.keys()].sort((a, b) => a - b);
+  const COLS = 4, ROWS = Math.max(4, Math.ceil((zoneKeys[zoneKeys.length - 1] + 1) / COLS));   // 4×4 for ZONE_COUNT=16
+  const dx = 0.72 / (COLS - 1), dy = ROWS > 1 ? 0.72 / (ROWS - 1) : 0;
+  const colonies = [];
+  for (const z of zoneKeys) {
+    const ids = byZone.get(z).sort((a, b) => a - b);
+    if (!ids.length) continue;
+    const controller = ctrl.get(z) || null;                        // who OWNS the zone now (authoritative)
+    const sitters = home.get(z) || houseOf.get(ids[0]) || null;    // whose members physically sit here
+    const src = controller || sitters;
+    const name = (src && src.name) ? src.name : ("Zone " + z);
+    const sigil = (src && src.sigil) ? src.sigil : "";
+    const color = (src && src.name ? houseColor(src.name) : null) || COLONY_COLORS[z % COLONY_COLORS.length];
+    const contested = !!(controller && sitters && controller.name && controller.name !== sitters.name);
+    colonies.push({
+      ids, founder: ids[0], zone: z,
+      ax: clamp(0.14 + dx * (z % COLS), 0.06, 0.94),
+      ay: clamp(0.14 + dy * Math.floor(z / COLS), 0.06, 0.94),
+      color, name: sigil ? (sigil + " " + name) : name, contested,
+    });
+  }
+  const colonyOf = new Map();
+  for (let i = 0; i < colonies.length; i++) for (const id of colonies[i].ids) colonyOf.set(id, i);
+  return { colonies, colonyOf };
+}
+
 /** Rebuild the colony partition from the latest social read-out. Deterministic: the same bonds always
  *  yield the same colonies, anchors and colours, so the field never jitters between polls. */
 function rebuildSocieties() {
@@ -1297,6 +1355,16 @@ function rebuildSocieties() {
   const nodes = [...nodeSet].sort((x, y) => x - y);
   const edges = [...pairW.entries()].map(([key, w]) => { const p = key.split(":"); return { a: +p[0], b: +p[1], w }; });
   const allies = edges.map((e) => ({ a: e.a, b: e.b, w: clamp(e.w) }));
+  // ---- TERRITORY (server-authoritative): a fixed 4×4 zone grid replaces the Louvain-on-bonds partition
+  //      below whenever the /population feed carries per-fly home zones. allies/feuds (the relationship
+  //      lines) are shared by both paths. Zone map absent (layer off) ⇒ fall through, byte-for-byte. ----
+  const terr = territoryColonies();
+  if (terr) {
+    societies = { colonies: terr.colonies, allies, feuds, colonyOf: terr.colonyOf };
+    focusCacheId = null;
+    if (selectedId != null) refreshInspectorSocial(selectedId);
+    return;
+  }
   // weighted-modularity communities ⇒ colonies (a lone fly is not a society)
   const comm = louvainCommunities(nodes, edges);
   const groups = new Map();
@@ -1422,6 +1490,13 @@ function renderSocieties(pal, now) {
     traceBlob(ctx, scr.P);
     ctx.fillStyle = rgba(c.color, 0.13 * cdim); ctx.fill();
     ctx.strokeStyle = rgba(c.color, 0.55 * cdim); ctx.lineWidth = 1.4; ctx.stroke();
+    // a SEIZED zone (territory conquered in war): the members sitting here no longer control it — ring the
+    // territory in dashed crimson over the owner's hue so the occupation reads at a glance. Guarded by
+    // c.contested, which is always false until a Phase-2 conquest flips a zone's controller.
+    if (c.contested) {
+      ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 2;
+      ctx.strokeStyle = rgba([196, 62, 48], 0.85 * cdim); traceBlob(ctx, scr.P); ctx.stroke(); ctx.restore();
+    }
     // soft inner glow for depth (cached gradient)
     if (cdim >= 1) { ctx.fillStyle = glow.grad; ctx.fill(); }
     // the colony's heraldic plate: a small shield in the colony hue + its initial, then the name in Roman caps
@@ -1465,6 +1540,168 @@ function renderSocieties(pal, now) {
   }
 }
 
+// ================= TERRITORY MAP: every house a dominion on the field (a Three-Kingdoms-style partition) ======
+// A pure client-side VISUALISATION of the LIVE dynasty membership (houseOf: flyId → {name,sigil,color}), so it
+// renders WITHOUT arming the economic territory switch — it draws no server zone state, moves no money and never
+// touches the sim. Each house's living members are hugged by an organic blob, Voronoi-capped against every other
+// house (colonyBlob) so the dominions are mutually exclusive, then painted map-style: a saturated fill + a cached
+// diagonal hatch + a double ink border, a big engraved serif name, a capital glyph, two rivers and a map key.
+// Toggle #territory (default OFF ⇒ the field is byte-for-byte today's). When the server zone grid IS armed the two
+// agree, because both key a territory to the same house.
+function rebuildTerritoryPolities() {
+  const byName = new Map();
+  for (const [id, h] of houseOf) {
+    if (!h || !h.name) continue;
+    let a = byName.get(h.name);
+    if (!a) { a = { name: h.name, sigil: h.sigil || "", color: h.color || houseColor(h.name) || COLONY_COLORS[0], ids: [] }; byName.set(h.name, a); }
+    a.ids.push(id);
+  }
+  const polities = [...byName.values()].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  for (const p of polities) {
+    p.ids.sort((a, b) => a - b);
+    p._scr = { rad: new Array(28).fill(0), sm: new Array(28).fill(0), P: Array.from({ length: 28 }, () => [0, 0]) };
+    p._pts = []; p._hatch = null;
+  }
+  territories = polities.length ? polities : null;
+}
+
+/** A cached diagonal-line pattern in the polity's hue, laid over the fill for the map's engraved texture. */
+function makeHatch(color) {
+  const c = document.createElement("canvas"); c.width = c.height = 8;
+  const g = c.getContext("2d");
+  g.strokeStyle = rgba(mix(color, [255, 255, 255], 0.22), 0.15); g.lineWidth = 1.3;
+  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.moveTo(2, 14); g.lineTo(14, 2); g.stroke();
+  return ctx.createPattern(c, "repeat");
+}
+
+/** Two deterministic meandering "rivers" across the field — pure parchment decoration, seeded once. */
+function drawRivers() {
+  ctx.save(); ctx.lineCap = "round";
+  const RIVER = [104, 140, 176];
+  for (let r = 0; r < 2; r++) {
+    const ph = (fnv1a("river:" + r) % 360) * Math.PI / 180;
+    const yb = VH * (r ? 0.66 : 0.34), amp = VH * 0.07;
+    ctx.beginPath();
+    for (let i = 0; i <= 44; i++) {
+      const t = i / 44, x = t * VW, y = yb + Math.sin(t * 5 + ph + r) * amp + Math.sin(t * 13 + ph) * amp * 0.28;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = rgba(RIVER, 0.15); ctx.lineWidth = 4.2; ctx.stroke();
+    ctx.strokeStyle = rgba(mix(RIVER, [255, 255, 255], 0.4), 0.22); ctx.lineWidth = 1.3; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Reference-style layout: spread the living houses across the WHOLE canvas as stable "capitals" (a
+ *  centre-out grid so the biggest houses claim the middle), each wrapped in an organic domain ring, so
+ *  their Voronoi-capped territories tile the map like the warring-kingdoms ref — independent of whether
+ *  the swarm is huddled or dispersed this moment. Seats are deterministic (name-hashed jitter) so they
+ *  never flicker frame to frame; recomputed cheaply each draw so they reflow on resize. */
+function layoutTerritoryMap(pol) {
+  const n = pol.length;
+  const mx = VW * 0.11, my = VH * 0.13;
+  const uw = VW - mx * 2, uh = VH - my * 2;
+  const cols = Math.max(1, Math.round(Math.sqrt(n * (VW / VH))));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const cw = uw / cols, ch = uh / rows;
+  const cells = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push([c, r]);
+  const d2 = (cell) => ((cell[0] + 0.5) / cols - 0.5) ** 2 + ((cell[1] + 0.5) / rows - 0.5) ** 2;
+  cells.sort((a, b) => d2(a) - d2(b));                 // centre-out
+  const Rseat = Math.max(cw, ch) * 1.18;               // big enough that outer regions overflow to the edges
+  for (let i = 0; i < n; i++) {
+    const o = pol[i], cell = cells[i % cells.length];
+    const h = fnv1a("seat:" + o.p.name);
+    const jx = ((h >>> 4) % 1000) / 1000 - 0.5, jy = ((h >>> 14) % 1000) / 1000 - 0.5;
+    const sx = mx + (cell[0] + 0.5) * cw + jx * cw * 0.30;
+    const sy = my + (cell[1] + 0.5) * ch + jy * ch * 0.30;
+    o.seat = { x: sx, y: sy };
+    const ring = o.ring || (o.ring = []); ring.length = 0;
+    for (let k = 0; k < 28; k++) {
+      const a = (k / 28) * TAU;
+      const rr = Rseat * (0.80 + 0.34 * (((fnv1a(o.p.name + ":" + k) >>> 3) % 1000) / 1000));
+      ring.push({ x: sx + Math.cos(a) * rr, y: sy + Math.sin(a) * rr });
+    }
+  }
+}
+
+/** Paint the house dominions as a full-canvas political map. Same scratch-reused blob model as
+ *  renderSocieties (cheap per frame): fills + engraved hatch → rivers → ink double borders →
+ *  capitals + serif names sized by strength → the bottom-left map key. */
+function renderTerritoryMap() {
+  if (!showTerritory || !territories || !territories.length) return;
+  const pol = [];
+  for (const p of territories) {
+    let cnt = 0; for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) cnt++; }
+    if (cnt > 0) pol.push({ p, n: cnt });
+  }
+  if (!pol.length) return;
+  pol.sort((a, b) => b.n - a.n || (a.p.name < b.p.name ? -1 : 1));   // biggest houses first ⇒ central seats
+  layoutTerritoryMap(pol);
+  const seats = pol.map((o) => o.seat);
+  // 1) territory fills + engraved diagonal hatch
+  for (let i = 0; i < pol.length; i++) {
+    const o = pol[i], p = o.p;
+    const blob = colonyBlob(o.ring, seats.filter((_, k) => k !== i), p._scr);
+    p._blob = blob;
+    traceBlob(ctx, p._scr.P);
+    ctx.fillStyle = rgba(p.color, 0.32); ctx.fill();
+    if (!p._hatch) p._hatch = makeHatch(p.color);
+    if (p._hatch) { ctx.save(); traceBlob(ctx, p._scr.P); ctx.clip(); ctx.fillStyle = p._hatch; ctx.fillRect(blob.cx - blob.rmax, blob.cy - blob.rmax, blob.rmax * 2, blob.rmax * 2); ctx.restore(); }
+  }
+  // 2) the two meandering rivers run across the dominions
+  drawRivers();
+  // 3) ink double-line borders, drawn over fills + rivers so the map reads crisp
+  ctx.lineJoin = "round";
+  for (const o of pol) {
+    const p = o.p;
+    ctx.strokeStyle = rgba(INK, 0.5); ctx.lineWidth = 3.6; traceBlob(ctx, p._scr.P); ctx.stroke();
+    ctx.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.92); ctx.lineWidth = 1.4; traceBlob(ctx, p._scr.P); ctx.stroke();
+  }
+  // 4) capital dot + serif house name (bigger houses get bigger type, like the ref) + strength tally
+  for (const o of pol) {
+    const p = o.p, s = o.seat;
+    const capR = 3.2 + Math.min(4.5, o.n * 0.7);
+    ctx.beginPath(); ctx.arc(s.x, s.y, capR, 0, TAU);
+    ctx.fillStyle = rgba(INK, 0.92); ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = rgba([248, 244, 236], 0.9); ctx.stroke();
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = rgba([248, 244, 236], 0.9); ctx.shadowBlur = 6;
+    ctx.font = "700 " + Math.round(Math.min(30, 17 + o.n * 1.7)) + "px Fraunces, Cinzel, Georgia, serif";
+    ctx.fillStyle = rgba(mix(p.color, INK, 0.55), 0.97);
+    ctx.fillText((p.sigil ? p.sigil + " " : "") + p.name, s.x, s.y - capR - 13);
+    ctx.shadowBlur = 0;
+    ctx.font = "600 11px Georgia, serif"; ctx.fillStyle = rgba(INK, 0.55);
+    ctx.fillText(String(o.n), s.x, s.y + capR + 11);
+    ctx.restore();
+  }
+  drawTerritoryLegend(pol);
+}
+
+/** A bottom-left map key: the era title + the largest dominions with their colour swatches (the ref's legend). */
+function drawTerritoryLegend(pol) {
+  const ranked = pol.slice(0, 6);
+  const era = (chronMeta && chronMeta.eraName) ? chronMeta.eraName : "the swarm's dominions";
+  const pad = 12, lh = 16, w = 180, h = pad * 2 + lh * (ranked.length + 1);
+  const bx = 16, by = VH - h - 16;
+  ctx.save();
+  ctx.fillStyle = rgba([248, 244, 236], 0.74); ctx.strokeStyle = rgba(INK, 0.35); ctx.lineWidth = 1;
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6); ctx.fill(); ctx.stroke(); }
+  else { ctx.fillRect(bx, by, w, h); ctx.strokeRect(bx, by, w, h); }
+  ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  ctx.font = "700 12px Fraunces, Cinzel, Georgia, serif"; ctx.fillStyle = rgba(INK, 0.9);
+  ctx.fillText(era, bx + pad, by + pad + lh * 0.5);
+  for (let i = 0; i < ranked.length; i++) {
+    const y = by + pad + lh * (i + 1.5);
+    ctx.fillStyle = rgba(ranked[i].p.color, 0.95); ctx.fillRect(bx + pad, y - 5, 10, 10);
+    ctx.strokeStyle = rgba(INK, 0.5); ctx.lineWidth = 0.8; ctx.strokeRect(bx + pad + 0.5, y - 4.5, 9, 9);
+    ctx.font = "600 11px Georgia, serif"; ctx.fillStyle = rgba(INK, 0.85);
+    ctx.fillText(ranked[i].p.name + "  ·  " + ranked[i].n, bx + pad + 16, y);
+  }
+  ctx.restore();
+}
+
 function render(pal, now) {
   // OPAQUE full clear every frame. The old translucent "trail wash" let previous frames linger and
   // fade slowly, smearing moving flies AND every glyph/label into ghosts that read as stutter.
@@ -1482,6 +1719,9 @@ function render(pal, now) {
 
   // ambient flow ink (under everything)
   if (quality >= 1) renderMotes(pal);
+
+  // the TERRITORY map: each house a coloured dominion (rivers + hatched regions + names), beneath the societies web
+  renderTerritoryMap();
 
   // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
   renderSocieties(pal, now);
@@ -1973,6 +2213,11 @@ function renderSimTrade(a, b, e, age, pal) {
 /** Consume the economy summary the /population feed carries (live) or the local mirror (offline). */
 function applyEconomy(econ) {
   if (!econ) return;
+  // territory: stash the per-fly home-zone map (and refresh the dynasty read-out) BEFORE the social branch
+  // below calls rebuildSocieties(), so the fixed 4×4 grid grouping sees fresh zone→house data on this poll.
+  // Both stay null while the layer is off ⇒ rebuildSocieties keeps the byte-for-byte Louvain-on-bonds view.
+  econZones = (econ.zones && Object.keys(econ.zones).length) ? econ.zones : null;
+  if (econ.dynasty) econDynasty = econ.dynasty;
   if (econ.balances) {
     econBalances = new Map();
     for (const [id, atomic] of Object.entries(econ.balances)) econBalances.set(Number(id), atomicToUsdc(atomic));
@@ -3056,7 +3301,7 @@ const CHRON_ICONS = {
   EPOCH_OPEN: "✷", EPOCH_CLOSE: "✥", TREND: "≈", TRADITION: "⚜",
   MARKET_SHIFT: "↕", CREDIT: "⛁", RUN: "⇊", CLASS: "☰",
   ASSEMBLY: "⛬", DECREE: "✎",
-  WAR_DECLARED: "⚔", WAR_RESOLVED: "⚑", TAX_LEVIED: "⛃",
+  WAR_DECLARED: "⚔", WAR_RESOLVED: "⚑", TAX_LEVIED: "⛃", TERRITORY_SEIZED: "♜",
 };
 
 function renderChron() {
@@ -3178,13 +3423,14 @@ const CHRON_ = {
     WAR_DECLARED: "War is declared between the House of {attacker} and the House of {defender} — {stakeUsdc} USDC a side stands escrowed on-chain behind the coffer.",
     WAR_RESOLVED: "The coffer renders its verdict — the House of {winner} takes the {potUsdc} USDC pot from the House of {loser}; the feud is settled in coin, not in word.",
     TAX_LEVIED: "Beyond the swarm's own tithe, the coffer levies its tax — {taxUsdc} USDC drawn from {houseCount} houses' on-chain vaults into the commons purse.",
+    TERRITORY_SEIZED: "Conquest follows the verdict — the House of {winner} annexes {zones} zone(s) held by the vanquished House of {loser}, which is stripped of its ground and cast out, landless and toll-bound in exile.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -4542,6 +4788,22 @@ async function getJSON(path, timeoutMs = FETCH_TIMEOUT_MS, outerSignal) {
   }
 }
 
+// The territory map needs the fly→house roster, which ONLY the /economy feed carries — and the main
+// poll skips that feed for viewers (canvas body scale is driven by /population balances). So pull it,
+// throttled, exclusively while the territory layer is on: default off ⇒ zero extra traffic, and the
+// whole scene stays byte-for-byte identical to what every viewer already gets.
+let lastRosterPoll = 0;
+const ROSTER_POLL_MS = 15000;
+async function pollRoster(force) {
+  const now = Date.now();
+  if (!force && now - lastRosterPoll < ROSTER_POLL_MS) return;
+  lastRosterPoll = now;
+  try {
+    const econ = await getJSON("/economy", 8000);
+    if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents);   // → rebuildHouseMap → rebuildTerritoryPolities
+  } catch { /* best-effort: the map simply keeps its last roster if the feed hiccups */ }
+}
+
 async function poll() {
   if (pollInFlight) return;                        // never overlap polls
   if (Date.now() < offlineUntil) {                 // circuit-breaker open → local only
@@ -4568,6 +4830,8 @@ async function poll() {
       if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
       if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
     }).catch(() => {});
+    // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
+    if (showTerritory && !walletsOpen) pollRoster();
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
@@ -5202,6 +5466,7 @@ function bindUI() {
     if (b.dataset.layer === "mind") showMind = on;
     else if (b.dataset.layer === "shards") showShards = on;
     else if (b.dataset.layer === "societies") showSocieties = on;
+    else if (b.dataset.layer === "territory") { showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { showGraves = on; if (!on) hideEpitaph(); }
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);

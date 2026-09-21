@@ -141,6 +141,7 @@ export interface Env {
   WAR_FEUD_THRESHOLD?: string;          // a cross-house bond <= this (negative) may go to war (default -0.6)
   WAR_TAX_PCT?: string;                 // fraction of a house vault levied as EXTRA on-chain tax per cron (default 0.01)
   WAR_TAX_DEST?: string;                // "coffer" (commons purse, default) | "dominant" (sweep to the wealthiest house)
+  WAR_BOOTSTRAP?: string;               // "true"/"false" (default false) — COLD-START: lift feudPairs' vault gate so driveWar funds the deepest feud's empty vaults from WAR_TREASURY (moves REAL USDC ≤ maxEscrow) and the first war can start; requires an explicit arm
 
   // --- Organic conflict: deterministic negative social events that let genuine feuds surface (all optional) ---
   // OFF by default ⇒ every conflict hook no-ops and houseFeuds stays a pure mean (byte-for-byte unchanged).
@@ -151,6 +152,19 @@ export interface Env {
   CONFLICT_RAID_STEP?: string;          // heavy social grudge a raided house takes toward the raider house (default 0.40)
   CONFLICT_RAID_PROB?: string;          // per-cron hash-gated probability a raid is attempted (default 0.0003 ≈ one every 2–3 days)
   FEUD_BLEND?: string;                  // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in (default 0)
+
+  // --- Territory & conquest: a fixed zone grid where each house holds ONE home zone; cross-zone (foreign)
+  //     trade pays a TOLL (part-tributed to the zone's controller) and home-zone trade is discounted. OFF by
+  //     default ⇒ every territory hook no-ops and applyTerritory is a byte-for-byte passthrough. Economic-side
+  //     only: it re-prices a deal the neurons already made, never touches connectome/genome/manifestHash. ---
+  TERRITORY_ENABLED?: string;           // "true"/"false" (default false) — enable the fixed home-zone grid + toll/discount pricing
+  ZONE_COUNT?: string;                  // size of the zone grid (default 16 = HOUSE_CAP ⇒ one unique home zone per house)
+  TERR_TOLL_PCT?: string;               // surcharge on a cross-zone (foreign) deal, as a fraction (default 0.12)
+  TERR_HOME_DISCOUNT_PCT?: string;      // discount on a deal inside the buyer's own controlled zone (default 0.05)
+  TERR_TRIBUTE_PCT?: string;            // fraction of the toll tributed to the zone controller's treasury (default 0.5)
+  TERR_EXILE_SEVERITY?: string;         // extra toll multiplier on a landless (conquered) buyer, bounded (default 0.5)
+  TERR_POWER_PER_ZONE?: string;         // war power added per controlled zone (default 0 = off; winnerOf lock-step unchanged)
+  TERR_SEIZE_ON_WIN?: string;           // "true"/"false" (default false) — a war winner seizes the loser's zones on resolve (ledger-only conquest; needs TERRITORY_ENABLED + the war layer armed)
 
   // --- Autonomous evolution: profitable agents self-fund breeding from their OWN wallets ---
   //     Each cron, the top agents by realized PnL (netUsdc>0) may autonomously initiate a mutate/cross over
@@ -340,6 +354,7 @@ export interface RuntimeConfig {
     feudThreshold: number;       // cross-house bond <= this (negative) may go to war
     taxPct: number;              // fraction of a house vault levied as extra on-chain tax per cron
     taxDest: "coffer" | "dominant";  // commons purse, or swept to the dominant house
+    bootstrap: boolean;          // cold-start: lift feudPairs' vault gate so driveWar funds the deepest feud first (default false ⇒ inert)
   };
 
   // ORGANIC CONFLICT: deterministic, on-chain-reachable negative social events (rivalry / envy / embargo /
@@ -354,6 +369,21 @@ export interface RuntimeConfig {
     raidStep: number;       // heavy grudge a raided house's member takes toward the raider house (social only)
     raidProb: number;       // per-cron probability (hash-gated) that a raid is attempted
     feudBlend: number;      // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in
+  };
+
+  // TERRITORY & CONQUEST: a fixed zone grid; each house holds ONE home zone. Cross-zone (foreign) trade pays a
+  // toll (part-tributed to the zone's controller), home-zone trade is discounted, and a conquered (landless)
+  // house pays toll everywhere. OFF by default ⇒ applyTerritory is a byte-for-byte passthrough and no zone
+  // state is written. Economic-side only (re-prices a deal the neurons already made); never touches neurons.
+  territory: {
+    enabled: boolean;
+    zoneCount: number;        // the fixed grid size (default 16 = HOUSE_CAP ⇒ one unique home zone per house)
+    tollPct: number;          // surcharge on a cross-zone (foreign) deal
+    homeDiscountPct: number;  // discount on a deal inside the buyer's own controlled zone
+    tributePct: number;       // fraction of the toll tributed to the zone controller's treasury
+    exileSeverity: number;    // extra toll multiplier on a landless (conquered) buyer, bounded
+    powerPerZone: number;     // war power added per controlled zone (0 ⇒ off; winnerOf lock-step unchanged)
+    seizeOnWin: boolean;      // a war winner seizes the loser's zones on resolve (ledger-only conquest; default false)
   };
 
   // Community governance page (off-chain token-gated forum + weighted voting; D1-backed, read-only on-chain)
@@ -616,6 +646,10 @@ export function loadConfig(env: Env): RuntimeConfig {
       feudThreshold: clamp(Number(env.WAR_FEUD_THRESHOLD ?? "-0.6"), -1, 1),
       taxPct: clamp(Number(env.WAR_TAX_PCT ?? "0.01"), 0, 1),
       taxDest: (env.WAR_TAX_DEST ?? "").trim().toLowerCase() === "dominant" ? "dominant" : "coffer",
+      // Cold-start funding is OFF by default: it is the ONLY switch that lets the first war move real operator USDC
+      // into empty vaults, so it requires an explicit arm (WAR_BOOTSTRAP=true). Off ⇒ the vault gate holds and a cold
+      // swarm can never start a war (byte-for-byte today's deadlocked-but-inert behaviour).
+      bootstrap: (env.WAR_BOOTSTRAP ?? "false").toLowerCase() === "true",
     },
 
     conflict: {
@@ -628,6 +662,19 @@ export function loadConfig(env: Env): RuntimeConfig {
       raidStep: clamp(Number(env.CONFLICT_RAID_STEP ?? "0.40"), 0, 1),
       raidProb: clamp(Number(env.CONFLICT_RAID_PROB ?? "0.0003"), 0, 1),
       feudBlend: clamp(Number(env.FEUD_BLEND ?? "0"), 0, 1),
+    },
+
+    territory: {
+      // OFF by default: absent/false ⇒ every territory hook no-ops, applyTerritory is a byte-for-byte
+      // passthrough and no zoneControl is written. All knobs are deterministic economic-side nudges only.
+      enabled: (env.TERRITORY_ENABLED ?? "false").toLowerCase() === "true",
+      zoneCount: clampInt(Number(env.ZONE_COUNT ?? "16"), 1, 4096),
+      tollPct: clamp(Number(env.TERR_TOLL_PCT ?? "0.12"), 0, 5),
+      homeDiscountPct: clamp(Number(env.TERR_HOME_DISCOUNT_PCT ?? "0.05"), 0, 1),
+      tributePct: clamp(Number(env.TERR_TRIBUTE_PCT ?? "0.5"), 0, 1),
+      exileSeverity: clamp(Number(env.TERR_EXILE_SEVERITY ?? "0.5"), 0, 5),
+      powerPerZone: clamp(Number(env.TERR_POWER_PER_ZONE ?? "0"), 0, 100000),
+      seizeOnWin: (env.TERR_SEIZE_ON_WIN ?? "false").toLowerCase() === "true",
     },
 
     community: {

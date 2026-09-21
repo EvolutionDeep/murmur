@@ -70,7 +70,10 @@ export type ChronicleKind =
   //     and moved inside WarCoffer.sol; only ever folded into the context while WAR_ENABLED):
   | "WAR_DECLARED"
   | "WAR_RESOLVED"
-  | "TAX_LEVIED";
+  | "TAX_LEVIED"
+  // ⑩ TERRITORY CONQUEST narrative kind (a ledger-only zone seizure folded in off the war read-out, only while
+  //     TERRITORY_ENABLED + TERR_SEIZE_ON_WIN are armed — so it never fires on the default dark deployment):
+  | "TERRITORY_SEIZED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -183,6 +186,10 @@ export interface ChronicleWar {
   declared: { attackerId: number; defenderId: number; attackerName: string; defenderName: string; stakeUsdc: number; potUsdc: number } | null;
   resolved: { attackerId: number; defenderId: number; attackerName: string; defenderName: string; winnerId: number | null; potUsdc: number; stakeUsdc: number } | null;
   tax: { houseCount: number; taxUsdc: number } | null;
+  /** TERRITORY CONQUEST (additive): the zones a resolved war's winner annexed from the loser this cron. Null
+   *  unless a seizure actually mined (needs TERR_SEIZE_ON_WIN + TERRITORY_ENABLED armed), so the chronicle stays
+   *  byte-for-byte the pre-conquest build. Ledger-only — no money moved; the historian narrates it. */
+  seized: { winnerId: number | null; loserId: number | null; winnerName: string; loserName: string; zones: number[] } | null;
 }
 
 /** The persistent monotonic memory across crons/restarts. Small and JSON-safe. */
@@ -284,6 +291,7 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24,
   ASSEMBLY: 8, DECREE: 6,
   WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10,
+  TERRITORY_SEIZED: 4,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -327,6 +335,9 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   WAR_DECLARED: "War is declared between the House of {attacker} and the House of {defender} — {stakeUsdc} USDC a side stands escrowed on-chain behind the coffer.",
   WAR_RESOLVED: "The coffer renders its verdict — the House of {winner} takes the {potUsdc} USDC pot from the House of {loser}; the feud is settled in coin, not in word.",
   TAX_LEVIED: "Beyond the swarm's own tithe, the coffer levies its tax — {taxUsdc} USDC drawn from {houseCount} houses' on-chain vaults into the commons purse.",
+  // ⑩ TERRITORY CONQUEST — the ledger-only annexation that follows a resolved war (no money moves; the ground
+  //     does). Mirrored byte-for-byte in CHRON_. Fires only while TERRITORY_ENABLED + TERR_SEIZE_ON_WIN are armed.
+  TERRITORY_SEIZED: "Conquest follows the verdict — the House of {winner} annexes {zones} zone(s) held by the vanquished House of {loser}, which is stripped of its ground and cast out, landless and toll-bound in exile.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -768,6 +779,15 @@ export class Chronicler {
         out.push(await this.emit(ctx, "TAX_LEVIED", 2, [],
           { taxUsdc: round(war.tax.taxUsdc), houseCount: war.tax.houseCount },
           { taxUsdc: war.tax.taxUsdc, houseCount: war.tax.houseCount }));
+      }
+      // ⑩ TERRITORY CONQUEST: a resolved war's winner annexed the loser's zones THIS cron (ledger-only; folded
+      //     in by state.ts only while TERRITORY_ENABLED + TERR_SEIZE_ON_WIN are armed, so war.seized is null on
+      //     the default deployment and no line is told — the chronicle stays byte-for-byte the pre-conquest build).
+      if (war.seized && war.seized.zones.length && this.ready("TERRITORY_SEIZED", ctx)) {
+        const s = war.seized;
+        out.push(await this.emit(ctx, "TERRITORY_SEIZED", 4, s.winnerId != null ? [s.winnerId] : [],
+          { winner: s.winnerName, loser: s.loserName, zones: s.zones.length },
+          { winnerId: s.winnerId ?? 0, loserId: s.loserId ?? 0, zones: s.zones.length }));
       }
     }
 

@@ -173,9 +173,12 @@ export class FlyStateDO {
    * worth replaying. Empty while the war layer is inert, so the chronicle context stays exactly today's.
    */
   private warEvents: {
-    kind: "declared" | "resolved" | "taxed";
+    kind: "declared" | "resolved" | "taxed" | "seized";
     houseId: number; attackerId: number; defenderId: number; attackerName: string; defenderName: string;
     winnerId: number | null; stakeUsdc: number; potUsdc: number; taxUsdc: number;
+    // "seized" only (territory conquest): the zones the winner annexed + the house that lost them. Absent on
+    // every other kind, so the pre-territory event shape is byte-for-byte unchanged.
+    zonesSeized?: number[]; loserId?: number;
   }[] = [];
   /** The breeding-market lineage store (genesis roots + every bred individual), lazily loaded from DO storage. */
   private lineage: LineageEntry[] | null = null;
@@ -292,6 +295,19 @@ export class FlyStateDO {
         raidStep: this.cfg.conflict.raidStep,
         raidProb: this.cfg.conflict.raidProb,
         feudBlend: this.cfg.conflict.feudBlend,
+      },
+      // TERRITORY: a fixed zone grid; each house holds ONE home zone, cross-zone trade pays a toll (part-
+      // tributed to the zone's controller) and home-zone trade is discounted. OFF by default (TERRITORY_ENABLED)
+      // ⇒ applyTerritory is a byte-for-byte passthrough and no zone state is written. Economic-side only: it
+      // re-prices a deal the neurons already made, never touching connectome/genome/manifestHash.
+      territory: {
+        enabled: this.cfg.territory.enabled,
+        zoneCount: this.cfg.territory.zoneCount,
+        tollPct: this.cfg.territory.tollPct,
+        homeDiscountPct: this.cfg.territory.homeDiscountPct,
+        tributePct: this.cfg.territory.tributePct,
+        exileSeverity: this.cfg.territory.exileSeverity,
+        powerPerZone: this.cfg.territory.powerPerZone,
       },
     };
   }
@@ -463,6 +479,21 @@ export class FlyStateDO {
             attackerName: nameOf(att), defenderName: nameOf(def), winnerId,
             stakeUsdc: atomicToUsdc(info.stake), potUsdc: atomicToUsdc(info.pot), taxUsdc: 0,
           });
+          // TERRITORY CONQUEST (ledger-only, additive): with the conquest switch armed, the winner annexes every
+          // zone the loser controlled. NO money moves here (the pot already settled on-chain above) — it only
+          // re-points zoneControl, leaving the loser exiled. Off by default (TERR_SEIZE_ON_WIN=false, and it also
+          // needs TERRITORY_ENABLED) ⇒ a resolved war is byte-for-byte today's. Stable across restarts.
+          if (winnerId != null && this.cfg.territory.enabled && this.cfg.territory.seizeOnWin) {
+            const loserId = winnerId === att ? def : att;
+            const seized = economy.seizeZones(loserId, winnerId);
+            if (seized.length) {
+              this.warEvents.push({
+                kind: "seized", houseId: winnerId, attackerId: att, defenderId: def,
+                attackerName: nameOf(att), defenderName: nameOf(def), winnerId,
+                stakeUsdc: 0, potUsdc: 0, taxUsdc: 0, zonesSeized: seized, loserId,
+              });
+            }
+          }
         }
       }
     }
@@ -489,8 +520,11 @@ export class FlyStateDO {
         const av = va != null ? atomicToUsdc(va) : ha.vaultOnchainUsdc;
         const bv = vb != null ? atomicToUsdc(vb) : hb.vaultOnchainUsdc;
         const stake = stakeOf(av, bv, w);
-        const powerA = housePower(ha);
-        const powerB = housePower(hb);
+        // territory-additive: held ground is war power (powerPerZone defaults 0 ⇒ byte-for-byte the old power, so
+        // the on-chain winnerOf lock-step is unchanged unless TERR_POWER_PER_ZONE is explicitly armed).
+        const ppz = this.cfg.territory.powerPerZone;
+        const powerA = housePower(ha, ppz);
+        const powerB = housePower(hb, ppz);
         if (stake > 0 && powerA + powerB > 0) {
           const tx = await economy.declareWarOnchain({
             warId: plan.declareWar, attacker: ha.id, defender: hb.id,
@@ -1113,6 +1147,7 @@ export class FlyStateDO {
       // Declared/resolved take the single bout this cron saw; tax aggregates every vault-holding house's levy.
       const warDeclared = this.warEvents.find((e) => e.kind === "declared") ?? null;
       const warResolved = this.warEvents.find((e) => e.kind === "resolved") ?? null;
+      const warSeized = this.warEvents.find((e) => e.kind === "seized") ?? null;
       const taxedEvents = this.warEvents.filter((e) => e.kind === "taxed");
       const war = this.cfg.war.enabled && this.warEvents.length
         ? {
@@ -1124,6 +1159,18 @@ export class FlyStateDO {
               : null,
             tax: taxedEvents.length
               ? { houseCount: taxedEvents.length, taxUsdc: taxedEvents.reduce((a, e) => a + e.taxUsdc, 0) }
+              : null,
+            // territory conquest (additive): the zones annexed on a war resolved THIS cron. Present only when a
+            // seizure actually mined; null keeps the chronicle byte-for-byte the pre-conquest build. Winner/loser
+            // names are derived from the stored bout names (nameOf is scoped to driveWar, not here).
+            seized: warSeized
+              ? {
+                  winnerId: warSeized.winnerId,
+                  loserId: warSeized.loserId ?? null,
+                  winnerName: warSeized.winnerId === warSeized.attackerId ? warSeized.attackerName : warSeized.defenderName,
+                  loserName: warSeized.loserId === warSeized.attackerId ? warSeized.attackerName : warSeized.defenderName,
+                  zones: warSeized.zonesSeized ?? [],
+                }
               : null,
           }
         : null;

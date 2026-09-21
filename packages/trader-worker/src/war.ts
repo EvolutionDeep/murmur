@@ -36,6 +36,10 @@ export interface WarConfig {
   feudThreshold: number;    // a cross-house bond <= this (negative) ⇒ a deep feud that may go to war
   taxPct: number;           // fraction of a house vault levied as EXTRA on-chain tax into the commons
   taxDest: "coffer" | "dominant";  // tax held in the coffer purse, or swept to the dominant house
+  // COLD-START bootstrap: lift the vault gate when picking a feud, so the deepest grudge is selected even while
+  // both vaults are empty — driveWar then funds them from the operator treasury (moving REAL USDC up to
+  // maxEscrow) before declaring. Default false ⇒ the vault gate holds and a cold swarm can never start a war.
+  bootstrap: boolean;
 }
 
 /** A house reduced to ONLY the public read-outs that are safe to commit on-chain (never a neuron/genome). */
@@ -46,6 +50,7 @@ export interface WarHouse {
   earnedUsdc: number;     // lifetime gross income tithed in (dynasty prestige)
   capitalShare: number;   // this house's share of swarm wealth, 0..1
   vaultOnchainUsdc: number; // the house's on-chain vault mirror (USDC), the stake/tax base
+  zonesControlled?: number; // territory: how many zones this house controls (absent/0 ⇒ no zone power bonus)
 }
 
 /** An AGGREGATED cross-house bond (economy.ts folds member bonds to house level; a<b house ids). */
@@ -113,12 +118,15 @@ export function planWar(nowSec: number, warCadenceSec: number, cursor: WarCursor
  * formula (not env-tunable) so a declared power never depends on when it is read. Always >= 1, guaranteeing
  * powerA + powerB > 0 (the coffer's ZeroPower guard can never trip from a well-formed house).
  */
-export function housePower(h: WarHouse): number {
+export function housePower(h: WarHouse, powerPerZone = 0): number {
   const cap = Math.max(0, h.capitalShare) * 1000;              // wealth share dominates (0..1000)
   const pop = Math.max(0, h.live) * 25;                        // living members
   const earn = Math.sqrt(Math.max(0, h.earnedUsdc)) * 10;      // diminishing returns on gross earnings
   const gen = Math.max(1, h.gen);                              // dynasty depth (at least 1)
-  return Math.max(1, Math.round(cap + pop + earn + gen));
+  // territory-additive: holding ground is power. powerPerZone defaults to 0, so the committed power is
+  // byte-for-byte the pre-territory value (and the winnerOf lock-step test stays pinned) unless it is armed.
+  const land = Math.max(0, powerPerZone) * Math.max(0, h.zonesControlled ?? 0);
+  return Math.max(1, Math.round(cap + pop + earn + gen + land));
 }
 
 /**
@@ -152,6 +160,8 @@ export function taxLevy(vaultUsdc: number, cfg: WarConfig): number {
  * `minVaultUsdc` AND the stake comes out non-zero. A per-pair cooldown (>= warCadenceSec, so a freshly
  * fought pair cannot immediately re-fund) keeps the escrow from thrashing. `lastWarByPair` maps a
  * "a-b" pair key to the unix seconds of its last declaration; the caller (driveWar) persists it.
+ * In `cfg.bootstrap` (cold-start) mode the vault/stake gate is LIFTED, so the deepest feud is picked even with
+ * empty vaults and driveWar funds them before declaring (see WarConfig.bootstrap) — the feud gate still holds.
  */
 export function feudPairs(
   houses: WarHouse[],
@@ -168,7 +178,10 @@ export function feudPairs(
     const ha = byId.get(f.a);
     const hb = byId.get(f.b);
     if (!ha || !hb) continue;
-    if (stakeOf(ha.vaultOnchainUsdc, hb.vaultOnchainUsdc, cfg) <= 0) continue;  // a side too poor to fight
+    // The vault gate: skip a pair too poor to fund a stake. COLD-START bootstrap (cfg.bootstrap) lifts it, so the
+    // deepest feud is selected even with empty vaults and driveWar funds them first (moving REAL USDC up to
+    // maxEscrow). bootstrap defaults false ⇒ byte-for-byte the gated behaviour, so a cold swarm never starts a war.
+    if (!cfg.bootstrap && stakeOf(ha.vaultOnchainUsdc, hb.vaultOnchainUsdc, cfg) <= 0) continue;  // a side too poor to fight
     const key = pairKey(f.a, f.b);
     const last = lastWarByPair[key];
     if (last != null && nowSec - last < cfg.warCadenceSec) continue;            // per-pair cooldown

@@ -68,6 +68,7 @@ function warCfg(over: Partial<WarConfig> = {}): WarConfig {
     feudThreshold: -0.6,
     taxPct: 0.01,
     taxDest: "coffer",
+    bootstrap: false,
     ...over,
   };
 }
@@ -170,6 +171,22 @@ test("housePower is always >= 1 and depends only on public read-outs", () => {
   assert.equal(housePower(house(7, { capitalShare: 0.2, live: 4, gen: 2, earnedUsdc: 9 })), housePower(house(999, { capitalShare: 0.2, live: 4, gen: 2, earnedUsdc: 9 })), "power ignores the house id");
 });
 
+test("housePower: powerPerZone defaults to 0 (byte-for-byte the pre-territory power) and weights held ground when armed", () => {
+  const h = house(1, { capitalShare: 0.2, live: 4, gen: 2, earnedUsdc: 9, zonesControlled: 3 });
+  // Default (no second arg) == an explicit 0: the committed power is byte-for-byte the pre-territory value, so
+  // the winnerOf lock-step with WarCoffer._deriveWinner is untouched unless TERR_POWER_PER_ZONE is armed.
+  assert.equal(housePower(h), housePower(h, 0), "powerPerZone defaults to 0");
+  const base = housePower({ ...h, zonesControlled: 0 }, 0);   // cap 200 + pop 100 + earn 30 + gen 2 = 332
+  assert.equal(housePower(h, 0), base, "with powerPerZone=0 the zones a house holds add NOTHING");
+  // Armed: each controlled zone adds exactly powerPerZone, monotonic in the zone count.
+  assert.equal(housePower(h, 10), base + 30, "3 zones × 10 power/zone = +30");
+  assert.ok(housePower(h, 10) > housePower(h, 0), "held ground is power once armed");
+  assert.ok(housePower({ ...h, zonesControlled: 5 }, 10) > housePower(h, 10), "more zones ⇒ more power");
+  // A house with NO zonesControlled key at all (territory off ⇒ warHouses emits none) is unaffected by powerPerZone.
+  const noKey = house(1, { capitalShare: 0.2, live: 4, gen: 2, earnedUsdc: 9 });
+  assert.equal(housePower(noKey, 10), housePower(noKey, 0), "absent zonesControlled ⇒ no land bonus even when armed");
+});
+
 // ---------- stakeOf: the bounded, symmetric stake ----------
 
 test("stakeOf returns 0 when either vault is below the minimum (no dust wars)", () => {
@@ -233,6 +250,25 @@ test("feudPairs orders the deepest feud first", () => {
   const bouts = feudPairs(houses, feuds, c, 1000, {});
   assert.equal(bouts.length, 2);
   assert.deepEqual(bouts[0], { attacker: 3, defender: 4 }, "the -0.95 blood feud leads");
+});
+
+test("feudPairs bootstrap mode lifts the VAULT gate only: the deepest feud is picked even with EMPTY vaults (cold-start)", () => {
+  // Two houses that HATE each other but hold nothing on-chain — the exact cold-start deadlock: stakeOf <= 0 so the
+  // vault gate skips them, driveWar never funds a vault, and the first war can never begin. bootstrap=true lifts
+  // ONLY the vault gate (the feud threshold + cooldown still hold), so driveWar can fund the deepest feud first.
+  const houses = [house(1, { vaultOnchainUsdc: 0, capitalShare: 0.1 }), house(2, { vaultOnchainUsdc: 0, capitalShare: 0.2 })];
+  const feuds: HouseFeud[] = [{ a: 1, b: 2, score: -0.9 }];
+  const gated = warCfg({ feudThreshold: -0.6, minVaultUsdc: 1, bootstrap: false });
+  const boot = warCfg({ feudThreshold: -0.6, minVaultUsdc: 1, bootstrap: true });
+  assert.equal(feudPairs(houses, feuds, gated, 1000, {}).length, 0, "bootstrap OFF ⇒ empty vaults ⇒ gated out (today's inert deadlock)");
+  const bouts = feudPairs(houses, feuds, boot, 1000, {});
+  assert.equal(bouts.length, 1, "bootstrap ON ⇒ the vault gate is lifted ⇒ the deepest feud surfaces");
+  assert.deepEqual(bouts[0], { attacker: 1, defender: 2 }, "the poorer house still attacks up");
+  // The feud gate is NOT lifted: a shallow bond is still not war, even in bootstrap mode.
+  const shallow: HouseFeud[] = [{ a: 1, b: 2, score: -0.3 }];
+  assert.equal(feudPairs(houses, shallow, boot, 1000, {}).length, 0, "bootstrap lifts the VAULT gate only, never the feud threshold");
+  // The per-pair cooldown still applies under bootstrap (a freshly-fought pair cannot immediately re-fund).
+  assert.equal(feudPairs(houses, feuds, boot, 5000, { [pairKey(1, 2)]: 4000 }).length, 0, "the cooldown holds under bootstrap");
 });
 
 test("pairKey is order-independent", () => {
@@ -373,6 +409,7 @@ test("by default the war coffer is disabled and inert (zero behaviour change for
   assert.equal(w.feudThreshold, -0.6);
   assert.equal(w.taxPct, 0.01);
   assert.equal(w.taxDest, "coffer");
+  assert.equal(w.bootstrap, false, "WAR_BOOTSTRAP unset ⇒ cold-start funding OFF ⇒ a vault-gated swarm can never start a war (byte-for-byte today's inert deadlock)");
 });
 
 test("enabled requires WAR_ENABLED=true; address/treasury are trimmed and empty⇒null", () => {
@@ -392,6 +429,18 @@ test("the tax destination is dominant only on an explicit 'dominant', else the c
   assert.equal(loadConfig(env({ WAR_TAX_DEST: " DOMINANT " })).war.taxDest, "dominant");
   assert.equal(loadConfig(env({ WAR_TAX_DEST: "coffer" })).war.taxDest, "coffer");
   assert.equal(loadConfig(env({ WAR_TAX_DEST: "nonsense" })).war.taxDest, "coffer", "unknown ⇒ coffer");
+});
+
+test("WAR_BOOTSTRAP + TERR_SEIZE_ON_WIN default false and arm only on an explicit 'true' (the conquest money switches)", () => {
+  // These two gate the ONLY paths that move real operator USDC into an empty vault (bootstrap) or rewrite zone
+  // ownership on a win (seizeOnWin). Both MUST default false so a deploy that never arms them is byte-for-byte inert.
+  assert.equal(loadConfig(env()).war.bootstrap, false, "WAR_BOOTSTRAP unset ⇒ cold-start funding OFF");
+  assert.equal(loadConfig(env({ WAR_BOOTSTRAP: "true" })).war.bootstrap, true);
+  assert.equal(loadConfig(env({ WAR_BOOTSTRAP: "TRUE" })).war.bootstrap, true, "case-insensitive");
+  assert.equal(loadConfig(env({ WAR_BOOTSTRAP: "1" })).war.bootstrap, false, "only 'true' arms it");
+  assert.equal(loadConfig(env()).territory.seizeOnWin, false, "TERR_SEIZE_ON_WIN unset ⇒ no conquest");
+  assert.equal(loadConfig(env({ TERR_SEIZE_ON_WIN: "true" })).territory.seizeOnWin, true);
+  assert.equal(loadConfig(env({ TERR_SEIZE_ON_WIN: "yes" })).territory.seizeOnWin, false, "only 'true' arms it");
 });
 
 test("by default organic conflict is OFF with pure-mean feuds, and every knob is clamped into 0..1", () => {

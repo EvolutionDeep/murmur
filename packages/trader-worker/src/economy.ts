@@ -223,6 +223,13 @@ export interface HouseRecord {
    * vault the project treasury funded is at stake).
    */
   vaultOnchainAtomic?: string;
+  /**
+   * TERRITORY (additive): the fixed home zone this house was granted at founding (0..zoneCount-1). ABSENT
+   * for a pre-territory house — armed lazily by ensureTerritory from the house's own deterministic seed, so
+   * an old record round-trips byte-identically and KEY_VERSION stays "economy:v1". A house whose home zone
+   * has been CONQUERED still remembers it here; zoneControl (below) is the authority on who holds it now.
+   */
+  homeZone?: number;
 }
 
 /** One burial: cause, lifetime dealings, the estate and who took it. The chronicle's epitaph source. */
@@ -240,7 +247,7 @@ export interface GraveRecord {
 
 /** Bounded dynasty read-out for the frontend panel + the historian (pure read-out, never feeds back). */
 export interface DynastyReadout {
-  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null; vaultOnchainUsdc?: number }[];
+  houses: { id: number; name: string; sigil: string; gen: number; foundedTick: number; members: number; live: number; deaths: number; treasuryUsdc: number; earnedUsdc: number; capitalShare: number; tradition: string | null; vaultOnchainUsdc?: number; homeZone?: number; controlsZones?: number[] }[];
   graves: { id: number; tick: number; cause: string; deals: number; age: number; bornTick: number; estateUsdc: number; heirIds: number[]; houseName: string | null }[];
   living: number;
   dead: number;
@@ -345,6 +352,10 @@ export interface AgentReading {
   /** dynasty: house name + sigil this fly bears (absent ⇒ commoner). */
   house?: string;
   sigil?: string;
+  /** territory: the zone this fly physically sits in — its house's home zone (absent ⇒ layer off, or a
+   *  commoner/houseless fly). A LOCATION, not a claim; lets the frontend anchor the fly on the fixed 4×4
+   *  grid WITHOUT a name→zone join (house names can collide). Zone 0 is a valid value. */
+  zone?: number;
   /** institutions: sticky profession (absent ⇒ layer off; null ⇒ not yet working). */
   profession?: Profession | null;
   /** institutions: live IOU principal owed by this fly, atomic USDC (absent ⇒ layer off). */
@@ -451,6 +462,21 @@ export interface EconomyConfig {
     raidProb: number;       // per-cron hash-gated probability a raid is attempted
     feudBlend: number;      // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in
   };
+  // --- TERRITORY & CONQUEST (economic asymmetry on a fixed zone grid): OPTIONAL — absent/false ⇒ every
+  //     territory hook no-ops AND applyTerritory is a pure passthrough, so the economy is byte-for-byte
+  //     unchanged. Each house holds ONE fixed home zone; a deal inside the buyer's own controlled zone is
+  //     discounted, a deal reaching into another house's zone pays a TOLL, part of which is tributed to the
+  //     zone's controller (a bounded additive treasury accrual, mirroring the tithe). It re-prices a deal
+  //     the neurons already agreed to (one-way street): NEVER touches connectome/genome/manifestHash. ---
+  territory?: {
+    enabled: boolean;
+    zoneCount: number;        // the grid size (default HOUSE_CAP=16 ⇒ one unique home zone per house)
+    tollPct: number;          // surcharge on a cross-zone (foreign) deal, as a fraction
+    homeDiscountPct: number;  // discount on a deal inside the buyer's own controlled zone, as a fraction
+    tributePct: number;       // fraction of the toll tributed to the zone controller's treasury
+    exileSeverity: number;    // extra toll multiplier on a landless (conquered/exiled) buyer, bounded
+    powerPerZone: number;     // war power added per controlled zone (0 ⇒ off, winnerOf lock-step unchanged)
+  };
 }
 
 /**
@@ -504,6 +530,12 @@ const HOUSE_COLORS = [
   "Ashen", "Ember", "Verdant", "Ivory", "Obsidian", "Amber",
 ];
 const HOUSE_SIGILS = ["\u2B22", "\u2726", "\u2756", "\u25C6", "\u25B2", "\u2B23", "\u2735", "\u25C8"];
+// --- territory tuning (all deterministic; the grid is a hard cap so DO storage stays bounded) ---
+const TERR_TOLL_PCT = 0.12;               // surcharge on a cross-zone (foreign) deal
+const TERR_HOME_DISCOUNT_PCT = 0.05;      // discount on a deal inside the buyer's own controlled zone
+const TERR_TRIBUTE_PCT = 0.5;             // fraction of the toll tributed to the zone controller's treasury
+const TERR_EXILE_SEVERITY = 0.5;          // extra toll multiplier on a landless (conquered) buyer, bounded
+const TERR_POWER_PER_ZONE = 0;            // war power per controlled zone (0 ⇒ off; winnerOf lock-step unchanged)
 
 export class AgentEconomy {
   private cfg: EconomyConfig;
@@ -571,6 +603,13 @@ export class AgentEconomy {
    */
   private kin = new Map<number, KinRecord>();
   private houses = new Map<number, HouseRecord>();
+  /**
+   * TERRITORY (economic layer only): zone → controlling houseId on the fixed grid. Runtime-authoritative and
+   * PERSISTED (additive; an old payload has none ⇒ each house controls its own homeZone, re-derived on first
+   * sight). A house controlling 0 zones is EXILED (conquered): it pays toll everywhere, enjoys no home
+   * discount. Empty while the layer is off (never written), so the default deployment is byte-for-byte the same.
+   */
+  private zoneControl = new Map<number, number>();
   private graves: GraveRecord[] = [];
   private dead = new Set<number>();
   /**
@@ -701,6 +740,10 @@ export class AgentEconomy {
       this.stepProfessions(readings, tickIndex);
     }
 
+    // TERRITORY: make sure every house has claimed its fixed home zone before the first deal is priced (a
+    // pre-territory house is assigned its deterministic seed zone on first sight). Inert while the layer is off.
+    if (this.territoryOn()) this.ensureTerritory();
+
     for (let i = 0; i < n && made.length < budget; i++) {
       const r = readings[i];
       // A buried fly's ledger is closed: it neither buys (here) nor sells (pickCounterparty) nor
@@ -786,7 +829,11 @@ export class AgentEconomy {
   ): Promise<Settlement> {
     const buyer = this.agents[buyerIdx];
     const seller = this.agents[sellerIdx];
-    const amount = this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null);
+    // TERRITORY re-prices the deal AFTER the neurons picked it (home discount / cross-zone toll); passthrough when off.
+    const amount = this.applyTerritory(
+      this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null),
+      buyer.id, seller.id,
+    );
     const lo = Math.min(buyer.id, seller.id);
     const hi = Math.max(buyer.id, seller.id);
     const key = `${lo}>${hi}`;
@@ -1302,6 +1349,14 @@ export class AgentEconomy {
     return !!this.cfg.conflict && this.cfg.conflict.enabled === true;
   }
 
+  /**
+   * TERRITORY resolved: false/absent ⇒ every territory hook no-ops and applyTerritory is a pure passthrough,
+   * so the economy is byte-for-byte unchanged. Default OFF; arms only on an explicit enabled:true (like conflict).
+   */
+  private territoryOn(): boolean {
+    return !!this.cfg.territory && this.cfg.territory.enabled === true;
+  }
+
   // ---------- ORGANIC CONFLICT (economic layer only; deterministic negative cross-house bonds) ----------
   // Four sources of genuine house-vs-house animosity, all reachable ON-CHAIN (where an insufficient-funds
   // betrayal structurally cannot fire, since the facilitator re-checks the real balance before signing). Each
@@ -1805,6 +1860,123 @@ export class AgentEconomy {
     };
   }
 
+  /** Resolved territory config, or null when the layer is off (absent block or enabled:false ⇒ fully inert). */
+  private tcfg(): {
+    zoneCount: number; tollPct: number; homeDiscountPct: number;
+    tributePct: number; exileSeverity: number; powerPerZone: number;
+  } | null {
+    const raw = this.cfg.territory;
+    if (!raw || raw.enabled !== true) return null;
+    return {
+      zoneCount: Math.max(1, Math.round(raw.zoneCount ?? HOUSE_CAP)),
+      tollPct: raw.tollPct ?? TERR_TOLL_PCT,
+      homeDiscountPct: raw.homeDiscountPct ?? TERR_HOME_DISCOUNT_PCT,
+      tributePct: raw.tributePct ?? TERR_TRIBUTE_PCT,
+      exileSeverity: raw.exileSeverity ?? TERR_EXILE_SEVERITY,
+      powerPerZone: raw.powerPerZone ?? TERR_POWER_PER_ZONE,
+    };
+  }
+
+  // ---------- TERRITORY & CONQUEST (economic layer only; a fixed zone grid the neurons never see) ----------
+
+  /**
+   * Deterministically claim a home zone for a house on the fixed grid: probe from a seed-derived start,
+   * wrapping, for the first zone nobody controls yet. With zoneCount == HOUSE_CAP every house gets a unique
+   * home; only if the grid is somehow full (zoneCount < houses) does it fall back to the seed's own slot.
+   */
+  private pickFreeZone(seed: number, zoneCount: number): number {
+    const start = (((seed >>> 0) % zoneCount) + zoneCount) % zoneCount;
+    for (let k = 0; k < zoneCount; k++) {
+      const z = (start + k) % zoneCount;
+      if (!this.zoneControl.has(z)) return z;
+    }
+    return start;
+  }
+
+  /**
+   * Arm the grid for every house that predates the territory layer: assign each home-less house its
+   * deterministic seed zone (by ascending id, so the assignment is reproducible) and record its control.
+   * Idempotent — once a house has a homeZone it is never reassigned, and a zone already controlled (e.g.
+   * seized) is never overwritten, so a conquered house stays landless across restarts. Called once per step.
+   */
+  private ensureTerritory(): void {
+    const t = this.tcfg();
+    if (!t) return;
+    for (const h of Array.from(this.houses.values()).sort((a, b) => a.id - b.id)) {
+      if (h.homeZone == null || !Number.isFinite(h.homeZone)) {
+        const z = this.pickFreeZone(this.houseSeed(h.id), t.zoneCount);
+        h.homeZone = z;
+        if (!this.zoneControl.has(z)) this.zoneControl.set(z, h.id);
+      } else if (!this.zoneControl.has(h.homeZone)) {
+        // homeZone known but its control was never recorded (a partial/old payload): the house holds its own.
+        this.zoneControl.set(h.homeZone, h.id);
+      }
+    }
+  }
+
+  /** The zone a fly physically sits in — its house's home zone — or null for a commoner/houseless fly. This
+   *  is a LOCATION, not a claim: a conquered house's members still sit in their (now-occupied) home zone. */
+  private zoneOf(flyId: number): number | null {
+    const houseId = this.kin.get(flyId)?.house;
+    if (houseId == null) return null;
+    const h = this.houses.get(houseId);
+    if (!h || h.homeZone == null || !Number.isFinite(h.homeZone)) return null;
+    return h.homeZone;
+  }
+
+  /** Whether a house still controls AT LEAST one zone (false ⇒ exiled/landless: it pays toll everywhere). */
+  private houseControlsAnyZone(houseId: number): boolean {
+    for (const ctrl of this.zoneControl.values()) if (ctrl === houseId) return true;
+    return false;
+  }
+
+  /** The sorted list of zones a house currently controls (its home plus any it has seized). */
+  private zonesControlledBy(houseId: number): number[] {
+    const zs: number[] = [];
+    for (const [z, ctrl] of this.zoneControl.entries()) if (ctrl === houseId) zs.push(z);
+    return zs.sort((a, b) => a - b);
+  }
+
+  /**
+   * TERRITORY pricing — the economic side of the one-way street, applied AFTER the neurons picked the deal.
+   * Re-prices one amount for a buyer→seller trade and returns the new atomic amount used for BOTH the buyer's
+   * debit and the seller's credit (so the deal itself stays conservative; no money is minted in the transfer):
+   *   • layer off / a commoner on either side ⇒ returned UNCHANGED (byte-for-byte passthrough);
+   *   • DOMESTIC (the buyer's house controls the seller's zone) ⇒ × (1 − homeDiscountPct);
+   *   • FOREIGN (anyone else's zone) ⇒ × (1 + tollPct), the toll amplified by exileSeverity when the buyer's
+   *     house is landless (conquered). A slice of the toll (toll × tributePct) is accrued to the treasury of
+   *     whoever CONTROLS the seller's zone — the occupier's tribute. house.treasury is a pure scoreboard (never
+   *     spent as real USDC: only read for capitalShare/read-out and fed by conserved tithes and estates), so
+   *     this bounded additive accrual mirrors the tithe's treasury pattern and can never move real money.
+   */
+  private applyTerritory(amountAtomic: string, buyerId: number, sellerId: number): string {
+    const t = this.tcfg();
+    if (!t) return amountAtomic;
+    let gross: bigint;
+    try { gross = BigInt(amountAtomic); } catch { return amountAtomic; }
+    if (gross <= 0n) return amountAtomic;
+    const zb = this.zoneOf(buyerId);
+    const zs = this.zoneOf(sellerId);
+    if (zb == null || zs == null) return amountAtomic;   // a commoner trades outside the territorial system
+    const buyerHouse = this.kin.get(buyerId)?.house;
+    const controller = this.zoneControl.get(zs);
+    // DOMESTIC: the buyer's own house controls the zone the deal happens in (its home, or a zone it seized).
+    if (buyerHouse != null && controller === buyerHouse) {
+      const disc = (gross * BigInt(Math.round(t.homeDiscountPct * 1000))) / 1000n;
+      return (gross - disc).toString();
+    }
+    // FOREIGN: the buyer reaches into someone else's zone. A landless (exiled) buyer pays an amplified toll.
+    const exiled = buyerHouse != null && !this.houseControlsAnyZone(buyerHouse);
+    const tollPct = t.tollPct * (exiled ? 1 + t.exileSeverity : 1);
+    const toll = (gross * BigInt(Math.round(tollPct * 1000))) / 1000n;
+    if (toll > 0n && controller != null) {
+      const ctrlHouse = this.houses.get(controller);
+      const tribute = (toll * BigInt(Math.round(t.tributePct * 1000))) / 1000n;
+      if (ctrlHouse && tribute > 0n) ctrlHouse.treasury = addAtomic(ctrlHouse.treasury, tribute.toString());
+    }
+    return (gross + toll).toString();
+  }
+
   /** Fetch (creating on first sight — a genesis fly is "born" when the economy first met it) a kin record. */
   private kinOf(id: number): KinRecord {
     let k = this.kin.get(id);
@@ -1895,6 +2067,10 @@ export class AgentEconomy {
     }
     if (this.houses.size >= d.maxHouses) return null;   // house roll full: the child is born a commoner
     const seed = this.houseSeed(parentId, genomeHash);
+    // TERRITORY: grant the new house a fixed home zone and claim it on the grid (additive — the homeZone key
+    // is absent while the layer is off, so a pre-territory house record round-trips byte-identically).
+    const tc = this.tcfg();
+    const homeZone = tc ? this.pickFreeZone(seed, tc.zoneCount) : null;
     const house: HouseRecord = {
       id: parentId,
       name: HOUSE_COLORS[seed % HOUSE_COLORS.length],
@@ -1908,8 +2084,14 @@ export class AgentEconomy {
       // culture: the founder's creed AT FOUNDING becomes the house tradition — the Lamarckian old
       // way the descendants may hold against later fashions. Validated FAP name or absent.
       ...(fapSeed && /^[A-Z]{2,12}$/.test(fapSeed) ? { tradition: fapSeed } : {}),
+      ...(homeZone != null ? { homeZone } : {}),
     };
     this.houses.set(house.id, house);
+    // Claim the home zone ONLY if it is still free (mirrors ensureTerritory). With zoneCount == HOUSE_CAP a free
+    // zone always exists, so every house controls its own home; only if the grid is somehow full does a later
+    // house keep a homeZone it does NOT control — i.e. it is born landless/exiled, exactly the state a conquest
+    // produces, and never an eviction of the incumbent.
+    if (homeZone != null && !this.zoneControl.has(homeZone)) this.zoneControl.set(homeZone, house.id);
     parent.house = house.id;
     child.house = house.id;
     return { houseId: house.id, name: house.name, sigil: house.sigil, childId, founded: true };
@@ -2102,6 +2284,10 @@ export class AgentEconomy {
       // war-additive: only emit the on-chain vault mirror when this house actually has one, so a pre-war
       // read-out is byte-identical to today's (no spurious vaultOnchainUsdc: 0 on untouched houses).
       ...(h.vaultOnchainAtomic != null ? { vaultOnchainUsdc: atomicToUsdc(h.vaultOnchainAtomic) } : {}),
+      // territory-additive: emit the home zone + every zone this house controls ONLY while the layer is on, so
+      // a territory-off read-out is byte-for-byte today's (no spurious homeZone/controlsZones keys).
+      ...(this.territoryOn() && h.homeZone != null
+        ? { homeZone: h.homeZone, controlsZones: this.zonesControlledBy(h.id) } : {}),
       capitalShare: pot > 0n
         ? Math.round((Number(memberBal + BigInt(h.treasury)) * 10000) / Number(pot)) / 10000
         : 0,
@@ -2215,7 +2401,12 @@ export class AgentEconomy {
     const onchain = this.facilitator.mode === "onchain";
 
     // Price of this deal in atomic USDC (shared with the netting queue so queued and direct deals price alike).
-    const amount = this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null);
+    // TERRITORY re-prices it AFTER the neurons picked the deal: a home discount inside the buyer's own zone, a
+    // toll (part-tributed to the zone's controller) reaching into another's. Passthrough (byte-for-byte) when off.
+    const amount = this.applyTerritory(
+      this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null),
+      buyer.id, seller.id,
+    );
 
     const resource = `${good}:${seller.id}`;
     const reqs: PaymentRequirements = {
@@ -2582,6 +2773,10 @@ export class AgentEconomy {
           paid: a.paid, earned: a.earned, deals: a.deals, sales: a.sales,
           ...(this.dead.has(a.id) ? { dead: true } : {}),
           ...(house ? { house: house.name, sigil: house.sigil } : {}),
+          // territory-additive: the zone this fly sits in (its house's home zone) so the frontend can anchor it
+          // on the fixed 4×4 grid WITHOUT a name→zone join (house names can collide). Key absent while the layer
+          // is off ⇒ the roster is byte-for-byte today's. Mirrors houseRowFor's homeZone guard (zone 0 is valid).
+          ...(this.territoryOn() && house && house.homeZone != null ? { zone: house.homeZone } : {}),
           // institutions-additive: the wallet grows a line of work and a debt column — keys absent while off.
           ...(inst ? { profession: this.profs.get(a.id)?.role ?? null, debtAtomic: this.debtAtomicOf(a.id) } : {}),
         };
@@ -2612,11 +2807,22 @@ export class AgentEconomy {
   summary(): {
     lastTick: Settlement[]; totals: EconomyTotals; balances: Record<number, string>;
     social: SocialReadout; dynasty?: DynastyReadout;
+    // territory-additive: flyId → home zone for every zoned (house-member, living) fly, so the frontend can
+    // anchor the swarm on the fixed 4×4 grid on EVERY /population poll — the full agent roster (which also
+    // carries `zone`) is only fetched while the wallets drawer is open. Absent while the layer is off ⇒
+    // byte-for-byte today's summary.
+    zones?: Record<number, number>;
   } {
     const snap = this.snapshot();
     const balances: Record<number, string> = {};
     for (const a of this.agents) balances[a.id] = a.balance;
-    return { lastTick: snap.lastTick, totals: snap.totals, balances, social: snap.social, dynasty: snap.dynasty };
+    // snap.agents already carries the per-agent zone (added in snapshot()); skip the dead to keep it compact.
+    const zones: Record<number, number> | null = this.territoryOn() ? {} : null;
+    if (zones) for (const a of snap.agents) if (a.zone != null && !a.dead) zones[a.id] = a.zone;
+    return {
+      lastTick: snap.lastTick, totals: snap.totals, balances, social: snap.social, dynasty: snap.dynasty,
+      ...(zones && Object.keys(zones).length ? { zones } : {}),
+    };
   }
 
   getAgent(id: number): AgentState | undefined {
@@ -2680,6 +2886,15 @@ export class AgentEconomy {
         graves: this.graves,
         dead: Array.from(this.dead).sort((x, y) => x - y),
       },
+      // TERRITORY. Additive exactly like `dynasty` above — and, like the market block below, WRITTEN ONLY WHEN
+      // THE SWITCH IS ON, so a territory-off serialize is byte-identical to the pre-territory blob. An older
+      // payload has no `zoneControl` ⇒ each house simply controls its own lazily re-derived homeZone (see
+      // ensureTerritory). KEY_VERSION stays "economy:v1". homeZone itself rides free on each house record above.
+      ...(this.territoryOn() ? {
+        zoneControl: Array.from(this.zoneControl.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([zone, house]) => ({ zone, house })),
+      } : {}),
       // INSTITUTIONS. Additive exactly like `dynasty` above — and, like the books themselves, the block
       // is WRITTEN ONLY WHEN THE SWITCH IS ON: an OFF serialize is byte-identical to the pre-institutions
       // blob. Orders never survive; the mark tapes, professions, and live IOUs do (all hard-capped).
@@ -2829,6 +3044,10 @@ export class AgentEconomy {
             // war-additive: a pre-war house carries no on-chain vault mirror (key absent ⇒ treated as no
             // vault), so an old payload round-trips byte-identically and KEY_VERSION stays "economy:v1".
             ...(/^\d+$/.test(String(e.vaultOnchainAtomic ?? "")) ? { vaultOnchainAtomic: String(e.vaultOnchainAtomic) } : {}),
+            // territory-additive: a pre-territory house carries no homeZone (key absent ⇒ ensureTerritory
+            // re-derives it from the house seed), so an old payload round-trips byte-identically. The /^\d+$/
+            // guard keeps zone 0 valid while rejecting null/undefined/"" — NEVER `Number(v) || 0` (house-id-0).
+            ...(/^\d+$/.test(String(e.homeZone ?? "")) ? { homeZone: Number(e.homeZone) } : {}),
           });
         }
       }
@@ -2855,6 +3074,18 @@ export class AgentEconomy {
           const id = Number(raw);
           if (Number.isFinite(id)) this.dead.add(id);
         }
+      }
+    }
+    // Restore the territory grid (absent in pre-territory payloads ⇒ empty; each house then re-derives its own
+    // homeZone via ensureTerritory). Cleared first so a corrupt blob can't leak control across a restore.
+    this.zoneControl = new Map();
+    if (Array.isArray(p.zoneControl)) {
+      for (const e of p.zoneControl) {
+        if (!e || typeof e !== "object") continue;
+        // Zone ids AND house ids can both be 0 — guard on finiteness, never `|| 0` (the house-id-0 lesson).
+        if (e.zone == null || !Number.isFinite(Number(e.zone))) continue;
+        if (e.house == null || !Number.isFinite(Number(e.house))) continue;
+        this.zoneControl.set(Number(e.zone), Number(e.house));
       }
     }
     // Restore the institutions (absent in pre-institutions payloads ⇒ no trades taken, no debts owed,
@@ -3173,8 +3404,32 @@ export class AgentEconomy {
       .sort((x, y) => x.id - y.id)
       .map((h) => {
         const r = this.houseRowFor(h, pot);
-        return { id: r.id, live: r.live, gen: r.gen, earnedUsdc: r.earnedUsdc, capitalShare: r.capitalShare, vaultOnchainUsdc: r.vaultOnchainUsdc ?? 0 };
+        const row: WarHouse = { id: r.id, live: r.live, gen: r.gen, earnedUsdc: r.earnedUsdc, capitalShare: r.capitalShare, vaultOnchainUsdc: r.vaultOnchainUsdc ?? 0 };
+        // territory-additive: how many zones this house controls, so housePower can weight held ground. houseRowFor
+        // emits controlsZones ONLY while the layer is on, so the key is absent (not 0) when off ⇒ byte-for-byte power.
+        if (r.controlsZones) row.zonesControlled = r.controlsZones.length;
+        return row;
       });
+  }
+
+  /**
+   * TERRITORY CONQUEST (ledger-only; the write side of the war↔territory bridge, called by driveWar on a
+   * resolved war). Re-point EVERY zone the loser controls to the winner and return the sorted list of zones
+   * that changed hands — empty when the layer is off, the two ids match, the winner is not a known house, or
+   * the loser already holds nothing (so a double-seize is a no-op). This moves NO money: the war pot already
+   * settled on-chain, conquest only rewrites zoneControl. The loser is left landless ⇒ EXILED (applyTerritory
+   * then charges it the amplified toll everywhere and grants no home discount), while the winner enjoys the
+   * domestic discount + tribute on the annexed ground. The loser keeps its homeZone MEMORY (HouseRecord.homeZone)
+   * but no longer controls it, and ensureTerritory never re-grants a zone someone else holds ⇒ the conquest is
+   * stable across restarts and idempotent within a cron.
+   */
+  seizeZones(loserHouseId: number, winnerHouseId: number): number[] {
+    if (!this.territoryOn()) return [];
+    if (loserHouseId === winnerHouseId) return [];
+    if (!this.houses.has(winnerHouseId)) return [];   // never orphan control to a non-existent house
+    const seized = this.zonesControlledBy(loserHouseId);
+    for (const z of seized) this.zoneControl.set(z, winnerHouseId);
+    return seized;
   }
 
   /**
