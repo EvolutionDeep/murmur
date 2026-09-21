@@ -100,7 +100,7 @@ curl https://api.muros.live/health
 # {"ok":true,"name":"murmur","chain":"arc", ...}
 
 curl https://api.muros.live/economy
-# → facilitator mode "onchain", asset 0x3600…0000 (Arc USDC), liveAgents 24, real settlement txHashes
+# → facilitator mode "onchain", asset 0x3600…0000 (Arc USDC), liveAgents (24 genesis, breeding toward 48), real settlement txHashes
 
 curl "https://api.muros.live/history?limit=5"
 # → { enabled:true, rows:[…], summary:{ ticks, settlements, volumeUsdc, … } }   (D1 long-term archive)
@@ -153,8 +153,8 @@ All non-sensitive config is in `wrangler.toml` `[vars]`, with authoritative defa
 ## Quality gates & rollback
 
 ```bash
-npm run typecheck     # tsc --noEmit for fly-brain + trader-worker
-npm test              # 85 unit tests (connectome · LIF · motor decoder · economy · x402 · provenance · prediction · arena)
+npm run typecheck     # tsc --noEmit for fly-brain + trader-worker + arc-circle-x402
+npm test              # 357 unit tests (connectome · LIF · motor decoder · economy · x402 · provenance · prediction · arena · arc-circle client)
 npm run smoke         # neural smoke test (no chain, no keys)
 npm run build         # workspace builds (where present)
 ```

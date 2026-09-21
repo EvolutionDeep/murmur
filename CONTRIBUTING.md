@@ -13,7 +13,7 @@ funds** on Arc — [SECURITY.md](./SECURITY.md).
 
 ```bash
 npm install                 # Node >= 20, npm workspaces
-npm test                    # 36 unit tests — connectome · LIF · motor decoder · economy (no chain, no keys)
+npm test                    # 357 unit tests — connectome · LIF · motor decoder · economy · x402 · arc-circle client (no chain, no keys)
 npm run smoke               # neural smoke test — no chain, no keys
 npm run dev:worker          # local Worker → http://localhost:8787/health
 ```
@@ -44,8 +44,8 @@ the piece. (The committed *production* config is LIVE and moves real USDC — se
 3. Before opening a PR, run the gates:
 
    ```bash
-   npm run typecheck     # tsc --noEmit for fly-brain + trader-worker (must be clean)
-   npm test              # 36 unit tests (must pass)
+   npm run typecheck     # tsc --noEmit for fly-brain + trader-worker + arc-circle-x402 (must be clean)
+   npm test              # 357 unit tests (must pass)
    npm run smoke         # neural smoke test (must pass)
    npm run build         # workspace builds where present
    ```

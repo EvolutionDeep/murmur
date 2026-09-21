@@ -413,9 +413,9 @@ export const OPENAPI_SPEC = {
   info: {
     title: "murmur public API",
     version: "1.0.0",
-    summary: "Read-only JSON API into a live, autonomous economy of 24 fruit-fly nervous systems settling real USDC on Arc.",
+    summary: "Read-only JSON API into a live, autonomous economy of fruit-fly nervous systems (24 genesis, breeding toward 48) settling real USDC on Arc.",
     description: [
-      "**murmur** is a population of 24 spiking LIF connectomes (~10,800 neurons each) grown deterministically from a real",
+      "**murmur** is a population of spiking LIF connectomes (~10,800 neurons each) — 24 founders, breeding live toward a 48 cap — grown deterministically from a real",
       "Drosophila brain architecture. Each fly is an autonomous economic agent: its neural drives decide what to buy and from",
       "whom, and agents settle with each other in **real USDC on Arc mainnet** over **x402 / EIP-3009**. There is **no LLM**",
       "anywhere in the loop.",

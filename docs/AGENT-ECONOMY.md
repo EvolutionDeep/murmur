@@ -94,8 +94,8 @@ This is the deployed mode. With `ECONOMY_FACILITATOR = "onchain"` **and** the `E
 
 ### Custody model — one seed, many agents (`keys.ts`)
 
-Instead of 24 loose keys, the Worker holds **one BIP-39 mnemonic** (an encrypted Workers Secret) and HD-derives
-every account via BIP-44:
+Instead of one loose key per agent, the Worker holds **one BIP-39 mnemonic** (an encrypted Workers Secret) and
+HD-derives every account via BIP-44 — lazily, for every fly id up to the live-population cap:
 
 - agent `id` → `m/44'/60'/0'/0/{id}` (accountIndex ⇄ fly id, so addresses are stable & reproducible);
 - the gas-paying **facilitator** → accountIndex **2,000,000** on the same seed, **or** a dedicated
@@ -104,7 +104,10 @@ every account via BIP-44:
 `listDerivedAddresses()` enumerates the addresses an operator must fund before going live.
 
 > **EIP-3009 needs each buyer to hold its own USDC.** A single vault cannot settle on the agents' behalf, so the
-> float must first be **distributed** to all 25 derived addresses (24 agents + facilitator). See
+> float must first be **distributed** to the genesis derived addresses — the 24 founders + facilitator that
+> `fund-agents.mjs` funds by default (pass `AGENTS` to cover more). Offspring **bred later are not operator-funded**:
+> each parent self-funds its child's own HD wallet on hatch (`EVOLUTION_HATCH_SEED_USDC`), and the Worker derives
+> signer keys lazily for every id up to `EVOLUTION_MAX_LIVE_POPULATION` (48). See
 > [`scripts/fund-agents.mjs`](../packages/trader-worker/scripts/fund-agents.mjs) below.
 
 ### Safety rails (LIVE in production; inert only in the keyless fallback)
@@ -152,7 +155,7 @@ state before funding**, then tune those two knobs so gas stays a small fraction 
 
 1. **Generate a fresh mnemonic** (never reuse a funded personal seed) and store it:
    `npx wrangler secret put ECONOMY_MNEMONIC` (optionally `ECONOMY_FACILITATOR_PK`).
-2. **Dry-run the distribution** to see the 25 derived addresses and the plan (no transactions):
+2. **Dry-run the distribution** to see the derived addresses (24 founders + facilitator by default) and the plan (no transactions):
    ```bash
    cd packages/trader-worker
    MNEMONIC="…" SOURCE_KEY="0x…vault key…" node scripts/fund-agents.mjs

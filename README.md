@@ -8,21 +8,23 @@
 [![Mode](https://img.shields.io/badge/Mode-LIVE%20%C2%B7%20Real%20USDC%20on%20Arc-success)](#-project-status-live-real-money-on-arc)
 [![Chain](https://img.shields.io/badge/Chain-Arc%20Mainnet%20(5042)-7b61ff)](https://arc.io/)
 [![Protocol](https://img.shields.io/badge/Payments-x402%20%C2%B7%20USDC-2775ca)](./docs/AGENT-ECONOMY.md)
-[![Neurons](https://img.shields.io/badge/Neurons-%7E1%2C080%20LIF-9b59b6)](./docs/NEURAL-SIM.md)
-[![Population](https://img.shields.io/badge/Population-24%20agents-e74c3c)](./docs/ARCHITECTURE.md)
+[![Neurons](https://img.shields.io/badge/Neurons-%7E10%2C800%20LIF-9b59b6)](./docs/NEURAL-SIM.md)
+[![Population](https://img.shields.io/badge/Population-24%20genesis%20%C2%B7%20breeds%20to%2048-e74c3c)](./docs/ARCHITECTURE.md)
 [![Edge](https://img.shields.io/badge/Cloudflare-Workers%20%2B%20DO%20%2B%20Pages-f38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![CI](https://img.shields.io/badge/CI-typecheck%20%2B%20test%20%2B%20build%20%2B%20smoke-2ea44f)](./.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
+[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
 
 </div>
 
 ---
 
 > **murmur** reads whole-chain activity on **Arc**, reduces it to a single **market temperature**, and lets a
-> population of **24 fruit-fly nervous systems** react — collectively and one fly at a time. Each fly is also an
-> **autonomous economic agent**: its ~1,080-neuron **Leaky Integrate-and-Fire (LIF)** connectome decides *what to
+> population of **fruit-fly nervous systems** react — collectively and one fly at a time. The swarm founders at
+> **24 flies** and **breeds live** (lineage, houses, graves) toward a 48 cap. Each fly is also an
+> **autonomous economic agent**: its **10,800-neuron** **Leaky Integrate-and-Fire (LIF)** connectome (production
+> sizing; the library default is 1,080) decides *what to
 > buy* and *from whom*, and the agents settle with each other in **real USDC on Arc mainnet** over the **x402**
 > payment protocol — every settlement a genuine **EIP-3009** transfer you can verify on the Arc explorer.
 >
@@ -58,7 +60,7 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
 | Feature | Description |
 |---|---|
 | **Market temperature** | Samples recent Arc blocks, reduces tx/gas throughput against a self-calibrating EWMA baseline, and maps the ratio through a logistic curve to a `HOT / CALM / COLD` regime — no token, no price feed. |
-| **Neural population** | 24 flies, each an independent ~1,080-neuron LIF connectome grown from its own seed (its *temperament*). No breeding, no lineage, no culling — the population persists and reacts. |
+| **Neural population** | 24 founding flies, each an independent **10,800-neuron** LIF connectome grown from its own seed (its *temperament*). Flies **breed, age and die**: offspring inherit a mutated/crossed genome, form **houses** (dynasties), and the roster is capped at 48 living — the population is a lineage, not a fixed cast. |
 | **Two-layer behaviour** | The temperature sets the collective regime; each fly's own wiring decides how strongly it expresses that regime and whether it breaks rank. Decoded *relative to its peers* every tick. |
 | **Agent economy (x402)** | Each fly is an economic agent with its own USDC micro-wallet. Neural drives become an economic intent (which good, how strongly, which peer), and buyer/seller run a faithful x402 `exact` flow that settles in **real USDC**. |
 | **Live on-chain settlement** | Production runs the **`OnChainFacilitator`**: real **EIP-3009** `transferWithAuthorization` against Arc's USDC precompile, signed by each buyer's HD-derived key. Every settlement yields a real tx hash, verifiable on the Arc explorer. A keyless `SimulatedFacilitator` remains for local dev — same economy code, zero changes. |
@@ -83,7 +85,7 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
         │                                                                │
         │   ┌──────────────── Durable Object: FlyStateDO ─────────────┐ │
         │   │  MarketMeter   ▶ temperature + regime (EWMA baseline)    │ │
-        │   │  Population    ▶ 24 × FlyBrain (LIF ~1,080 n)            │ │
+        │   │  Population    ▶ founders 24 · breeds to 48 (LIF 10,800 n)   │ │
         │   │                  sensory encode ▶ spike ▶ motor decode   │ │
         │   │                  ▶ drives + behaviour (peer-relative)    │ │
         │   │  AgentEconomy  ▶ drives → intent → x402 "exact" flow     │ │
@@ -155,7 +157,7 @@ docs/
 ## Testing
 
 CI runs four gates, all keyless and chain-free (`npm run typecheck && npm test && npm run build && npm run smoke`).
-The **85 unit tests** (27 in `fly-brain`, 58 in `trader-worker`) are real behavioural assertions, not a smoke stub.
+The **357 unit tests** (47 in `fly-brain`, 286 in `trader-worker`, 24 in `arc-circle-x402`) are real behavioural assertions, not a smoke stub.
 Key suites:
 
 ```bash
@@ -164,7 +166,7 @@ npm test          # connectome · LIF · motor decoder · economy
 
 | Suite | What it pins down |
 |---|---|
-| `connectome.test.ts` | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the appetitive gustatory→proboscis reflex, and **deterministic-per-seed / distinct-across-seeds** wiring. |
+| `connectome.test.ts` | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** sizing (production overrides `BRAIN_N_*` to 10,800): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the appetitive gustatory→proboscis reflex, and **deterministic-per-seed / distinct-across-seeds** wiring. |
 | `lif.test.ts` | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
 | `motor-decoder.test.ts` | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime state selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
 | `economy.test.ts` | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, **simulated money conservation**, the solvency floor, full determinism, and the per-agent wallet roster. |
@@ -225,11 +227,16 @@ All paths also answer under a `/v1` prefix (`/v1/population` ≡ `/population`).
 | `GET` | `/signal/requirements` | The x402 payment requirements a browser signs to buy `/signal/pulse` |
 | `GET` | `/signal/pulse` | **Paid (x402):** the machine-readable Arc-activity signal — `402` with requirements until you attach an EIP-3009 `X-PAYMENT` |
 | `GET` | `/arena` | The human-vs-swarm **MURMUR** arena: current + previous round (pools, odds, entry/exit temp, countdown), the resolver/contract addresses, and the swarm's lifetime hit-rate. Inert (`{enabled:false}`) until `PredictionArena` is deployed and `ARENA_ENABLED` is on |
+| `GET` | `/war` | Colony war & taxation: WarCoffer address + knobs, every house's on-chain vault / capital share / power, commons purse + escrow, open/resolved wars and pairs in cooldown. Inert until `WarCoffer` is deployed and `WAR_ENABLED` is on |
+| `GET` | `/community` | Token-gated governance forum (browse free; post/propose/vote need a MURMUR-holding wallet signature); sub-endpoints under `/community/…` |
 | `GET` | `/history` | D1 long-term archive: one row per cron (temperature, deals, cumulative volume, gini, state histogram) + a since-launch summary |
+| `GET` | `/annals` | The deterministic chronicle: volumes + entries rendered from public templates, folded into a SHA-256 hash chain, plus the chronicler rules hash |
+| `GET` | `/annals/verify` | Re-walk the hash chain from genesis and re-render every entry from its tokens → PASS/FAIL (prove the annals are not LLM-written) |
 | `GET` | `/snapshot?flyId=N` | Full neural state of one fly (firing rates, spikes) + its agent wallet |
 | `GET` | `/flies/:id` | A single fly's drives, behaviour and vitals |
 | `GET` | `/stimuli` | Recent visitor-stimulus history |
 | `POST` | `/stimulus` | Poke the swarm (walletless; `clientId` + cooldown) |
+| `POST` | `/breed` | Apply a genetic operator to committed parents and record the offspring; `ADMIN_TOKEN`-gated |
 | `POST` | `/tick` | Debug: run one cron tick immediately |
 | `POST` | `/reset` | Debug: fresh founding population + re-founded agent wallets |
 
@@ -254,10 +261,11 @@ secret transparently falls back to the keyless `simulated` facilitator (see the 
 | `MARKET_EWMA_ALPHA` | `0.08` | Baseline smoothing (slow ⇒ tracks the regime, not spikes) |
 | `MARKET_GAIN` | `3.0` | Logistic sharpness, activity ratio → temperature |
 | `REGIME_HOT` / `REGIME_COLD` | `0.66` / `0.33` | Temperature thresholds for `HOT` / `COLD` |
-| `POPULATION_SIZE` | `24` | Number of flies (1–256) |
+| `POPULATION_SIZE` | `24` | Founding flies (1–256); live breeding (`EVOLUTION_*`) grows the roster toward `EVOLUTION_MAX_LIVE_POPULATION` (48) |
 | `POPULATION_SEED_BASE` | `42` | Base seed; fly *i* uses `base + i·7919` |
 | `TICKS_PER_CRON` | `6` | Simulation sub-ticks per cron |
 | `SIM_STEPS_PER_TICK` | `500` | LIF integration steps per sub-tick |
+| `BRAIN_N_SENSORY` / `_INTER_L1` / `_INTER_L2` / `_MODULATORY` / `_MOTOR_PER_CHANNEL` | `1800/4000/4000/400/120` | Connectome sizing ⇒ **10,800 neurons** live (omit ⇒ the 1,080 library default) |
 | `STIMULUS_COOLDOWN_SEC` | `30` | One stimulus injection per visitor per N seconds |
 | `ECONOMY_ENABLED` | `true` | Agent economy on/off |
 | `ECONOMY_INITIAL_BALANCE` | `6` | Display-mirror float per agent; onchain the spendable balance is what the operator actually funded |
@@ -303,7 +311,7 @@ See [**docs/DEPLOYMENT.md**](./docs/DEPLOYMENT.md) for secrets, custom domains a
 - **Edge**: Cloudflare Workers + Durable Objects (SQLite storage) + Pages · wrangler 4.x
 - **Chain**: Arc mainnet (Chain ID 5042) — reads whole-chain activity for temperature, **writes** real EIP-3009 USDC transfers · viem ^2.21
 - **Payments**: x402 `exact` scheme · **real USDC** (Arc precompile `0x3600…0000`, 6 decimals) · EIP-3009 `transferWithAuthorization`
-- **Neural core**: TypeScript LIF spiking network (~1,080 neurons), deterministic and dependency-free
+- **Neural core**: TypeScript LIF spiking network (**10,800 neurons** in production via `BRAIN_N_*`; 1,080 default), deterministic and dependency-free
 - **Frontend**: vanilla JS + Canvas 2D (no framework, no build step)
 
 ---

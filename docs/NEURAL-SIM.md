@@ -6,7 +6,7 @@ deterministic spiking-network library the Worker drives. Everything a fly "decid
 ```
 src/
   lif.ts            the Leaky Integrate-and-Fire network + spike-frequency adaptation (SFA)
-  connectome.ts     buildConnectome(): the ~1,080-neuron wiring grown from a seed
+  connectome.ts     buildConnectome(): the wiring grown from a seed (1,080 n default · 10,800 n in production)
   fly-brain.ts      FlyBrain: inject → advance → read motor; snapshot; serialize/deserialize
   motor-decoder.ts  motor firing rates → drives → behaviour (decoded relative to the population)
   stimuli.ts        market pulse + visitor stimulus → sensory-channel currents
@@ -15,10 +15,11 @@ src/
 
 ---
 
-## The connectome (~1,080 neurons)
+## The connectome (1,080 neurons default · 10,800 in production)
 
 `buildConnectome(opts)` grows a fruit-fly-shaped network deterministically from a seed. Defaults (overridable via
-`BRAIN_N_*` / `BRAIN_DENSITY` vars) produce exactly **1,080 neurons**:
+`BRAIN_N_*` / `BRAIN_DENSITY` vars) produce exactly **1,080 neurons**; the production `wrangler.toml` scales every
+layer 10× (`1800/4000/4000/400/120`) to **10,800 neurons**:
 
 | Layer | Count | Role |
 |---|---|---|

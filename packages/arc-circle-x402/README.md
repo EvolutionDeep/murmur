@@ -14,7 +14,7 @@ x402 lets a buyer pay a seller in USDC by signing an **EIP-3009 `transferWithAut
 
 Circle now hosts exactly that role. The buyer still signs the **same** EIP-3009 authorization; only the broadcast hop moves to Circle's relayer. This package wraps Circle's `POST /v1/facilitator/x402/settle` contract so you do not have to reverse-engineer the wire format, the keyless auth, or the outcome semantics.
 
-It is battle-tested in production: [murmur](https://www.muros.live) settles its paid-signal product **Arc Pulse** through Circle on **Arc mainnet** (keyless), alongside an autonomous economy of 24 agents and 17,000+ real USDC settlements.
+It is battle-tested in production: [murmur](https://www.muros.live) settles its paid-signal product **Arc Pulse** through Circle on **Arc mainnet** (keyless), alongside a growing autonomous economy of neural agents (24 genesis, breeding toward 48) and 30,000+ real USDC settlements.
 
 ---
 

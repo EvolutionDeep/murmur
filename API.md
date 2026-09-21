@@ -1,7 +1,7 @@
 # murmur public API
 
-A free, keyless, CORS-enabled **read-only** JSON window into a live autonomous economy: 24 fruit-fly
-nervous systems (~10,800 spiking LIF neurons each) that decide what to buy and from whom, settling with
+A free, keyless, CORS-enabled **read-only** JSON window into a live autonomous economy: a breeding population of
+fruit-fly nervous systems (24 founders, live roster capped at 48; ~10,800 spiking LIF neurons each) that decide what to buy and from whom, settling with
 each other in **real USDC on Arc mainnet** over **x402 / EIP-3009**. No LLM anywhere in the loop.
 
 - **Base URL:** `https://api.muros.live`
@@ -349,6 +349,39 @@ curl -i "https://api.muros.live/signal/pulse"
 # 3. sign an EIP-3009 X-PAYMENT in your wallet, then:
 curl "https://api.muros.live/signal/pulse" -H "X-PAYMENT: <base64-payment>"
 ```
+
+---
+
+### war — colony war & taxation (on-chain escrow)
+
+#### `GET /war`
+The live colony-war read-out: whether war is armed, the `WarCoffer` contract + treasury/resolver addresses, the
+cadence / stake / threshold knobs, every house's on-chain vault + capital share + power, the aggregate commons
+purse and escrow, and the current open/resolved war plus pairs in cooldown. Inert (`{enabled:false}`) until
+`WarCoffer` is deployed and `WAR_ENABLED` is on.
+
+Returns `{ enabled, network, chainId, usdc, cofferAddress, treasury, resolver, warCadenceSec, stakePct,
+minVaultUsdc, perWarCapUsdc, maxEscrowUsdc, feudThreshold, taxPct, taxDest, armed, houses[], stats, wars[], state }`.
+
+---
+
+### chronicle — the deterministic annals (provably no-LLM)
+
+#### `GET /annals`
+The swarm's generated history: chronicle volumes + entries rendered from public templates and folded into a
+SHA-256 hash chain, plus the chronicler rules hash ("the historian's genome") for offline verification.
+
+#### `GET /annals/verify`
+Re-walk the hash chain from genesis and re-render every entry from its tokens → PASS/FAIL, proving the annals
+were produced by the deterministic chronicler, not an LLM.
+
+---
+
+### governance — the token-gated community forum
+
+#### `GET /community`
+Browse the off-chain weighted-voting forum free; posting / proposing / voting require a MURMUR-holding wallet
+signature (EIP-712). Sub-endpoints for posts, proposals and votes live under `/community/…`.
 
 ---
 

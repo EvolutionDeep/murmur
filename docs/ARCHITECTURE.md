@@ -25,7 +25,7 @@ Cloudflare Worker "murmur"  (src/index.ts)
             ▼
 Durable Object  FlyStateDO  (src/state.ts, singleton id "fly-main", SQLite storage class)
   ├── MarketMeter   (src/market.ts)     Arc blocks → temperature + regime
-  ├── Population     (src/population.ts) 24 × FlyBrain (@fly/fly-brain)
+  ├── Population     (src/population.ts) founders 24 · breeds to 48 (@fly/fly-brain)
   ├── AgentEconomy   (src/economy.ts)    drives → intent → x402 settlement → per-pair netting
   │     └── x402     (src/x402.ts)       OnChainFacilitator (LIVE, production) | SimulatedFacilitator (keyless dev)
   │           └── keys (src/keys.ts)     HD wallet derivation — ONLY used onchain
@@ -58,7 +58,8 @@ races. Brains are persisted via `serialize()/deserialize()` so the swarm keeps i
    richness). Every fly receives the **same** pulse through its sensory channels **plus its own** stable internal
    arousal (its *temperament*, derived from its seed) so individuals keep a tempo. A pending visitor stimulus, if
    any, rides on top.
-4. **Spike** (`@fly/fly-brain`). Each fly advances its ~1,080-neuron LIF network independently for
+4. **Spike** (`@fly/fly-brain`). Each fly advances its **10,800-neuron** LIF network (production sizing; the
+   library default is 1,080) independently for
    `SIM_STEPS_PER_TICK` (500) ms.
 5. **Decode, peer-relative** (`motor-decoder.ts`). Read each fly's motor firing rates → raw drives
    (arousal / turn / cohesion / rest), compute the population bands (robust 10–90 percentiles) for this tick, and
@@ -135,13 +136,13 @@ never stall the tab. If the Worker is unreachable, an offline circuit-breaker ru
 Four CI gates run on every push/PR, all keyless and chain-free: `typecheck → test → build → smoke`.
 
 ```bash
-npm test          # 36 unit tests across both packages (node:test, run via tsx)
+npm test          # 357 unit tests across the three packages (node:test, run via tsx)
 npm run smoke     # end-to-end neural smoke: grow brains, spike, decode, settle
 ```
 
 | Suite | Package | What it pins down |
 |---|---|---|
-| `connectome.test.ts` | fly-brain | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the gustatory→proboscis reflex, and deterministic-per-seed / distinct-across-seeds wiring. |
+| `connectome.test.ts` | fly-brain | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** sizing (production overrides `BRAIN_N_*` to 10,800): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the gustatory→proboscis reflex, and deterministic-per-seed / distinct-across-seeds wiring. |
 | `lif.test.ts` | fly-brain | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
 | `motor-decoder.test.ts` | fly-brain | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
 | `economy.test.ts` | trader-worker | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, money conservation, the solvency floor, full determinism, and the per-agent wallet roster. |
