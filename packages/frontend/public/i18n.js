@@ -12,8 +12,8 @@
 //   ct(kind, tokens, lang), applyDom(root), gl(glossGroup, word)
 // ============================================================================
 
-import { en, zh, fr, es, ja, ko, ar } from "./i18n-ui.js?v=54";
-import { CHRON_TPL } from "./i18n-chron.js?v=54";
+import { en, zh, fr, es, ja, ko, ar } from "./i18n-ui.js?v=55";
+import { CHRON_TPL } from "./i18n-chron.js?v=55";
 
 export const SUPPORTED = ["en", "zh", "fr", "es", "ja", "ko", "ar"];
 export const RTL = new Set(["ar"]);

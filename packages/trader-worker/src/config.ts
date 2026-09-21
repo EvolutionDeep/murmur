@@ -142,6 +142,16 @@ export interface Env {
   WAR_TAX_PCT?: string;                 // fraction of a house vault levied as EXTRA on-chain tax per cron (default 0.01)
   WAR_TAX_DEST?: string;                // "coffer" (commons purse, default) | "dominant" (sweep to the wealthiest house)
 
+  // --- Organic conflict: deterministic negative social events that let genuine feuds surface (all optional) ---
+  // OFF by default ⇒ every conflict hook no-ops and houseFeuds stays a pure mean (byte-for-byte unchanged).
+  CONFLICT_ENABLED?: string;            // "true"/"false" (default false) — enable rivalry/envy/embargo/raid grudges
+  CONFLICT_RIVAL_STEP?: string;         // grudge per tick between houses competing in the same good's market (default 0.06)
+  CONFLICT_ENVY_STEP?: string;          // max grudge a losing house takes toward the dominant house on a hot shock (default 0.10)
+  CONFLICT_EMBARGO_STEP?: string;       // grievance accrued on a retaliatory supply-cut / whole-span shun (default 0.05)
+  CONFLICT_RAID_STEP?: string;          // heavy social grudge a raided house takes toward the raider house (default 0.40)
+  CONFLICT_RAID_PROB?: string;          // per-cron hash-gated probability a raid is attempted (default 0.02)
+  FEUD_BLEND?: string;                  // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in (default 0)
+
   // --- Autonomous evolution: profitable agents self-fund breeding from their OWN wallets ---
   //     Each cron, the top agents by realized PnL (netUsdc>0) may autonomously initiate a mutate/cross over
   //     the SAME x402/EIP-3009 rails, paying the breeding fee from the parent's own HD wallet (the
@@ -330,6 +340,20 @@ export interface RuntimeConfig {
     feudThreshold: number;       // cross-house bond <= this (negative) may go to war
     taxPct: number;              // fraction of a house vault levied as extra on-chain tax per cron
     taxDest: "coffer" | "dominant";  // commons purse, or swept to the dominant house
+  };
+
+  // ORGANIC CONFLICT: deterministic, on-chain-reachable negative social events (rivalry / envy / embargo /
+  // raid) that let genuine house-vs-house feuds surface so war can fire on real hatred. OFF by default ⇒
+  // every hook no-ops and houseFeuds stays a pure mean (byte-for-byte today's economy). Pure social-memory
+  // writes only — never touches neurons/genome/manifestHash, never moves or mints money. KEY_VERSION stays economy:v1.
+  conflict: {
+    enabled: boolean;
+    rivalStep: number;      // grudge per tick between two houses competing in the same good's market
+    envyStep: number;       // max grudge a losing house takes toward the dominant house on a hot shock
+    embargoStep: number;    // grievance accrued when a buyer's whole span is shunned (retaliatory hold)
+    raidStep: number;       // heavy grudge a raided house's member takes toward the raider house (social only)
+    raidProb: number;       // per-cron probability (hash-gated) that a raid is attempted
+    feudBlend: number;      // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in
   };
 
   // Community governance page (off-chain token-gated forum + weighted voting; D1-backed, read-only on-chain)
@@ -592,6 +616,18 @@ export function loadConfig(env: Env): RuntimeConfig {
       feudThreshold: clamp(Number(env.WAR_FEUD_THRESHOLD ?? "-0.6"), -1, 1),
       taxPct: clamp(Number(env.WAR_TAX_PCT ?? "0.01"), 0, 1),
       taxDest: (env.WAR_TAX_DEST ?? "").trim().toLowerCase() === "dominant" ? "dominant" : "coffer",
+    },
+
+    conflict: {
+      // OFF by default: absent/false ⇒ every conflict hook no-ops and houseFeuds stays a pure mean, so the
+      // economy is byte-for-byte unchanged. All knobs are deterministic social-memory nudges only.
+      enabled: (env.CONFLICT_ENABLED ?? "false").toLowerCase() === "true",
+      rivalStep: clamp(Number(env.CONFLICT_RIVAL_STEP ?? "0.06"), 0, 1),
+      envyStep: clamp(Number(env.CONFLICT_ENVY_STEP ?? "0.10"), 0, 1),
+      embargoStep: clamp(Number(env.CONFLICT_EMBARGO_STEP ?? "0.05"), 0, 1),
+      raidStep: clamp(Number(env.CONFLICT_RAID_STEP ?? "0.40"), 0, 1),
+      raidProb: clamp(Number(env.CONFLICT_RAID_PROB ?? "0.02"), 0, 1),
+      feudBlend: clamp(Number(env.FEUD_BLEND ?? "0"), 0, 1),
     },
 
     community: {

@@ -79,6 +79,14 @@ function house(id: number, over: Partial<WarHouse> = {}): WarHouse {
 const FRESH: WarCursor = { openedWar: -1, resolvedWar: -1 };
 const CAD = 3600; // 1-hour war buckets
 
+// Organic-conflict knobs + a stable genome hash, for the end-to-end aggregation↔war-candidate test below.
+const HASH_A = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+const HASH_B = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+type ConflictKnobs = NonNullable<EconomyConfig["conflict"]>;
+function econConflict(on: boolean, over: Partial<ConflictKnobs> = {}): ConflictKnobs {
+  return { enabled: on, rivalStep: 0, envyStep: 0, embargoStep: 0, raidStep: 0, raidProb: 0, feudBlend: 0, ...over };
+}
+
 // ---------- planWar: the resolver's declare/resolve timing (a pure function of now + cursor) ----------
 
 test("a fresh resolver declares the live bucket and does NOT resolve a bucket it never declared", () => {
@@ -232,6 +240,40 @@ test("pairKey is order-independent", () => {
   assert.equal(pairKey(2, 5), "2-5");
 });
 
+test("the conflict blend aggregation unblocks feudPairs: a diluted cluster of grudges is war once weighted, not on the pure mean", () => {
+  // Two houses with real (positive) vaults, plus a HAND-CRAFTED cross-house bond cluster: three -1 grudges
+  // diluted by five +0.05 friendly bonds. This is the exact shape that kept a war from ever surfacing while
+  // houseFeuds was a pure mean — the ONLY thing that changes the outcome is the feudBlend aggregation.
+  const base = new AgentEconomy(econCfg({ dynasty: {} }));
+  base.noteHatch(2, 10, HASH_A);
+  base.noteHatch(5, 15, HASH_B);
+  base.setVaultOnchain(2, "20000000");                                // 20 USDC escrowed on-chain each
+  base.setVaultOnchain(5, "20000000");
+  const p = JSON.parse(base.serialize());
+  const fr = { trades: 0, lastTick: 0 };
+  p.social = {
+    mem: [
+      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
+      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
+      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: 0.05, ...fr }] },
+      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.05, ...fr }, { other: 10, score: 0.05, ...fr }] },
+    ],
+    grudges: [],
+  };
+  const blob = JSON.stringify(p);
+  const wc = warCfg({ feudThreshold: -0.6, minVaultUsdc: 1 });
+
+  const meanEcon = new AgentEconomy(econCfg({ dynasty: {}, conflict: econConflict(true, { feudBlend: 0 }) }), blob);
+  const blendEcon = new AgentEconomy(econCfg({ dynasty: {}, conflict: econConflict(true, { feudBlend: 1 }) }), blob);
+
+  const meanBouts = feudPairs(meanEcon.warHouses(), meanEcon.houseFeuds(), wc, 1000, {});
+  const blendBouts = feudPairs(blendEcon.warHouses(), blendEcon.houseFeuds(), wc, 1000, {});
+
+  assert.equal(meanBouts.length, 0, "pure mean dilutes the grudges above -0.6 ⇒ NO war (the deadlock the engine breaks)");
+  assert.equal(blendBouts.length, 1, "weighting the deepest bonds surfaces a genuine, funded war candidate");
+  assert.deepEqual(blendBouts[0], { attacker: 2, defender: 5 }, "equal capital share ⇒ the lower house id attacks up");
+});
+
 // ---------- winnerOf / warRoll: byte-for-byte with WarCoffer._deriveWinner ----------
 
 /** An INDEPENDENT re-implementation of Solidity's `abi.encodePacked(uint256 ×5)` — hand-padded 32-byte words
@@ -350,6 +392,23 @@ test("the tax destination is dominant only on an explicit 'dominant', else the c
   assert.equal(loadConfig(env({ WAR_TAX_DEST: " DOMINANT " })).war.taxDest, "dominant");
   assert.equal(loadConfig(env({ WAR_TAX_DEST: "coffer" })).war.taxDest, "coffer");
   assert.equal(loadConfig(env({ WAR_TAX_DEST: "nonsense" })).war.taxDest, "coffer", "unknown ⇒ coffer");
+});
+
+test("by default organic conflict is OFF with pure-mean feuds, and every knob is clamped into 0..1", () => {
+  const off = loadConfig(env()).conflict;
+  assert.equal(off.enabled, false, "CONFLICT_ENABLED unset ⇒ OFF ⇒ byte-for-byte today's economy");
+  assert.equal(off.rivalStep, 0.06);
+  assert.equal(off.envyStep, 0.1);
+  assert.equal(off.embargoStep, 0.05);
+  assert.equal(off.raidStep, 0.4);
+  assert.equal(off.raidProb, 0.02);
+  assert.equal(off.feudBlend, 0, "FEUD_BLEND defaults to 0 ⇒ houseFeuds stays a pure mean even if armed");
+
+  assert.equal(loadConfig(env({ CONFLICT_ENABLED: "TRUE" })).conflict.enabled, true, "case-insensitive enable");
+  assert.equal(loadConfig(env({ CONFLICT_ENABLED: "1" })).conflict.enabled, false, "only 'true' enables");
+  const clamped = loadConfig(env({ CONFLICT_RIVAL_STEP: "9", FEUD_BLEND: "-2" })).conflict;
+  assert.equal(clamped.rivalStep, 1, "step clamped to 1");
+  assert.equal(clamped.feudBlend, 0, "blend clamped up from -2 to 0");
 });
 
 test("the war cadence is clamped to 5 minutes .. 7 days and the stake/fraction bounds hold", () => {

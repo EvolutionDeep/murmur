@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=54";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=55";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -2495,7 +2495,15 @@ function renderWarSection() {
   const host = $("chron-war");
   if (!host) return;
   const w = econWar;
-  if (!w || !w.enabled) { host.hidden = true; return; }
+  // the volume owns a tab in the codex rail: show it only while the coffer is live, and never strand
+  // the rail on a hidden volume when war is off (byte-for-byte rollback ⇒ no war UI footprint).
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="war"]');
+  if (!w || !w.enabled) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
   const houses = (w.houses || []).filter((h) => Number(h.vaultOnchainUsdc) > 0);
   const wars = w.wars || [];
   if (!houses.length && !wars.length && !w.stats) { host.hidden = true; return; }

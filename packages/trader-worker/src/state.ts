@@ -281,6 +281,18 @@ export class FlyStateDO {
         creditCapBaseUsdc: this.cfg.institutions.creditCapBaseUsdc,
         iouRatePer10: this.cfg.institutions.iouRatePer10,
       },
+      // ORGANIC CONFLICT: deterministic negative cross-house bonds (rivalry/envy/embargo/raid) so genuine
+      // feuds can surface on-chain. OFF by default (CONFLICT_ENABLED) ⇒ every hook no-ops and houseFeuds
+      // stays a pure mean, so the economy is byte-for-byte unchanged. Pure social memory: no money, no neurons.
+      conflict: {
+        enabled: this.cfg.conflict.enabled,
+        rivalStep: this.cfg.conflict.rivalStep,
+        envyStep: this.cfg.conflict.envyStep,
+        embargoStep: this.cfg.conflict.embargoStep,
+        raidStep: this.cfg.conflict.raidStep,
+        raidProb: this.cfg.conflict.raidProb,
+        feudBlend: this.cfg.conflict.feudBlend,
+      },
     };
   }
 

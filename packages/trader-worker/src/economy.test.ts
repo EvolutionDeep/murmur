@@ -956,3 +956,117 @@ test("war: mirroring a vault + levying tax NEVER mints — member balances and l
   assert.equal(balAfter, founding + BigInt(after.totals.treasuryOutAtomic),
     "money is still conserved: war never created or destroyed a single atomic unit");
 });
+
+// ---------- ORGANIC CONFLICT: deterministic negative cross-house bonds (rivalry / envy / embargo / raid) ----------
+// The whole layer exists because the ONLY historical betrayal path (rememberBetrayal) is structurally dead
+// ON-CHAIN, so hatred could never accumulate and no war ever fired. These tests pin the two laws that make the
+// layer safe to arm: (1) OFF ⇒ byte-for-byte the pre-conflict economy (every hook no-ops, houseFeuds stays a
+// pure mean); (2) ON ⇒ grudges are a PURE FUNCTION of (tick, houses) — reproducible, and they move SOCIAL
+// memory only, never minting or transferring a single atomic unit. KEY_VERSION stays "economy:v1".
+
+type ConflictKnobs = NonNullable<EconomyConfig["conflict"]>;
+function conflict(on: boolean, over: Partial<ConflictKnobs> = {}): ConflictKnobs {
+  return { enabled: on, rivalStep: 0, envyStep: 0, embargoStep: 0, raidStep: 0, raidProb: 0, feudBlend: 0, ...over };
+}
+
+// Two houses, each holding real (settling) members: founders 2 & 5 plus heirs 10 & 15 (all inside the 0..23 population).
+async function seedTwoHouses(econ: AgentEconomy, ticks: number, t0 = 0): Promise<void> {
+  for (let t = t0; t < t0 + 10; t++) await econ.step(population("AGITATE"), collective(0.9), t);
+  econ.noteHatch(2, 10, HASH_A);
+  econ.noteHatch(5, 15, HASH_B);
+  for (let t = t0 + 10; t < t0 + ticks; t++) await econ.step(population("AGITATE"), collective(0.9), t);
+}
+
+// A byte-for-byte-stable view of the ledger: the ONLY non-reproducible fields are the wall-clock `ts` stamped
+// onto settlements (recent / lastTick), so we strip them and compare everything else (balances, social memory,
+// dynasty, totals) exactly. This is strictly stronger than the pre-existing determinism tests, which only
+// compare `.social` (see "social state is deterministic").
+function stable(econ: AgentEconomy): string {
+  const p = JSON.parse(econ.serialize());
+  delete p.recent;
+  delete p.lastTick;
+  return JSON.stringify(p);
+}
+
+test("conflict OFF: an aggressive-but-disabled knob set is byte-for-byte the baseline economy", async () => {
+  const baseline = new AgentEconomy(cfg({ dynasty: {} }));
+  await seedTwoHouses(baseline, 24);
+  // Same steps, but the switch is OFF with MAXED knobs: the whole point is that `false` beats every magnitude.
+  const off = new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(false, { rivalStep: 0.5, envyStep: 0.5, embargoStep: 0.5, raidStep: 1, raidProb: 1, feudBlend: 1 }) }));
+  await seedTwoHouses(off, 24);
+
+  assert.equal(stable(off), stable(baseline), "enabled:false ⇒ no hook fires and the whole ledger is byte-identical");
+  assert.deepEqual(off.houseFeuds(), baseline.houseFeuds(), "OFF ⇒ houseFeuds stays the pure mean (blend ignored even at feudBlend:1)");
+});
+
+test("conflict ON (raid only): the weakest house bears a deep, reproducible grudge toward the strongest — and no money is minted", async () => {
+  const make = () => new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { raidStep: 1, raidProb: 1 }) }));
+  const a = make(); await seedTwoHouses(a, 20);
+  const b = make(); await seedTwoHouses(b, 20);
+
+  assert.equal(stable(a), stable(b), "raid is a pure function of (tick, houses) ⇒ byte-for-byte reproducible");
+
+  const feuds = a.houseFeuds();
+  const pair = feuds.find((f) => (f.a === 2 && f.b === 5) || (f.a === 5 && f.b === 2));
+  assert.ok(pair && pair.score < 0, "a genuine cross-house feud surfaces on-chain where the old betrayal path could not");
+
+  // The hatred moves SOCIAL memory only: supply never grows beyond the founding float + documented top-ups
+  // (integer-atomic deal dust is a one-way sink, so the balance can only sit AT or BELOW this ceiling).
+  const snap = a.snapshot();
+  const bal = snap.agents.reduce((s, x) => s + BigInt(x.balance), 0n);
+  const minted = BigInt(usdcToAtomic(cfg().initialBalanceUsdc)) * BigInt(snap.agents.length) + BigInt(snap.totals.treasuryOutAtomic);
+  assert.ok(bal <= minted, "conflict never minted value: total supply stays at or below founding float + treasury top-ups");
+});
+
+test("conflict ON (rivalry only): houses trading the same good grow a grudge, deterministically", async () => {
+  const make = () => new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { rivalStep: 0.5 }) }));
+  const a = make(); await seedTwoHouses(a, 40);
+  const b = make(); await seedTwoHouses(b, 40);
+
+  assert.equal(stable(a), stable(b), "rivalry is deterministic across identical runs");
+  const feuds = a.houseFeuds();
+  assert.ok(feuds.some((f) => f.score < 0), "competing in the same good's market leaves a visible negative bond");
+});
+
+test("conflict ON (all four armed): the whole layer is deterministic and mints nothing", async () => {
+  const make = () => new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { rivalStep: 0.06, envyStep: 0.1, embargoStep: 0.05, raidStep: 0.4, raidProb: 0.5, feudBlend: 0.55 }) }));
+  const a = make(); await seedTwoHouses(a, 30);
+  const b = make(); await seedTwoHouses(b, 30);
+  assert.equal(stable(a), stable(b), "no Math.random anywhere: identical inputs ⇒ identical ledger");
+
+  const snap = a.snapshot();
+  const bal = snap.agents.reduce((s, x) => s + BigInt(x.balance), 0n);
+  const minted = BigInt(usdcToAtomic(cfg().initialBalanceUsdc)) * BigInt(snap.agents.length) + BigInt(snap.totals.treasuryOutAtomic);
+  assert.ok(bal <= minted, "every conflict source is pure social memory — it never inflates total supply");
+});
+
+test("houseFeuds blend: a diluted cluster of deep grudges stays above -0.6 on the pure mean but crosses it once weighted", () => {
+  // Build a real two-house economy, then hand-craft its social memory so the SAME pair (2,5) carries eight
+  // cross-house bonds: three at the deepest -1 and five friendly +0.05. This is the exact dilution that kept
+  // the pure mean from ever surfacing a war — no loop needed, we drive the aggregation directly.
+  const base = new AgentEconomy(cfg({ dynasty: {} }));
+  void base.step(population("AGITATE"), collective(0.8), 5);
+  base.noteHatch(2, 10, HASH_A);                                    // house 2 ⇒ members {2,10}
+  base.noteHatch(5, 15, HASH_B);                                    // house 5 ⇒ members {5,15}
+  const p = JSON.parse(base.serialize());
+  const fr = { trades: 0, lastTick: 0 };
+  p.social = {
+    mem: [
+      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
+      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
+      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: 0.05, ...fr }] },
+      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.05, ...fr }, { other: 10, score: 0.05, ...fr }] },
+    ],
+    grudges: [],
+  };
+  const blob = JSON.stringify(p);
+
+  // mean = (3×-1 + 5×0.05)/8 = -0.34375 (diluted, above the -0.6 line); blend=1 ⇒ worst-3 mean = -1.
+  const meanEcon = new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { feudBlend: 0 }) }), blob);
+  const blendEcon = new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { feudBlend: 1 }) }), blob);
+
+  const m = meanEcon.houseFeuds().find((f) => f.a === 2 && f.b === 5)!;
+  const bl = blendEcon.houseFeuds().find((f) => f.a === 2 && f.b === 5)!;
+  assert.ok(m.score > -0.6 && m.score < -0.3, `pure mean stays above the war line (got ${m.score})`);
+  assert.ok(bl.score <= -0.6, `blending the deepest grudges crosses the -0.6 war line (got ${bl.score})`);
+});

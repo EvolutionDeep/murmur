@@ -230,6 +230,24 @@ WAR_FEUD_THRESHOLD = "-0.6"                   # cross-house mean bond at or belo
 WAR_TAX_PCT = "0.01"                          # extra on-chain tax per bucket as a fraction of a house's on-chain vault (bounded)
 WAR_TAX_DEST = "coffer"                       # "coffer" = tax stays in the coffer's commons purse (default); "dominant" sweeps it to the leading house
 
+# ===== ORGANIC CONFLICT (deterministic negative social events that let genuine feuds surface, then war) =====
+# The ONLY historical betrayal path (rememberBetrayal) is structurally dead ON-CHAIN (the facilitator re-checks
+# the real balance before signing), and houseFeuds averaged every cross-house bond — so hatred could never
+# accumulate past the -0.6 war line and the swarm sat in perpetual peace. This layer injects four ON-CHAIN-
+# REACHABLE, hash-deterministic grudges (market rivalry / zero-sum envy / embargo / rare raid) and lets the
+# houseFeuds aggregation weight the deepest bonds in. Pure social-memory writes only: it NEVER touches a neuron /
+# genome / manifestHash, NEVER moves or mints a single atomic unit, and KEY_VERSION stays "economy:v1".
+# ROLLOUT: shipped OFF (CONFLICT_ENABLED="false" ⇒ every hook no-ops and houseFeuds is a byte-for-byte pure
+# mean). To arm it, flip CONFLICT_ENABLED to "true" — the knobs below are already at the intended gray-open values.
+# Set CONFLICT_ENABLED = "false" again to roll the whole layer back to today's economy in one deploy.
+CONFLICT_ENABLED = "true"                     # master switch, ARMED: the four grudge sources now accrue on-chain each cron (set back to "false" for a one-deploy byte-for-byte rollback)
+CONFLICT_RIVAL_STEP = "0.06"                  # grudge/tick between two houses competing in the same good's market
+CONFLICT_ENVY_STEP = "0.10"                   # max grudge a losing house takes toward the dominant house on a hot shock (sampled ~1-in-5)
+CONFLICT_EMBARGO_STEP = "0.05"                # grievance a shunned seller accrues back at the embargoing buyer's house
+CONFLICT_RAID_STEP = "0.40"                   # heavy social grudge the raided (weakest) house holds against the raider (Phase 1: no money moves)
+CONFLICT_RAID_PROB = "0.02"                   # per-cron, hash-gated chance a raid is attempted (rare, ~"one every few days")
+FEUD_BLEND = "0.55"                           # 0 ⇒ pure-mean houseFeuds (byte-identical to today); >0 weights the K=3 deepest grudges toward the -0.6 war line
+
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
 # fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /

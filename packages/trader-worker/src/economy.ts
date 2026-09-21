@@ -53,7 +53,7 @@ import {
   type WarInfo,
   type WarCofferStats,
 } from "./x402.js";
-import type { WarHouse, HouseFeud } from "./war.js";
+import { housePower, type WarHouse, type HouseFeud } from "./war.js";
 import type { Fap } from "@fly/fly-brain";
 import type { FlyReading, CollectiveState } from "./population.js";
 import type { PredictFlow } from "./prediction.js";
@@ -437,6 +437,20 @@ export interface EconomyConfig {
     creditCapBaseUsdc?: number;   // base credit line (traders double it, reputation scales it)
     iouRatePer10?: number;        // interest per 10 sub-ticks on live IOUs
   };
+  // --- ORGANIC CONFLICT (rivalry / envy / embargo / raid): OPTIONAL — absent/false ⇒ every conflict hook
+  //     no-ops AND houseFeuds stays a pure mean, so the economy is byte-for-byte unchanged. These are pure
+  //     social-memory nudges (negative cross-house bonds via touchBond): they NEVER move or mint money and
+  //     NEVER touch the connectome/genome/manifestHash. They exist only so a genuine feud can reach the
+  //     war threshold on-chain (where insufficient-funds betrayals structurally cannot fire). ---
+  conflict?: {
+    enabled: boolean;
+    rivalStep: number;      // grudge per tick between houses competing in the same good's market
+    envyStep: number;       // max grudge a losing house takes toward the dominant house on a hot shock
+    embargoStep: number;    // grievance accrued when a buyer's whole span is shunned (retaliatory hold)
+    raidStep: number;       // heavy social grudge a raided house's member takes toward the raider house
+    raidProb: number;       // per-cron hash-gated probability a raid is attempted
+    feudBlend: number;      // 0 ⇒ pure-mean houseFeuds (byte-identical); >0 weights the worst grudges in
+  };
 }
 
 /**
@@ -471,6 +485,7 @@ const REP_FAIL_STEP = 0.1;               // reputation lost on an onchain failed
 const BOND_BLACKLIST = -0.6;             // bond at or below this ⇒ flat-out refusal ("never trade with #N")
 const ALLIANCE_MIN_TRADES = 8;           // a partnership is only chronicle-worthy once seasoned
 const PICK_CANDIDATES = 5;               // pool size re-weighted inside the neural span
+const FEUD_WORST_K = 3;                  // houseFeuds blend: how many of a pair's deepest bonds the "worst mean" averages
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
 // --- dynasty tuning (all deterministic; every collection is a hard cap so DO storage stays bounded) ---
@@ -558,6 +573,12 @@ export class AgentEconomy {
   private houses = new Map<number, HouseRecord>();
   private graves: GraveRecord[] = [];
   private dead = new Set<number>();
+  /**
+   * ORGANIC CONFLICT (runtime-only, NEVER persisted): the candidate ids the most recent pickCounterparty
+   * call refused outright because the buyer holds a grudge ≤ BOND_BLACKLIST against each. The step loop
+   * reads it right after the call to feed the embargo mechanism (a refused seller resents the embargo).
+   */
+  private lastShunned: number[] = [];
 
   /** ⑧ THE COMMONS: this era's legislated overrides of two institution knobs, applied fresh each cron by
    *  state.ts. null ⇒ base config (byte-for-byte the pre-law economy). Runtime-only, NEVER serialized —
@@ -662,6 +683,9 @@ export class AgentEconomy {
     const n = readings.length;
     const T = clamp01(collective.temperature);
     const made: Settlement[] = [];
+    // ORGANIC CONFLICT: buyers that held because their whole span was shunned, with the specific sellers
+    // they refused (fed to the embargo mechanism). Collected only while the switch is on; empty otherwise.
+    const held: { buyer: number; shunned: number[] }[] = [];
     const budget = Math.max(0, budgetOverride ?? this.cfg.maxDealsPerTick);
 
     // Market-wide demand: a HOT chain means more agents want to buy, at higher prices.
@@ -695,7 +719,11 @@ export class AgentEconomy {
 
       const good = goodForState(r.state);
       const sellerIdx = this.pickCounterparty(r, i, n, tickIndex);
-      if (sellerIdx < 0 || sellerIdx === buyerIdx) continue;
+      if (sellerIdx < 0) {
+        if (this.lastShunned.length) held.push({ buyer: r.id, shunned: this.lastShunned.slice() });
+        continue;
+      }
+      if (sellerIdx === buyerIdx) continue;
 
       // ONCHAIN: fold the trade into the pair's pending NET instead of broadcasting now — flush() moves
       // only nets, far less often (gas amortisation). The returned record is a "net-pending" placeholder
@@ -717,6 +745,10 @@ export class AgentEconomy {
     // the treasury top-up still sees who genuinely fell below the floor after debts were settled.
     if (this.institutionsOn()) made.push(...this.creditCycle(tickIndex, readings));
     if (!onchain) this.solvencyTopUp();
+
+    // ORGANIC CONFLICT: after the market clears, accrue deterministic negative cross-house bonds (rivalry /
+    // envy / embargo / raid) so genuine feuds can surface on-chain. Inert (byte-for-byte) unless the switch is on.
+    if (this.conflictOn()) this.applyConflict(tickIndex, T, made, held);
 
     this.lastTick = made;
     for (const s of made) {
@@ -1059,6 +1091,7 @@ export class AgentEconomy {
    * buy, WHAT to buy, how FAR to reach and WHICH side — the connectome is never touched (one-way law).
    */
   private pickCounterparty(r: FlyReading, buyerI: number, n: number, tick: number): number {
+    this.lastShunned = [];
     const others = n - 1;
     if (others <= 0) return -1;
     const coh = clamp01(r.cohesion);
@@ -1082,19 +1115,20 @@ export class AgentEconomy {
     // pick inside the span, so a fresh swarm behaves neutrally until a past accumulates.
     const picks: number[] = [];
     const weights: number[] = [];
+    const shunned: number[] = [];
     let total = 0;
     for (const idx of pool) {
       const cand = this.agents[idx];
       if (!cand || this.dead.has(cand.id)) continue;   // you cannot buy from a grave
       const bond = this.effectiveBond(r.id, cand.id, tick);
-      if (bond <= BOND_BLACKLIST) continue;   // the grudge vetoes; the neurons never notice
+      if (bond <= BOND_BLACKLIST) { shunned.push(cand.id); continue; }   // the grudge vetoes; the neurons never notice
       const rep = this.effectiveRep(cand.id, tick);
       const w = Math.max(0.05, 1 + 0.6 * bond + 0.4 * rep);
       picks.push(idx);
       weights.push(w);
       total += w;
     }
-    if (picks.length === 0) return -1;   // every candidate in the span is shunned: hold back this tick
+    if (picks.length === 0) { this.lastShunned = shunned; return -1; }   // every candidate in the span is shunned: hold back this tick
     // Deterministic weighted roulette (same persisted past + same tick ⇒ same choice, DO-safe replay).
     let spin = hash01(tick, r.id, 0x2545f491) * total;
     for (let k = 0; k < picks.length; k++) {
@@ -1257,6 +1291,123 @@ export class AgentEconomy {
   /** INSTITUTIONS resolved: false/absent ⇒ the old fixed-formula pricing, byte-for-byte. */
   private institutionsOn(): boolean {
     return !!this.cfg.institutions && this.cfg.institutions.enabled !== false;
+  }
+
+  /**
+   * ORGANIC CONFLICT resolved: false/absent ⇒ no negative social events fire AND houseFeuds stays a pure
+   * mean, so the economy is byte-for-byte unchanged. Unlike institutions (default ON), conflict is default
+   * OFF and only arms on an explicit enabled:true — the whole layer is an opt-in experiment.
+   */
+  private conflictOn(): boolean {
+    return !!this.cfg.conflict && this.cfg.conflict.enabled === true;
+  }
+
+  // ---------- ORGANIC CONFLICT (economic layer only; deterministic negative cross-house bonds) ----------
+  // Four sources of genuine house-vs-house animosity, all reachable ON-CHAIN (where an insufficient-funds
+  // betrayal structurally cannot fire, since the facilitator re-checks the real balance before signing). Each
+  // writes a NEGATIVE directed bond between members of DIFFERENT houses via touchBond, so houseFeuds can
+  // surface a real feud and war.ts's feudPairs can — once both vaults are funded — declare. NONE moves or
+  // mints money; NONE touches the connectome/genome/manifestHash. Fully inert unless conflictOn().
+
+  /** Deterministically pick one LIVING member id of a house (reborn-slot guarded), or null if none. */
+  private conflictMember(houseId: number, salt: number): number | null {
+    const h = this.houses.get(houseId);
+    if (!h) return null;
+    const live: number[] = [];
+    for (const m of h.members) {
+      if (this.dead.has(m)) continue;
+      if (this.kin.get(m)?.house !== houseId) continue;   // reborn-slot guard (same law as houseRowFor)
+      if (this.indexOfId.get(m) == null) continue;
+      live.push(m);
+    }
+    if (live.length === 0) return null;
+    live.sort((x, y) => x - y);
+    return live[Math.floor(hash01(houseId, salt, 0x51ed270b) * live.length) % live.length];
+  }
+
+  /** Run all four conflict sources for this tick. Returns immediately (byte-for-byte) when the switch is off. */
+  private applyConflict(tick: number, T: number, made: Settlement[], held: { buyer: number; shunned: number[] }[]): void {
+    if (!this.conflictOn()) return;
+    const c = this.cfg.conflict!;
+    if (this.houses.size < 2) return;
+    const rows = this.warHouses();
+    if (rows.length < 2) return;
+    this.conflictRivalry(tick, made, c);
+    this.conflictEnvy(tick, T, rows, c);
+    this.conflictEmbargo(tick, held, c);
+    this.conflictRaid(tick, rows, c);
+  }
+
+  /** RIVALRY: the two houses trading the same good most this tick compete for its demand and resent each other. */
+  private conflictRivalry(tick: number, made: Settlement[], c: NonNullable<EconomyConfig["conflict"]>): void {
+    if (c.rivalStep <= 0) return;
+    const byGood = new Map<GoodKind, Map<number, { n: number; member: number }>>();
+    for (const s of made) {
+      if (!s.valid) continue;
+      const house = this.kin.get(s.fromId)?.house;
+      if (house == null) continue;
+      let m = byGood.get(s.good);
+      if (!m) { m = new Map(); byGood.set(s.good, m); }
+      const cur = m.get(house);
+      if (cur) cur.n++;
+      else { const mem = this.conflictMember(house, tick); if (mem != null) m.set(house, { n: 1, member: mem }); }
+    }
+    for (const m of byGood.values()) {
+      if (m.size < 2) continue;
+      const top = Array.from(m.entries()).sort((x, y) => y[1].n - x[1].n || x[0] - y[0]).slice(0, 2);
+      const [a, b] = top;
+      if (!a || !b || a[0] === b[0]) continue;
+      this.touchBond(a[1].member, b[1].member, -c.rivalStep, false, tick);
+      this.touchBond(b[1].member, a[1].member, -c.rivalStep, false, tick);
+    }
+  }
+
+  /** ENVY: in a HOT (zero-sum) market, houses behind the dominant one resent it. Sampled, not every hot tick. */
+  private conflictEnvy(tick: number, T: number, rows: WarHouse[], c: NonNullable<EconomyConfig["conflict"]>): void {
+    if (c.envyStep <= 0 || T < 0.6) return;
+    if (hash01(tick, 0x35e3, 0x1e4a) >= 0.2) return;   // only ~1 in 5 hot ticks boils over
+    const dom = rows.reduce((a, b) => (b.capitalShare > a.capitalShare ? b : a));
+    const domMember = this.conflictMember(dom.id, tick);
+    if (domMember == null) return;
+    for (const h of rows) {
+      if (h.id === dom.id) continue;
+      const gap = Math.max(0, dom.capitalShare - h.capitalShare);
+      const step = Math.min(c.envyStep, c.envyStep * (0.25 + gap * 10));
+      const mem = this.conflictMember(h.id, tick);
+      if (mem == null) continue;
+      this.touchBond(mem, domMember, -step, false, tick);
+    }
+  }
+
+  /** EMBARGO: a seller shunned by a buyer's grudge resents being cut off, feeding the grievance back. */
+  private conflictEmbargo(tick: number, held: { buyer: number; shunned: number[] }[], c: NonNullable<EconomyConfig["conflict"]>): void {
+    if (c.embargoStep <= 0) return;
+    for (const h of held) {
+      const buyerHouse = this.kin.get(h.buyer)?.house;
+      if (buyerHouse == null) continue;
+      const buyerMember = this.conflictMember(buyerHouse, tick) ?? h.buyer;
+      const seen = new Set<number>();
+      for (const sid of h.shunned) {
+        const sellerHouse = this.kin.get(sid)?.house;
+        if (sellerHouse == null || sellerHouse === buyerHouse || seen.has(sellerHouse)) continue;
+        seen.add(sellerHouse);
+        this.touchBond(sid, buyerMember, -c.embargoStep, false, tick);   // the shunned seller resents the embargo
+      }
+    }
+  }
+
+  /** RAID: rarely, the strongest house preys on the weakest — a heavy social grudge (NO money moves in Phase 1). */
+  private conflictRaid(tick: number, rows: WarHouse[], c: NonNullable<EconomyConfig["conflict"]>): void {
+    if (c.raidStep <= 0 || hash01(tick, 0x0a1d, 0x5f3a) >= c.raidProb) return;
+    const sorted = rows.slice().sort((a, b) => housePower(b) - housePower(a) || a.id - b.id);
+    const raider = sorted[0];
+    const victim = sorted[sorted.length - 1];
+    if (!raider || !victim || raider.id === victim.id) return;
+    const rm = this.conflictMember(raider.id, tick);
+    const vm = this.conflictMember(victim.id, tick);
+    if (rm == null || vm == null) return;
+    this.touchBond(vm, rm, -c.raidStep, false, tick);   // the raided house holds the deep grudge
+    this.bumpRep(rm, -0.05, tick);                      // raiding dents the raider's own name a little
   }
 
   /**
@@ -3020,12 +3171,21 @@ export class AgentEconomy {
   }
 
   /**
-   * Aggregate the swarm's directed member bonds into CROSS-house feud scores (mean bond across every member
-   * pair straddling two houses), deepest feud first. A pure read-out of persisted social memory + kinship; it
-   * never feeds back. Same-house and commoner links are ignored, so only genuine house-vs-house animosity shows.
+   * Aggregate the swarm's directed member bonds into CROSS-house feud scores, deepest feud first. A pure
+   * read-out of persisted social memory + kinship; it never feeds back. Same-house and commoner links are
+   * ignored, so only genuine house-vs-house animosity shows.
+   *
+   * Two regimes, chosen by the conflict switch's feudBlend:
+   *   • blend == 0 (conflict OFF, or FEUD_BLEND=0): score = the MEAN of every cross-house bond — byte-for-byte
+   *     the historical behaviour. A lone deep grudge is diluted by the mountain of friendly trade bonds, which
+   *     is exactly why a war could never surface on-chain.
+   *   • blend >  0 (conflict ON): score = (1-blend)*mean + blend*(mean of the K deepest bonds for the pair), so a
+   *     genuine cluster of grudges can pull a house-vs-house feud down toward the -0.6 war line despite goodwill
+   *     elsewhere. K = FEUD_WORST_K. Raw (un-faded) bond scores are used in BOTH regimes for byte-identity.
    */
   houseFeuds(): HouseFeud[] {
-    const agg = new Map<string, { a: number; b: number; sum: number; n: number }>();
+    const blend = this.conflictOn() ? Math.max(0, Math.min(1, this.cfg.conflict!.feudBlend)) : 0;
+    const agg = new Map<string, { a: number; b: number; sum: number; n: number; worst: number[] }>();
     for (const [id, mem] of this.social.entries()) {
       const houseA = this.kin.get(id)?.house;
       if (houseA == null) continue;
@@ -3035,14 +3195,31 @@ export class AgentEconomy {
         const lo = Math.min(houseA, houseB);
         const hi = Math.max(houseA, houseB);
         const key = `${lo}-${hi}`;
-        const cur = agg.get(key) ?? { a: lo, b: hi, sum: 0, n: 0 };
+        const cur = agg.get(key) ?? { a: lo, b: hi, sum: 0, n: 0, worst: [] };
         cur.sum += b.score;
         cur.n++;
+        if (blend > 0) {
+          cur.worst.push(b.score);
+          if (cur.worst.length > FEUD_WORST_K) {   // keep only the FEUD_WORST_K most negative (deepest grudges)
+            cur.worst.sort((x, y) => x - y);
+            cur.worst.length = FEUD_WORST_K;
+          }
+        }
         agg.set(key, cur);
       }
     }
     const out: HouseFeud[] = [];
-    for (const v of agg.values()) out.push({ a: v.a, b: v.b, score: v.n > 0 ? v.sum / v.n : 0 });
+    for (const v of agg.values()) {
+      if (v.n <= 0) { out.push({ a: v.a, b: v.b, score: 0 }); continue; }
+      const mean = v.sum / v.n;
+      let score = mean;
+      if (blend > 0) {
+        v.worst.sort((x, y) => x - y);
+        const worstMean = v.worst.length > 0 ? v.worst.reduce((x, y) => x + y, 0) / v.worst.length : mean;
+        score = (1 - blend) * mean + blend * worstMean;
+      }
+      out.push({ a: v.a, b: v.b, score });
+    }
     out.sort((x, y) => x.score - y.score || x.a - y.a || x.b - y.b);
     return out;
   }
