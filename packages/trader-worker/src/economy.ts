@@ -351,6 +351,10 @@ export interface EconomyTotals {
   volumeAtomic: string;   // lifetime settled volume
   volumeUsdc: number;
   count: number;          // lifetime successful settlements
+  settleOk: number;        // lifetime mined on-chain net settlements (successes)
+  settleFail: number;      // lifetime on-chain net settlement attempts that failed to mine
+  settleAttempts: number;  // settleOk + settleFail (real broadcast attempts, shadow dry-runs excluded)
+  successRate: number | null; // settleOk / settleAttempts, or null before any attempt
   liveAgents: number;
   meanBalanceUsdc: number;
   gini: number;           // 0 = equal wealth, →1 = concentrated (emergent from neural diversity)
@@ -478,6 +482,12 @@ export class AgentEconomy {
   private tickIndex = 0;
   private volumeAtomic = "0";
   private count = 0;
+  // Real-money settlement reliability: terminal outcomes of on-chain net settlements. `settleOk` counts
+  // mined successes, `settleFail` counts every attempt that never mined (verify-failed / settle-failed,
+  // including the bred-fly "no signer for payer" class). Additive + persisted (default 0 on old payloads)
+  // so a success rate can be published WITHOUT a KEY_VERSION bump.
+  private settleOk = 0;
+  private settleFail = 0;
   private treasuryOutAtomic = "0";
   /**
    * Real-spend guardrails, persisted so a mid-day DO eviction can't reset the daily budget. ONCHAIN
@@ -835,12 +845,14 @@ export class AgentEconomy {
         if (!verified.valid) {
           // A net that fails verification on-chain dents the debtor's reputation (light: rails can fail
           // for non-moral reasons, so this is a smudge, not a grudge — the book stays for true stiffs).
+          this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
           out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
         }
         const receipt = await this.facilitator.settle(payload, reqs);
         if (receipt.shadow) { out.push({ ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" }); break; }
         if (!receipt.success) {
+          this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
           out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break;
         }
@@ -856,6 +868,7 @@ export class AgentEconomy {
         this.recordSpend(debtor.id, amountStr);
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
+        this.settleOk++;
         // The mined net IS the settled history reputation is made of: both sides keep the promise.
         this.rememberTrade(debtor.id, creditor.id, tickIndex);
         // Dynasty tithe: 2% of what the creditor just earned flows to its house treasury (no-op for a
@@ -2318,6 +2331,10 @@ export class AgentEconomy {
         volumeAtomic: this.volumeAtomic,
         volumeUsdc: atomicToUsdc(this.volumeAtomic),
         count: this.count,
+        settleOk: this.settleOk,
+        settleFail: this.settleFail,
+        settleAttempts: this.settleOk + this.settleFail,
+        successRate: this.settleOk + this.settleFail > 0 ? this.settleOk / (this.settleOk + this.settleFail) : null,
         liveAgents: n,
         meanBalanceUsdc: meanUsdc,
         gini: giniAtomic(this.agents.map((a) => a.balance)),
@@ -2350,6 +2367,8 @@ export class AgentEconomy {
       tickIndex: this.tickIndex,
       volumeAtomic: this.volumeAtomic,
       count: this.count,
+      settleOk: this.settleOk,
+      settleFail: this.settleFail,
       treasuryOutAtomic: this.treasuryOutAtomic,
       recent: this.recent,
       agents: this.agents,
@@ -2406,6 +2425,8 @@ export class AgentEconomy {
     this.tickIndex = Number(p.tickIndex ?? 0);
     this.volumeAtomic = String(p.volumeAtomic ?? "0");
     this.count = Number(p.count ?? 0);
+    this.settleOk = Number(p.settleOk ?? 0);
+    this.settleFail = Number(p.settleFail ?? 0);
     this.treasuryOutAtomic = String(p.treasuryOutAtomic ?? "0");
     this.recent = Array.isArray(p.recent) ? p.recent : [];
     this.agents = Array.isArray(p.agents) ? p.agents : [];

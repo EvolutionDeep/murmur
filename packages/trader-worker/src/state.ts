@@ -599,12 +599,17 @@ export class FlyStateDO {
    */
   private buildOnchainDeps(): EconomyDeps {
     const e = this.cfg.economy;
-    const keys = deriveAgentKeys(e.mnemonic!, this.cfg.populationSize, e.facilitatorPk ?? undefined);
+    // Derive the FULL live-growth range, NOT just the genesis cohort. Live fly ids run 0..maxLivePopulation-1:
+    // genesis 0..populationSize-1 PLUS bred offspring hatched into growth slots (id >= populationSize). Their
+    // payer wallets are HD-derived exactly like genesis (addressOf is deterministic), so if we only derived
+    // populationSize accounts a newly bred fly's address would be absent from byAddress and its on-chain buy
+    // would fail "no signer for payer". Derivation is deterministic + lazy, so covering unused slots is free.
+    const keys = deriveAgentKeys(e.mnemonic!, this.cfg.maxLivePopulation, e.facilitatorPk ?? undefined);
     const pub = publicClient(this.cfg);
     const wallet = walletClient(this.cfg, keys.facilitator());
 
-    // Reverse map: lowercase agent address → its HD signing account. Fly ids are 0..populationSize-1
-    // (see population.ts), exactly the range we derive, so every possible buyer resolves to a signer.
+    // Reverse map: lowercase agent address → its HD signing account, across the WHOLE live-growth range
+    // (keys.count === maxLivePopulation), so every possible buyer — genesis or newly bred — resolves to a signer.
     const byAddress = new Map<string, LocalAccount>();
     for (let id = 0; id < keys.count; id++) {
       byAddress.set(keys.address(id).toLowerCase(), keys.account(id));
