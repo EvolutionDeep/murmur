@@ -748,6 +748,232 @@ const GOLD_THREAD = [198, 152, 66];   // the reference's signature "gold thread"
 const CRACK_RED = [198, 60, 44];      // conflict / grudge cracks between rivals
 const fnv1a = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; };
 
+// ---- lineage (dynasty bloodline) + chronicle-event layers --------------------------------
+// House names ARE colour words, so the bloodline tint is the name itself: a thin ring on every fly
+// plus a house-tinted ink trail, so a family reads as coloured streaks inside its colony.
+const HOUSE_COLORS = {
+  ochre: [196, 148, 60], ivory: [214, 206, 182], ashen: [148, 150, 154], vermilion: [198, 70, 48],
+  amber: [214, 164, 64], slate: [110, 126, 146], sage: [140, 164, 120], plum: [150, 104, 140],
+  teal: [86, 150, 150], rust: [170, 96, 60], indigo: [92, 102, 170], rose: [190, 110, 130],
+  sable: [96, 84, 72], verdant: [120, 140, 96], azure: [96, 132, 176], crimson: [178, 58, 66],
+};
+const HOUSE_FALLBACK = [[176, 142, 86], [140, 104, 140], [96, 140, 138], [168, 110, 110], [124, 124, 168], [154, 110, 90]];
+function houseColor(name) {
+  if (!name) return null;
+  const k = String(name).toLowerCase();
+  if (HOUSE_COLORS[k]) return HOUSE_COLORS[k];
+  for (const w in HOUSE_COLORS) if (k.includes(w)) return HOUSE_COLORS[w];
+  return HOUSE_FALLBACK[fnv1a(k) % HOUSE_FALLBACK.length];
+}
+
+let hoverId = null;                       // fly under the pointer (throttled pick) — hover half of focus
+let focusCacheId = null, focusSet = null; // cached highlight set: focus + its colony + its bonds/feuds
+const houseOf = new Map();                // flyId → {name, sigil, color} — the bloodline, from /economy agents
+const monuments = [];                     // fading grave steles at OBSERVED death positions
+const chronFx = [];                       // transient canvas events spawned by fresh chronicle entries
+const MONUMENT_MS = 42000;                // how long a stele lingers before it fades into the paper
+let chronBanner = null;                   // the epic centre-caption flashed when the chronicle "happens"
+const LAW_GOLD = [186, 152, 66];          // the legislative shockwave tint (assembly / decree)
+
+function rebuildHouseMap() {
+  houseOf.clear();
+  for (const ag of econAgents) {
+    if (ag && ag.house) houseOf.set(ag.id, { name: ag.house, sigil: ag.sigil || "", color: houseColor(ag.house) });
+  }
+  focusCacheId = null;                    // house tints feed the focus set; invalidate the cache
+}
+
+/** The fly the eye is on: pointer hover wins, else the persisted inspector selection. */
+function currentFocus() { return hoverId != null ? hoverId : selectedId; }
+/** 1 for flies inside the focus's social neighbourhood, ~0.16 for everyone else (the "fade the rest"). */
+function focusDim(id) {
+  const foc = currentFocus();
+  if (foc == null) return 1;
+  if (focusCacheId !== foc) {
+    focusCacheId = foc;
+    const s = new Set([foc]);
+    if (societies) {
+      const ci = societies.colonyOf.get(foc);
+      if (ci != null && societies.colonies[ci]) for (const m of societies.colonies[ci].ids) s.add(m);
+      for (const p of societies.allies) { if (p.a === foc) s.add(p.b); else if (p.b === foc) s.add(p.a); }
+      for (const p of societies.feuds) { if (p.a === foc) s.add(p.b); else if (p.b === foc) s.add(p.a); }
+    }
+    focusSet = s;
+  }
+  return focusSet.has(id) ? 1 : 0.12;
+}
+
+/** Plant a fading grave stele where a fly is observed dying (its death position). */
+function plantMonument(f, now) {
+  f._mon = true;
+  const h = houseOf.get(f.id);
+  monuments.push({ x: f.x, y: f.y, t0: now, id: f.id, sigil: (h && h.sigil) || "", color: (h && h.color) || [120, 120, 124], pulse: 0 });
+  if (monuments.length > 48) monuments.shift();
+}
+
+/** Fading grave steles: a small headstone + a contracting house ring at each observed death spot. */
+function renderMonuments(pal, now) {
+  for (let i = monuments.length - 1; i >= 0; i--) {
+    const m = monuments[i];
+    const age = (now - m.t0) / MONUMENT_MS;
+    if (age >= 1) { monuments.splice(i, 1); continue; }
+    const fade = 1 - age;
+    const pulse = m.pulse ? Math.max(0, 1 - (now - m.pulse) / 900) : 0;   // an ELEGY re-lights its stele
+    const col = m.color;
+    ctx.save();
+    ctx.globalAlpha = fade * (0.8 + pulse * 0.2);
+    // a soft ground shadow so the stele sits ON the paper, not floats over it
+    ctx.fillStyle = rgba(col, 0.14);
+    ctx.beginPath(); ctx.ellipse(m.x, m.y + 7, 11, 3.4, 0, 0, TAU); ctx.fill();
+    // a larger headstone slab
+    ctx.fillStyle = rgba(col, 0.42);
+    ctx.beginPath();
+    ctx.moveTo(m.x - 6, m.y + 7); ctx.lineTo(m.x - 6, m.y - 4);
+    ctx.quadraticCurveTo(m.x - 6, m.y - 11, m.x, m.y - 11);
+    ctx.quadraticCurveTo(m.x + 6, m.y - 11, m.x + 6, m.y - 4);
+    ctx.lineTo(m.x + 6, m.y + 7);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = rgba(col, 0.7); ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 12 + pulse * 8, 0, TAU); ctx.stroke();
+    ctx.font = "600 12px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillStyle = rgba(col, 0.9);
+    ctx.fillText("†" + m.sigil, m.x, m.y + 9);
+    ctx.font = "8px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = rgba(col, 0.6);
+    ctx.fillText("#" + m.id, m.x, m.y + 22);
+    ctx.restore();
+  }
+}
+
+/** The chronicle made visible: every fresh ALLIANCE/FEUD/BETRAYAL/HOUSE_FOUNDED/ASSEMBLY/DECREE entry
+ *  becomes a transient canvas event at the actors' live positions, so each annals sentence can be
+ *  WATCHED happening on the field. */
+function renderChronFx(pal, now) {
+  // the epic centre-caption: the chronicle announcing itself in big serif type
+  if (chronBanner) {
+    const ba = (now - chronBanner.t0) / chronBanner.dur;
+    if (ba >= 1) chronBanner = null;
+    else {
+      const env = Math.sin(Math.PI * Math.min(1, ba));
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = "italic 600 30px Fraunces, Georgia, serif";
+      ctx.fillStyle = rgba(chronBanner.color, env * 0.92);
+      ctx.fillText(chronBanner.text, VW / 2, VH * 0.30);
+      if (chronBanner.sub) {
+        ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle = rgba(chronBanner.color, env * 0.62);
+        ctx.fillText(chronBanner.sub, VW / 2, VH * 0.30 + 26);
+      }
+      ctx.restore();
+    }
+  }
+  for (let i = chronFx.length - 1; i >= 0; i--) {
+    const fx = chronFx[i];
+    const age = (now - fx.t0) / fx.dur;
+    if (age >= 1) { chronFx.splice(i, 1); continue; }
+    const env = Math.sin(Math.PI * Math.min(1, age));      // fast in, slow out
+    if (fx.kind === "law") {
+      // a whole-field legislative shockwave: a faint gold wash + two expanding rings
+      ctx.fillStyle = rgba(LAW_GOLD, (1 - age) * 0.05);
+      ctx.fillRect(0, 0, VW, VH);
+      const R = age * Math.min(VW, VH) * 0.62;
+      ctx.strokeStyle = rgba(LAW_GOLD, (1 - age) * 0.5); ctx.lineWidth = 3.0 * (1 - age) + 0.5;
+      ctx.beginPath(); ctx.arc(VW / 2, VH / 2, R, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(LAW_GOLD, (1 - age) * 0.3); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(VW / 2, VH / 2, R * 0.72, 0, TAU); ctx.stroke();
+      continue;
+    }
+    if (fx.kind === "house") {
+      const f = sim.get(fx.a);
+      const x = f ? f.x : fx.x, y = f ? f.y : fx.y;
+      if (x == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(fx.color, 0.9); ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(x, y, 14 + age * 40, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(fx.color, 0.4); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, 8 + age * 26, 0, TAU); ctx.stroke();
+      ctx.font = "600 22px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(fx.color, 0.95);
+      ctx.fillText(fx.sigil, x, y - 20 - age * 14);
+      ctx.restore();
+      continue;
+    }
+    const a = sim.get(fx.a), b = sim.get(fx.b);
+    if (!a || !b) continue;
+    const colr = fx.kind === "alliance" ? GOLD_THREAD : CRACK_RED;
+    // shockwave rings bursting from each actor so the eye is drawn to the pair
+    ctx.strokeStyle = rgba(colr, env * 0.45); ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(a.x, a.y, 6 + age * 42, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(b.x, b.y, 6 + age * 42, 0, TAU); ctx.stroke();
+    if (fx.kind === "alliance") {
+      ctx.strokeStyle = rgba(GOLD_THREAD, env * 0.95); ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.strokeStyle = rgba(GOLD_THREAD, env * 0.6); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc((a.x + b.x) / 2, (a.y + b.y) / 2, 6 + age * 30, 0, TAU); ctx.stroke();
+    } else {   // feud / betrayal: a red rift flashing open between the two
+      ctx.strokeStyle = rgba(CRACK_RED, env * 0.95); ctx.lineWidth = 2.4;
+      traceCrack(a, b); ctx.stroke();
+    }
+  }
+}
+
+/** Turn one fresh chronicle entry into a canvas event (+ a one-shot social impulse so an alliance
+ *  visibly pulls its two colonies together for an instant, a feud shoves them apart). */
+function spawnChronFx(e) {
+  const actors = Array.isArray(e.actors) ? e.actors : [];
+  const a = actors[0], b = actors[1];
+  const now = performance.now();
+  if (e.kind === "ALLIANCE") {
+    if (a == null || b == null) return;
+    chronFx.push({ kind: "alliance", a, b, t0: now, dur: 2600 });
+    setBanner("❖ an alliance is sworn", `fly #${a} · fly #${b}`, GOLD_THREAD);
+    chronNudge(a, b, +1);
+  } else if (e.kind === "FEUD" || e.kind === "BETRAYAL") {
+    if (a == null || b == null) return;
+    chronFx.push({ kind: "feud", a, b, t0: now, dur: 2200 });
+    setBanner(e.kind === "BETRAYAL" ? "✕ a betrayal is written" : "⚔ a feud is declared", `fly #${a} · fly #${b}`, CRACK_RED);
+    chronNudge(a, b, -1);
+  } else if (e.kind === "HOUSE_FOUNDED") {
+    if (a == null) return;
+    const h = houseOf.get(a), f = sim.get(a);
+    chronFx.push({ kind: "house", a, x: f ? f.x : null, y: f ? f.y : null, sigil: (h && h.sigil) || "", color: (h && h.color) || LAW_GOLD, t0: now, dur: 3200 });
+    setBanner("⌂ a house is founded", h ? `the house of ${h.name}` : `fly #${a}`, (h && h.color) || LAW_GOLD);
+  } else if (e.kind === "ASSEMBLY" || e.kind === "DECREE") {
+    chronFx.push({ kind: "law", t0: now, dur: 3400 });
+    setBanner(e.kind === "ASSEMBLY" ? "⛬ the assembly convenes" : "✎ a decree is inscribed", "the commons speaks in law", LAW_GOLD);
+  } else if (e.kind === "ELEGY") {
+    const m = monuments.find((mm) => mm.id === a);
+    if (m) m.pulse = now;
+    setBanner("† a life is remembered", `fly #${a}`, [120, 120, 124]);
+  }
+}
+/** Flash the epic centre-caption for a chronicle event. */
+function setBanner(text, sub, color) {
+  chronBanner = { text, sub, color, t0: performance.now(), dur: 2600 };
+}
+/** One-shot impulse along the axis between two flies' colonies: +1 draws them together (a new
+ *  alliance), -1 shoves them apart (a new feud). Tiny and instantaneous — flavour, not physics. */
+function chronNudge(a, b, sign) {
+  const fa = sim.get(a), fb = sim.get(b);
+  if (!fa || !fb) return;
+  const dx = fb.x - fa.x, dy = fb.y - fa.y, d = Math.hypot(dx, dy) || 1;
+  const ux = dx / d, uy = dy / d, s = 0.5 * sign;
+  const push = (ci, dir, solo) => {
+    if (ci != null && societies && societies.colonies[ci]) {
+      for (const id of societies.colonies[ci].ids) { const f = sim.get(id); if (f && !f.dying) { f.vx += ux * s * dir; f.vy += uy * s * dir; } }
+    } else {
+      const f = sim.get(solo); if (f && !f.dying) { f.vx += ux * s * dir; f.vy += uy * s * dir; }
+    }
+  };
+  const ca = societies ? societies.colonyOf.get(a) : undefined;
+  const cb = societies ? societies.colonyOf.get(b) : undefined;
+  push(ca, +1, a); push(cb, -1, b);
+}
+
 /** Weighted-modularity community detection (Louvain local-moving, single level). The live bond graph is
  *  sparse and chain-like, so plain connected-components would lump the whole swarm into ONE colony; this
  *  splits it into the tight little societies that actually exist. Deterministic: fixed id ordering +
@@ -840,6 +1066,8 @@ function rebuildSocieties() {
   const colonyOf = new Map();
   for (let i = 0; i < colonies.length; i++) for (const id of colonies[i].ids) colonyOf.set(id, i);
   societies = { colonies, allies, feuds, colonyOf };
+  focusCacheId = null;                                  // the partition moved → rebuild the highlight set
+  if (selectedId != null) refreshInspectorSocial(selectedId);
 }
 
 /** Smooth organic boundary hugging a colony's living members: angular-bin the member radii around the
@@ -910,6 +1138,8 @@ function traceCrack(a, b) {
  *  a gold bond web inside each colony, and red conflict cracks between feuding flies. Beneath the flies. */
 function renderSocieties(pal, now) {
   if (!showSocieties || !societies || !societies.colonies.length) return;
+  const foc = currentFocus();
+  const focCol = foc != null ? societies.colonyOf.get(foc) : undefined;
   // 1) bounded territories hugging each colony's live members.
   //    The outline ring is recomputed EVERY frame (cheap bin math on reused scratch buffers, zero
   //    allocation) so the border tracks members smoothly at 60fps; only the radial glow gradient —
@@ -929,32 +1159,37 @@ function renderSocieties(pal, now) {
       grad.addColorStop(0, rgba(c.color, 0.10)); grad.addColorStop(1, rgba(c.color, 0));
       glow = c._glow = { grad, cx: blob.cx, cy: blob.cy, rmax: blob.rmax, t: now };
     }
+    const cdim = (foc != null && ci !== focCol) ? 0.18 : 1;   // focus highlight: fade the other colonies
     traceBlob(ctx, scr.P);
-    ctx.fillStyle = rgba(c.color, 0.13); ctx.fill();
-    ctx.strokeStyle = rgba(c.color, 0.55); ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.fillStyle = rgba(c.color, 0.13 * cdim); ctx.fill();
+    ctx.strokeStyle = rgba(c.color, 0.55 * cdim); ctx.lineWidth = 1.4; ctx.stroke();
     // soft inner glow for depth (cached gradient)
-    ctx.fillStyle = glow.grad; ctx.fill();
+    if (cdim >= 1) { ctx.fillStyle = glow.grad; ctx.fill(); }
     // label: colony name + headcount, above the territory
     ctx.save();
     ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.fillStyle = rgba(c.color, 0.9);
+    ctx.fillStyle = rgba(c.color, 0.9 * cdim);
     ctx.fillText(`${c.name} · ${pts.length}`, blob.cx, blob.cy - blob.rmax - 6);
     ctx.restore();
   }
   // 2) gold bond web inside colonies (the alliances that define each society)
-  ctx.lineWidth = 1.1;
   for (const p of societies.allies) {
     const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-    ctx.strokeStyle = rgba(GOLD_THREAD, 0.30 + p.w * 0.35);
+    const inv = foc != null && (p.a === foc || p.b === foc);
+    const ed = foc == null ? 1 : (inv ? 1 : 0.10);
+    ctx.lineWidth = inv ? 1.6 : 1.1;
+    ctx.strokeStyle = rgba(GOLD_THREAD, (0.30 + p.w * 0.35) * ed);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
   // 3) red conflict cracks between feuding flies
-  ctx.lineWidth = 1.3;
   for (const p of societies.feuds) {
     const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
     if (Math.hypot(a.x - b.x, a.y - b.y) > 380) continue;
-    ctx.strokeStyle = rgba(CRACK_RED, 0.5);
+    const inv = foc != null && (p.a === foc || p.b === foc);
+    const ed = foc == null ? 1 : (inv ? 1 : 0.10);
+    ctx.lineWidth = inv ? 1.7 : 1.3;
+    ctx.strokeStyle = rgba(CRACK_RED, 0.5 * ed);
     traceCrack(a, b); ctx.stroke();
   }
 }
@@ -975,6 +1210,9 @@ function render(pal, now) {
 
   // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
   renderSocieties(pal, now);
+
+  // fading grave steles at observed death positions (the dynasty's monuments, on the field)
+  renderMonuments(pal, now);
 
   const acc = pal.accent;
 
@@ -1014,14 +1252,20 @@ function render(pal, now) {
     let alpha = clamp((now - f.born) / 900);
     if (f.dying) alpha = clamp(1 - (now - (f.dieT || now)) / 820);
     if (alpha <= 0.001) continue;
+    if (f.dying && !f._mon) plantMonument(f, now);   // a death observed live leaves a fading stele
     drawFly(f, acc, alpha, now);
   }
 
   // x402 settlement packets flying payer → payee (over the swarm, so the money is visible)
   renderPayments(pal, now);
+
+  // the chronicle made visible: transient alliance/feud/house/legislative events, over everything
+  renderChronFx(pal, now);
 }
 
 function drawFly(f, acc, alpha, now) {
+  alpha *= focusDim(f.id);                                   // focus highlight: fade the un-related
+  const hs = houseOf.get(f.id);                              // dynasty bloodline tint (ring + trail)
   const flap = Math.sin(f.phase) * 0.5 + 0.5;               // 0..1 wingbeat phase
   const balN = f.balN != null ? f.balN : 0.5;
   // Colour AND size both encode wealth: the richer the wallet, the warmer (slate → gold) and bigger the
@@ -1036,8 +1280,8 @@ function drawFly(f, acc, alpha, now) {
   // ink trail: a short stroke from the previous position (stronger when aroused)
   const tdx = f.x - f.px, tdy = f.y - f.py;
   if (quality >= 1 && tdx * tdx + tdy * tdy > 0.6) {
-    ctx.strokeStyle = rgba(body, (0.05 + f.aro * 0.15) * alpha);
-    ctx.lineWidth = size * 0.6;
+    ctx.strokeStyle = rgba(hs && hs.color ? mix(body, hs.color, 0.8) : body, (0.10 + f.aro * 0.22) * alpha);
+    ctx.lineWidth = size * 0.8;
     ctx.beginPath(); ctx.moveTo(f.px, f.py); ctx.lineTo(f.x, f.y); ctx.stroke();
   }
 
@@ -1071,6 +1315,25 @@ function drawFly(f, acc, alpha, now) {
     ctx.beginPath(); ctx.ellipse(0, 0, size * 1.5, size * 0.82, 0, 0, TAU); ctx.fill();
   }
   ctx.restore();
+
+  // dynasty bloodline: a bold house-coloured band + a comet streak, so a family reads as coloured
+  // ribbons inside its colony at a glance (two concentric rings + a trailing ribbon when moving)
+  if (hs && hs.color) {
+    ctx.strokeStyle = rgba(hs.color, 0.9 * alpha);
+    ctx.lineWidth = 2.0;
+    ctx.beginPath(); ctx.arc(f.x, f.y, size * 2.2, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = rgba(hs.color, 0.35 * alpha);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, size * 2.9, 0, TAU); ctx.stroke();
+    const sp = Math.hypot(f.vx, f.vy);
+    if (sp > 0.12) {
+      const ux = f.vx / sp, uy = f.vy / sp;
+      for (let k = 1; k <= 3; k++) {
+        ctx.fillStyle = rgba(hs.color, (0.34 - k * 0.09) * alpha);
+        ctx.beginPath(); ctx.arc(f.x - ux * k * size * 1.5, f.y - uy * k * size * 1.5, Math.max(0.6, size * (0.55 - k * 0.13)), 0, TAU); ctx.fill();
+      }
+    }
+  }
 
   // bred-offspring marker: a thin accent ring around any live fly hatched PAST the fixed genesis cohort
   // (id >= populationSize). Genesis flies are the permanent founding 24; a ring means "this individual was
@@ -1530,7 +1793,12 @@ function updateEconFoot() {
     f.classList.remove("live");
     f.classList.add("stale");
   } else if (econMode === "onchain") {
-    f.textContent = "live · settled on Arc mainnet · click any hash to verify on-chain";
+    // publish real settlement reliability: mined successes over total on-chain broadcast attempts
+    const ok = econTotals ? (econTotals.settleOk || 0) : 0;
+    const att = econTotals ? (econTotals.settleAttempts || 0) : 0;
+    const sr = econTotals && econTotals.successRate != null ? econTotals.successRate : null;
+    const rateTxt = sr != null ? ` · ${ok}/${att} settled ${(sr * 100).toFixed(1)}% on-chain` : "";
+    f.textContent = "live · settled on Arc mainnet · click any hash to verify on-chain" + rateTxt;
     f.classList.remove("stale");
     f.classList.add("live");
   } else {
@@ -1613,6 +1881,7 @@ function updateWallet(ag) {
 // official Arc explorer so any wallet's on-chain activity can be verified.
 function applyEconAgents(agents) {
   econAgents = agents;
+  rebuildHouseMap();              // fresh roster → refresh the dynasty bloodline tint
   refreshBalanceScale();          // fresh roster → refresh the wealth scale that drives fly size
   if (walletsOpen) renderWallets();
 }
@@ -2157,6 +2426,16 @@ function closeChron() {
 }
 function toggleChron() { if (chronOpen) closeChron(); else openChron(); }
 
+/** Open one volume of the chronicle codex: flip the epic tab rail + show only that volume's body. */
+function setChronVol(vol) {
+  for (const t of document.querySelectorAll("#chron-tabs .chron-tab")) {
+    const on = t.dataset.vol === vol;
+    t.classList.toggle("is-on", on);
+    t.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  for (const v of document.querySelectorAll("#panel-chron .chron-vol")) v.classList.toggle("is-on", v.dataset.vol === vol);
+}
+
 // ================= the chronicle drawer (opened from the bottom-right button) =================
 // Poll /annals — the deterministic historian's timeline. The poll runs whether or not the drawer is open,
 // so the sheet is never stale when the button pulls it in: era badge, entry list, and the browser-side
@@ -2170,6 +2449,8 @@ async function pollChron() {
       chronMeta = { era: r.era, eraName: r.eraName, eraRegime: r.eraRegime, seq: r.seq,
         eraShock: r.eraShock || null, eraShockWilled: !!r.eraShockWilled,
         headHash: r.headHash || null, chroniclerHash: r.chroniclerHash || null, version: r.version || null };
+      // the chronicle made visible: hand every entry newer than the last-shown seq to the canvas FX
+      if (chronSeenSeq > 0) for (const e of chronRows) { if ((e.seq || 0) <= chronSeenSeq) break; spawnChronFx(e); }
       renderChron();
       if (chronVerifyState) renderChronVerdict();
     } else {
@@ -3863,6 +4144,25 @@ function fillInspectorFromSim(id) {
   renderEthogram(f);
   $("ins-temp").textContent = (f.temperament ?? 0).toFixed(2);
   $("ins-fp").textContent = f.fingerprint || "–";
+  refreshInspectorSocial(id);
+}
+
+/** The inspector's social line: colony · allies · feuds · house (the lineage + society read-out). */
+function refreshInspectorSocial(id) {
+  const el = $("ins-social");
+  if (!el) return;
+  const parts = [];
+  if (societies) {
+    const ci = societies.colonyOf.get(id);
+    if (ci != null && societies.colonies[ci]) parts.push(societies.colonies[ci].name);
+    let al = 0, fe = 0;
+    for (const p of societies.allies) if (p.a === id || p.b === id) al++;
+    for (const p of societies.feuds) if (p.a === id || p.b === id) fe++;
+    parts.push(al + (al === 1 ? " ally" : " allies"), fe + (fe === 1 ? " feud" : " feuds"));
+  }
+  const h = houseOf.get(id);
+  parts.push(h ? `${h.sigil ? h.sigil + " " : ""}House of ${h.name}` : "no house");
+  el.textContent = parts.join(" · ");
 }
 
 function renderDrives(f) {
@@ -4163,14 +4463,29 @@ function getRect() {
   if (!cachedRect) cachedRect = canvas.getBoundingClientRect();
   return cachedRect;
 }
+let lastHoverAt = 0;
+/** Throttled nearest-fly pick under the pointer — the hover half of the focus highlight. */
+function pickHover() {
+  const pn = performance.now();
+  if (pn - lastHoverAt < 90) return;      // pointermove fires far faster than the highlight needs
+  lastHoverAt = pn;
+  let best = null, bd = Infinity;
+  for (const f of sim.values()) {
+    if (f.dying) continue;
+    const d = Math.hypot(f.x - pointer.x, f.y - pointer.y);
+    if (d < bd) { bd = d; best = f; }
+  }
+  hoverId = (best && bd < 26) ? best.id : null;
+  canvas.style.cursor = hoverId != null ? "pointer" : "";
+}
 function bindPointer() {
   const toLocal = (e) => {
     const rect = getRect();          // cached — pointermove fires constantly; don't reflow each time
     pointer.x = e.clientX - rect.left;
     pointer.y = e.clientY - rect.top;
   };
-  canvas.addEventListener("pointermove", (e) => { toLocal(e); pointer.inside = true; });
-  canvas.addEventListener("pointerleave", () => { pointer.inside = false; pointer.down = false; });
+  canvas.addEventListener("pointermove", (e) => { toLocal(e); pointer.inside = true; pickHover(); });
+  canvas.addEventListener("pointerleave", () => { pointer.inside = false; pointer.down = false; hoverId = null; canvas.style.cursor = ""; });
   canvas.addEventListener("pointerdown", (e) => {
     // swallow click-storms: cap interaction-driven work so rapid clicking can never stall the tab
     const pn = performance.now();
@@ -4249,6 +4564,8 @@ function bindUI() {
   const crb = $("chron-btn"); if (crb) crb.addEventListener("click", toggleChron);
   const crc = $("chron-close"); if (crc) crc.addEventListener("click", closeChron);
   const cp = $("chron-prove"); if (cp) cp.addEventListener("click", proveChron);
+    const ctabs = $("chron-tabs");
+    if (ctabs) ctabs.addEventListener("click", (e) => { const b = e.target.closest(".chron-tab"); if (b) setChronVol(b.dataset.vol); });
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
   const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);

@@ -769,6 +769,25 @@ body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-event
 .panel-chron .chron-verify { margin: 0 0 8px; flex: none; }
 .panel-chron .chron-list { flex: 1; min-height: 40px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 7px; }
 .panel-chron .chron-item { padding: 6px 8px; gap: 7px; }
+/* --- the chronicle as one codex in five volumes: an epic tab rail, one volume open at a time --- */
+.chron-tabs { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; flex: none; }
+.chron-tab {
+  display: grid; grid-template-columns: 20px 1fr; grid-template-rows: auto auto; column-gap: 8px;
+  align-items: baseline; text-align: left; cursor: pointer;
+  padding: 7px 10px; border: 1px solid var(--hair); border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.03); color: var(--muted);
+  transition: background 0.18s, border-color 0.18s;
+}
+.chron-tab .ct-ico { grid-row: 1 / span 2; align-self: center; text-align: center; font-size: 14px; color: var(--muted); }
+.chron-tab .ct-name { font-family: var(--display); font-style: italic; font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.chron-tab .ct-sub { grid-column: 2; font-family: var(--mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.chron-tab:hover { background: rgba(var(--accent-rgb), 0.07); }
+.chron-tab.is-on { background: rgba(var(--accent-rgb), 0.10); border-color: rgba(var(--accent-rgb), 0.5); }
+.chron-tab.is-on .ct-ico, .chron-tab.is-on .ct-name { color: var(--accent); }
+.chron-vol { display: none; }
+.chron-vol.is-on { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* each volume now owns the whole drawer body, so drop the old shared-drawer height caps */
+.panel-chron .chron-vol .wallets-social { max-height: none; }
 .panel-chron .chron-icon { width: 15px; font-size: 11.5px; }
 .panel-chron .chron-line { font-size: 11.5px; }
 .panel-chron .wallets-social { flex: none; max-height: 36%; margin: 0; padding-top: 10px; }
