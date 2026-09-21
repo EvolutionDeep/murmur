@@ -355,7 +355,7 @@ let lastHistSample = 0;
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
-let showMind = true, showShards = true;
+let showMind = true, showShards = true, showSocieties = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
@@ -486,6 +486,31 @@ function updateSim(dt, now) {
   const flowStr = 0.04 + T * 0.20;      // the current pushes harder when it is hot
   const list = [...sim.values()];
 
+  // ---- societies (MVP) social force field: pre-compute each fly's colony pull into f.sx/f.sy ----
+  //      A pure read-out of econSocial — bonded flies attract, feuders repel, colony anchors spread the
+  //      societies apart. socOn=false ⇒ no accumulators touched ⇒ byte-for-byte today's boids physics.
+  const socOn = showSocieties && societies && societies.colonies.length > 0;
+  if (socOn) {
+    const smx = Math.max(96, Math.round(VW * 0.21)), smy = Math.max(88, Math.round(VH * 0.19));
+    for (const f of list) { f.sx = 0; f.sy = 0; }
+    for (const c of societies.colonies) {
+      const axp = smx + c.ax * (VW - 2 * smx), ayp = smy + c.ay * (VH - 2 * smy);
+      for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { f.sx += (axp - f.x) * SOCIETY_ANCHOR_K; f.sy += (ayp - f.y) * SOCIETY_ANCHOR_K; } }
+    }
+    for (const p of societies.allies) {
+      const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, s = p.w * SOCIETY_ALLY_K;
+      a.sx += (dx / d) * s; a.sy += (dy / d) * s; b.sx -= (dx / d) * s; b.sy -= (dy / d) * s;
+    }
+    for (const p of societies.feuds) {
+      const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      if (d > SOCIETY_FEUD_RANGE) continue;
+      const s = p.w * SOCIETY_FEUD_K * (1 - d / SOCIETY_FEUD_RANGE);
+      a.sx -= (dx / d) * s; a.sy -= (dy / d) * s; b.sx += (dx / d) * s; b.sy += (dy / d) * s;
+    }
+  }
+
   for (const f of list) {
     // fade-out retired flies, then drop them
     if (f.dying) {
@@ -530,12 +555,20 @@ function updateSim(dt, now) {
     ax -= (dx / d) * (1 - f.coh) * T * 0.7;
     ay -= (dy / d) * (1 - f.coh) * T * 0.7;
 
-    // separation from neighbours (personal space)
+    // separation from neighbours (personal space); flies of DIFFERENT colonies keep extra distance so
+    // the societies stay visually distinct (only when the social layer is on)
     for (const g of list) {
       if (g === f || g.dying) continue;
       const sx = f.x - g.x, sy = f.y - g.y, sd = Math.hypot(sx, sy);
-      if (sd > 0 && sd < SEP) { const push = (SEP - sd) * 0.028; ax += (sx / sd) * push; ay += (sy / sd) * push; }
+      if (sd > 0 && sd < SEP) {
+        let push = (SEP - sd) * 0.028;
+        if (socOn && societies.colonyOf) { const ca = societies.colonyOf.get(f.id), cb = societies.colonyOf.get(g.id); if (ca != null && cb != null && ca !== cb) push *= 1.9; }
+        ax += (sx / sd) * push; ay += (sy / sd) * push;
+      }
     }
+
+    // the social force field (societies MVP): colony anchor + ally pull + feud push, pre-computed above
+    if (socOn) { ax += (f.sx || 0); ay += (f.sy || 0); }
 
     // the pointer stirs the swarm: hover draws flies in, press blows them apart
     if (pointer.inside) {
@@ -669,6 +702,159 @@ function renderShards(pal, now) {
   ctx.restore();
 }
 
+// ================= societies (MVP): the social graph made visible on the canvas =================
+// A pure read-out of econSocial.bonds/grudges, partitioned CLIENT-SIDE into "colonies" (connected
+// components of the alliance graph). Bonded flies then pull together, feuds push apart, and each
+// colony gets a soft territory aura + bond filaments. Never touches the server drives, the connectome,
+// or the economy — showSocieties=false (or no social data) ⇒ zero force ⇒ byte-for-byte today's boids.
+let societies = null;   // { colonies:[{ids,ax,ay,color,founder}], allies:[{a,b,w}], feuds:[{a,b,w}], colonyOf:Map<id,idx> }
+
+const SOCIETY_BOND_MIN = 0.25;     // min bond score to count as an alliance edge
+const SOCIETY_FEUD_MAX = -0.6;     // bond score at/under which two flies actively shun each other
+const SOCIETY_ANCHOR_K = 0.0025;   // spring toward the colony's home anchor (gentle, ~ cohesion scale)
+const SOCIETY_ALLY_K = 0.5;        // ally pull accel (unit vector × bond weight)
+const SOCIETY_FEUD_K = 1.1;        // feud push accel, faded out beyond SOCIETY_FEUD_RANGE
+const SOCIETY_FEUD_RANGE = 220;    // css px — grudges only shove when the flies are this close
+// muted jewel/earth tones so colonies read on the light paper without clashing with the palette
+const COLONY_COLORS = [
+  [91, 124, 141], [154, 110, 90], [120, 140, 96], [176, 142, 86],
+  [140, 104, 140], [96, 140, 138], [168, 110, 110], [124, 124, 168],
+];
+const fnv1a = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; };
+
+/** Weighted-modularity community detection (Louvain local-moving, single level). The live bond graph is
+ *  sparse and chain-like, so plain connected-components would lump the whole swarm into ONE colony; this
+ *  splits it into the tight little societies that actually exist. Deterministic: fixed id ordering +
+ *  tie-break by smallest community id, so the same bonds always give the same partition. */
+function louvainCommunities(nodes, edges) {
+  const adj = new Map();
+  for (const id of nodes) adj.set(id, new Map());
+  for (const e of edges) {
+    if (!adj.has(e.a) || !adj.has(e.b) || e.a === e.b) continue;
+    adj.get(e.a).set(e.b, (adj.get(e.a).get(e.b) || 0) + e.w);
+    adj.get(e.b).set(e.a, (adj.get(e.b).get(e.a) || 0) + e.w);
+  }
+  const k = new Map(); let m2 = 0;                 // m2 = 2m = sum of weighted degrees
+  for (const id of nodes) { let s = 0; for (const w of adj.get(id).values()) s += w; k.set(id, s); m2 += s; }
+  const comm = new Map(); for (const id of nodes) comm.set(id, id);
+  if (m2 <= 0) return comm;
+  const order = [...nodes].sort((x, y) => x - y);
+  for (let pass = 0; pass < 10; pass++) {
+    let moved = false;
+    for (const i of order) {
+      const ci = comm.get(i), ki = k.get(i);
+      const tot = new Map();
+      for (const id of nodes) { const c = comm.get(id); tot.set(c, (tot.get(c) || 0) + k.get(id)); }
+      const neighComm = new Map();
+      for (const [j, w] of adj.get(i)) { const cj = comm.get(j); neighComm.set(cj, (neighComm.get(cj) || 0) + w); }
+      const candidates = new Set(neighComm.keys()); candidates.add(ci);
+      let bestC = ci, bestGain = -Infinity;
+      for (const C of candidates) {
+        const wIC = neighComm.get(C) || 0;
+        let totC = tot.get(C) || 0;
+        if (C === ci) totC -= ki;                   // i leaves its own community before re-joining
+        const gain = (2 * wIC) / m2 - (2 * totC * ki) / (m2 * m2);
+        if (gain > bestGain + 1e-12 || (Math.abs(gain - bestGain) <= 1e-12 && C < bestC)) { bestGain = gain; bestC = C; }
+      }
+      if (bestC !== ci) { comm.set(i, bestC); moved = true; }
+    }
+    if (!moved) break;
+  }
+  return comm;
+}
+
+/** Rebuild the colony partition from the latest social read-out. Deterministic: the same bonds always
+ *  yield the same colonies, anchors and colours, so the field never jitters between polls. */
+function rebuildSocieties() {
+  const s = econSocial;
+  if (!s || !Array.isArray(s.bonds) || !s.bonds.length) { societies = null; return; }
+  const pairW = new Map();                          // undirected "lo:hi" → weight (max of both directions)
+  const nodeSet = new Set(), feuds = [];
+  for (const b of s.bonds) {
+    if (!b || b.a == null || b.b == null || b.a === b.b) continue;
+    const sc = typeof b.score === "number" ? b.score : 0;
+    if (sc >= SOCIETY_BOND_MIN) {
+      const key = Math.min(b.a, b.b) + ":" + Math.max(b.a, b.b);
+      pairW.set(key, Math.max(pairW.get(key) || 0, sc));
+      nodeSet.add(b.a); nodeSet.add(b.b);
+    } else if (sc <= SOCIETY_FEUD_MAX) {
+      feuds.push({ a: b.a, b: b.b, w: clamp(-sc) });
+    }
+  }
+  // the grudge book is a feud even if the bond has since faded — surface it as a rift too
+  if (Array.isArray(s.grudges)) for (const g of s.grudges) { if (g && g.buyerId != null && g.sellerId != null && g.buyerId !== g.sellerId) feuds.push({ a: g.buyerId, b: g.sellerId, w: 0.8 }); }
+  const nodes = [...nodeSet].sort((x, y) => x - y);
+  const edges = [...pairW.entries()].map(([key, w]) => { const p = key.split(":"); return { a: +p[0], b: +p[1], w }; });
+  const allies = edges.map((e) => ({ a: e.a, b: e.b, w: clamp(e.w) }));
+  // weighted-modularity communities ⇒ colonies (a lone fly is not a society)
+  const comm = louvainCommunities(nodes, edges);
+  const groups = new Map();
+  for (const id of nodes) { const c = comm.get(id); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(id); }
+  const colonies = [];
+  for (const ids of groups.values()) {
+    if (ids.length < 2) continue;
+    ids.sort((x, y) => x - y);
+    colonies.push({ ids, founder: ids[0] });
+  }
+  colonies.sort((p, q) => p.founder - q.founder);
+  // deterministic, collision-free home anchors on a 4×3 grid (linear-probe on a hash clash) + a distinct
+  // colour per colony, so the societies spread across the field instead of piling onto one spot
+  const SLOTS = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) SLOTS.push([0.16 + 0.226 * c, 0.22 + 0.28 * r]);
+  const taken = new Set();
+  for (let i = 0; i < colonies.length; i++) {
+    const col = colonies[i], h = fnv1a("colony:" + col.founder);
+    let si = h % SLOTS.length; while (taken.has(si)) si = (si + 1) % SLOTS.length; taken.add(si);
+    const jx = ((h >>> 8) % 100) / 100 - 0.5, jy = ((h >>> 16) % 100) / 100 - 0.5;
+    col.ax = clamp(SLOTS[si][0] + jx * 0.05, 0.06, 0.94);
+    col.ay = clamp(SLOTS[si][1] + jy * 0.05, 0.06, 0.94);
+    col.color = COLONY_COLORS[i % COLONY_COLORS.length];
+  }
+  const colonyOf = new Map();
+  for (let i = 0; i < colonies.length; i++) for (const id of colonies[i].ids) colonyOf.set(id, i);
+  societies = { colonies, allies, feuds, colonyOf };
+}
+
+/** Draw the colonies beneath the flies: a soft territory aura at each colony's LIVE centroid, gold
+ *  bond filaments between allies, and dashed red rifts between nearby feuding flies. */
+function renderSocieties(pal, now) {
+  if (!showSocieties || !societies || !societies.colonies.length) return;
+  // territory auras — centred on where the members actually are, so the colony breathes with them
+  for (const c of societies.colonies) {
+    const pts = [];
+    let sx = 0, sy = 0;
+    for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { pts.push(f); sx += f.x; sy += f.y; } }
+    if (pts.length < 2) continue;
+    const cxp = sx / pts.length, cyp = sy / pts.length;
+    let rmax = 0; for (const f of pts) { const d = Math.hypot(f.x - cxp, f.y - cyp); if (d > rmax) rmax = d; }
+    const R = rmax + 34;
+    const g = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
+    g.addColorStop(0, rgba(c.color, 0.11));
+    g.addColorStop(0.6, rgba(c.color, 0.05));
+    g.addColorStop(1, rgba(c.color, 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, TAU); ctx.fill();
+    ctx.strokeStyle = rgba(c.color, 0.10); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cxp, cyp, R * 0.92, 0, TAU); ctx.stroke();
+  }
+  // bond filaments (allies) — tinted by the colony they belong to, brighter the stronger the bond
+  ctx.lineWidth = 0.9;
+  for (const p of societies.allies) {
+    const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+    const ci = societies.colonyOf.get(p.a);
+    const col = (ci != null && societies.colonies[ci]) ? societies.colonies[ci].color : [180, 150, 90];
+    ctx.strokeStyle = rgba(col, 0.10 + p.w * 0.28);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  // feud rifts — only when the two are near enough to see the tension
+  ctx.save(); ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+  for (const p of societies.feuds) {
+    const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+    if (Math.hypot(a.x - b.x, a.y - b.y) > 320) continue;
+    ctx.strokeStyle = rgba([176, 64, 48], 0.30);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function render(pal, now) {
   // trail wash: cohesive swarms leave long lingering trails, scattered ones fade fast
   const fade = 0.055 + (1 - cohSmoothed) * 0.24;
@@ -680,6 +866,9 @@ function render(pal, now) {
 
   // ambient flow ink (under everything)
   if (quality >= 1) renderMotes(pal);
+
+  // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
+  renderSocieties(pal, now);
 
   const acc = pal.accent;
 
@@ -1140,7 +1329,7 @@ function applyEconomy(econ) {
   }
   refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
-  if (econ.social) { econSocial = econ.social; renderSocialSection(); }
+  if (econ.social) { econSocial = econ.social; renderSocialSection(); rebuildSocieties(); }
   if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
   if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
   if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
@@ -3945,6 +4134,7 @@ function bindUI() {
     b.classList.toggle("is-on", on);
     if (b.dataset.layer === "mind") showMind = on;
     else if (b.dataset.layer === "shards") showShards = on;
+    else if (b.dataset.layer === "societies") showSocieties = on;
   });
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
   const wc = $("wallets-close"); if (wc) wc.addEventListener("click", closeWallets);
