@@ -29,9 +29,11 @@
   --rest: #8b9a86;
 
   /* --- type --- */
-  --display: "Fraunces", "Iowan Old Style", Georgia, serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --cjk: "PingFang SC", "Hiragino Sans", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", sans-serif;
+  /* Noto webfont fallbacks (loaded in index.html) keep CJK + Arabic glyphs from tofu-ing when the
+     display/mono latin faces have no coverage; the primary faces are unchanged for LTR latin. */
+  --display: "Fraunces", "Iowan Old Style", Georgia, "Noto Serif SC", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", monospace;
+  --cjk: "PingFang SC", "Hiragino Sans", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", sans-serif;
 
   --pad: clamp(14px, 2.4vw, 28px);
 }
@@ -123,6 +125,23 @@ body { transition: background 1.6s linear; }
   0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
   50%      { box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0); }
 }
+
+/* --- language switcher (globe dropdown in the top meta) --- */
+.lang-select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--hair); border-radius: 2px;
+  padding: 2px 20px 2px 8px; margin-right: 2px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 11px) 55%, calc(100% - 7px) 55%;
+  background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  transition: color 0.35s ease, border-color 0.35s ease;
+}
+.lang-select:hover, .lang-select:focus { color: var(--ink); border-color: var(--accent); outline: none; }
+.lang-select option { color: var(--ink); background: var(--paper); font-family: var(--mono); }
+/* keep the globe dropdown LTR even under Arabic so the chevron + geometry don't drift */
+[dir="rtl"] .lang-select { direction: ltr; text-align: left; }
 
 /* ============ floating panels ============ */
 .panel {
@@ -788,6 +807,26 @@ body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-event
 .chron-vol.is-on { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 /* each volume now owns the whole drawer body, so drop the old shared-drawer height caps */
 .panel-chron .chron-vol .wallets-social { max-height: none; }
+/* --- ⑤ the social graph: a force-directed node-link that fills its volume --- */
+.chron-vol[data-vol="graph"] { overflow: hidden; }
+.sg-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; margin: 0 0 8px; }
+.sg-title { font-family: var(--display); font-style: italic; font-weight: 600; font-size: 13px; color: var(--ink); }
+.sg-title em { font-style: normal; font-family: var(--mono); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.sg-tools { display: flex; gap: 4px; flex: none; }
+.sg-btn { font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 7px; border: 1px solid var(--hair); border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; transition: background 0.16s, border-color 0.16s, color 0.16s; }
+.sg-btn:hover { background: rgba(var(--accent-rgb), 0.07); }
+.sg-btn.is-on { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.10); }
+.sg-canvas-wrap { position: relative; flex: 1; min-height: 240px; border: 1px solid var(--hair); border-radius: 4px; background: rgba(var(--accent-rgb), 0.02); overflow: hidden; }
+#social-graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#social-graph.dragging { cursor: grabbing; }
+.sg-legend { display: flex; flex-wrap: wrap; gap: 12px; flex: none; margin-top: 8px; font-family: var(--mono); font-size: 8px; letter-spacing: 0.04em; color: var(--muted); }
+.sg-legend span { display: inline-flex; align-items: center; }
+.sg-legend .sg-line { display: inline-block; width: 12px; height: 2px; border-radius: 1px; margin-right: 5px; }
+.sg-legend .sg-trust { background: rgb(92, 158, 96); }
+.sg-legend .sg-grudge { background: rgb(198, 60, 44); }
+.sg-legend .sg-ring { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--muted); margin-right: 5px; }
+.sg-legend .sg-halo { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1.2px solid rgba(150, 104, 140, 0.8); margin-right: 5px; }
+.sg-tip { position: absolute; z-index: 2; pointer-events: none; padding: 5px 7px; border: 1px solid var(--hair); border-radius: 4px; background: rgba(250, 249, 245, 0.97); color: var(--ink); font-family: var(--mono); font-size: 9px; line-height: 1.55; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); max-width: 210px; }
 .panel-chron .chron-icon { width: 15px; font-size: 11.5px; }
 .panel-chron .chron-line { font-size: 11.5px; }
 .panel-chron .wallets-social { flex: none; max-height: 36%; margin: 0; padding-top: 10px; }
@@ -1356,4 +1395,37 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.08s !important; }
+}
+
+/* ============ Arabic · text-only RTL ============ */
+/* setLang flags <html dir="rtl"> for Arabic. To honour "panels + canvas geometry stay LTR, only text
+   reads right-to-left", we re-pin the whole shell to LTR (so no flex row, fixed panel, or canvas drifts)
+   and then opt the localised prose back to RTL. Unicode bidi shapes Arabic correctly either way. */
+html[dir="rtl"] body { direction: ltr; }
+html[dir="rtl"] .chron-line,
+html[dir="rtl"] .chron-empty,
+html[dir="rtl"] .chron-meta,
+html[dir="rtl"] .drawer-title,
+html[dir="rtl"] .drawer-sub,
+html[dir="rtl"] .wsoc-title,
+html[dir="rtl"] .wsoc-row,
+html[dir="rtl"] .dyn-row,
+html[dir="rtl"] .dyn-grave,
+html[dir="rtl"] .cult-row,
+html[dir="rtl"] .com-row,
+html[dir="rtl"] .wmk-foot,
+html[dir="rtl"] .econ-line-txt,
+html[dir="rtl"] .cv-t,
+html[dir="rtl"] .cv-note,
+html[dir="rtl"] .cv-head,
+html[dir="rtl"] .ins-foot,
+html[dir="rtl"] .panel-title,
+html[dir="rtl"] .econ-foot,
+html[dir="rtl"] .net-note,
+html[dir="rtl"] .hist-foot,
+html[dir="rtl"] .chron-era-name,
+html[dir="rtl"] .chron-era-regime,
+html[dir="rtl"] .chron-btn .chron-label,
+html[dir="rtl"] .dist-legend li {
+  direction: rtl; text-align: right;
 }

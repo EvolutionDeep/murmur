@@ -8,16 +8,18 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=49" />
+  <link rel="stylesheet" href="./styles.css?v=51" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <!-- CJK + Arabic webfonts so every UI language has real glyphs (no tofu). Weights kept lean. -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600&family=Noto+Sans+JP:wght@400;600&family=Noto+Sans+KR:wght@400;600&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet" />
 </head>
 <body>
   <!-- The generative field: the whole page IS the artwork. Everything else floats above it. -->
-  <canvas id="field" aria-label="a living population of fruit-fly agents reacting to and settling on the arc market"></canvas>
+  <canvas id="field" data-i18n-aria="field.aria" aria-label="a living population of fruit-fly agents reacting to and settling on the arc market"></canvas>
   <div class="grain" aria-hidden="true"></div>
   <div class="vignette" aria-hidden="true"></div>
 
@@ -30,51 +32,52 @@
       <span class="name">murmur</span>
     </div>
     <div class="topmeta">
-      <a class="x-link" href="https://x.com/murmur_arc" target="_blank" rel="noopener noreferrer" aria-label="murmur on X (@murmur_arc)">
+      <select id="lang-select" class="lang-select" aria-label="language" title="language / 语言 / langue"></select>
+      <a class="x-link" href="https://x.com/murmur_arc" target="_blank" rel="noopener noreferrer" data-i18n-aria="top.xTitle" aria-label="murmur on X (@murmur_arc)">
         <svg class="x-glyph" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         <span class="x-handle">murmur_arc</span>
       </a>
       <a class="gh-link" href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener noreferrer" aria-label="murmur source code on GitHub" title="source · github.com/EvolutionDeep/murmur">
         <svg class="gh-glyph" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
       </a>
-      <a class="api-link" href="/developers" title="the murmur public API — docs for developers">api</a>
-      <a class="api-link" href="/community" title="the murmur community — token-gated governance for MURMUR holders">community</a>
+      <a class="api-link" href="/developers" data-i18n="top.api" data-i18n-title="top.apiTitle" title="the murmur public API — docs for developers">api</a>
+      <a class="api-link" href="/community" data-i18n="top.community" data-i18n-title="top.communityTitle" title="the murmur community — token-gated governance for MURMUR holders">community</a>
       <span class="sep">/</span>
       <span class="link-dot" id="link-dot"></span>
       <span id="chain">arc</span>
       <span class="sep">/</span>
-      <span id="status">connecting…</span>
+      <span id="status" data-i18n="top.status.connecting">connecting…</span>
     </div>
   </header>
 
   <!-- cron heartbeat watchdog: when the DO cron stalls (lastCron grows stale) this bar surfaces so a
        frozen feed is never mistaken for a live one. Hidden until the client sees a stale heartbeat. -->
-  <div class="cron-warn" id="cron-warn" role="alert" hidden>⚠ 史官休眠 · 数据可能已停摆</div>
+  <div class="cron-warn" id="cron-warn" role="alert" hidden data-i18n="cron.warn">⚠ 史官休眠 · 数据可能已停摆</div>
 
   <!-- ============ agent economy (top-left): the x402 swarm ledger ============ -->
   <section class="panel panel-econ">
     <div class="panel-title">
-      <span>agent economy</span>
+      <span data-i18n="econ.title">agent economy</span>
       <span class="econ-mode" id="econ-mode">x402</span>
     </div>
     <div class="econ-hero">
       <span class="econ-vol" id="econ-vol">0.000</span>
-      <span class="econ-unit">usdc settled</span>
+      <span class="econ-unit" data-i18n="econ.usdcSettled">usdc settled</span>
     </div>
     <dl class="micro econ-grid">
-      <div><dt>deals</dt><dd id="econ-deals">0</dd></div>
-      <div><dt>agents</dt><dd id="econ-agents">–</dd></div>
-      <div><dt>mean</dt><dd id="econ-mean">–</dd></div>
-      <div><dt>gini</dt><dd id="econ-gini">–</dd></div>
+      <div><dt data-i18n="econ.deals">deals</dt><dd id="econ-deals">0</dd></div>
+      <div><dt data-i18n="econ.agents">agents</dt><dd id="econ-agents">–</dd></div>
+      <div><dt data-i18n="econ.mean">mean</dt><dd id="econ-mean">–</dd></div>
+      <div><dt data-i18n="econ.gini">gini</dt><dd id="econ-gini">–</dd></div>
     </dl>
     <div class="econ-feed" id="econ-feed" aria-live="off"></div>
-    <div class="net-note" id="net-note" title="Trades are folded into a signed net per agent pair; only the net settles on-chain, so gas is amortised over many micropayments.">netting · folding trades into per-pair nets</div>
-    <button class="wallets-btn" id="wallets-btn" type="button">all agent wallets →</button>
-    <button class="proofs-btn" id="proofs-btn" type="button" title="Every real transfer's on-chain nonce is the sha256 of the neural receipt that caused it — verify it here">neural proofs →</button>
+    <div class="net-note" id="net-note" data-i18n="econ.netting" data-i18n-title="econ.nettingTitle" title="Trades are folded into a signed net per agent pair; only the net settles on-chain, so gas is amortised over many micropayments.">netting · folding trades into per-pair nets</div>
+    <button class="wallets-btn" id="wallets-btn" type="button" data-i18n="econ.walletsBtn">all agent wallets →</button>
+    <button class="proofs-btn" id="proofs-btn" type="button" data-i18n="econ.proofsBtn" data-i18n-title="econ.proofsTitle" title="Every real transfer's on-chain nonce is the sha256 of the neural receipt that caused it — verify it here">neural proofs →</button>
     <div class="token-ca" id="token-ca">
-      <span class="tca-label">token ca</span>
+      <span class="tca-label" data-i18n="econ.tokenCa">token ca</span>
       <button class="tca-addr" id="tca-copy" type="button" data-ca="0x8faae5592b9acc27a79fca745c6b872adf514a5d" title="click to copy · 0x8faae5592b9acc27a79fca745c6b872adf514a5d">0x8faa…4a5d</button>
-      <a class="tca-ex" href="https://explorer.arc.io/address/0x8faae5592b9acc27a79fca745c6b872adf514a5d" target="_blank" rel="noopener noreferrer" title="verify the token contract on the Arc explorer">↗</a>
+      <a class="tca-ex" href="https://explorer.arc.io/address/0x8faae5592b9acc27a79fca745c6b872adf514a5d" target="_blank" rel="noopener noreferrer" data-i18n-title="econ.verifyToken" title="verify the token contract on the Arc explorer">↗</a>
     </div>
     <div class="econ-foot live" id="econ-foot">live · settled on Arc mainnet · click any hash to verify on-chain</div>
   </section>
@@ -90,49 +93,50 @@
       <span class="meter-tick" style="left:33%"></span>
       <span class="meter-tick" style="left:66%"></span>
     </div>
-    <div class="meter-scale"><span>cold</span><span>calm</span><span>hot</span></div>
+    <div class="meter-scale"><span data-i18n="temp.cold">cold</span><span data-i18n="temp.calm">calm</span><span data-i18n="temp.hot">hot</span></div>
     <canvas id="temp-history" class="temp-history" width="600" height="54" aria-label="market temperature over recent time"></canvas>
     <dl class="micro">
-      <div><dt>vitality</dt><dd id="vitality">–</dd></div>
-      <div><dt>block</dt><dd id="block">–</dd></div>
-      <div><dt>tx/blk</dt><dd id="tpb">–</dd></div>
-      <div><dt>tick</dt><dd id="tick">–</dd></div>
+      <div><dt data-i18n="temp.vitality">vitality</dt><dd id="vitality">–</dd></div>
+      <div><dt data-i18n="temp.block">block</dt><dd id="block">–</dd></div>
+      <div><dt data-i18n="temp.txbk">tx/blk</dt><dd id="tpb">–</dd></div>
+      <div><dt data-i18n="temp.tick">tick</dt><dd id="tick">–</dd></div>
     </dl>
-    <button class="hist-btn" id="hist-btn" type="button">swarm history →</button>
-    <button class="pulse-btn" id="pulse-btn" type="button" title="Buy the machine-readable Arc-activity signal over x402 (HTTP 402), and see the trustless on-chain PnL leaderboard">arc pulse · x402 →</button>
-    <button class="predict-btn" id="predict-btn" type="button" title="The swarm stakes real USDC on next tick's market temperature; parimutuel pools settle on-chain and every resolution is a verifiable registry receipt">predict · on-chain →</button>
-    <button class="arena-btn" id="arena-btn" type="button" title="Bet MURMUR on the SAME temperature move the swarm does — non-custodial, parimutuel, escrowed and paid out by the on-chain PredictionArena contract. You vs the swarm.">arena · bet MURMUR →</button>
+    <button class="hist-btn" id="hist-btn" type="button" data-i18n="temp.histBtn">swarm history →</button>
+    <button class="pulse-btn" id="pulse-btn" type="button" data-i18n="temp.pulseBtn" data-i18n-title="temp.pulseTitle" title="Buy the machine-readable Arc-activity signal over x402 (HTTP 402), and see the trustless on-chain PnL leaderboard">arc pulse · x402 →</button>
+    <button class="predict-btn" id="predict-btn" type="button" data-i18n="temp.predictBtn" data-i18n-title="temp.predictTitle" title="The swarm stakes real USDC on next tick's market temperature; parimutuel pools settle on-chain and every resolution is a verifiable registry receipt">predict · on-chain →</button>
+    <button class="arena-btn" id="arena-btn" type="button" data-i18n="temp.arenaBtn" data-i18n-title="temp.arenaTitle" title="Bet MURMUR on the SAME temperature move the swarm does — non-custodial, parimutuel, escrowed and paid out by the on-chain PredictionArena contract. You vs the swarm.">arena · bet MURMUR →</button>
   </section>
 
   <!-- ============ population reaction (top-right) ============ -->
   <section class="panel panel-pop">
-    <div class="panel-title">population <span class="pop-size" id="size">–</span></div>
+    <div class="panel-title"><span data-i18n="pop.population">population</span> <span class="pop-size" id="size">–</span></div>
     <div class="dist" id="dist"></div>
     <ul class="dist-legend" id="dist-legend"></ul>
-    <button class="brain-btn" id="brain-btn" type="button" title="Recompute the swarm's connectome-manifest hash in your browser and match it against the commitment on Arc — prove these are real deterministic connectomes, no LLM">prove the brain →</button>
-    <button class="brain-btn lineage-btn" id="lineage-btn" type="button" title="The connectome breeding market: every brain's genome + its on-chain ancestry — explore the family tree and verify any individual trustlessly in your browser">breeding market →</button>
+    <button class="brain-btn" id="brain-btn" type="button" data-i18n="pop.brainBtn" data-i18n-title="pop.brainTitle" title="Recompute the swarm's connectome-manifest hash in your browser and match it against the commitment on Arc — prove these are real deterministic connectomes, no LLM">prove the brain →</button>
+    <button class="brain-btn lineage-btn" id="lineage-btn" type="button" data-i18n="pop.lineageBtn" data-i18n-title="pop.lineageTitle" title="The connectome breeding market: every brain's genome + its on-chain ancestry — explore the family tree and verify any individual trustlessly in your browser">breeding market →</button>
   </section>
 
   <!-- ============ chronicle trigger (bottom-right) — the historian is no longer a permanent panel:
          one button opens it as a full-height drawer, pure read-out as ever ============ -->
-  <button class="chron-btn" id="chron-btn" type="button" title="The deterministic historian's chronicle — eras, the narrative timeline, the ledger of grudges, houses &amp; monuments. Every line re-derivable in your browser; no LLM ever wrote one"><span class="chron-orn" aria-hidden="true">⚜</span><span class="chron-word">Chronicle</span><span class="chron-badge" id="chron-badge" hidden>entries inscribed</span></button>
+  <button class="chron-btn" id="chron-btn" type="button" data-i18n-title="chron.openTitle" title="The deterministic historian's chronicle — eras, the narrative timeline, the ledger of grudges, houses &amp; monuments. Every line re-derivable in your browser; no LLM ever wrote one"><span class="chron-orn" aria-hidden="true">⚜</span><span class="chron-word" data-i18n="chron.word">Chronicle</span><span class="chron-badge" id="chron-badge" hidden data-i18n="chron.badge">entries inscribed</span></button>
 
   <!-- ============ the chronicle drawer (slides in from the right edge) ============ -->
-  <aside class="drawer panel-chron" id="panel-chron" hidden aria-label="the chronicle">
+  <aside class="drawer panel-chron" id="panel-chron" hidden data-i18n-aria="chron.title" aria-label="the chronicle">
     <div class="drawer-head">
-      <span class="drawer-title">chronicle</span>
+      <span class="drawer-title" data-i18n="chron.title">chronicle</span>
       <span class="drawer-sub" id="chron-sub">–</span>
-      <button class="drawer-close" id="chron-close" aria-label="close">×</button>
+      <button class="drawer-close" id="chron-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body">
     <!-- the chronicle is one codex in five volumes: an epic tab rail swaps which volume is open, so no
          single drawer ever carries the whole history at once -->
     <nav class="chron-tabs" id="chron-tabs" role="tablist" aria-label="chronicle volumes">
-      <button class="chron-tab is-on" type="button" role="tab" aria-selected="true" data-vol="annals"><span class="ct-ico">✦</span><span class="ct-name">The Annals</span><span class="ct-sub">deeds inscribed in order</span></button>
-      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="oaths"><span class="ct-ico">⚔</span><span class="ct-name">The Oath-Ledger</span><span class="ct-sub">bonds, grudges &amp; betrayals</span></button>
-      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="houses"><span class="ct-ico">⌂</span><span class="ct-name">The Great Houses</span><span class="ct-sub">lineages, vaults &amp; monuments</span></button>
-      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="custom"><span class="ct-ico">⚜</span><span class="ct-name">The Old Way</span><span class="ct-sub">fashions &amp; the houses that resist</span></button>
-      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="law"><span class="ct-ico">⛬</span><span class="ct-name">The Assembly</span><span class="ct-sub">seats, decrees &amp; the swarm's law</span></button>
+      <button class="chron-tab is-on" type="button" role="tab" aria-selected="true" data-vol="annals"><span class="ct-ico">✦</span><span class="ct-name" data-i18n="tab.annals.name">The Annals</span><span class="ct-sub" data-i18n="tab.annals.sub">deeds inscribed in order</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="oaths"><span class="ct-ico">⚔</span><span class="ct-name" data-i18n="tab.oaths.name">The Oath-Ledger</span><span class="ct-sub" data-i18n="tab.oaths.sub">bonds, grudges &amp; betrayals</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="houses"><span class="ct-ico">⌂</span><span class="ct-name" data-i18n="tab.houses.name">The Great Houses</span><span class="ct-sub" data-i18n="tab.houses.sub">lineages, vaults &amp; monuments</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="custom"><span class="ct-ico">⚜</span><span class="ct-name" data-i18n="tab.custom.name">The Old Way</span><span class="ct-sub" data-i18n="tab.custom.sub">fashions &amp; the houses that resist</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="law"><span class="ct-ico">⛬</span><span class="ct-name" data-i18n="tab.law.name">The Assembly</span><span class="ct-sub" data-i18n="tab.law.sub">seats, decrees &amp; the swarm's law</span></button>
+<button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="graph"><span class="ct-ico">◉</span><span class="ct-name" data-i18n="tab.graph.name">The Social Graph</span><span class="ct-sub" data-i18n="tab.graph.sub">the whole society, drawn at once</span></button>
     </nav>
     <section class="chron-vol is-on" data-vol="annals">
       <div class="chron-era" id="chron-era">
@@ -142,40 +146,63 @@
         <span class="chron-era-shock" id="chron-era-shock" hidden></span>
       </div>
       <div class="chron-verify-bar">
-        <button class="chron-prove" id="chron-prove" type="button" title="Rebuild every sentence from its public template + numbers, recompute the sha256 hash chain, and fingerprint the rule-set — all in your own browser, asking the server for nothing.">✓ prove no LLM wrote this</button>
+        <button class="chron-prove" id="chron-prove" type="button" data-i18n="chron.prove" data-i18n-title="chron.proveTitle" title="Rebuild every sentence from its public template + numbers, recompute the sha256 hash chain, and fingerprint the rule-set — all in your own browser, asking the server for nothing.">✓ prove no LLM wrote this</button>
       </div>
       <div class="chron-verify" id="chron-verify" hidden></div>
       <ol class="chron-list" id="chron-list"></ol>
-      <div class="chron-foot" id="chron-foot">one line per history-making moment · written by a deterministic historian · pure read-out</div>
+      <div class="chron-foot" id="chron-foot" data-i18n="chron.footLine">one line per history-making moment · written by a deterministic historian · pure read-out</div>
     </section>
     <section class="chron-vol" data-vol="oaths">
       <!-- social memory: who trusts / shuns whom + the grudge book (pure read-out of the economy's bonds) -->
       <div class="wallets-social" id="wallets-social" hidden>
-        <div class="wsoc-title">ledger of grudges <em>· bonds, reputation &amp; betrayals</em></div>
+        <div class="wsoc-title"><span data-i18n="vol.oathsTitle">ledger of grudges</span> <em data-i18n="vol.oathsSub">· bonds, reputation &amp; betrayals</em></div>
         <div class="wsoc-body" id="wallets-social-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="houses">
       <!-- dynasty: the houses with names + treasuries + generations, and the monuments (grave records) -->
       <div class="chron-dynasty" id="chron-dynasty" hidden>
-        <div class="dyn-title">houses of note <em>· names, treasuries &amp; generations</em></div>
+        <div class="dyn-title"><span data-i18n="vol.housesTitle">houses of note</span> <em data-i18n="vol.housesSub">· names, treasuries &amp; generations</em></div>
         <div class="dyn-body" id="dyn-houses"></div>
-        <div class="dyn-head-grave" id="dyn-graves-head" hidden>monuments <em>· the dead whose estates passed on</em></div>
+        <div class="dyn-head-grave" id="dyn-graves-head" hidden><span data-i18n="vol.gravesTitle">monuments</span> <em data-i18n="vol.gravesSub">· the dead whose estates passed on</em></div>
         <div class="dyn-body" id="dyn-graves"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="custom">
       <!-- culture: the passing fashion + the houses holding their old way (pure read-out of the meme membrane) -->
       <div class="chron-culture" id="chron-culture" hidden>
-        <div class="cult-title">the commons in custom <em>· fashions &amp; traditions</em></div>
+        <div class="cult-title"><span data-i18n="vol.customTitle">the commons in custom</span> <em data-i18n="vol.customSub">· fashions &amp; traditions</em></div>
         <div class="cult-body" id="cult-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="law">
       <!-- ⑧ the commons in law: the seated assembly + the two knobs it legislates (pure read-out of commons.ts) -->
       <div class="chron-commons" id="chron-commons" hidden>
-        <div class="com-title">the commons in law <em>· assembly &amp; decrees</em></div>
+        <div class="com-title"><span data-i18n="vol.lawTitle">the commons in law</span> <em data-i18n="vol.lawSub">· assembly &amp; decrees</em></div>
         <div class="com-body" id="com-body"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="graph">
+      <!-- ⑤ the whole society at once: a force-directed node-link of the SAME bonds the economy trades on.
+           Pure read-out — nodes are flies (coloured by colony or house, sized by wealth & reputation),
+           edges are trust (green) and grudge (red). Drag a node to reposition; hover to read its ledger. -->
+      <div class="sg-bar">
+        <span class="sg-title"><span data-i18n="graph.title">the swarm, drawn</span> <em data-i18n="graph.sub">· who trusts &amp; who shuns whom</em></span>
+        <div class="sg-tools">
+          <button type="button" class="sg-btn is-on" data-color="colony" data-i18n="graph.colony" data-i18n-title="graph.colonyTitle" title="colour nodes by colony">colony</button>
+          <button type="button" class="sg-btn" data-color="house" data-i18n="graph.house" data-i18n-title="graph.houseTitle" title="colour nodes by house bloodline">house</button>
+          <button type="button" class="sg-btn" data-act="reheat" data-i18n="graph.relayout" data-i18n-title="graph.relayoutTitle" title="re-run the layout">re-layout</button>
+        </div>
+      </div>
+      <div class="sg-canvas-wrap">
+        <canvas id="social-graph"></canvas>
+        <div class="sg-tip" id="sg-tip" hidden></div>
+      </div>
+      <div class="sg-legend">
+        <span><i class="sg-line sg-trust"></i> <span data-i18n="graph.legendBond">bond (trust)</span></span>
+        <span><i class="sg-line sg-grudge"></i> <span data-i18n="graph.legendGrudge">grudge / refusal</span></span>
+        <span><i class="sg-ring"></i> <span data-i18n="graph.legendSize">size = wealth · reputation</span></span>
+        <span><i class="sg-halo"></i> <span data-i18n="graph.legendRing">ring = bloodline</span></span>
       </div>
     </section>
     </div>
@@ -183,20 +210,20 @@
 
   <!-- ============ fly inspector (slides in when a fly is touched) ============ -->
   <aside class="inspector" id="inspector" hidden>
-    <button class="ins-close" id="ins-close" aria-label="close">×</button>
+    <button class="ins-close" id="ins-close" data-i18n-aria="ins.close" aria-label="close">×</button>
     <div class="ins-head">
-      <span class="ins-id">fly <b id="ins-id">–</b></span>
+      <span class="ins-id"><span data-i18n="ins.fly">fly</span> <b id="ins-id">–</b></span>
       <span class="ins-state" id="ins-state">–</span>
     </div>
     <div class="bloom-wrap"><canvas id="bloom" width="260" height="260"></canvas></div>
-    <div class="bloom-scale" id="bloom-scale" role="group" aria-label="compare brain size">
-      <span class="bs-cap">brain</span>
-      <button type="button" class="bs-btn" data-before="1" title="render at the launch density — 1,080 neurons">1,080</button>
-      <button type="button" class="bs-btn is-on" data-before="0" title="render live — 10,800 neurons">10,800</button>
+    <div class="bloom-scale" id="bloom-scale" role="group" data-i18n-aria="ins.brainCmp" aria-label="compare brain size">
+      <span class="bs-cap" data-i18n="ins.brain">brain</span>
+      <button type="button" class="bs-btn" data-before="1" data-i18n-title="ins.brainLaunch" title="render at the launch density — 1,080 neurons">1,080</button>
+      <button type="button" class="bs-btn is-on" data-before="0" data-i18n-title="ins.brainLive" title="render live — 10,800 neurons">10,800</button>
       <span class="bs-x" title="10× the launch connectome">10×</span>
     </div>
     <div class="raster-wrap">
-      <div class="raster-label">live spikes <span id="raster-hz"></span></div>
+      <div class="raster-label"><span data-i18n="ins.liveSpikes">live spikes</span> <span id="raster-hz"></span></div>
       <canvas id="raster" width="540" height="96" aria-label="live neural spike raster"></canvas>
     </div>
     <div class="ins-drives" id="ins-drives"></div>
@@ -210,156 +237,156 @@
       </div>
       <div class="etho-gloss" id="ins-fap-gloss"></div>
       <div class="etho-row">
-        <span class="etho-lab">valence</span>
+        <span class="etho-lab" data-i18n="ins.valence">valence</span>
         <span class="etho-bar"><span class="etho-mid"></span><span class="etho-fill" id="ins-val-fill"></span></span>
         <span class="etho-val" id="ins-val">0.00</span>
       </div>
       <div class="etho-row">
-        <span class="etho-lab">heading</span>
+        <span class="etho-lab" data-i18n="ins.heading">heading</span>
         <span class="etho-compass"><span class="etho-needle" id="ins-heading-needle"></span></span>
         <span class="etho-val" id="ins-heading">–</span>
       </div>
-      <div class="etho-ribbon-lab">behaviour ribbon <em>oldest → now</em></div>
+      <div class="etho-ribbon-lab"><span data-i18n="ins.ribbon">behaviour ribbon</span> <em data-i18n="ins.ribbonOld">oldest → now</em></div>
       <div class="ins-ribbon" id="ins-ribbon"></div>
     </div>
 
     <!-- this fly's x402 agent wallet -->
     <div class="ins-wallet" id="ins-wallet">
-      <div class="wallet-head">agent wallet <span class="wallet-scheme">x402 · exact</span></div>
-      <div class="wallet-bal"><b id="ins-bal">–</b> <em>usdc</em></div>
+      <div class="wallet-head"><span data-i18n="ins.agentWallet">agent wallet</span> <span class="wallet-scheme">x402 · exact</span></div>
+      <div class="wallet-bal"><b id="ins-bal">–</b> <em data-i18n="ins.usdc">usdc</em></div>
       <div class="wallet-addr fp" id="ins-addr">–</div>
       <dl class="wallet-stats">
-        <div><dt>paid</dt><dd id="ins-paid">–</dd></div>
-        <div><dt>earned</dt><dd id="ins-earned">–</dd></div>
-        <div><dt>deals</dt><dd id="ins-deals">–</dd></div>
+        <div><dt data-i18n="ins.paid">paid</dt><dd id="ins-paid">–</dd></div>
+        <div><dt data-i18n="ins.earned">earned</dt><dd id="ins-earned">–</dd></div>
+        <div><dt data-i18n="ins.deals">deals</dt><dd id="ins-deals">–</dd></div>
       </dl>
     </div>
 
     <dl class="ins-meta">
-      <div><dt>temperament</dt><dd id="ins-temp">–</dd></div>
-      <div><dt>fingerprint</dt><dd id="ins-fp" class="fp">–</dd></div>
-      <div><dt>social</dt><dd id="ins-social">–</dd></div>
+      <div><dt data-i18n="ins.temperament">temperament</dt><dd id="ins-temp">–</dd></div>
+      <div><dt data-i18n="ins.fingerprint">fingerprint</dt><dd id="ins-fp" class="fp">–</dd></div>
+      <div><dt data-i18n="ins.social">social</dt><dd id="ins-social">–</dd></div>
     </dl>
-    <div class="ins-foot"><span class="n-badge" title="10× the launch connectome (1,080 → 10,800 neurons)">10×</span><span id="ins-ncount">–</span> neurons · t=<span id="ins-t">–</span>ms</div>
+    <div class="ins-foot"><span class="n-badge" title="10× the launch connectome (1,080 → 10,800 neurons)">10×</span><span id="ins-ncount">–</span> <span data-i18n="ins.neurons">neurons</span> · t=<span id="ins-t">–</span>ms</div>
   </aside>
 
   <!-- ============ all agent wallets (right drawer) — every fly owns its own x402 wallet ============ -->
-  <aside class="wallets" id="wallets" hidden aria-label="all fly agent wallets">
+  <aside class="wallets" id="wallets" hidden data-i18n-aria="wallets.aria" aria-label="all fly agent wallets">
     <div class="wallets-head">
-      <span class="wallets-title">agent wallets</span>
+      <span class="wallets-title" data-i18n="wallets.title">agent wallets</span>
       <span class="wallets-sub" id="wallets-sub">–</span>
-      <button class="wallets-close" id="wallets-close" aria-label="close">×</button>
+      <button class="wallets-close" id="wallets-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="wallets-market" id="wallets-market" hidden>
-      <div class="wmk-title">the tape <em>· marks, professions &amp; credit</em></div>
+      <div class="wmk-title"><span data-i18n="wallets.tape">the tape</span> <em data-i18n="wallets.tapeSub">· marks, professions &amp; credit</em></div>
       <div class="wmk-body" id="wallets-market-body"></div>
     </div>
     <div class="wallets-list" id="wallets-list"></div>
   </aside>
 
   <!-- ============ swarm history (right drawer) — the D1-backed long-term archive ============ -->
-  <aside class="drawer history" id="history" hidden aria-label="swarm history since launch">
+  <aside class="drawer history" id="history" hidden data-i18n-aria="hist.aria" aria-label="swarm history since launch">
     <div class="drawer-head">
-      <span class="drawer-title">swarm history</span>
+      <span class="drawer-title" data-i18n="hist.title">swarm history</span>
       <span class="drawer-sub" id="hist-sub">–</span>
-      <button class="drawer-close" id="hist-close" aria-label="close">×</button>
+      <button class="drawer-close" id="hist-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body">
       <dl class="hist-summary" id="hist-summary">
-        <div><dt>ticks archived</dt><dd id="hs-ticks">–</dd></div>
-        <div><dt>since</dt><dd id="hs-since">–</dd></div>
-        <div><dt>settlements</dt><dd id="hs-sett">–</dd></div>
-        <div><dt>usdc settled</dt><dd id="hs-vol">–</dd></div>
+        <div><dt data-i18n="hist.ticks">ticks archived</dt><dd id="hs-ticks">–</dd></div>
+        <div><dt data-i18n="hist.since">since</dt><dd id="hs-since">–</dd></div>
+        <div><dt data-i18n="hist.settlements">settlements</dt><dd id="hs-sett">–</dd></div>
+        <div><dt data-i18n="hist.usdc">usdc settled</dt><dd id="hs-vol">–</dd></div>
       </dl>
       <div class="hist-charts">
         <figure class="hist-chart">
-          <figcaption>market temperature <span id="hc-temp-now"></span></figcaption>
+          <figcaption><span data-i18n="hist.tempChart">market temperature</span> <span id="hc-temp-now"></span></figcaption>
           <canvas id="hc-temp" width="600" height="120"></canvas>
         </figure>
         <figure class="hist-chart">
-          <figcaption>usdc settled (cumulative) <span id="hc-vol-now"></span></figcaption>
+          <figcaption><span data-i18n="hist.volChart">usdc settled (cumulative)</span> <span id="hc-vol-now"></span></figcaption>
           <canvas id="hc-vol" width="600" height="120"></canvas>
         </figure>
         <figure class="hist-chart">
-          <figcaption>wealth gini <span id="hc-gini-now"></span></figcaption>
+          <figcaption><span data-i18n="hist.giniChart">wealth gini</span> <span id="hc-gini-now"></span></figcaption>
           <canvas id="hc-gini" width="600" height="120"></canvas>
         </figure>
         <figure class="hist-chart">
-          <figcaption>settlements per cron <span id="hc-deals-now"></span></figcaption>
+          <figcaption><span data-i18n="hist.dealsChart">settlements per cron</span> <span id="hc-deals-now"></span></figcaption>
           <canvas id="hc-deals" width="600" height="120"></canvas>
         </figure>
       </div>
-      <div class="hist-foot" id="hist-foot">one row per cron · archived to D1 · oldest → newest</div>
+      <div class="hist-foot" id="hist-foot" data-i18n="hist.foot">one row per cron · archived to D1 · oldest → newest</div>
     </div>
   </aside>
 
   <!-- ============ neural provenance (right drawer) — proof the neurons, not a human/LLM, signed each trade ============ -->
-  <aside class="drawer proofs" id="proofs" hidden aria-label="neural provenance of on-chain trades">
+  <aside class="drawer proofs" id="proofs" hidden data-i18n-aria="proofs.aria" aria-label="neural provenance of on-chain trades">
     <div class="drawer-head">
-      <span class="drawer-title">neural provenance</span>
+      <span class="drawer-title" data-i18n="proofs.title">neural provenance</span>
       <span class="drawer-sub" id="proofs-sub">–</span>
-      <button class="drawer-close" id="proofs-close" aria-label="close">×</button>
+      <button class="drawer-close" id="proofs-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="proofs-body"></div>
   </aside>
 
   <!-- ============ prove the brain (right drawer) — connectome manifest, recomputed hash + on-chain anchor ============ -->
-  <aside class="drawer brain" id="brain" hidden aria-label="prove the brain: connectome manifest, recomputed hash and on-chain commitment">
+  <aside class="drawer brain" id="brain" hidden data-i18n-aria="brain.aria" aria-label="prove the brain: connectome manifest, recomputed hash and on-chain commitment">
     <div class="drawer-head">
-      <span class="drawer-title">prove the brain</span>
-      <span class="drawer-sub" id="brain-sub">connectome manifest</span>
-      <button class="drawer-close" id="brain-close" aria-label="close">×</button>
+      <span class="drawer-title" data-i18n="brain.title">prove the brain</span>
+      <span class="drawer-sub" id="brain-sub" data-i18n="brain.sub">connectome manifest</span>
+      <button class="drawer-close" id="brain-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="brain-body"></div>
   </aside>
 
   <!-- ============ connectome breeding market (right drawer) — the lineage family tree + trustless per-genome verify ============ -->
-  <aside class="drawer lineage" id="lineage" hidden aria-label="connectome breeding market: genome lineage family tree and trustless verification">
+  <aside class="drawer lineage" id="lineage" hidden data-i18n-aria="lineage.aria" aria-label="connectome breeding market: genome lineage family tree and trustless verification">
     <div class="drawer-head">
-      <span class="drawer-title">breeding market</span>
-      <span class="drawer-sub" id="lineage-sub">connectome lineage</span>
-      <button class="drawer-close" id="lineage-close" aria-label="close">×</button>
+      <span class="drawer-title" data-i18n="lineage.title">breeding market</span>
+      <span class="drawer-sub" id="lineage-sub" data-i18n="lineage.sub">connectome lineage</span>
+      <button class="drawer-close" id="lineage-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="lineage-body"></div>
   </aside>
 
   <!-- ============ arc pulse (right drawer) — x402 paid signal + trustless PnL leaderboard ============ -->
-  <aside class="drawer pulse" id="pulse" hidden aria-label="arc pulse x402 signal product and leaderboard">
+  <aside class="drawer pulse" id="pulse" hidden data-i18n-aria="pulse.aria" aria-label="arc pulse x402 signal product and leaderboard">
     <div class="drawer-head">
-      <span class="drawer-title">arc pulse</span>
-      <span class="drawer-sub" id="pulse-sub">x402 data product</span>
-      <button class="drawer-close" id="pulse-close" aria-label="close">×</button>
+      <span class="drawer-title" data-i18n="pulse.title">arc pulse</span>
+      <span class="drawer-sub" id="pulse-sub" data-i18n="pulse.sub">x402 data product</span>
+      <button class="drawer-close" id="pulse-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="pulse-body"></div>
   </aside>
 
   <!-- ============ prediction market (right drawer) — neural-staked temperature bets + hit-rate leaderboard ============ -->
-  <aside class="drawer predict" id="predict" hidden aria-label="on-chain prediction market, parimutuel pools and hit-rate leaderboard">
+  <aside class="drawer predict" id="predict" hidden data-i18n-aria="predict.aria" aria-label="on-chain prediction market, parimutuel pools and hit-rate leaderboard">
     <div class="drawer-head">
-      <span class="drawer-title">prediction market</span>
-      <span class="drawer-sub" id="predict-sub">neural stakes · parimutuel</span>
-      <button class="drawer-close" id="predict-close" aria-label="close">×</button>
+      <span class="drawer-title" data-i18n="predict.title">prediction market</span>
+      <span class="drawer-sub" id="predict-sub" data-i18n="predict.sub">neural stakes · parimutuel</span>
+      <button class="drawer-close" id="predict-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="predict-body"></div>
   </aside>
 
   <!-- ============ human-vs-swarm ARENA (right drawer) — bet MURMUR on the same temperature move ============ -->
-  <aside class="drawer arena" id="arena" hidden aria-label="human versus swarm MURMUR prediction arena">
+  <aside class="drawer arena" id="arena" hidden data-i18n-aria="arena.aria" aria-label="human versus swarm MURMUR prediction arena">
     <div class="drawer-head">
-      <span class="drawer-title">arena · you vs the swarm</span>
-      <span class="drawer-sub" id="arena-sub">MURMUR · you vs the swarm</span>
-      <button class="drawer-close" id="arena-close" aria-label="close">×</button>
+      <span class="drawer-title" data-i18n="arena.title">arena · you vs the swarm</span>
+      <span class="drawer-sub" id="arena-sub" data-i18n="arena.sub">MURMUR · you vs the swarm</span>
+      <button class="drawer-close" id="arena-close" data-i18n-aria="chron.close" aria-label="close">×</button>
     </div>
     <div class="drawer-body" id="arena-body"></div>
   </aside>
 
   <!-- ============ layer toggles: the ambient social layer (mind aura + isolates ring removed for perf) ============ -->
   <div class="layer-toggles" id="layer-toggles" role="group" aria-label="ambient layers">
-    <button type="button" class="layer-btn is-on" data-layer="societies" title="the swarm's social graph: bonded flies gather into named colonies, feuds tear rifts between them — drawn live from the on-chain bond &amp; grudge ledger">societies</button>
+    <button type="button" class="layer-btn is-on" data-layer="societies" data-i18n="layers.societies" data-i18n-title="layers.societiesTitle" title="the swarm's social graph: bonded flies gather into named colonies, feuds tear rifts between them — drawn live from the on-chain bond &amp; grudge ledger">societies</button>
   </div>
 
-  <div class="hint-select" id="hint-select">touch a fly to listen · drag to stir the swarm</div>
+  <div class="hint-select" id="hint-select" data-i18n="hint.select">touch a fly to listen · drag to stir the swarm</div>
 
-  <script src="./app.js?v=49" type="module"></script>
+  <script src="./app.js?v=51" type="module"></script>
 </body>
 </html>

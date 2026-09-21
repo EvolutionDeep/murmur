@@ -30,6 +30,11 @@
 // trading, no wallet — observation only.
 // ==========================================================================
 
+// i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
+// NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
+// translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=51";
+
 const params = new URLSearchParams(location.search);
 const API =
   params.get("api") ||
@@ -930,25 +935,25 @@ function spawnChronFx(e) {
   if (e.kind === "ALLIANCE") {
     if (a == null || b == null) return;
     chronFx.push({ kind: "alliance", a, b, t0: now, dur: 2600 });
-    setBanner("❖ an alliance is sworn", `fly #${a} · fly #${b}`, GOLD_THREAD);
+    setBanner(T("banner.alliance"), T("banner.fly", { id: a }) + " · " + T("banner.fly", { id: b }), GOLD_THREAD);
     chronNudge(a, b, +1);
   } else if (e.kind === "FEUD" || e.kind === "BETRAYAL") {
     if (a == null || b == null) return;
     chronFx.push({ kind: "feud", a, b, t0: now, dur: 2200 });
-    setBanner(e.kind === "BETRAYAL" ? "✕ a betrayal is written" : "⚔ a feud is declared", `fly #${a} · fly #${b}`, CRACK_RED);
+    setBanner(e.kind === "BETRAYAL" ? T("banner.betrayal") : T("banner.feud"), T("banner.fly", { id: a }) + " · " + T("banner.fly", { id: b }), CRACK_RED);
     chronNudge(a, b, -1);
   } else if (e.kind === "HOUSE_FOUNDED") {
     if (a == null) return;
     const h = houseOf.get(a), f = sim.get(a);
     chronFx.push({ kind: "house", a, x: f ? f.x : null, y: f ? f.y : null, sigil: (h && h.sigil) || "", color: (h && h.color) || LAW_GOLD, t0: now, dur: 3200 });
-    setBanner("⌂ a house is founded", h ? `the house of ${h.name}` : `fly #${a}`, (h && h.color) || LAW_GOLD);
+    setBanner(T("banner.house"), h ? T("banner.houseOf", { name: h.name }) : T("banner.fly", { id: a }), (h && h.color) || LAW_GOLD);
   } else if (e.kind === "ASSEMBLY" || e.kind === "DECREE") {
     chronFx.push({ kind: "law", t0: now, dur: 3400 });
-    setBanner(e.kind === "ASSEMBLY" ? "⛬ the assembly convenes" : "✎ a decree is inscribed", "the commons speaks in law", LAW_GOLD);
+    setBanner(e.kind === "ASSEMBLY" ? T("banner.assembly") : T("banner.decree"), T("banner.commonsLaw"), LAW_GOLD);
   } else if (e.kind === "ELEGY") {
     const m = monuments.find((mm) => mm.id === a);
     if (m) m.pulse = now;
-    setBanner("† a life is remembered", `fly #${a}`, [120, 120, 124]);
+    setBanner(T("banner.elegy"), T("banner.fly", { id: a }), [120, 120, 124]);
   }
 }
 /** Flash the epic centre-caption for a chronicle event. */
@@ -1698,7 +1703,7 @@ function applyEconomy(econ) {
   }
   refreshBalanceScale();
   if (econ.totals) { econTotals = econ.totals; updateEconHud(econ.totals); }
-  if (econ.social) { econSocial = econ.social; renderSocialSection(); rebuildSocieties(); }
+  if (econ.social) { econSocial = econ.social; renderSocialSection(); rebuildSocieties(); sgMarkDirty(); }
   if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); }
   if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
   if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
@@ -1773,10 +1778,10 @@ function updateEconMode() {
   em.classList.remove("is-live", "is-stale");
   if (offline) {
     // The API is down and the panel is showing the local synthetic mirror — never pass it off as real.
-    em.textContent = "⚠ 加载中 · 数据不准确";
+    em.textContent = T("foot.offlineLoading");
     em.classList.add("is-stale");
   } else if (econMode === "onchain") {
-    em.innerHTML = '<span class="live-dot"></span>live · on-chain';
+    em.innerHTML = '<span class="live-dot"></span>' + T("mode.liveOnChain");
     em.classList.add("is-live");
   } else {
     em.textContent = econMode + " x402";
@@ -1789,7 +1794,7 @@ function updateEconFoot() {
   const f = $("econ-foot");
   if (!f) return;
   if (offline) {
-    f.textContent = "⚠ 连接中断 · 以下为本地演示数据，非实时真实结算";
+    f.textContent = T("foot.offlineLost");
     f.classList.remove("live");
     f.classList.add("stale");
   } else if (econMode === "onchain") {
@@ -1797,12 +1802,12 @@ function updateEconFoot() {
     const ok = econTotals ? (econTotals.settleOk || 0) : 0;
     const att = econTotals ? (econTotals.settleAttempts || 0) : 0;
     const sr = econTotals && econTotals.successRate != null ? econTotals.successRate : null;
-    const rateTxt = sr != null ? ` · ${ok}/${att} settled ${(sr * 100).toFixed(1)}% on-chain` : "";
-    f.textContent = "live · settled on Arc mainnet · click any hash to verify on-chain" + rateTxt;
+    const rateTxt = sr != null ? " · " + T("foot.settledRate", { ok, att, pct: (sr * 100).toFixed(1) }) : "";
+    f.textContent = T("foot.live") + rateTxt;
     f.classList.remove("stale");
     f.classList.add("live");
   } else {
-    f.textContent = "keyless · simulated — no real funds move";
+    f.textContent = T("foot.sim");
     f.classList.remove("live", "stale");
   }
 }
@@ -1821,14 +1826,14 @@ function pushEconFeed(s) {
   if (netted) {
     const chip = document.createElement("span");
     chip.className = "net-chip";
-    chip.textContent = "net";
-    chip.title = "Netted settlement — several folded trades settled as one on-chain transfer";
+    chip.textContent = T("badge.net");
+    chip.title = T("badge.netTitle");
     line.appendChild(chip);
   }
 
   const txt = document.createElement("span");
   txt.className = "econ-line-txt";
-  txt.textContent = `#${s.fromId} → #${s.toId} · ${atomicToUsdc(s.amount).toFixed(4)} · ${s.good}`;
+  txt.textContent = `#${s.fromId} → #${s.toId} · ${atomicToUsdc(s.amount).toFixed(4)} · ${gl("goods", s.good)}`;
   line.appendChild(txt);
 
   // Only a genuinely-mined hash is linkable: real 64-hex + valid. Simulated / offline / shadow
@@ -1839,7 +1844,7 @@ function pushEconFeed(s) {
     a.href = `${ARC_EXPLORER}/tx/${s.txHash}`;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
-    a.title = `Verify on the Arc explorer — ${s.txHash}`;
+    a.title = T("feed.verifyHash", { hash: s.txHash });
     a.textContent = `↗ ${shortHash(s.txHash)}`;
     line.appendChild(a);
   }
@@ -1863,7 +1868,7 @@ function updateWallet(ag) {
       a.href = `${ARC_EXPLORER}/address/${ag.address}`;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
-      a.title = `View this agent's on-chain activity — ${ag.address}`;
+      a.title = T("ins.viewActivity", { addr: ag.address });
       a.textContent = ag.address;
       addrEl.appendChild(a);
     } else {
@@ -1896,7 +1901,7 @@ function rosterSource() {
 }
 
 // ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
-const PROF_ICON = { forager: "❍ forager", mooder: "❂ mooder", trader: "⇅ trader", brooder: "❄ brooder" };
+const PROF_ICON = { forager: "❍", mooder: "❂", trader: "⇅", brooder: "❄" };
 // The four goods the tape marks, in book order, for the price-line block.
 const MARKET_GOODS = ["signal", "momentum", "attestation", "prediction"];
 
@@ -1912,21 +1917,21 @@ function renderWallets() {
     row.className = "wallet-row" + (ag.id === selectedId ? " sel" : "") + (ag.dead ? " gone" : "");
     row.tabIndex = 0;
     row.setAttribute("role", "button");
-    row.setAttribute("aria-label", `fly ${ag.id} wallet, ${atomicToUsdc(ag.balance || "0").toFixed(4)} USDC`);
+    row.setAttribute("aria-label", T("wallets.ariaRow", { id: ag.id, bal: atomicToUsdc(ag.balance || "0").toFixed(4) }));
 
     const idEl = document.createElement("span"); idEl.className = "wr-id"; idEl.textContent = "#" + ag.id;
     // Dynasty: the house name a fly bears (sigil + colour), inherited at birth from its parent's line.
     if (ag.house) {
       const nm = document.createElement("span"); nm.className = "wr-house";
       nm.textContent = `${ag.sigil || ""} ${ag.house}`;
-      nm.title = `of the House of ${ag.house} — name and sigil inherited; vault and monuments in the chronicle panel`;
+      nm.title = T("social.houseOf", { name: ag.house });
       idEl.append(" ", nm);
     }
     // ⑥ Institutions: the sticky profession a fly has fallen into (its line of work, economic side only).
     if (ag.profession) {
       const prof = document.createElement("span"); prof.className = "wr-prof " + ag.profession;
-      prof.textContent = PROF_ICON[ag.profession] || ag.profession;
-      prof.title = `by trade: ${ag.profession} — read off the last 50 ticks of behaviour; tilts only the market's intent, never the neurons`;
+      prof.textContent = (PROF_ICON[ag.profession] ? PROF_ICON[ag.profession] + " " : "") + gl("role", ag.profession);
+      prof.title = T("social.profession", { prof: gl("role", ag.profession) });
       idEl.append(" ", prof);
     }
     const balEl = document.createElement("span"); balEl.className = "wr-bal";
@@ -1937,8 +1942,8 @@ function renderWallets() {
       const debtUsdc = Number(debtAtomic) / 1e6;
       const net = atomicToUsdc(ag.balance || "0") - debtUsdc;
       const dv = document.createElement("span"); dv.className = "wr-debt";
-      dv.textContent = `⛁ ${debtUsdc.toFixed(4)} debt`;
-      dv.title = `owes ${debtUsdc.toFixed(4)} USDC across open notes — net worth ${net.toFixed(4)} USDC (balance − debt); settled from future receipts`
+      dv.textContent = T("badge.debt", { amt: debtUsdc.toFixed(4) });
+      dv.title = T("wallets.debtTitle", { amt: debtUsdc.toFixed(4), net: net.toFixed(4) });
       balEl.append(" ", dv);
     }
     // Reputation badge: the fly's NAME, earned from settled history (kept promises vs defaults).
@@ -1947,16 +1952,16 @@ function renderWallets() {
       const badge = document.createElement("span");
       const dead = rp.score <= -0.15;
       badge.className = "wr-rep " + (dead ? "dead" : "good");
-      badge.textContent = dead ? "☠ deadbeat" : "★ honour";
-      badge.title = `reputation ${rp.score.toFixed(2)} · ${rp.kept} settlements kept · ${rp.broken} defaulted`;
+      badge.textContent = dead ? T("badge.deadbeat") : T("badge.honour");
+      badge.title = T("wallets.repTitle", { score: rp.score.toFixed(2), kept: rp.kept, broken: rp.broken });
       balEl.append(" ", badge);
     }
     // Dynasty: a closed ledger — the wallet was buried and its estate inherited (see the monuments).
     if (ag.dead) {
       const grave = document.createElement("span");
       grave.className = "wr-grave";
-      grave.textContent = "† buried";
-      grave.title = "ledger closed — estate passed to heirs; the epitaph stands in the chronicle monuments";
+      grave.textContent = T("badge.buried");
+      grave.title = T("wallets.graveTitle");
       balEl.append(" ", grave);
     }
     const addrEl = document.createElement("span"); addrEl.className = "wr-addr";
@@ -1968,7 +1973,7 @@ function renderWallets() {
       link.className = "wr-link";
       link.href = `${ARC_EXPLORER}/address/${ag.address}`;
       link.target = "_blank"; link.rel = "noopener noreferrer";
-      link.title = `Verify this wallet on the Arc explorer — ${ag.address}`;
+      link.title = T("wallets.verifyWallet", { addr: ag.address });
       link.textContent = "↗";
       link.addEventListener("click", (e) => e.stopPropagation());   // open explorer, don't select the fly
       row.appendChild(link);
@@ -1980,7 +1985,7 @@ function renderWallets() {
     host.appendChild(row);
   }
   const sub = $("wallets-sub");
-  if (sub) sub.textContent = live ? `${list.length} wallets · live on Arc mainnet` : `${list.length} wallets · ${econMode}`;
+  if (sub) sub.textContent = live ? T("wallets.live", { n: list.length }) : T("wallets.sim", { n: list.length, mode: econMode });
   renderSocialSection();
 }
 
@@ -2000,19 +2005,19 @@ function renderSocialSection() {
     const row = document.createElement("div");
     const shun = b.score <= -0.6;
     row.className = "wsoc-row " + (b.score < 0 ? (shun ? "shun" : "grudge") : "trust");
-    const mark = shun ? "⚔ shuns" : b.score < 0 ? "☄ grudge" : "❖ trust";
-    row.textContent = `#${b.a} ${mark} #${b.b} · ${b.score > 0 ? "+" : ""}${b.score.toFixed(2)}${b.trades ? ` · ${b.trades} deals` : ""}`;
+    const mark = shun ? T("social.shuns") : b.score < 0 ? T("social.grudge") : T("social.trust");
+    row.textContent = `#${b.a} ${mark} #${b.b} · ${b.score > 0 ? "+" : ""}${b.score.toFixed(2)}${b.trades ? ` · ${b.trades} ${T("social.deals")}` : ""}`;
     body.appendChild(row);
   }
   const gr = (s.grudges || []).slice(0, 6);
   if (gr.length) {
     const head = document.createElement("div");
-    head.className = "wsoc-head-grudge"; head.textContent = "grudge book";
+    head.className = "wsoc-head-grudge"; head.textContent = T("social.grudgeBook");
     body.appendChild(head);
     for (const g of gr) {
       const row = document.createElement("div");
       row.className = "wsoc-row grudge-entry";
-      row.textContent = `#${g.buyerId} defaulted on #${g.sellerId} · ${(Number(g.amount) / 1e6).toFixed(4)} USDC · t${g.tick}`;
+      row.textContent = T("social.grudgeEntry", { buyer: g.buyerId, seller: g.sellerId, amt: (Number(g.amount) / 1e6).toFixed(4), tick: g.tick });
       body.appendChild(row);
     }
   }
@@ -2035,8 +2040,8 @@ function renderDynastySection() {
     for (const h of houses.slice(0, 6)) {
       const row = document.createElement("div");
       row.className = "dyn-row";
-      row.textContent = `${h.sigil} House of ${h.name} · gen ${h.gen} · ${h.live}/${h.members} live · ${(h.capitalShare * 100).toFixed(1)}% of capital · vault ${Number(h.treasuryUsdc).toFixed(4)}`;
-      row.title = `founded at tick ${h.foundedTick} by fly #${h.id} · ${h.deaths} buried · lifetime tithes ${Number(h.earnedUsdc).toFixed(4)} USDC`;
+      row.textContent = T("dyn.house", { sigil: h.sigil, name: h.name, gen: h.gen, live: h.live, members: h.members, share: (h.capitalShare * 100).toFixed(1), vault: Number(h.treasuryUsdc).toFixed(4) });
+      row.title = T("dyn.houseTitle", { tick: h.foundedTick, id: h.id, deaths: h.deaths, earned: Number(h.earnedUsdc).toFixed(4) });
       hh.appendChild(row);
     }
   }
@@ -2048,8 +2053,8 @@ function renderDynastySection() {
     for (const g of graves.slice(0, 6)) {
       const row = document.createElement("div");
       row.className = "dyn-grave";
-      row.textContent = `† #${g.id}${g.houseName ? " · " + g.houseName : " · no house"} · ${g.cause} · ${g.deals} dealings`;
-      row.title = `estate ${Number(g.estateUsdc).toFixed(4)} USDC → ${g.heirIds && g.heirIds.length ? g.heirIds.map((x) => "#" + x).join(", ") : "the commons"} · age ${g.age} ticks · fell at t${g.tick}`;
+      row.textContent = T("dyn.grave", { id: g.id, house: g.houseName ? " · " + g.houseName : " · " + T("dyn.noHouse"), cause: gl("cause", g.cause), deals: g.deals });
+      row.title = T("dyn.graveTitle", { estate: Number(g.estateUsdc).toFixed(4), heirs: g.heirIds && g.heirIds.length ? g.heirIds.map((x) => "#" + x).join(", ") : T("dyn.theCommons"), age: g.age, tick: g.tick });
       gb.appendChild(row);
     }
   }
@@ -2102,13 +2107,13 @@ function renderMarketSection() {
     const row = document.createElement("div");
     row.className = "wmk-row" + (chg >= 0 ? " up" : " down");
     row.appendChild(sparkline(usdc));
-    const nm = document.createElement("span"); nm.className = "wmk-good"; nm.textContent = good;
+    const nm = document.createElement("span"); nm.className = "wmk-good"; nm.textContent = gl("goods", good);
     const mk = document.createElement("span"); mk.className = "wmk-mark";
     mk.textContent = `${last.toFixed(4)} usdc`;
     const pc = document.createElement("span"); pc.className = "wmk-chg";
     pc.textContent = `${chg >= 0 ? "+" : ""}${(chg * 100).toFixed(1)}%`;
     row.append(nm, mk, pc);
-    row.title = `${good}: marked ${last.toFixed(4)} USDC, ${chg >= 0 ? "up" : "down"} ${(chg * 100).toFixed(1)}% across the last ${usdc.length} crons — the tape of a book the whole swarm's nerves drew`;
+    row.title = T("mkt.rowTitle", { good: gl("goods", good), last: last.toFixed(4), dir: chg >= 0 ? T("mkt.up") : T("mkt.down"), pct: (chg * 100).toFixed(1), n: usdc.length });
     body.appendChild(row);
   }
   // A one-line ledger of credit and class beneath the tape.
@@ -2117,13 +2122,13 @@ function renderMarketSection() {
   const cls = m.classes || {};
   const bits = [];
   const profs = m.professions || {};
-  bits.push(`${profs.trader || 0} trading · ${profs.forager || 0} foraging · ${profs.mooder || 0} mooding · ${profs.brooder || 0} brooding`);
-  bits.push(`${m.openIous || 0} open notes, ${(Number(m.debtAtomic || "0") / 1e6).toFixed(4)} USDC owed`);
-  if (cls.creditors || cls.debtors) bits.push(`${cls.creditors || 0} creditors / ${cls.debtors || 0} debtors`);
+  bits.push(T("mkt.profs", { trader: profs.trader || 0, forager: profs.forager || 0, mooder: profs.mooder || 0, brooder: profs.brooder || 0 }));
+  bits.push(T("mkt.notes", { n: m.openIous || 0, owed: (Number(m.debtAtomic || "0") / 1e6).toFixed(4) }));
+  if (cls.creditors || cls.debtors) bits.push(T("mkt.classes", { creditors: cls.creditors || 0, debtors: cls.debtors || 0 }));
   foot.textContent = bits.join(" · ");
   if (m.run) {
-    const badge = document.createElement("span"); badge.className = "wmk-run"; badge.textContent = "⇊ a run";
-    badge.title = "a credit RUN is in progress — creditors are recalling at once, spreads have doubled";
+    const badge = document.createElement("span"); badge.className = "wmk-run"; badge.textContent = T("mkt.run");
+    badge.title = T("mkt.runTitle");
     foot.append(" ", badge);
   }
   body.appendChild(foot);
@@ -2144,15 +2149,15 @@ function renderCultureSection() {
   if (trend) {
     const row = document.createElement("div");
     row.className = "cult-row cult-trend";
-    row.textContent = `≈ the fashion — ${trend.adherents} flies take to ${trend.fap} at once (${(trend.share * 100).toFixed(0)}% of the market)`;
-    row.title = "a custom is spreading: one mood carried fly to fly across the feeding table, a trend in the swarm's habits";
+    row.textContent = T("cult.trend", { n: trend.adherents, fap: gl("fap", trend.fap), share: (trend.share * 100).toFixed(0) });
+    row.title = T("cult.trendTitle");
     body.appendChild(row);
   }
   if (trad) {
     const row = document.createElement("div");
     row.className = "cult-row cult-trad";
-    row.textContent = `⚜ the House of ${trad.name} ${trad.sigil} keeps the old way — ${trad.fap}, held ${trad.streak} crons against the fashion`;
-    row.title = "a dynasty's founding custom, defended against the passing trend — the family as a breakwater for culture";
+    row.textContent = T("cult.trad", { name: trad.name, sigil: trad.sigil, fap: gl("fap", trad.fap), streak: trad.streak });
+    row.title = T("cult.tradTitle");
     body.appendChild(row);
   }
 }
@@ -2177,32 +2182,32 @@ function renderCommonsSection() {
   const seats = Array.isArray(c.seats) ? c.seats : [];
   const asb = document.createElement("div");
   asb.className = "com-row com-assembly";
-  asb.textContent = `⛬ a council sits in Era ${roman(c.seatedEra)} — ${seats.length} of the swarm's honoured and propertied`;
-  asb.title = "when a new era dawns the wealthiest-and-best-regarded living flies take the seats and vote, a pure function of the era and their identities, on two knobs: the base credit line and its rate";
+  asb.textContent = T("com.assembly", { era: roman(c.seatedEra), n: seats.length });
+  asb.title = T("com.assemblyTitle");
   body.appendChild(asb);
   if (seats.length) {
     const roster = document.createElement("div");
     roster.className = "com-row com-roster";
     roster.textContent = seats.slice(0, 8).map((s) => `#${s.id}·${Number(s.balanceUsdc).toFixed(3)}ᵁ·${(Number(s.rep) * 100).toFixed(0)}r`).join("  ");
-    roster.title = "the seated flies — purse in USDC, standing (rep) as a percent; chosen by the assembly's own deterministic ranking, never by a brain";
+    roster.title = T("com.rosterTitle");
     body.appendChild(roster);
   }
   const decrees = Array.isArray(c.decrees) ? c.decrees : [];
-  const label = (p) => (p === "creditCap" ? "the base credit line" : "the rate of interest");
+  const label = (p) => (p === "creditCap" ? T("com.creditLine") : T("com.rate"));
   for (const d of decrees) {
     const row = document.createElement("div");
     row.className = "com-row com-decree";
-    row.textContent = `✎ ${label(d.param)} set to ${Number(d.target).toFixed(4)} in Era ${roman(d.passedEra)}`;
-    row.title = "a carried law — the era that passed it, hard-clamped into its constitutional band so no radical room can corner the ledger";
+    row.textContent = T("com.decree", { param: label(d.param), val: Number(d.target).toFixed(4), era: roman(d.passedEra) });
+    row.title = T("com.decreeTitle");
     body.appendChild(row);
   }
   const eff = c.effective || {};
-  const line = eff.creditCapBaseUsdc != null ? Number(eff.creditCapBaseUsdc).toFixed(4) : "base";
-  const rate = eff.iouRatePer10 != null ? Number(eff.iouRatePer10).toFixed(4) : "base";
+  const line = eff.creditCapBaseUsdc != null ? Number(eff.creditCapBaseUsdc).toFixed(4) : T("com.base");
+  const rate = eff.iouRatePer10 != null ? Number(eff.iouRatePer10).toFixed(4) : T("com.base");
   const eRow = document.createElement("div");
   eRow.className = "com-row com-eff";
-  eRow.textContent = `≈ in force — credit line ${line} USDC · rate ${rate}`;
-  eRow.title = "the parameters the economy consults when it sizes an IOU line and stamps its rate; 'base' means no law is live and the config stands";
+  eRow.textContent = T("com.eff", { line, rate });
+  eRow.title = T("com.effTitle");
   body.appendChild(eRow);
 }
 
@@ -2227,7 +2232,7 @@ function openWallets() {
   getJSON("/economy").then((e) => {
     if (!e) return;
     if (Array.isArray(e.agents)) applyEconAgents(e.agents);
-    if (e.social) { econSocial = e.social; renderSocialSection(); renderWallets(); }
+    if (e.social) { econSocial = e.social; renderSocialSection(); renderWallets(); sgMarkDirty(); }
     if (e.dynasty) { econDynasty = e.dynasty; renderDynastySection(); renderWallets(); }
     if (e.market) { econMarket = e.market; renderMarketSection(); }
     if (e.culture) { econCulture = e.culture; renderCultureSection(); }
@@ -2252,7 +2257,7 @@ function updateNetNote() {
   const el = $("net-note");
   if (!el) return;
   if (netting.folded || netting.settled) {
-    el.textContent = `netting · ${netting.folded} trades folded → ${netting.settled} settled on-chain`;
+    el.textContent = T("net.note", { folded: netting.folded, settled: netting.settled });
     el.classList.add("active");
   }
 }
@@ -2278,8 +2283,9 @@ async function pollHistory() {
 function fmtSince(ts) {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return "–";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const loc = currentLang();
+  return d.toLocaleDateString(loc, { month: "short", day: "numeric" }) + " · " +
+    d.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit" });
 }
 
 function updateSinceLaunch() {
@@ -2287,7 +2293,7 @@ function updateSinceLaunch() {
   const s = histSummary;
   if (!histEnabled || !s) {
     set("hs-ticks", "–"); set("hs-since", "–"); set("hs-sett", "–"); set("hs-vol", "–");
-    const sub0 = $("hist-sub"); if (sub0) sub0.textContent = "archive offline";
+    const sub0 = $("hist-sub"); if (sub0) sub0.textContent = T("hist.offline");
     return;
   }
   set("hs-ticks", s.ticks != null ? Number(s.ticks).toLocaleString() : "–");
@@ -2295,11 +2301,11 @@ function updateSinceLaunch() {
   set("hs-sett", s.settlements != null ? Number(s.settlements).toLocaleString() : "–");
   set("hs-vol", s.volumeUsdc != null ? Number(s.volumeUsdc).toFixed(3) : "–");
   const sub = $("hist-sub");
-  if (sub) sub.textContent = s.ticks ? `${Number(s.ticks).toLocaleString()} crons · tick ${s.firstTick}→${s.lastTick}` : "no rows yet";
+  if (sub) sub.textContent = s.ticks ? T("hist.rows", { n: Number(s.ticks).toLocaleString(), from: s.firstTick, to: s.lastTick }) : T("hist.noRows");
   const foot = $("hist-foot");
   if (foot) foot.textContent = histRows.length
-    ? `showing last ${histRows.length} crons · oldest → newest · source: D1 archive`
-    : "one row per cron · archived to D1";
+    ? T("hist.showing", { n: histRows.length })
+    : T("hist.foot");
 }
 
 /** Generic mini time-series chart. vals = numbers oldest→newest; mode "line"|"area"|"bars". */
@@ -2420,6 +2426,7 @@ function openChron() {
 function closeChron() {
   chronOpen = false;
   document.body.classList.remove("chron-open");
+  sgStop();   // never leave the graph loop spinning behind a closed drawer
   const d = $("panel-chron"); if (!d) return;
   d.classList.remove("open");
   setTimeout(() => { if (!chronOpen) d.hidden = true; }, 420);
@@ -2434,7 +2441,217 @@ function setChronVol(vol) {
     t.setAttribute("aria-selected", on ? "true" : "false");
   }
   for (const v of document.querySelectorAll("#panel-chron .chron-vol")) v.classList.toggle("is-on", v.dataset.vol === vol);
+  // the social graph owns a live force loop: run it ONLY while its volume is on stage, stop otherwise
+  if (vol === "graph") sgStart(); else sgStop();
 }
+
+// ================= ⑤ the social graph (force-directed node-link, lives in the chronicle drawer) =========
+// A standalone "prove this is a real society" view: the SAME econSocial bonds the economy trades on, laid
+// out by a tiny DETERMINISTIC force sim on its own canvas. Pure read-out — it never touches the sim, the
+// drives, or the economy. The loop runs ONLY while this volume is on screen and idles to a stop once the
+// layout cools, so it costs nothing when hidden or settled (the perf lesson of the whole frontend).
+const SG = {
+  canvas: null, ctx: null, wrap: null, tip: null, raf: 0,
+  running: false, open: false, dirty: true, bound: false,
+  nodes: [], edges: [], byId: new Map(),
+  colorMode: "colony", alpha: 0, hover: null, drag: null, dpr: 1, w: 0, h: 0,
+};
+const SG_GREEN = [92, 158, 96];        // trust
+const SG_RED = [198, 60, 44];          // grudge
+const SG_NEUTRAL = [150, 150, 154];    // no colony / no house
+const SG_REP = 0.0016, SG_SPRING = 0.02, SG_GRAV = 0.006, SG_COH = 0.01;
+const SG_DAMP = 0.82, SG_COOL = 0.985, SG_MINSIM = 0.02;
+
+/** Mark the graph stale; if it's on screen right now, rebuild (preserving positions) + gentle reheat. */
+function sgMarkDirty() { SG.dirty = true; if (SG.open) { sgBuild(true); sgReheat(0.5); } }
+function sgReheat(a) { SG.alpha = Math.max(SG.alpha, a == null ? 1 : a); if (SG.open && !SG.running) { SG.running = true; SG.raf = requestAnimationFrame(sgTick); } }
+
+/** Build nodes/edges from the latest social + agent read-outs. preserve=true keeps live node positions so
+ *  a background poll doesn't re-scramble the picture; seeds are a deterministic golden-angle spiral. */
+function sgBuild(preserve) {
+  const prev = SG.byId;
+  SG.byId = new Map(); SG.nodes = []; SG.edges = [];
+  SG.dirty = false;
+  const s = econSocial;
+  if (!s) return;
+  const ids = new Set();
+  for (const b of (s.bonds || [])) if (b && b.a != null && b.b != null && b.a !== b.b) { ids.add(b.a); ids.add(b.b); }
+  for (const r of (s.rep || [])) if (r && r.id != null) ids.add(r.id);
+  if (!ids.size) return;
+  const bal = new Map(), rep = new Map();
+  for (const ag of econAgents) if (ag && ag.id != null) bal.set(Number(ag.id), atomicToUsdc(ag.balance || "0"));
+  for (const r of (s.rep || [])) if (r && r.id != null) rep.set(r.id, r.score || 0);
+  let maxBal = 1e-6; for (const v of bal.values()) if (v > maxBal) maxBal = v;
+  for (const id of [...ids].sort((a, b) => a - b)) {
+    const b0 = bal.get(id) || 0, rp = rep.get(id) || 0;
+    const ci = societies ? societies.colonyOf.get(id) : undefined;
+    const colony = ci != null && societies.colonies[ci] ? societies.colonies[ci] : null;
+    const house = houseOf.get(id) || null;
+    const rad = Math.min(20, 5 + 9 * Math.sqrt(Math.min(1, b0 / maxBal)) + 4 * Math.abs(rp));
+    const ang = (id * 2.39996323) % (Math.PI * 2), rr = 0.1 + 0.32 * Math.sqrt((id % 13) / 13);
+    const old = preserve ? prev.get(id) : null;
+    const node = { id, x: old ? old.x : 0.5 + Math.cos(ang) * rr, y: old ? old.y : 0.5 + Math.sin(ang) * rr,
+      vx: 0, vy: 0, r: rad, bal: b0, rep: rp, colony, house };
+    SG.nodes.push(node); SG.byId.set(id, node);
+  }
+  const em = new Map();
+  for (const bd of (s.bonds || [])) {
+    if (!bd || bd.a == null || bd.b == null || bd.a === bd.b) continue;
+    const sc = typeof bd.score === "number" ? bd.score : 0;
+    if (Math.abs(sc) < 0.05) continue;
+    const key = Math.min(bd.a, bd.b) + ":" + Math.max(bd.a, bd.b);
+    const cur = em.get(key);
+    if (!cur || Math.abs(sc) > Math.abs(cur.score)) em.set(key, { a: bd.a, b: bd.b, score: sc, trades: bd.trades || 0 });
+  }
+  for (const g of (s.grudges || [])) {
+    if (!g || g.buyerId == null || g.sellerId == null || g.buyerId === g.sellerId) continue;
+    const key = Math.min(g.buyerId, g.sellerId) + ":" + Math.max(g.buyerId, g.sellerId);
+    if (!em.has(key)) em.set(key, { a: g.buyerId, b: g.sellerId, score: -0.8, trades: 0 });
+  }
+  for (const e of em.values()) { e.neg = e.score < 0; SG.edges.push(e); }
+  SG.alpha = prev.size ? Math.max(SG.alpha, 0.25) : 1;
+}
+
+function sgColorOf(n) {
+  if (SG.colorMode === "house") return n.house ? n.house.color : (n.colony ? n.colony.color : SG_NEUTRAL);
+  return n.colony ? n.colony.color : (n.house ? n.house.color : SG_NEUTRAL);
+}
+
+/** One force integration step (O(n²) charge — trivial for a few dozen nodes). */
+function sgStep() {
+  const n = SG.nodes, e = SG.edges; if (!n.length) return;
+  const a = SG.alpha;
+  const cent = new Map();
+  for (const nd of n) { if (nd.colony) { let c = cent.get(nd.colony); if (!c) { c = { x: 0, y: 0, n: 0 }; cent.set(nd.colony, c); } c.x += nd.x; c.y += nd.y; c.n++; } }
+  for (const c of cent.values()) { c.x /= c.n; c.y /= c.n; }
+  for (let i = 0; i < n.length; i++) {
+    const A = n[i];
+    for (let j = i + 1; j < n.length; j++) {
+      const B = n[j]; let dx = B.x - A.x, dy = B.y - A.y, d2 = dx * dx + dy * dy;
+      if (d2 < 1e-5) { dx = 0.017 + (i - j) * 1e-4; dy = 0.013; d2 = dx * dx + dy * dy; }
+      const d = Math.sqrt(d2), rep = SG_REP / d2, fx = (dx / d) * rep, fy = (dy / d) * rep;
+      A.vx -= fx * a; A.vy -= fy * a; B.vx += fx * a; B.vy += fy * a;
+    }
+  }
+  for (const ed of e) {
+    const A = SG.byId.get(ed.a), B = SG.byId.get(ed.b); if (!A || !B) continue;
+    let dx = B.x - A.x, dy = B.y - A.y; const d = Math.hypot(dx, dy) || 1e-6;
+    const target = ed.neg ? 0.34 : 0.13;
+    const k = SG_SPRING * (0.4 + Math.min(1, Math.abs(ed.score)));
+    const f = (d - target) * k, fx = (dx / d) * f, fy = (dy / d) * f;
+    A.vx += fx * a; A.vy += fy * a; B.vx -= fx * a; B.vy -= fy * a;
+  }
+  for (const nd of n) {
+    nd.vx += (0.5 - nd.x) * SG_GRAV * a; nd.vy += (0.5 - nd.y) * SG_GRAV * a;
+    if (nd.colony) { const c = cent.get(nd.colony); if (c) { nd.vx += (c.x - nd.x) * SG_COH * a; nd.vy += (c.y - nd.y) * SG_COH * a; } }
+  }
+  const pad = 0.08;
+  for (const nd of n) {
+    if (SG.drag && SG.drag.id === nd.id) { nd.vx = 0; nd.vy = 0; continue; }
+    nd.vx *= SG_DAMP; nd.vy *= SG_DAMP;
+    nd.x = clamp(nd.x + nd.vx, pad, 1 - pad); nd.y = clamp(nd.y + nd.vy, pad, 1 - pad);
+  }
+  SG.alpha *= SG_COOL;
+}
+
+function sgDraw() {
+  const ctx = SG.ctx; if (!ctx || !SG.w) return;
+  const { w, h, dpr } = SG;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+  for (const ed of SG.edges) {
+    const A = SG.byId.get(ed.a), B = SG.byId.get(ed.b); if (!A || !B) continue;
+    const col = ed.neg ? SG_RED : SG_GREEN, st = Math.min(1, Math.abs(ed.score));
+    ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${(0.16 + 0.5 * st).toFixed(3)})`;
+    ctx.lineWidth = 0.6 + 2.2 * st + Math.min(2, (ed.trades || 0) * 0.05);
+    ctx.beginPath(); ctx.moveTo(A.x * w, A.y * h); ctx.lineTo(B.x * w, B.y * h); ctx.stroke();
+  }
+  for (const nd of SG.nodes) {
+    const x = nd.x * w, y = nd.y * h, c = sgColorOf(nd);
+    if (nd.house) { ctx.beginPath(); ctx.arc(x, y, nd.r + 2.6, 0, TAU); ctx.strokeStyle = rgba(nd.house.color, 0.7); ctx.lineWidth = 1.2; ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(x, y, nd.r, 0, TAU);
+    ctx.fillStyle = rgba(c, nd === SG.hover ? 1 : 0.9); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = "rgba(40,40,44,0.5)"; ctx.stroke();
+    if (nd === SG.hover || nd.r > 12) { ctx.fillStyle = "rgba(40,40,44,0.82)"; ctx.font = "600 9px ui-monospace, SFMono-Regular, Menlo, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText("#" + nd.id, x, y + nd.r + 3); }
+  }
+}
+
+function sgTick() {
+  if (!SG.running) return;
+  sgStep(); sgDraw();
+  if (SG.alpha <= SG_MINSIM && !SG.drag) { SG.running = false; sgDraw(); return; }   // settled → idle, free the CPU
+  SG.raf = requestAnimationFrame(sgTick);
+}
+
+function sgMeasure() {
+  if (!SG.canvas || !SG.wrap) return;
+  const r = SG.wrap.getBoundingClientRect();
+  SG.dpr = Math.min(2, window.devicePixelRatio || 1);
+  SG.w = Math.max(0, r.width); SG.h = Math.max(0, r.height);
+  SG.canvas.width = Math.round(SG.w * SG.dpr); SG.canvas.height = Math.round(SG.h * SG.dpr);
+}
+
+function sgTip(nd, mx, my) {
+  if (!SG.tip) return;
+  if (!nd) { SG.tip.hidden = true; return; }
+  const col = nd.colony ? nd.colony.name : "unaffiliated";
+  const hs = nd.house ? `${nd.house.sigil} ${nd.house.name}` : "commoner";
+  const rel = [];
+  for (const ed of SG.edges) { if (ed.a === nd.id || ed.b === nd.id) { const o = ed.a === nd.id ? ed.b : ed.a; rel.push(`${ed.neg ? "⚔" : "❖"}#${o}`); } }
+  SG.tip.innerHTML = `<b>#${nd.id}</b> · ${col} · ${hs}<br>bal ${nd.bal.toFixed(4)} · rep ${nd.rep >= 0 ? "+" : ""}${nd.rep.toFixed(2)}${rel.length ? "<br>" + rel.slice(0, 8).join(" ") : ""}`;
+  SG.tip.hidden = false;
+  const tw = SG.tip.offsetWidth, th = SG.tip.offsetHeight;
+  SG.tip.style.left = clamp(mx + 12, 4, Math.max(4, SG.w - tw - 4)) + "px";
+  SG.tip.style.top = clamp(my + 12, 4, Math.max(4, SG.h - th - 4)) + "px";
+}
+
+function sgBindDom() {
+  if (SG.bound) return;
+  SG.canvas = $("social-graph"); SG.tip = $("sg-tip");
+  if (!SG.canvas) return;
+  SG.wrap = SG.canvas.parentElement;
+  SG.ctx = SG.canvas.getContext("2d");
+  SG.bound = true;
+  const bar = document.querySelector(".sg-tools");
+  if (bar) bar.addEventListener("click", (ev) => {
+    const b = ev.target.closest(".sg-btn"); if (!b) return;
+    if (b.dataset.color) { SG.colorMode = b.dataset.color; for (const x of bar.querySelectorAll(".sg-btn")) if (x.dataset.color) x.classList.toggle("is-on", x === b); sgBuild(true); sgReheat(0.6); }
+    else if (b.dataset.act === "reheat") { sgBuild(false); sgReheat(1); }
+  });
+  const pick = (ev) => {
+    const r = SG.canvas.getBoundingClientRect();
+    const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    let best = null, bd = 1e9;
+    for (const nd of SG.nodes) { const dx = nd.x * SG.w - mx, dy = nd.y * SG.h - my, d = Math.hypot(dx, dy); if (d < nd.r + 4 && d < bd) { bd = d; best = nd; } }
+    return { best, mx, my };
+  };
+  SG.canvas.addEventListener("pointermove", (ev) => {
+    const { best, mx, my } = pick(ev);
+    if (SG.drag) { const nd = SG.byId.get(SG.drag.id); if (nd) { nd.x = clamp(mx / SG.w, 0.04, 0.96); nd.y = clamp(my / SG.h, 0.04, 0.96); nd.vx = 0; nd.vy = 0; } sgReheat(0.5); }
+    SG.hover = best; SG.canvas.style.cursor = best ? "pointer" : "grab";
+    sgTip(best, mx, my);
+    if (!SG.running) sgDraw();
+  });
+  SG.canvas.addEventListener("pointerdown", (ev) => { const { best } = pick(ev); if (best) { SG.drag = { id: best.id }; SG.canvas.classList.add("dragging"); try { SG.canvas.setPointerCapture(ev.pointerId); } catch { /* noop */ } sgReheat(0.4); } });
+  const endDrag = () => { SG.drag = null; SG.canvas.classList.remove("dragging"); };
+  SG.canvas.addEventListener("pointerup", endDrag);
+  SG.canvas.addEventListener("pointercancel", endDrag);
+  SG.canvas.addEventListener("pointerleave", () => { SG.hover = null; if (SG.tip) SG.tip.hidden = true; if (!SG.running) sgDraw(); });
+}
+
+function sgStart() {
+  sgBindDom();
+  if (!SG.canvas) return;
+  SG.open = true;
+  if (SG.dirty || !SG.nodes.length) sgBuild(false);
+  sgMeasure();
+  sgReheat(SG.alpha > SG_MINSIM ? SG.alpha : 0.9);
+}
+function sgStop() {
+  SG.open = false; SG.running = false;
+  if (SG.raf) cancelAnimationFrame(SG.raf); SG.raf = 0;
+  if (SG.tip) SG.tip.hidden = true;
+}
+window.addEventListener("resize", () => { if (SG.open) { sgMeasure(); sgDraw(); } });
 
 // ================= the chronicle drawer (opened from the bottom-right button) =================
 // Poll /annals — the deterministic historian's timeline. The poll runs whether or not the drawer is open,
@@ -2486,7 +2703,7 @@ function renderChron() {
   const cbadge = $("chron-badge");
   if (cbadge) {
     cbadge.hidden = chronRows.length === 0;
-    cbadge.textContent = `${chronRows.length > 99 ? "99+" : chronRows.length} entries inscribed`;
+    cbadge.textContent = `${chronRows.length > 99 ? "99+" : chronRows.length} ${T("chron.badge")}`;
   }
   // Header (era badge + name + regime).
   const badge = $("chron-era-badge"); const name = $("chron-era-name"); const reg = $("chron-era-regime");
@@ -2498,9 +2715,9 @@ function renderChron() {
       const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
       let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
     };
-    if (badge) badge.textContent = "era " + roman(chronMeta.era).toLowerCase();
+    if (badge) badge.textContent = T("chron.eraBadge") + " " + roman(chronMeta.era).toLowerCase();
     if (name) name.textContent = chronMeta.eraName || "—";
-    if (reg)  reg.textContent = (chronMeta.eraRegime || "").toLowerCase();
+    if (reg)  reg.textContent = chronMeta.eraRegime ? gl("regime", String(chronMeta.eraRegime).toLowerCase()) : "";
     // ⑦ EPOCHS: if this era was forced open by a shock, badge the shock's name (⚖ when the commons willed it).
     if (shock) {
       const kind = chronMeta.eraShock;
@@ -2508,17 +2725,17 @@ function renderChron() {
         shock.hidden = false;
         shock.textContent = `✷ ${CHRON_.shockNames[kind] || kind}${chronMeta.eraShockWilled ? " ⚖" : ""}`;
         shock.title = chronMeta.eraShockWilled
-          ? `a shock era — "${kind}" was willed upon the swarm by the commons (a governance stimulus)`
-          : `a shock era — "${kind}" fell upon the swarm of its own accord; the age was forced open by upheaval, not drift`;
+          ? T("chron.shockWilled", { kind })
+          : T("chron.shockNatural", { kind });
       } else {
         shock.hidden = true; shock.textContent = "";
       }
     }
-    if (sub)  sub.textContent = chronRows.length ? `${chronRows.length} entries · seq ${chronMeta.seq}` : "awaiting first entry…";
-  } else if (sub) sub.textContent = "chronicle offline";
+    if (sub)  sub.textContent = chronRows.length ? T("chron.subEntries", { n: chronRows.length, seq: chronMeta.seq }) : T("chron.subAwaiting");
+  } else if (sub) sub.textContent = T("chron.subOffline");
   if (!chronRows.length) {
-    list.innerHTML = `<li class="chron-empty">the historian is watching. it will write when a threshold is crossed — an era shift, the first settlement, a panic, a record.</li>`;
-    if (foot) foot.textContent = "no entries yet · pure read-out · thresholds pending";
+    list.innerHTML = `<li class="chron-empty">${escapeHtml(T("chron.empty"))}</li>`;
+    if (foot) foot.textContent = T("chron.footThreshold");
     return;
   }
   const html = chronRows.map((e) => {
@@ -2526,16 +2743,21 @@ function renderChron() {
     const ago = e.ts ? chronTimeAgo(e.ts) : "";
     const actors = Array.isArray(e.actors) && e.actors.length ? ` · #${e.actors.join(" #")}` : "";
     const sev = e.severity || 1;
+    // DISPLAY localisation only: rebuild the line from the entry's OWN tokens into the reader's
+    // language. Verification (verifyChron) still re-derives the byte-frozen English template, so
+    // the "prove no LLM" trust is untouched. Fall back to the canonical English when unavailable.
+    const L = currentLang();
+    const disp = L !== "en" ? (ct(e.kind, e.tokens, L) || e.text) : e.text;
     return `<li class="chron-item sev-${sev} kind-${(e.kind || "").toLowerCase()}">
       <span class="chron-icon" aria-hidden="true">${icon}</span>
       <div class="chron-main">
-        <div class="chron-line">${escapeHtml(e.text || "")}</div>
-        <div class="chron-meta">tick ${e.tick ?? "–"} · ${ago} · ${e.kind}${actors}</div>
+        <div class="chron-line">${escapeHtml(disp || "")}</div>
+        <div class="chron-meta">${T("chron.tick")} ${e.tick ?? "–"} · ${ago} · ${e.kind}${actors}</div>
       </div>
     </li>`;
   }).join("");
   list.innerHTML = html;
-  if (foot) foot.textContent = `${chronRows.length} recent entries · newest first · D1 archive is complete`;
+  if (foot) foot.textContent = T("chron.footRecent", { n: chronRows.length });
   // Track the highest seq we've rendered, so a future ticker can diff against this.
   if (chronRows.length) chronSeenSeq = Math.max(chronSeenSeq, chronRows[0].seq || 0);
 }
@@ -2677,10 +2899,10 @@ async function verifyChron() {
   // head binding: the newest line's hash must equal the published chain head.
   if (asc.length && chronMeta?.headHash) v.headMatch = String(asc[asc.length - 1].hash) === String(chronMeta.headHash);
   v.reason = !v.chainOk
-    ? (v.badText != null ? `line #${v.badText} does not regenerate from its public template` : `chain breaks at #${v.brokenAt}`)
+    ? (v.badText != null ? T("chron.reasonBadLine", { n: v.badText }) : T("chron.reasonChainBreak", { n: v.brokenAt }))
     : v.rulesMatch === false
-      ? "server rule-set differs from the open-source historian"
-      : `${v.rederived}/${v.lines} lines re-derive from public templates · hash chain intact`;
+      ? T("chron.reasonRulesDiff")
+      : T("chron.reasonOk", { r: v.rederived, l: v.lines });
   v.ok = v.chainOk && v.rederived === v.lines && v.lines > 0 && v.rulesMatch !== false;
   v.running = false;
   chronVerifyState = v;
@@ -2689,15 +2911,15 @@ async function verifyChron() {
 
 async function proveChron() {
   const btn = $("chron-prove");
-  if (btn) { btn.disabled = true; btn.textContent = "verifying…"; }
+  if (btn) { btn.disabled = true; btn.textContent = T("chron.verifying"); }
   try {
     if (!chronRows.length) await pollChron();
     await verifyChron();
   } catch (e) {
-    chronVerifyState = { ok: false, running: false, reason: "verification error: " + (e && e.message ? e.message : e), lines: chronRows.length };
+    chronVerifyState = { ok: false, running: false, reason: T("chron.verifyError") + ": " + (e && e.message ? e.message : e), lines: chronRows.length };
   }
   renderChronVerdict();
-  if (btn) { btn.disabled = false; btn.textContent = "re-verify in my browser"; }
+  if (btn) { btn.disabled = false; btn.textContent = T("chron.reverify"); }
 }
 
 function renderChronVerdict() {
@@ -2706,15 +2928,15 @@ function renderChronVerdict() {
   const v = chronVerifyState;
   const mark = (b) => b === true ? `<span class="cv-yes">✓</span>` : b === false ? `<span class="cv-no">✗</span>` : `<span class="cv-na">·</span>`;
   const short = (h) => h ? String(h).slice(0, 10) + "…" + String(h).slice(-8) : "—";
-  const head = `<div class="cv-head ${v.ok ? "pass" : "fail"}">${v.ok ? "PROVEN · a deterministic historian wrote these, not an LLM" : "NOT PROVEN · " + escapeHtml(v.reason || "check failed")}</div>`;
-  const rulesVal = v.rulesMatch == null ? "server published no fingerprint" : (v.rulesMatch ? "the server runs the open-source rule-set" : "MISMATCH — a different rule-set");
+  const head = `<div class="cv-head ${v.ok ? "pass" : "fail"}">${v.ok ? T("chron.proven") : T("chron.notProven") + escapeHtml(v.reason || T("chron.checkFailed"))}</div>`;
+  const rulesVal = v.rulesMatch == null ? T("chron.rulesNone") : (v.rulesMatch ? T("chron.rulesMatch") : T("chron.rulesMismatch"));
   const rows = [
-    [mark(v.rulesMatch), `<b>Rule-set fingerprint</b><span>${escapeHtml(rulesVal)}</span><code>${escapeHtml(short(v.localRules))}</code>`],
-    [mark(v.chainOk && v.lines > 0), `<b>Every line re-derives</b><span>${v.rederived}/${v.lines} sentences rebuilt word-for-word from their own template + numbers</span>`],
-    [mark(v.chainOk && v.lines > 0), `<b>Hash chain intact</b><span>no word altered after the fact · sha256 links each line to the last</span>${v.headMatch === true ? `<em>head ${escapeHtml(short(chronMeta && chronMeta.headHash))} matches</em>` : ""}`],
+    [mark(v.rulesMatch), `<b>${T("chron.vRules")}</b><span>${escapeHtml(rulesVal)}</span><code>${escapeHtml(short(v.localRules))}</code>`],
+    [mark(v.chainOk && v.lines > 0), `<b>${T("chron.vRederive")}</b><span>${T("chron.vRederiveDesc", { r: v.rederived, l: v.lines })}</span>`],
+    [mark(v.chainOk && v.lines > 0), `<b>${T("chron.vChain")}</b><span>${T("chron.vChainDesc")}</span>${v.headMatch === true ? `<em>${T("chron.vHead")} ${escapeHtml(short(chronMeta && chronMeta.headHash))} ${T("chron.vHeadMatch")}</em>` : ""}`],
   ];
   box.innerHTML = head + `<ul class="cv-rows">` + rows.map((r) => `<li>${r[0]}<div class="cv-t">${r[1]}</div></li>`).join("") + `</ul>` +
-    `<div class="cv-note">All checks ran in <i>your</i> browser against open-source templates — this asks the server for nothing but the entries themselves.</div>`;
+    `<div class="cv-note">${T("chron.vNote")}</div>`;
   box.hidden = false;
 }
 
@@ -3964,7 +4186,7 @@ async function poll() {
   try {
     const [pop, st] = await Promise.all([getJSON("/population"), getJSON("/state")]);
     offline = false;
-    setStatus("live", "live");
+    setStatusKind("live");
     if (pop && pop.snapshot) applySnapshot(pop.snapshot);
     if (pop && pop.economy) applyEconomy(pop.economy);
     if (pop && pop.topology) applyTopology(pop.topology);
@@ -3984,7 +4206,7 @@ async function poll() {
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
   } catch (e) {
-    if (!offline) { offline = true; setStatus("offline · dreaming", "off"); }
+    if (!offline) { offline = true; setStatusKind("dreaming"); }
     offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while
     offlineTick();                                    // local synthetic mirror + the offline econ badge
     updateCronWatchdog();                             // hide the stale-heartbeat bar (offline badge covers it)
@@ -4069,27 +4291,40 @@ function setStatus(text, cls) {
   const dot = $("link-dot");
   dot.className = "link-dot" + (cls ? " " + cls : "");
 }
+// The link status is a word, not a number — keep the *kind* so a language switch re-labels it in place.
+let curStatusKind = "connecting";
+const STATUS_KIND = { live: ["top.status.live", "live"], dreaming: ["top.status.dreaming", "off"], offline: ["top.status.offline", "off"], connecting: ["top.status.connecting", ""] };
+function setStatusKind(kind) {
+  curStatusKind = kind;
+  const [k, cls] = STATUS_KIND[kind] || STATUS_KIND.connecting;
+  setStatus(T(k), cls);
+}
 
 // ================= HUD =================
 function updateHud(snap) {
   const c = snap.collective;
   $("temp").textContent = c.temperature.toFixed(2);
-  $("regime").textContent = (c.regime || "—").toLowerCase();
+  $("regime").textContent = c.regime ? gl("regime", String(c.regime).toLowerCase()) : "—";
   $("meter-fill").style.width = (clamp(c.temperature) * 100).toFixed(1) + "%";
   $("vitality").textContent = c.vitality != null ? c.vitality.toFixed(2) : "–";
   $("tick").textContent = "#" + (snap.tickIndex ?? "–");
 }
 
 const DIST_ORDER = ["AGITATE", "EXPLORE", "AGGREGATE", "REST"];
+let _distLang = null;   // rebuild the legend labels whenever the reader switches language
+let _lastDist = null;   // last {states,size} so a language switch can repaint the legend instantly
 function renderDist(states, size) {
   const host = $("dist");
-  if (!host.children.length) {
+  const lg = currentLang();
+  if (!host.children.length || _distLang !== lg) {
+    _distLang = lg;
     host.innerHTML = DIST_ORDER.map((s) => `<span class="dist-seg ${s.toLowerCase()}"></span>`).join("");
     $("dist-legend").innerHTML = DIST_ORDER.map(
-      (s) => `<li><span class="sw" style="background:var(--${s.toLowerCase()})"></span>${s.toLowerCase()}<b data-k="${s}">0</b></li>`
+      (s) => `<li><span class="sw" style="background:var(--${s.toLowerCase()})"></span>${T("pop.state." + s.toLowerCase())}<b data-k="${s}">0</b></li>`
     ).join("");
   }
   const st = states || {};
+  _lastDist = { states: st, size };
   for (const s of DIST_ORDER) {
     const c = st[s] || 0;
     const seg = host.querySelector(".dist-seg." + s.toLowerCase());
@@ -4158,10 +4393,10 @@ function refreshInspectorSocial(id) {
     let al = 0, fe = 0;
     for (const p of societies.allies) if (p.a === id || p.b === id) al++;
     for (const p of societies.feuds) if (p.a === id || p.b === id) fe++;
-    parts.push(al + (al === 1 ? " ally" : " allies"), fe + (fe === 1 ? " feud" : " feuds"));
+    parts.push(T(al === 1 ? "ins.ally" : "ins.allies", { n: al }), T(fe === 1 ? "ins.feud" : "ins.feuds", { n: fe }));
   }
   const h = houseOf.get(id);
-  parts.push(h ? `${h.sigil ? h.sigil + " " : ""}House of ${h.name}` : "no house");
+  parts.push(h ? `${h.sigil ? h.sigil + " " : ""}` + T("ins.houseOf", { name: h.name }) : T("dyn.noHouse"));
   el.textContent = parts.join(" · ");
 }
 
@@ -4169,7 +4404,7 @@ function renderDrives(f) {
   const host = $("ins-drives");
   if (!host.children.length) {
     host.innerHTML = DRIVES.map(
-      ([k, label]) => `<div class="drive ${k}"><span class="d-name">${label}</span><span class="d-bar"><span class="d-fill"></span></span><span class="d-val">0.00</span></div>`
+      ([k, label]) => `<div class="drive ${k}"><span class="d-name">${T("drive." + k)}</span><span class="d-bar"><span class="d-fill"></span></span><span class="d-val">0.00</span></div>`
     ).join("");
   }
   const set = (k, val, centered) => {
@@ -4545,8 +4780,42 @@ async function copyTokenCA(btn) {
 }
 
 // ================= misc UI bindings =================
+// ================= language switcher + live re-render =================
+// On a language change we re-translate the static DOM (applyDom, done inside setLang) and then
+// rebuild whatever is currently on stage. The canvas layers read T()/gl() every frame, so they
+// refresh on the next animation tick without any help from us.
+function populateLangSelect() {
+  const sel = $("lang-select");
+  if (!sel) return;
+  sel.textContent = "";
+  for (const code of SUPPORTED) {
+    const o = document.createElement("option");
+    o.value = code; o.textContent = ENDONYMS[code] || code;
+    sel.appendChild(o);
+  }
+  sel.value = currentLang();
+}
+function rerenderAll() {
+  try {
+    setStatusKind(curStatusKind);
+    updateEconMode(); updateEconFoot();
+    updateNetNote();
+    const tca = $("tca-copy"); if (tca) tca.title = T("econ.copyTip", { ca: tca.dataset.ca || "" });
+    if (_lastDist) renderDist(_lastDist.states, _lastDist.size);   // repaint behaviour legend in the new language
+    updateSinceLaunch();
+    const dv = $("ins-drives"); if (dv) dv.innerHTML = "";   // force the cached drive labels to rebuild in the new language
+    if (selectedId != null) fillInspectorFromSim(selectedId);
+    if (walletsOpen) { renderWallets(); renderMarketSection(); }
+    if (historyOpen) renderHistory();
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderCommonsSection(); renderSocialSection(); }
+  } catch { /* never let a re-render break the scene */ }
+}
+window.__onLangChange = rerenderAll;
+
 function bindUI() {
   $("ins-close").addEventListener("click", deselect);
+  const lsel = $("lang-select");
+  if (lsel) lsel.addEventListener("change", () => setLang(lsel.value));
   bindBloomScale();
   const lt = $("layer-toggles");
   if (lt) lt.addEventListener("click", (e) => {
@@ -5224,13 +5493,17 @@ function offlineTick() {
 
 // ================= boot =================
 function boot() {
+  // resolve the reader's language first (persisted > browser > en) so the very first paints are localized
+  setLang(getLang(), { rerender: false });
   haloSprite = makeHaloSprite();
   resize();
   bindUI();
+  populateLangSelect();
+    { const tca = $("tca-copy"); if (tca) tca.title = T("econ.copyTip", { ca: tca.dataset.ca || "" }); }   // fill the {ca} param applyDom can't
   bindPointer();
   offlineTick();   // seed the field + the agent economy so it is alive immediately
   applyPaletteToDOM(paletteAt(tempSmoothed));
-  setStatus("connecting…", "");
+  setStatusKind("connecting");
   poll();
   setInterval(poll, POLL_MS);
   pollHistory();                              // seed the ribbon + since-launch summary from D1 on load
