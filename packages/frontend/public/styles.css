@@ -1434,34 +1434,76 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   .layer-toggles { top: auto; bottom: calc(var(--pad) + 4px); }
 }
 
-/* --- phones OR short viewports: stack the four panels into one scrollable column over the fixed
-       field. The document itself scrolls now (it was overflow:hidden before). Triggered by narrow
-       width OR insufficient height, so low-resolution / small monitors never collide either. --- */
+/* --- phones OR short viewports: stack the three corner panels into one scrollable column over the
+       fixed field. The document itself scrolls now (it was overflow:hidden before). Triggered by narrow
+       width OR insufficient height, so low-resolution / small monitors never collide either.
+       The Chronicle is NOT part of this column — it stays a true fixed right-edge sheet (see below),
+       so its 8-volume tab rail opens as an overlay instead of exploding inline. --- */
 @media (max-width: 680px), (max-height: 600px) {
-  html { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  body { height: auto; min-height: 100%; overflow: visible; }
+  /* clip (not just hidden) so the off-canvas fixed sheets can never add horizontal scroll width; the
+     page still scrolls vertically. Safe-area aware because viewport-fit=cover is set. */
+  html { height: auto; min-height: 100%; overflow-x: clip; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  body { height: auto; min-height: 100%; overflow-x: clip; overflow-y: visible; }
 
-  /* the field / grain / vignette / topbar stay fixed — they're the backdrop */
-  .panel-econ, .panel-temp, .panel-pop, .panel-chron {
+  /* the field / grain / vignette / topbar stay fixed — they're the backdrop.
+     panel-chron deliberately omitted: it keeps its .drawer fixed + translateX(100%) behaviour. */
+  .panel-econ, .panel-temp, .panel-pop {
     position: relative; left: auto; right: auto; top: auto; bottom: auto;
-    width: auto; max-width: min(92vw, 460px);
+    width: auto; max-width: min(90vw, 460px);
     margin: 0 auto 12px;
   }
-  /* first panel clears the pinned topbar and leaves a band of artwork above it */
-  .panel-econ { margin-top: clamp(74px, 24vh, 220px); }
+  /* first panel clears the (wrapping) pinned topbar and leaves a band of artwork above it */
+  .panel-econ { margin-top: clamp(96px, 20vh, 220px); }
+  /* last panel in the column must clear the fixed bottom dock (Chronicle pill + layer toggles) */
+  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 148px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
 
-  /* compact the pinned topbar so its meta never crowds the wordmark */
-  .topmeta { gap: 6px; font-size: 10px; letter-spacing: 0.1em; }
+  /* topbar: honour the notch, and let the meta wrap onto its own line instead of clipping on 360px */
+  .topbar {
+    padding-top: calc(var(--pad) + env(safe-area-inset-top, 0px));
+    padding-left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+    padding-right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+    flex-wrap: wrap; align-items: flex-start; gap: 8px;
+  }
+  .topmeta { margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; row-gap: 5px; gap: 6px; font-size: 10px; letter-spacing: 0.1em; }
   .wordmark { gap: 7px; }
   .wordmark .name { font-size: 20px; }
 
-  /* right-side drawers widen toward full-width sheets on a narrow screen */
+  /* right-side drawers widen toward near-full-width sheets on a narrow screen (Chronicle included) */
   .wallets { width: min(94vw, 372px); }
   .drawer { width: min(96vw, 440px); }
-  .inspector { max-height: 70vh; }
+  .drawer-head { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); }
+
+  /* the Chronicle trigger becomes a compact centred pill docked above the safe area — always
+     tappable (z above the panels), auto-hidden by body.chron-open / body.ins-open as before */
+  .chron-btn {
+    left: 0; right: 0; margin-inline: auto; width: max-content; max-width: 92vw;
+    min-width: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    flex-direction: row; align-items: center; justify-content: center; gap: 10px;
+    padding: 11px 22px; z-index: 20;
+  }
+  .chron-btn .chron-word { font-size: 16px; margin-top: 0; letter-spacing: 0.12em; }
+  .chron-btn .chron-orn { margin-left: 0; }
+  .chron-btn .chron-badge { display: none; }
+
+  /* ambient layer switches dock as a single centred row directly above the Chronicle pill */
+  .layer-toggles {
+    left: 0; right: 0; margin-inline: auto; transform: none; top: auto;
+    width: max-content; max-width: 94vw;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+    z-index: 20; justify-content: center;
+  }
+  .layer-toggles .layer-btn { padding: 7px 12px; }
+
+  /* inspector rises above the dock and clears the notch at the bottom */
+  .inspector { z-index: 22; max-height: 70vh; bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px)); }
+
+  /* comfortable ≥40px touch targets on every drawer's close control */
+  .drawer-close, .wallets-close, .ins-close, .epitaph-close {
+    min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; font-size: 22px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
