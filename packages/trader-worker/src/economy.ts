@@ -258,6 +258,15 @@ export interface DynastyReadout {
    * read-out stays synchronous + pure). Absent on a pre-war read-out ⇒ no vaults, no tax mirror.
    */
   war?: { housesWithVault: number; taxCollectedUsdc: number };
+  /**
+   * TERRITORY CONQUEST (additive, read-only): the authoritative zone→controller map for the WHOLE grid,
+   * present only while the territory layer is armed. `houses[]` is trimmed to the prestige top-8, so a zone
+   * seized by a poor victor would otherwise never surface (its controlsZones is cut) — leaving a conquest
+   * invisible on the frontend field. This bounded map (≤ zoneCount) lets the frontend recolour a seized zone
+   * and read it as contested regardless of the victor's standing. Pure read-out: never hashed, never persisted,
+   * never feeds back into the connectome/genome (KEY_VERSION stays economy:v1). Absent when territory is off.
+   */
+  zoneOwners?: { zone: number; houseId: number; name: string; sigil: string }[];
 }
 
 /**
@@ -2326,7 +2335,19 @@ export class AgentEconomy {
     const war = housesWithVault > 0 || this.warTaxAtomic !== "0"
       ? { housesWithVault, taxCollectedUsdc: atomicToUsdc(this.warTaxAtomic) }
       : undefined;
-    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size, ...(war ? { war } : {}) };
+    // territory-additive: emit the authoritative zone→controller map for the whole grid ONLY while the layer is
+    // on, so a territory-off read-out is byte-for-byte today's (no spurious zoneOwners key). Bounded by the grid
+    // itself (≤ zoneCount entries, one per controlled zone) — this is the map that lets a poor victor's seizure
+    // recolour on the frontend even though it was cut from the prestige top-8 `houses` above.
+    let zoneOwners: DynastyReadout["zoneOwners"];
+    if (this.territoryOn()) {
+      zoneOwners = [];
+      for (const [z, hid] of Array.from(this.zoneControl.entries()).sort((a, b) => a[0] - b[0])) {
+        const h = this.houses.get(hid);
+        if (h) zoneOwners.push({ zone: z, houseId: hid, name: h.name, sigil: h.sigil });
+      }
+    }
+    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size, ...(zoneOwners ? { zoneOwners } : {}), ...(war ? { war } : {}) };
   }
 
   /**

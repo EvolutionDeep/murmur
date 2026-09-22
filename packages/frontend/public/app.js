@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=67";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=68";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -371,6 +371,7 @@ const MIND_REBUILD_MS = 320;                          // offscreen + low-frequen
 // ---- illuminated-manuscript layers: an aged-parchment base + a gilded frame (offscreen, rebuilt rarely) ----
 let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
 let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (static ⇒ repaint on change, blit per frame)
+let territorySeizureSig = "";                            // a stable signature of which zones changed hands in war — folded into terrKey so a conquest repaints the dominion map
 
 // ================= canvas field =================
 const canvas = $("field");
@@ -1243,7 +1244,36 @@ function spawnChronFx(e) {
     const m = monuments.find((mm) => mm.id === a);
     if (m) m.pulse = now;
     setBanner(T("banner.elegy"), T("banner.fly", { id: a }), [120, 120, 124]);
+  } else if (e.kind === "WAR_DECLARED") {
+    // the two houses tear a red rift open between their colonies and are shoved apart
+    const t = e.tokens || {};
+    if (a != null && b != null) { chronFx.push({ kind: "feud", a, b, t0: now, dur: 2600 }); chronNudge(a, b, -1); }
+    setBanner(T("banner.warDeclared"), T("banner.warBetween", {
+      attacker: t.attacker || (a != null ? T("banner.fly", { id: a }) : "?"),
+      defender: t.defender || (b != null ? T("banner.fly", { id: b }) : "?"),
+    }), CRACK_RED);
+  } else if (e.kind === "WAR_RESOLVED") {
+    // the coffer's verdict: name the victor and the vanquished across the whole field
+    const t = e.tokens || {};
+    setBanner(T("banner.warResolved"), T("banner.defeats", {
+      winner: t.winner || "?", loser: t.loser || "?", potUsdc: t.potUsdc != null ? t.potUsdc : "",
+    }), CRACK_RED);
+    invalidateTerritory();
+  } else if (e.kind === "TERRITORY_SEIZED") {
+    // conquest repaints the map: drop the cached dominions + colony partition so the seized zone recolours
+    const t = e.tokens || {};
+    setBanner(T("banner.territorySeized"), T("banner.seizes", {
+      winner: t.winner || "?", loser: t.loser || "?", zones: t.zones != null ? t.zones : "",
+    }), [196, 62, 48]);
+    invalidateTerritory();
   }
+}
+/** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
+ *  (the big dominion map + the offscreen blit + the focus highlight). Cheap; only fired on a war beat. */
+function invalidateTerritory() {
+  terrKey = "";                       // renderTerritoryMap rebuilds the offscreen map on the next paint
+  focusCacheId = null;                // the colony/house tints feeding a focused fly's set are now stale
+  rebuildSocieties();                 // regroup colonies from the latest zoneOwners so a seizure recolours
 }
 /** Flash the epic centre-caption for a chronicle event. */
 function setBanner(text, sub, color) {
@@ -1336,6 +1366,17 @@ function territoryColonies() {
       if (!h) continue;
       if (Array.isArray(h.controlsZones)) for (const z of h.controlsZones) if (z != null) ctrl.set(z | 0, h);
       if (h.homeZone != null) home.set(h.homeZone | 0, h);
+    }
+  }
+  // Authoritative zone→controller map from the server (bounded, ≤ zoneCount). This is what lets a zone seized
+  // by a house OUTSIDE the prestige top-8 still recolour + read as contested: the trimmed `houses[]` never
+  // carries that victor, so its `controlsZones` alone would leave the conquest invisible on the field.
+  if (econDynasty && Array.isArray(econDynasty.zoneOwners)) {
+    const byId = new Map();
+    if (Array.isArray(econDynasty.houses)) for (const h of econDynasty.houses) if (h && h.id != null) byId.set(h.id, h);
+    for (const zo of econDynasty.zoneOwners) {
+      if (!zo || zo.zone == null) continue;
+      ctrl.set(zo.zone | 0, byId.get(zo.houseId) || { id: zo.houseId, name: zo.name, sigil: zo.sigil });
     }
   }
   const zoneKeys = [...byZone.keys()].sort((a, b) => a - b);
@@ -1599,6 +1640,33 @@ function rebuildTerritoryPolities() {
     p.ids.sort((a, b) => a - b);
     p._scr = { rad: new Array(28).fill(0), sm: new Array(28).fill(0), P: Array.from({ length: 28 }, () => [0, 0]) };
     p._pts = []; p._hatch = null;
+    p.occupied = false; p.occupiedBy = "";
+  }
+  // WAR SEIZURE (server-authoritative): a polity reads as OCCUPIED when another house CONTROLS a zone its own
+  // members physically sit in. econZones (flyId→homeZone) × houseOf (flyId→name) say who sits where; the
+  // dynasty read-out's zoneOwners (zone→controller) says who HOLDS it. Differ ⇒ conquest. This is what lets the
+  // dominion map change after a war even though membership itself never moves, and — unlike the live-societies
+  // contested ring (skipped whenever the map is on) — it is the seizure visual the default deployment actually shows.
+  territorySeizureSig = "";
+  const owners = (econDynasty && Array.isArray(econDynasty.zoneOwners)) ? econDynasty.zoneOwners : null;
+  if (owners && econZones) {
+    const zoneCtrl = new Map();
+    for (const zo of owners) if (zo && zo.zone != null) zoneCtrl.set(zo.zone | 0, zo.name);
+    const sit = new Map();                                   // zone → the set of house names sitting there
+    for (const key of Object.keys(econZones)) {
+      const z = econZones[key];
+      if (z == null || !Number.isFinite(z)) continue;
+      const ho = houseOf.get(Number(key));
+      if (!ho || !ho.name) continue;
+      let s = sit.get(z | 0); if (!s) { s = new Set(); sit.set(z | 0, s); }
+      s.add(ho.name);
+    }
+    for (const [z, names] of sit) {
+      const ctrl = zoneCtrl.get(z);
+      if (!ctrl) continue;
+      for (const n of names) if (n !== ctrl) { const pol = byName.get(n); if (pol) { pol.occupied = true; pol.occupiedBy = ctrl; } }
+    }
+    territorySeizureSig = polities.filter((p) => p.occupied).map((p) => p.name + "<" + p.occupiedBy).sort().join(",");
   }
   territories = polities.length ? polities : null;
 }
@@ -1681,7 +1749,7 @@ function renderTerritoryMap() {
   // structural-only key: field size / DPR / era / which houses are present — NOT the volatile living-member
   // tally, so routine births & deaths never force a full (heavy) map repaint. Seats are name-deterministic;
   // the small per-capital tally just reflects the last structural composition.
-  const key = VW + "x" + VH + "@" + DPR + ":" + ((chronMeta && chronMeta.eraName) || "") + ":" + pol.map((o) => o.p.name).join(",");
+  const key = VW + "x" + VH + "@" + DPR + ":" + ((chronMeta && chronMeta.eraName) || "") + ":" + pol.map((o) => o.p.name).join(",") + ":" + territorySeizureSig;
   if (!terrOff || terrKey !== key) {
     if (!terrOff) { terrOff = document.createElement("canvas"); terrOffCtx = terrOff.getContext("2d"); }
     const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
@@ -1716,6 +1784,11 @@ function paintTerritoryMap(g, pol) {
     const p = o.p;
     g.strokeStyle = rgba(INK, 0.5); g.lineWidth = 3.6; traceBlob(g, p._scr.P); g.stroke();
     g.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.92); g.lineWidth = 1.4; traceBlob(g, p._scr.P); g.stroke();
+    // a polity whose ground was SEIZED in war wears a dashed crimson border over its own hue — the occupation
+    if (p.occupied) {
+      g.save(); g.setLineDash([7, 5]); g.lineWidth = 2.6; g.strokeStyle = rgba([176, 42, 32], 0.95);
+      traceBlob(g, p._scr.P); g.stroke(); g.restore();
+    }
   }
   // 4) capital dot + serif house name (bigger houses get bigger type, like the ref) + strength tally
   for (const o of pol) {
@@ -1733,6 +1806,11 @@ function paintTerritoryMap(g, pol) {
     g.shadowBlur = 0;
     g.font = "600 11px Georgia, serif"; g.fillStyle = rgba(INK, 0.55);
     g.fillText(String(o.n), s.x, s.y + capR + 11);
+    // the conqueror's banner flying over an occupied dominion: ♜ + the house that now holds the ground
+    if (p.occupied) {
+      g.font = "700 12px Fraunces, Cinzel, Georgia, serif"; g.fillStyle = rgba([176, 42, 32], 0.97);
+      g.fillText("♜ " + p.occupiedBy, s.x, s.y - capR - 30);
+    }
     g.restore();
   }
   drawTerritoryLegend(g, pol);

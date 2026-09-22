@@ -519,7 +519,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wsoc-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .wsoc-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .wsoc-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
-.wsoc-row { font-family: var(--mono); font-size: 10.5px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wsoc-row { font-family: var(--mono); font-size: 10.5px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .wsoc-row.trust { color: #3f5a3a; }
 .wsoc-row.grudge, .wsoc-row.grudge-entry { color: rgba(26, 26, 24, 0.72); }
 .wsoc-row.shun { color: #9c3b2e; }
@@ -530,17 +530,17 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .dyn-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .dyn-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .dyn-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
-.dyn-row { font-family: var(--mono); font-size: 10.5px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dyn-row { font-family: var(--mono); font-size: 10.5px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .dyn-head-grave { margin-top: 8px; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px dashed var(--hair); padding-bottom: 3px; }
 .dyn-head-grave em { font-style: normal; text-transform: none; letter-spacing: 0.02em; }
-.dyn-grave { font-family: var(--mono); font-size: 10.5px; color: rgba(26, 26, 24, 0.66); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dyn-grave { font-family: var(--mono); font-size: 10.5px; color: rgba(26, 26, 24, 0.66); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 
 /* ⑤ culture (chronicle panel): the passing fashion + the houses holding the old way — mirrors the dynasty block */
 .chron-culture { flex: none; max-height: 30%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .cult-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .cult-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .cult-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
-.cult-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cult-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .cult-row.cult-trend { color: #3f5a3a; }
 .cult-row.cult-trad { color: #5a4a33; }
 /* ⑧ the commons in law — the seated assembly + the two knobs it re-prices (pure read-out of commons.ts) */
@@ -548,7 +548,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .com-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .com-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .com-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
-.com-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.com-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .com-row.com-assembly { color: var(--ink); }
 .com-row.com-roster { color: var(--muted); }
 .com-row.com-decree { color: #4a3f6a; }
@@ -557,9 +557,9 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .chron-war { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .war-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .war-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.war-head { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.war-head { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .war-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
-.war-row, .war-vault { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.war-row, .war-vault { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .war-row.open { color: #8a3a2f; }
 .war-row.resolved { color: #5a4a33; }
 .war-vault { color: var(--ink); }
