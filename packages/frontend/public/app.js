@@ -3173,7 +3173,8 @@ function renderSocialSection() {
   const body = $("wallets-social-body");
   if (!body) return;
   body.textContent = "";
-  for (const b of (s.bonds || []).slice(0, 8)) {
+  // show every bond the worker returns (up to its 24-cap) — the swarm's memory is fuller than the old 8-row slice revealed
+  for (const b of (s.bonds || []).slice(0, 24)) {
     const row = document.createElement("div");
     const shun = b.score <= -0.6;
     row.className = "wsoc-row " + (b.score < 0 ? (shun ? "shun" : "grudge") : "trust");
@@ -3181,7 +3182,7 @@ function renderSocialSection() {
     row.textContent = `#${b.a} ${mark} #${b.b} · ${b.score > 0 ? "+" : ""}${b.score.toFixed(2)}${b.trades ? ` · ${b.trades} ${T("social.deals")}` : ""}`;
     body.appendChild(row);
   }
-  const gr = (s.grudges || []).slice(0, 6);
+  const gr = (s.grudges || []).slice(0, 24);
   if (gr.length) {
     const head = document.createElement("div");
     head.className = "wsoc-head-grudge"; head.textContent = T("social.grudgeBook");
@@ -3209,7 +3210,7 @@ function renderDynastySection() {
   const hh = $("dyn-houses");
   if (hh) {
     hh.textContent = "";
-    for (const h of houses.slice(0, 6)) {
+    for (const h of houses.slice(0, 16)) {
       const row = document.createElement("div");
       row.className = "dyn-row";
       row.textContent = T("dyn.house", { sigil: h.sigil, name: h.name, gen: h.gen, live: h.live, members: h.members, share: (h.capitalShare * 100).toFixed(1), vault: Number(h.treasuryUsdc).toFixed(4) });
@@ -3222,7 +3223,7 @@ function renderDynastySection() {
   if (head && gb) {
     gb.textContent = "";
     head.hidden = graves.length === 0;
-    for (const g of graves.slice(0, 6)) {
+    for (const g of graves.slice(0, 12)) {
       const row = document.createElement("div");
       row.className = "dyn-grave";
       row.textContent = T("dyn.grave", { id: g.id, house: g.houseName ? " · " + g.houseName : " · " + T("dyn.noHouse"), cause: gl("cause", g.cause), deals: g.deals });
