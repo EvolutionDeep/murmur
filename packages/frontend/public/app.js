@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=72";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=73";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -4347,25 +4347,25 @@ function toggleProofs() { if (proofsOpen) closeProofs(); else openProofs(); }
 function renderProofs() {
   const body = $("proofs-body"); if (!body) return;
   const sub = $("proofs-sub");
-  if (sub) sub.textContent = proofsMeta ? `${proofsMeta.count} receipts · head ${shortHash(proofsMeta.chainHead || "")}` : "–";
+  if (sub) sub.textContent = proofsMeta ? T("pf.subMeta", { count: proofsMeta.count, head: shortHash(proofsMeta.chainHead || "") }) : T("pf.subEmpty");
   body.innerHTML = "";
 
   // autonomy attestation header
   const auto = document.createElement("div"); auto.className = "pf-auto";
   auto.innerHTML =
-    `<div class="pf-auto-title">autonomy attestation</div>` +
-    `<p class="pf-auto-body">No LLM and no human signs these trades. Each real transfer's EIP-3009 <b>nonce</b> IS the sha256 of the neural receipt that caused it — recompute it in your browser below, then read the same nonce off Arc.</p>` +
+    `<div class="pf-auto-title">${T("pf.autoTitle")}</div>` +
+    `<p class="pf-auto-body">${T("pf.autoBody")}</p>` +
     `<dl class="pf-auto-meta">` +
-    `<div><dt>policy</dt><dd>${proofsMeta ? proofsMeta.policy : "–"}</dd></div>` +
-    `<div><dt>schema</dt><dd>v${proofsMeta ? proofsMeta.version : "–"}</dd></div>` +
-    `<div><dt>chain head</dt><dd class="fp">${shortHash(proofsMeta ? proofsMeta.chainHead : "")}</dd></div>` +
-    `<div><dt>receipts</dt><dd>${proofs.length}</dd></div>` +
+    `<div><dt>${T("pf.metaPolicy")}</dt><dd>${proofsMeta ? proofsMeta.policy : "–"}</dd></div>` +
+    `<div><dt>${T("pf.metaSchema")}</dt><dd>v${proofsMeta ? proofsMeta.version : "–"}</dd></div>` +
+    `<div><dt>${T("pf.metaChainHead")}</dt><dd class="fp">${shortHash(proofsMeta ? proofsMeta.chainHead : "")}</dd></div>` +
+    `<div><dt>${T("pf.metaReceipts")}</dt><dd>${proofs.length}</dd></div>` +
     `</dl>`;
   body.appendChild(auto);
 
   if (!proofs.length) {
     const empty = document.createElement("p"); empty.className = "pf-empty";
-    empty.textContent = "no on-chain receipts yet — the first net settlement will appear here.";
+    empty.textContent = T("pf.empty");
     body.appendChild(empty);
     return;
   }
@@ -4376,12 +4376,12 @@ function proofCard(p) {
   const r = p.receipt;
   const card = document.createElement("div"); card.className = "pf-card"; card.dataset.tx = p.txHash;
   const head = document.createElement("div"); head.className = "pf-head";
-  const tick = document.createElement("span"); tick.className = "pf-tick"; tick.textContent = `t#${r.tickIndex}`;
-  const amt = document.createElement("span"); amt.className = "pf-amt"; amt.textContent = `${atomicToUsdc(r.netAmount).toFixed(4)} usdc`;
-  const tr = document.createElement("span"); tr.className = "pf-trades"; tr.textContent = `${r.trades} trade${r.trades === 1 ? "" : "s"} · ${r.constituents.length} pinned`;
+  const tick = document.createElement("span"); tick.className = "pf-tick"; tick.textContent = T("pf.tick", { n: r.tickIndex });
+  const amt = document.createElement("span"); amt.className = "pf-amt"; amt.textContent = T("pf.usdc", { amt: atomicToUsdc(r.netAmount).toFixed(4) });
+  const tr = document.createElement("span"); tr.className = "pf-trades"; tr.textContent = T(r.trades === 1 ? "pf.tradeOne" : "pf.tradeMany", { n: r.trades, pinned: r.constituents.length });
   const link = document.createElement("a"); link.className = "tx-link"; link.href = `${ARC_EXPLORER}/tx/${p.txHash}`;
   link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = `↗ ${shortHash(p.txHash)}`;
-  const vbtn = document.createElement("button"); vbtn.type = "button"; vbtn.className = "pf-verify"; vbtn.dataset.tx = p.txHash; vbtn.textContent = "verify";
+  const vbtn = document.createElement("button"); vbtn.type = "button"; vbtn.className = "pf-verify"; vbtn.dataset.tx = p.txHash; vbtn.textContent = T("pf.verify");
   const ebtn = document.createElement("button"); ebtn.type = "button"; ebtn.className = "pf-expand"; ebtn.dataset.tx = p.txHash; ebtn.textContent = "+";
   head.append(tick, amt, tr, link, vbtn, ebtn);
   const vout = document.createElement("div"); vout.className = "pf-verifyout"; vout.hidden = true;
@@ -4396,26 +4396,26 @@ function proofDetail(p) {
   const wrap = document.createElement("div");
   const meta = document.createElement("dl"); meta.className = "pf-meta";
   meta.innerHTML =
-    `<div><dt>pair</dt><dd>${r.pair[0]} ⇄ ${r.pair[1]}</dd></div>` +
-    `<div><dt>net flows</dt><dd>${r.debtor} → ${r.creditor}</dd></div>` +
-    `<div><dt>good</dt><dd>${r.good}</dd></div>` +
-    `<div><dt>flush</dt><dd>#${r.flushSeq}·c${r.chunk}</dd></div>` +
-    `<div><dt>receipt sha256</dt><dd class="fp">${shortHash(p.receiptHash)}</dd></div>` +
-    `<div><dt>prev chain</dt><dd class="fp">${r.prevChain ? shortHash(r.prevChain) : "genesis"}</dd></div>` +
-    (p.ipfsCid ? `<div><dt>ipfs cid</dt><dd class="fp">${shortHash(p.ipfsCid)}</dd></div>` : "");
+    `<div><dt>${T("pf.dPair")}</dt><dd>${r.pair[0]} ⇄ ${r.pair[1]}</dd></div>` +
+    `<div><dt>${T("pf.dNet")}</dt><dd>${r.debtor} → ${r.creditor}</dd></div>` +
+    `<div><dt>${T("pf.dGood")}</dt><dd>${gl("goods", r.good)}</dd></div>` +
+    `<div><dt>${T("pf.dFlush")}</dt><dd>#${r.flushSeq}·c${r.chunk}</dd></div>` +
+    `<div><dt>${T("pf.dReceipt")}</dt><dd class="fp">${shortHash(p.receiptHash)}</dd></div>` +
+    `<div><dt>${T("pf.dPrev")}</dt><dd class="fp">${r.prevChain ? shortHash(r.prevChain) : T("pf.dGenesis")}</dd></div>` +
+    (p.ipfsCid ? `<div><dt>${T("pf.dIpfsCid")}</dt><dd class="fp">${shortHash(p.ipfsCid)}</dd></div>` : "");
   wrap.appendChild(meta);
-  const ct = document.createElement("div"); ct.className = "pf-ct-title"; ct.textContent = "frozen neural read-out per folded trade";
+  const ct = document.createElement("div"); ct.className = "pf-ct-title"; ct.textContent = T("pf.ctTitle");
   wrap.appendChild(ct);
   for (const c of r.constituents) {
     const row = document.createElement("div"); row.className = "pf-ct";
     row.innerHTML =
-      `<div class="pf-ct-head"><b>${c.fromId} → ${c.toId}</b><span>${c.good}</span><span>${atomicToUsdc(c.amount).toFixed(4)}</span><span class="fp">${shortHash(c.decisionHash)}</span></div>` +
-      `<div class="pf-ct-ev">buyer ${c.buyer.state} a=${c.buyer.arousal} c=${c.buyer.cohesion} · seller ${c.seller.state} a=${c.seller.arousal} c=${c.seller.cohesion}</div>`;
+      `<div class="pf-ct-head"><b>${c.fromId} → ${c.toId}</b><span>${gl("goods", c.good)}</span><span>${atomicToUsdc(c.amount).toFixed(4)}</span><span class="fp">${shortHash(c.decisionHash)}</span></div>` +
+      `<div class="pf-ct-ev">${T("pf.ctEv", { bs: c.buyer.state, ba: c.buyer.arousal, bc: c.buyer.cohesion, ss: c.seller.state, sa: c.seller.arousal, sc: c.seller.cohesion })}</div>`;
     ct.appendChild(row);
   }
   if (!r.constituents.length) {
     const note = document.createElement("div"); note.className = "pf-ct-ev";
-    note.textContent = "net opened before provenance deployed — no neural constituents pinned for this one.";
+    note.textContent = T("pf.ctNone");
     ct.appendChild(note);
   }
   wrap.appendChild(ct);
@@ -4424,13 +4424,13 @@ function proofDetail(p) {
 
 async function verifyProof(tx, card) {
   const out = card.querySelector(".pf-verifyout"); if (!out) return;
-  out.hidden = false; out.textContent = "checking…";
+  out.hidden = false; out.textContent = T("pf.vChecking");
   const stored = proofs.find((x) => x.txHash === tx);
   let clientHash = null;
   if (stored) { try { clientHash = await sha256HexClient(stored.receipt); } catch { clientHash = null; } }
   try {
     const v = await getJSON(`/proofs/verify?tx=${encodeURIComponent(tx)}`, 9000);
-    if (!v.found) { out.textContent = "receipt not found for this tx"; return; }
+    if (!v.found) { out.textContent = T("pf.vNotFound"); return; }
     const selfOk = clientHash == null || clientHash === v.receiptHash;
     const onchainOk = v.match === true;
     // Trustless chain-ordering: read our NeuralReceiptRegistry DIRECTLY from Arc RPC in the browser
@@ -4439,9 +4439,9 @@ async function verifyProof(tx, card) {
     let reg = null, regSource = "";
     if (v.registryAddress) {
       reg = await readRegistryOnchain(v.registryAddress, v.receiptHash);
-      regSource = reg ? "direct Arc RPC" : "";
+      regSource = reg ? T("pf.vDirectRpc") : "";
     }
-    if (!reg && v.registry) { reg = v.registry; regSource = "via murmur API"; }
+    if (!reg && v.registry) { reg = v.registry; regSource = T("pf.vViaApi"); }
     const regOk = !!reg && reg.committed === true;
     // Trustless body retrieval: if this receipt was pinned to IPFS, fetch the body from a PUBLIC gateway (no
     // murmur server in the loop) and confirm sha256(body) == the on-chain receiptHash. The CID is only a
@@ -4464,13 +4464,13 @@ async function verifyProof(tx, card) {
     const badge = document.createElement("span");
     badge.className = "pf-badge " + (selfOk && onchainOk ? "ok" : "bad");
     badge.textContent = (selfOk && onchainOk)
-      ? (ipfsOk ? "✓ neural-origin verified on-chain · body pinned to IPFS" : "✓ neural-origin verified on-chain")
-      : "✗ mismatch";
+      ? (ipfsOk ? T("pf.vBadgeOkIpfs") : T("pf.vBadgeOk"))
+      : T("pf.vBadgeBad");
     const dl = document.createElement("dl"); dl.className = "pf-vmeta";
     dl.innerHTML =
-      `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
-      `<div><dt>published receiptHash</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>` +
-      `<div><dt>EIP-3009 nonce mined on Arc</dt><dd class="fp">${shortHash(v.onchainNonce || "–")}</dd></div>`;
+      `<div><dt>${T("pf.vShaBrowser")}</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
+      `<div><dt>${T("pf.vPublished")}</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>` +
+      `<div><dt>${T("pf.vNonceArc")}</dt><dd class="fp">${shortHash(v.onchainNonce || "–")}</dd></div>`;
     // 4th row: the on-chain registry link. Shows the committed chain head + whether THIS receipt is a
     // registered link (and whether the registry's txHash matches the transfer) — read trustlessly.
     const regDiv = document.createElement("div");
@@ -4480,28 +4480,28 @@ async function verifyProof(tx, card) {
         reg.chainHead.toLowerCase() === ("0x" + v.receiptHash).toLowerCase();
       const txMatch = reg.txHash && v.txHash &&
         reg.txHash.toLowerCase() === v.txHash.toLowerCase();
-      const stateTxt = !reg.committed ? "not committed" : (isHead ? "chain head ✓" : (txMatch ? "committed ✓" : "committed"));
+      const stateTxt = !reg.committed ? T("pf.vNotCommitted") : (isHead ? T("pf.vChainHeadOk") : (txMatch ? T("pf.vCommittedOk") : T("pf.vCommitted")));
       regDiv.innerHTML =
-        `<div><dt>on-chain registry (${regSource})</dt>` +
-        `<dd class="fp${regOk ? " ok" : ""}">${stateTxt} · head ${headTxt}</dd></div>` +
-        (v.registryAddress ? `<div><dt>registry contract</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
+        `<div><dt>${T("pf.vRegistry", { src: regSource })}</dt>` +
+        `<dd class="fp${regOk ? " ok" : ""}">${stateTxt} · ${T("pf.vHeadLabel")} ${headTxt}</dd></div>` +
+        (v.registryAddress ? `<div><dt>${T("pf.vRegistryContract")}</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
     } else {
-      regDiv.innerHTML = `<div><dt>on-chain registry</dt><dd class="fp">not configured</dd></div>`;
+      regDiv.innerHTML = `<div><dt>${T("pf.vRegistryNone")}</dt><dd class="fp">${T("pf.vNotConfigured")}</dd></div>`;
     }
     dl.append(...regDiv.children);
     // IPFS row: the pinned CID (linked to a gateway) + whether the fetched body hashed to the on-chain value.
     if (ipfsCid) {
-      const ipfsState = ipfsOk === true ? "body fetched · sha256 ✓ matches chain"
-        : (ipfsOk === false ? "body hash ✗ mismatch" : "not retrievable yet (gateway/propagation)");
+      const ipfsState = ipfsOk === true ? T("pf.vIpfsOk")
+        : (ipfsOk === false ? T("pf.vIpfsBad") : T("pf.vIpfsPending"));
       const ipfsDiv = document.createElement("div");
       ipfsDiv.innerHTML =
-        `<div><dt>receipt body on IPFS</dt>` +
+        `<div><dt>${T("pf.vIpfsOn")}</dt>` +
         `<dd class="fp${ipfsOk ? " ok" : ""}"><a href="${ipfsGw}/ipfs/${ipfsCid}" target="_blank" rel="noopener noreferrer">${shortHash(ipfsCid)}</a> · ${ipfsState}</dd></div>`;
       dl.append(...ipfsDiv.children);
     }
     out.append(badge, dl);
   } catch {
-    out.textContent = "verify request failed (network)";
+    out.textContent = T("pf.vFailed");
   }
 }
 
@@ -4578,11 +4578,9 @@ function renderBrain() {
   const sub = $("brain-sub");
   body.innerHTML = "";
   if (brainLoading || !brainData) {
-    if (sub) sub.textContent = brainLoading ? "assembling…" : "–";
+    if (sub) sub.textContent = brainLoading ? T("brain.loadingShort") : "–";
     const p = document.createElement("p"); p.className = "pf-empty";
-    p.textContent = brainLoading
-      ? "assembling the swarm's connectome manifest (24 brains, 10,800 neurons each) …"
-      : "manifest unavailable — is the worker online?";
+    p.textContent = brainLoading ? T("brain.loadingBody") : T("brain.unavailable");
     body.appendChild(p);
     return;
   }
@@ -4591,20 +4589,20 @@ function renderBrain() {
   const pop = m.population || {};
   const flies = Array.isArray(m.flies) ? m.flies : [];
   const nEach = flies.length && flies[0].structural ? flies[0].structural.neuronCount : null;
-  if (sub) sub.textContent = `${pop.size ?? flies.length} flies` + (nEach ? ` · ${Number(nEach).toLocaleString()} neurons each` : "");
+  if (sub) sub.textContent = T("brain.subFlies", { n: pop.size ?? flies.length }) + (nEach ? T("brain.subNeurons", { n: Number(nEach).toLocaleString() }) : "");
 
   // attestation header
   const auto = document.createElement("div"); auto.className = "pf-auto";
   auto.innerHTML =
-    `<div class="pf-auto-title">prove the brain</div>` +
-    `<p class="pf-auto-body">These are real, deterministic spiking connectomes — not a lookup table, not an LLM. Your browser recomputes <b>sha256(manifest)</b> below, matches it to the worker's hash, then reads that hash straight off the on-chain <b>NeuralManifestRegistry</b>. Every fly's wiring is rebuilt from its committed seed.</p>` +
+    `<div class="pf-auto-title">${T("brain.title")}</div>` +
+    `<p class="pf-auto-body">${T("brain.body")}</p>` +
     `<dl class="pf-auto-meta">` +
-    `<div><dt>schema</dt><dd>${m.schema || "–"} v${m.v ?? "–"}</dd></div>` +
-    `<div><dt>chain</dt><dd>${m.chainTag || "–"} (${m.chainId ?? "–"})</dd></div>` +
-    `<div><dt>population</dt><dd>${pop.size ?? "–"} · base ${pop.seedBase ?? "–"}</dd></div>` +
-    `<div><dt>seed rule</dt><dd class="fp">${pop.seedFormula || "–"}</dd></div>` +
-    `<div><dt>connectome</dt><dd>${c.nSensory ?? "–"}/${c.nInterL1 ?? "–"}/${c.nInterL2 ?? "–"} · ρ${c.density ?? "–"}</dd></div>` +
-    `<div><dt>policy · proof</dt><dd>${m.policy || "–"} · v${m.proofV ?? "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaSchema")}</dt><dd>${m.schema || "–"} v${m.v ?? "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaChain")}</dt><dd>${m.chainTag || "–"} (${m.chainId ?? "–"})</dd></div>` +
+    `<div><dt>${T("brain.metaPopulation")}</dt><dd>${pop.size ?? "–"} · ${T("brain.metaBase")} ${pop.seedBase ?? "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaSeedRule")}</dt><dd class="fp">${pop.seedFormula || "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaConnectome")}</dt><dd>${c.nSensory ?? "–"}/${c.nInterL1 ?? "–"}/${c.nInterL2 ?? "–"} · ρ${c.density ?? "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaPolicyProof")}</dt><dd>${m.policy || "–"} · v${m.proofV ?? "–"}</dd></div>` +
     `</dl>`;
   body.appendChild(auto);
 
@@ -4616,18 +4614,18 @@ function renderBrain() {
   const llm = m.llm || {};
   const provBox = document.createElement("div"); provBox.className = "pf-card"; provBox.style.padding = "10px 12px";
   provBox.innerHTML =
-    `<div class="pf-ct-title">provenance</div>` +
-    `<div class="pf-ct-ev">architecture: ${prov.architecture || "–"}</div>` +
-    `<div class="pf-ct-ev">flywire-literal: <b>${String(prov.flywireLiteral)}</b> · deterministic: <b>${String(prov.generatedDeterministically)}</b> · reproducible from seed: <b>${String(prov.reproducibleFromSeed)}</b> · llm involved: <b>${String(prov.llmInvolved)}</b></div>` +
+    `<div class="pf-ct-title">${T("brain.provenance")}</div>` +
+    `<div class="pf-ct-ev">${T("brain.architecture", { a: prov.architecture || "–" })}</div>` +
+    `<div class="pf-ct-ev">${T("brain.provenanceLine", { a: String(prov.flywireLiteral), b: String(prov.generatedDeterministically), c: String(prov.reproducibleFromSeed), d: String(prov.llmInvolved) })}</div>` +
     (llm.statement ? `<div class="pf-ct-ev" style="margin-top:6px">${llm.statement}</div>` : "");
   body.appendChild(provBox);
 
   // per-fly committed structural identity
   const t = document.createElement("div"); t.className = "pf-card"; t.style.padding = "10px 12px";
-  t.innerHTML = `<div class="pf-ct-title">per-fly structural identity (${flies.length} committed)</div>`;
+  t.innerHTML = `<div class="pf-ct-title">${T("brain.perFly", { n: flies.length })}</div>`;
   const tbl = document.createElement("div"); tbl.className = "br-table";
   const head = document.createElement("div"); head.className = "br-row br-head";
-  head.innerHTML = `<span>#</span><span>seed</span><span>neurons/synapses</span><span>edgeHash</span>`;
+  head.innerHTML = `<span>#</span><span>${T("brain.colSeed")}</span><span>${T("brain.colNeuronSyn")}</span><span>${T("brain.colEdgeHash")}</span>`;
   tbl.appendChild(head);
   for (const f of flies) {
     const s = f.structural || {};
@@ -4655,42 +4653,40 @@ function brainVerifyCard() {
   const hardOk = bodyOk === true && replayOk !== false;
 
   const badge = document.createElement("div");
-  if (!chk) { badge.className = "pf-badge"; badge.textContent = "verifying …"; }
-  else if (!hardOk) { badge.className = "pf-badge bad"; badge.textContent = "✗ verification failed"; }
+  if (!chk) { badge.className = "pf-badge"; badge.textContent = T("brain.verifying"); }
+  else if (!hardOk) { badge.className = "pf-badge bad"; badge.textContent = T("brain.badFail"); }
   else {
     badge.className = "pf-badge ok";
-    badge.textContent = chainOk
-      ? "✓ brain proven end-to-end · body hash + on-chain anchor + replay all match"
-      : "✓ body hash + replay match · not anchored on Arc mainnet yet";
+    badge.textContent = chainOk ? T("brain.badOkFull") : T("brain.badOkNoAnchor");
   }
   card.appendChild(badge);
 
   const dl = document.createElement("dl"); dl.className = "pf-vmeta";
   dl.innerHTML =
-    `<div><dt>sha256(manifest) in your browser</dt><dd class="fp">${cHash ? shortHash(cHash) : "–"}</dd></div>` +
-    `<div><dt>worker-reported manifestHash</dt><dd class="fp${bodyOk ? " ok" : ""}">${sHash ? shortHash(sHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>`;
+    `<div><dt>${T("brain.shaBrowser")}</dt><dd class="fp">${cHash ? shortHash(cHash) : "–"}</dd></div>` +
+    `<div><dt>${T("brain.reported")}</dt><dd class="fp${bodyOk ? " ok" : ""}">${sHash ? shortHash(sHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>`;
   if (m.registryAddress) {
     if (chain) {
-      const stateTxt = chain.committed ? (chain.isLatest ? "committed · latest ✓" : "committed ✓") : "not committed";
+      const stateTxt = chain.committed ? (chain.isLatest ? T("brain.registryCommittedLatest") : T("brain.registryCommittedOk")) : T("brain.registryNotCommitted");
       dl.innerHTML +=
-        `<div><dt>on-chain registry (direct Arc RPC)</dt><dd class="fp${chainOk ? " ok" : ""}">${stateTxt}</dd></div>` +
-        `<div><dt>latestHash · commitCount</dt><dd class="fp">${chain.latest ? shortHash(chain.latest) : "–"} · ${chain.count}</dd></div>` +
-        `<div><dt>registry contract</dt><dd class="fp"><a href="${ARC_EXPLORER}/address/${m.registryAddress}" target="_blank" rel="noopener noreferrer">${shortHash(m.registryAddress)}</a></dd></div>`;
+        `<div><dt>${T("brain.registryDirect")}</dt><dd class="fp${chainOk ? " ok" : ""}">${stateTxt}</dd></div>` +
+        `<div><dt>${T("brain.registryLatest")}</dt><dd class="fp">${chain.latest ? shortHash(chain.latest) : "–"} · ${chain.count}</dd></div>` +
+        `<div><dt>${T("brain.registryContract")}</dt><dd class="fp"><a href="${ARC_EXPLORER}/address/${m.registryAddress}" target="_blank" rel="noopener noreferrer">${shortHash(m.registryAddress)}</a></dd></div>`;
     } else {
       dl.innerHTML +=
-        `<div><dt>on-chain registry</dt><dd class="fp">read failed / not on Arc mainnet</dd></div>` +
-        `<div><dt>registry contract</dt><dd class="fp">${shortHash(m.registryAddress)}</dd></div>`;
+        `<div><dt>${T("brain.registryReadFail")}</dt><dd class="fp">${T("brain.registryReadFailNote")}</dd></div>` +
+        `<div><dt>${T("brain.registryContract")}</dt><dd class="fp">${shortHash(m.registryAddress)}</dd></div>`;
     }
   } else {
-    dl.innerHTML += `<div><dt>on-chain registry</dt><dd class="fp">not configured (manifest still replayable offline)</dd></div>`;
+    dl.innerHTML += `<div><dt>${T("brain.registryNone")}</dt><dd class="fp">${T("brain.registryNoneNote")}</dd></div>`;
   }
   dl.innerHTML += replay
-    ? `<div><dt>offline replay (worker /manifest/replay)</dt><dd class="fp${replayOk ? " ok" : ""}">${replay.checked ?? 0} brains rebuilt → ${replayOk ? "PASS ✓" : "FAIL ✗"}</dd></div>`
-    : `<div><dt>offline replay</dt><dd class="fp">unavailable</dd></div>`;
+    ? `<div><dt>${T("brain.replayLabel")}</dt><dd class="fp${replayOk ? " ok" : ""}">${T(replayOk ? "brain.replayPass" : "brain.replayFail", { n: replay.checked ?? 0 })}</dd></div>`
+    : `<div><dt>${T("brain.replayUnavailable")}</dt><dd class="fp">${T("brain.replayNA")}</dd></div>`;
   card.appendChild(dl);
 
   const note = document.createElement("div"); note.className = "pf-ct-ev"; note.style.marginTop = "7px";
-  note.textContent = "Run the identical replay yourself, trustlessly:  npm run replay -- --from-wrangler --expect " + (cHash || sHash || "<hash>");
+  note.textContent = T("brain.replayCmd", { hash: cHash || sHash || "<hash>" });
   card.appendChild(note);
   return card;
 }
@@ -4815,17 +4811,15 @@ function renderLineage() {
   const sub = $("lineage-sub");
   body.innerHTML = "";
   if (lineageLoading || !lineageData) {
-    if (sub) sub.textContent = lineageLoading ? "loading…" : "–";
+    if (sub) sub.textContent = lineageLoading ? T("lin.loadingShort") : "–";
     const p = document.createElement("p"); p.className = "pf-empty";
-    p.textContent = lineageLoading
-      ? "loading the connectome lineage (genesis roots + bred individuals) …"
-      : "lineage unavailable — is the worker online?";
+    p.textContent = lineageLoading ? T("lin.loadingBody") : T("lin.unavailable");
     body.appendChild(p);
     return;
   }
   const d = lineageData;
   const entries = Array.isArray(d.entries) ? d.entries : [];
-  if (sub) sub.textContent = `${d.count ?? entries.length} genomes · ${d.bred ?? 0} bred · gen ${d.generations ?? 0}`;
+  if (sub) sub.textContent = T("lin.sub", { n: d.count ?? entries.length, bred: d.bred ?? 0, gen: d.generations ?? 0 });
 
   // header / attestation
   const auto = document.createElement("div"); auto.className = "pf-auto";
@@ -4833,16 +4827,16 @@ function renderLineage() {
   const anchoredCount = entries.filter((e) => e.commitTx).length;   // genomes carrying a real on-chain commit tx
   const head = lineageHead;                                        // live head read DIRECTLY from Arc (may be null)
   auto.innerHTML =
-    `<div class="pf-auto-title">connectome breeding market</div>` +
-    `<p class="pf-auto-body">Every brain's heritable identity is its <b>genome</b> — the generator parameters that deterministically rebuild it. The 24 base-population brains are generation-0 <b>genesis</b> roots; breeding applies pure genetic operators (<b>mutate</b> / <b>cross</b>) and records each offspring's ancestry. Select any individual to rebuild + verify it in your browser.</p>` +
+    `<div class="pf-auto-title">${T("lin.title")}</div>` +
+    `<p class="pf-auto-body">${T("lin.body")}</p>` +
     `<dl class="pf-auto-meta">` +
-    `<div><dt>genomes</dt><dd>${d.count ?? entries.length}</dd></div>` +
-    `<div><dt>genesis · bred</dt><dd>${d.genesis ?? 0} · ${d.bred ?? 0}</dd></div>` +
-    `<div><dt>generations</dt><dd>${d.generations ?? 0}</dd></div>` +
-    `<div><dt>chain</dt><dd>arc (${d.chainId ?? "–"})</dd></div>` +
-    `<div><dt>on-chain anchor</dt><dd class="fp">${anchored ? `<a href="${ARC_EXPLORER}/address/${d.lineageAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.lineageAddress)}</a>` : "not configured"}</dd></div>` +
-    `<div><dt>committed on arc (live)</dt><dd>${head ? head.commitCount : anchoredCount + "*"} · ${anchoredCount}/${entries.length} shown</dd></div>` +
-    `<div><dt>committer (gas wallet)</dt><dd class="fp">${head && head.committer ? `<a href="${ARC_EXPLORER}/address/${head.committer}" target="_blank" rel="noopener noreferrer">${shortHash(head.committer)}</a>` : "reading arc…"}</dd></div>` +
+    `<div><dt>${T("lin.metaGenomes")}</dt><dd>${d.count ?? entries.length}</dd></div>` +
+    `<div><dt>${T("lin.metaGenesisBred")}</dt><dd>${d.genesis ?? 0} · ${d.bred ?? 0}</dd></div>` +
+    `<div><dt>${T("lin.metaGenerations")}</dt><dd>${d.generations ?? 0}</dd></div>` +
+    `<div><dt>${T("lin.metaChain")}</dt><dd>arc (${d.chainId ?? "–"})</dd></div>` +
+    `<div><dt>${T("lin.metaAnchor")}</dt><dd class="fp">${anchored ? `<a href="${ARC_EXPLORER}/address/${d.lineageAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.lineageAddress)}</a>` : T("lin.notConfigured")}</dd></div>` +
+    `<div><dt>${T("lin.metaCommitted")}</dt><dd>${head ? head.commitCount : anchoredCount + "*"} · ${anchoredCount}/${entries.length} ${T("lin.shownSuffix")}</dd></div>` +
+    `<div><dt>${T("lin.metaCommitter")}</dt><dd class="fp">${head && head.committer ? `<a href="${ARC_EXPLORER}/address/${head.committer}" target="_blank" rel="noopener noreferrer">${shortHash(head.committer)}</a>` : T("lin.readingArc")}</dd></div>` +
     `</dl>`;
   body.appendChild(auto);
 
@@ -4857,10 +4851,10 @@ function renderLineage() {
   }
   const gens = [...byGen.keys()].sort((a, b) => a - b);
   const tree = document.createElement("div"); tree.className = "pf-card lin-tree";
-  tree.innerHTML = `<div class="pf-ct-title">family tree (${entries.length} shown)</div>`;
+  tree.innerHTML = `<div class="pf-ct-title">${T("lin.familyTree", { n: entries.length })}</div>`;
   for (const g of gens) {
     const gEl = document.createElement("div"); gEl.className = "lin-gen";
-    gEl.innerHTML = `<span class="lin-gen-label">gen ${g}</span>`;
+    gEl.innerHTML = `<span class="lin-gen-label">${T("lin.genLabel", { g })}</span>`;
     const rows = document.createElement("div"); rows.className = "lin-rows";
     for (const e of byGen.get(g)) {
       const sel = lineageSel && lineageSel.hash === e.genomeHash;
@@ -4868,11 +4862,12 @@ function renderLineage() {
       row.type = "button"; row.className = "lin-row" + (sel ? " is-sel" : "");
       row.dataset.linHash = e.genomeHash;
       const opCls = "lin-op lin-op-" + (e.op || "genesis");
+      const tip = e.commitTx ? T("lin.tipAnchored", { tx: e.commitTx }) : T("lin.tipNotAnchored");
       row.innerHTML =
-        `<span class="${opCls}">${LIN_OP[e.op] || e.op}</span>` +
+        `<span class="${opCls}">${linOpLabel(e.op)}</span>` +
         `<span class="fp lin-hash">${shortHash(e.genomeHash)}</span>` +
         `<span class="lin-breeder">${isRealAddr(e.breeder || "") ? shortHash(e.breeder) : (e.breeder ? e.breeder : "–")}</span>` +
-        `<span class="lin-commit" title="${e.commitTx ? "anchored on Arc " + e.commitTx : "not anchored"}">${e.commitTx ? "⛓" : ""}</span>`;
+        `<span class="lin-commit" title="${tip}">${e.commitTx ? "⛓" : ""}</span>`;
       rows.appendChild(row);
     }
     gEl.appendChild(rows);
@@ -4883,19 +4878,28 @@ function renderLineage() {
   if (lineageSel) body.appendChild(lineageDetailCard());
 }
 
+// Localise the three genetic-operator badges; the raw uppercase keys (genesis/mutate/cross) stay
+// in the DOM dataset for logic, only the visible label goes through the dictionary.
+function linOpLabel(op) {
+  const k = op || "genesis";
+  const key = "lin.op." + k;
+  const s = T(key);
+  return s === key ? (k.toUpperCase ? k : String(k)) : s;
+}
+
 function lineageBreedPanel() {
   const p = document.createElement("div"); p.className = "pf-card lin-breed";
   p.innerHTML =
-    `<div class="pf-ct-title">breed (operator)</div>` +
+    `<div class="pf-ct-title">${T("lin.breedTitle")}</div>` +
     `<div class="lin-breed-row">` +
-    `<select id="lin-op" class="lin-in"><option value="mutate">mutate</option><option value="cross">cross</option></select>` +
-    `<input id="lin-pa" class="lin-in fp" placeholder="parent A genomeHash" />` +
-    `<input id="lin-pb" class="lin-in fp" placeholder="parent B (cross only)" />` +
+    `<select id="lin-op" class="lin-in"><option value="mutate">${T("lin.opMutate")}</option><option value="cross">${T("lin.opCross")}</option></select>` +
+    `<input id="lin-pa" class="lin-in fp" placeholder="${T("lin.paPh")}" />` +
+    `<input id="lin-pb" class="lin-in fp" placeholder="${T("lin.pbPh")}" />` +
     `</div>` +
     `<div class="lin-breed-row">` +
-    `<input id="lin-seed" class="lin-in" placeholder="rngSeed (optional)" />` +
-    `<input id="lin-breeder" class="lin-in fp" placeholder="breeder 0x… (optional)" />` +
-    `<button id="lin-breed-go" type="button" class="lin-breed-btn">breed</button>` +
+    `<input id="lin-seed" class="lin-in" placeholder="${T("lin.seedPh")}" />` +
+    `<input id="lin-breeder" class="lin-in fp" placeholder="${T("lin.breederPh")}" />` +
+    `<button id="lin-breed-go" type="button" class="lin-breed-btn">${T("lin.breedBtn")}</button>` +
     `</div>` +
     (lineageBreedMsg ? `<div class="lin-breed-msg">${lineageBreedMsg}</div>` : "");
   return p;
@@ -4904,7 +4908,7 @@ function lineageBreedPanel() {
 function lineageDetailCard() {
   const card = document.createElement("div"); card.className = "pf-card lin-detail";
   if (lineageSelLoading || !lineageSel.detail) {
-    card.innerHTML = `<div class="pf-ct-title">individual</div><div class="pf-ct-ev">${lineageSelLoading ? "loading + verifying …" : "unavailable"}</div>`;
+    card.innerHTML = `<div class="pf-ct-title">${T("lin.detailIndividual")}</div><div class="pf-ct-ev">${lineageSelLoading ? T("lin.detailLoading") : T("lin.detailUnavail")}</div>`;
     return card;
   }
   const det = lineageSel.detail, e = det.entry || {}, s = det.spec || {}, v = lineageSel.verify || {};
@@ -4921,27 +4925,25 @@ function lineageDetailCard() {
   const badge = document.createElement("div");
   if (hardOk && (chainProvenBrowser || chainOk === true)) {
     badge.className = "pf-badge ok";
-    badge.textContent = chainProvenBrowser
-      ? "✓ genome proven end-to-end · body hash + replay match, ancestry verified against Arc in your browser"
-      : "✓ genome proven end-to-end · body hash + replay + on-chain ancestry all match";
+    badge.textContent = chainProvenBrowser ? T("lin.badOkBrowser") : T("lin.badOkChain");
   }
-  else if (hardOk) { badge.className = "pf-badge ok"; badge.textContent = "✓ body hash + replay match · not anchored on Arc yet"; }
-  else { badge.className = "pf-badge bad"; badge.textContent = "✗ verification failed"; }
+  else if (hardOk) { badge.className = "pf-badge ok"; badge.textContent = T("lin.badOkNoAnchor"); }
+  else { badge.className = "pf-badge bad"; badge.textContent = T("lin.badFail"); }
   card.appendChild(badge);
 
   const dl = document.createElement("dl"); dl.className = "pf-vmeta";
   dl.innerHTML =
-    `<div><dt>genomeHash</dt><dd class="fp">${shortHash(e.genomeHash || "")}</dd></div>` +
-    `<div><dt>sha256(genome) in your browser</dt><dd class="fp${bodyOk ? " ok" : ""}">${clientHash ? shortHash(clientHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>` +
-    `<div><dt>op · generation</dt><dd>${LIN_OP[e.op] || e.op} · gen ${e.generation ?? 0}</dd></div>` +
-    `<div><dt>rngSeed</dt><dd class="fp">${e.rngSeed == null ? "– (genesis)" : e.rngSeed}</dd></div>` +
-    `<div><dt>breeder</dt><dd class="fp">${isRealAddr(e.breeder || "") ? `<a href="${ARC_EXPLORER}/address/${e.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(e.breeder)}</a>` : (e.breeder || "–")}</dd></div>` +
-    `<div><dt>neurons · synapses</dt><dd>${Number(s.neuronCount || 0).toLocaleString()} · ${Number(s.synapseCount || 0).toLocaleString()}</dd></div>` +
-    `<div><dt>edgeHash (topology)</dt><dd class="fp">${s.edgeHash || "–"}</dd></div>` +
-    `<div><dt>parents</dt><dd class="fp">${parents.length ? parents.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : "– (genesis root)"}</dd></div>` +
-    `<div><dt>children · fertility</dt><dd class="fp">${children.length ? children.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : "none"} · ${det.fertility ?? children.length}</dd></div>`;
+    `<div><dt>${T("lin.metaGenomeHash")}</dt><dd class="fp">${shortHash(e.genomeHash || "")}</dd></div>` +
+    `<div><dt>${T("lin.metaShaBrowser")}</dt><dd class="fp${bodyOk ? " ok" : ""}">${clientHash ? shortHash(clientHash) : "–"} ${bodyOk == null ? "" : (bodyOk ? "✓" : "✗")}</dd></div>` +
+    `<div><dt>${T("lin.metaOpGen")}</dt><dd>${linOpLabel(e.op)} · ${T("lin.genLabel", { g: e.generation ?? 0 })}</dd></div>` +
+    `<div><dt>${T("lin.metaRngSeed")}</dt><dd class="fp">${e.rngSeed == null ? T("lin.metaRngGenesis") : e.rngSeed}</dd></div>` +
+    `<div><dt>${T("lin.metaBreeder")}</dt><dd class="fp">${isRealAddr(e.breeder || "") ? `<a href="${ARC_EXPLORER}/address/${e.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(e.breeder)}</a>` : (e.breeder || "–")}</dd></div>` +
+    `<div><dt>${T("lin.metaNeuronSyn")}</dt><dd>${Number(s.neuronCount || 0).toLocaleString()} · ${Number(s.synapseCount || 0).toLocaleString()}</dd></div>` +
+    `<div><dt>${T("lin.metaEdgeHash")}</dt><dd class="fp">${s.edgeHash || "–"}</dd></div>` +
+    `<div><dt>${T("lin.metaParents")}</dt><dd class="fp">${parents.length ? parents.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : T("lin.metaGenesisRoot")}</dd></div>` +
+    `<div><dt>${T("lin.metaChildren")}</dt><dd class="fp">${children.length ? children.map((h) => `<a href="#" data-lin-hash="${h}" class="lin-plink">${shortHash(h)}</a>`).join(" · ") : T("lin.metaNone")} · ${det.fertility ?? children.length}</dd></div>`;
   if (e.commitTx) {
-    dl.innerHTML += `<div><dt>on-chain commit</dt><dd class="fp"><a href="${ARC_EXPLORER}/tx/${e.commitTx}" target="_blank" rel="noopener noreferrer">↗ ${shortHash(e.commitTx)}</a></dd></div>`;
+    dl.innerHTML += `<div><dt>${T("lin.metaOnchainCommit")}</dt><dd class="fp"><a href="${ARC_EXPLORER}/tx/${e.commitTx}" target="_blank" rel="noopener noreferrer">↗ ${shortHash(e.commitTx)}</a></dd></div>`;
   }
   const oc = lineageSel.onchainDirect;                    // read off Arc in YOUR browser — no murmur server in the loop
   if (oc && oc.committed) {
@@ -4949,16 +4951,16 @@ function lineageDetailCard() {
     const m = lineageSel.chainMatch;
     const ocParents = [oc.parentA, oc.parentB].filter((p) => !isZeroBytes32(p));
     dl.innerHTML +=
-      `<div><dt>on-chain ancestry · read from arc in your browser</dt><dd class="fp${m ? " ok" : ""}">op ${oc.op} · gen ${oc.generation} · committed ${when} ${m ? "✓ matches served genome" : "✗ mismatch"}</dd></div>` +
-      `<div><dt>on-chain breeder (arc)</dt><dd class="fp">${isRealAddr(oc.breeder) ? `<a href="${ARC_EXPLORER}/address/${oc.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(oc.breeder)}</a>` : "–"}</dd></div>` +
-      (ocParents.length ? `<div><dt>on-chain parents (arc)</dt><dd class="fp">${ocParents.map((p) => `<a href="#" data-lin-hash="${p.slice(2)}" class="lin-plink">${shortHash(p)}</a>`).join(" · ")}</dd></div>` : "");
+      `<div><dt>${T("lin.onchainAncestry")}</dt><dd class="fp${m ? " ok" : ""}">${T("lin.opVerb")} ${oc.op} · ${T("lin.generation")} ${oc.generation} · ${T("lin.committed")} ${when} ${m ? T("lin.matchOk") : T("lin.matchBad")}</dd></div>` +
+      `<div><dt>${T("lin.onchainBreeder")}</dt><dd class="fp">${isRealAddr(oc.breeder) ? `<a href="${ARC_EXPLORER}/address/${oc.breeder}" target="_blank" rel="noopener noreferrer">${shortHash(oc.breeder)}</a>` : "–"}</dd></div>` +
+      (ocParents.length ? `<div><dt>${T("lin.onchainParents")}</dt><dd class="fp">${ocParents.map((p) => `<a href="#" data-lin-hash="${p.slice(2)}" class="lin-plink">${shortHash(p)}</a>`).join(" · ")}</dd></div>` : "");
   } else if (isRealAddr(d0LineageAddr())) {
-    dl.innerHTML += `<div><dt>on-chain ancestry</dt><dd class="fp">${oc ? "not committed on arc" : "arc read unavailable (cors/network) — showing served data"}</dd></div>`;
+    dl.innerHTML += `<div><dt>${T("lin.onchainNotCommitted")}</dt><dd class="fp">${oc ? T("lin.onchainNotCommittedNote") : T("lin.onchainReadFail")}</dd></div>`;
   }
   card.appendChild(dl);
 
   const genomeBox = document.createElement("div"); genomeBox.className = "lin-genome";
-  genomeBox.innerHTML = `<div class="pf-ct-ev" style="margin-top:8px">genome (rebuild this brain offline):</div>` +
+  genomeBox.innerHTML = `<div class="pf-ct-ev" style="margin-top:8px">${T("lin.genomeRebuild")}</div>` +
     `<pre class="lin-genome-json">${JSON.stringify(g, null, 0)}</pre>`;
   card.appendChild(genomeBox);
   return card;
@@ -4994,7 +4996,7 @@ function togglePulse() { if (pulseOpen) closePulse(); else openPulse(); }
 
 async function renderPulse() {
   const body = $("pulse-body"); if (!body) return;
-  body.innerHTML = `<p class="pulse-loading">loading arc pulse…</p>`;
+  body.innerHTML = `<p class="pulse-loading">${T("pulse.loading")}</p>`;
   const [reqRes, lbRes] = await Promise.all([
     getJSON("/signal/requirements", 8000).catch(() => null),
     getJSON("/leaderboard", 8000).catch(() => null),
@@ -5010,8 +5012,8 @@ function paintPulse() {
   const body = $("pulse-body"); if (!body) return;
   const sub = $("pulse-sub");
   if (sub) sub.textContent = pulseReqs && pulseReqs.enabled
-    ? `x402 · ${pulseReqs.priceUsdc} USDC/read · ${pulseReqs.mode}`
-    : "x402 data product";
+    ? T("pulse.subEnabled", { price: pulseReqs.priceUsdc, mode: pulseReqs.mode })
+    : T("pulse.subDisabled");
   body.innerHTML = "";
   body.appendChild(pulseSignalCard());
   if (pulsePaid) body.appendChild(pulsePaidCard(pulsePaid));
@@ -5021,21 +5023,22 @@ function paintPulse() {
 /** Free live gauge + the locked machine-readable bundle + price/buy row. */
 function pulseSignalCard() {
   const card = document.createElement("div"); card.className = "pulse-card signal";
-  const T = collective ? clamp(collective.temperature) : tempSmoothed;
+  const temp = collective ? clamp(collective.temperature) : tempSmoothed;
   const regime = (collective && collective.regime) ? String(collective.regime)
-    : (T >= 0.66 ? "HOT" : T <= 0.33 ? "COLD" : "CALM");
+    : (temp >= 0.66 ? "HOT" : temp <= 0.33 ? "COLD" : "CALM");
   const r = pulseReqs;
   const enabled = !!(r && r.enabled);
+  const regimeLabel = gl("regime", regime.toLowerCase());
   card.innerHTML =
-    `<div class="pulse-title">arc pulse <span class="pulse-regime ${regime.toLowerCase()}">${regime.toLowerCase()}</span></div>` +
-    `<p class="pulse-blurb">The whole-chain Arc activity index, reduced to a market temperature. The gauge below is free and live; the machine-readable signal bundle is an <b>x402 paid data product</b> — you sign a gasless EIP-3009 USDC authorization in your own wallet, the murmur relay settles it on-chain, then serves exactly one read.</p>` +
-    `<div class="pulse-gauge"><div class="pulse-gauge-fill" style="width:${(clamp(T) * 100).toFixed(1)}%"></div></div>` +
-    `<div class="pulse-gauge-meta"><span>T ${T.toFixed(2)}</span><span>free · live</span></div>` +
-    `<div class="pulse-lock">\u{1F512} locked bundle · temperature, momentum, turbulence, tx/gas ratios, swarm positioning, trader read</div>` +
+    `<div class="pulse-title">${T("pulse.cardTitle")} <span class="pulse-regime ${regime.toLowerCase()}">${regimeLabel}</span></div>` +
+    `<p class="pulse-blurb">${T("pulse.blurb")}</p>` +
+    `<div class="pulse-gauge"><div class="pulse-gauge-fill" style="width:${(clamp(temp) * 100).toFixed(1)}%"></div></div>` +
+    `<div class="pulse-gauge-meta"><span>${T("pulse.gaugeT", { v: temp.toFixed(2) })}</span><span>${T("pulse.freeLive")}</span></div>` +
+    `<div class="pulse-lock">${T("pulse.lockedBundle")}</div>` +
     (enabled
-      ? `<div class="pulse-buyrow"><button type="button" class="pulse-buy">buy 1 read · ${r.priceUsdc} USDC</button>` +
-        `<span class="pulse-mode">${r.mode === "onchain" ? "settles on Arc mainnet" : "simulated · no real funds"}</span></div>`
-      : `<div class="pulse-buyrow"><span class="pulse-mode">signal product unavailable</span></div>`) +
+      ? `<div class="pulse-buyrow"><button type="button" class="pulse-buy">${T("pulse.buyBtn", { price: r.priceUsdc })}</button>` +
+        `<span class="pulse-mode">${r.mode === "onchain" ? T("pulse.modeOnchain") : T("pulse.modeSim")}</span></div>`
+      : `<div class="pulse-buyrow"><span class="pulse-mode">${T("pulse.unavailable")}</span></div>`) +
     `<div class="pulse-status"></div>`;
   return card;
 }
@@ -5047,18 +5050,18 @@ function pulsePaidCard(j) {
   const st = (j && j.settlement) || {};
   const txOk = st.txHash && isRealTxHash(st.txHash);
   card.innerHTML =
-    `<div class="pulse-title">unlocked · arc pulse read</div>` +
+    `<div class="pulse-title">${T("pulse.paidTitle")}</div>` +
     `<div class="pulse-read">${s.read || ""}</div>` +
     `<dl class="pulse-meta">` +
-      `<div><dt>regime</dt><dd>${s.regime || "\u2013"}</dd></div>` +
-      `<div><dt>temperature</dt><dd>${typeof s.temperature === "number" ? s.temperature.toFixed(3) : "\u2013"}</dd></div>` +
-      `<div><dt>block</dt><dd>${s.chain && s.chain.blockNumber != null ? "#" + s.chain.blockNumber : "\u2013"}</dd></div>` +
-      `<div><dt>tick</dt><dd>#${s.tickIndex != null ? s.tickIndex : "\u2013"}</dd></div>` +
+      `<div><dt>${T("pulse.metaRegime")}</dt><dd>${s.regime ? gl("regime", s.regime) : "\u2013"}</dd></div>` +
+      `<div><dt>${T("pulse.metaTemp")}</dt><dd>${typeof s.temperature === "number" ? s.temperature.toFixed(3) : "\u2013"}</dd></div>` +
+      `<div><dt>${T("pulse.metaBlock")}</dt><dd>${s.chain && s.chain.blockNumber != null ? "#" + s.chain.blockNumber : "\u2013"}</dd></div>` +
+      `<div><dt>${T("pulse.metaTick")}</dt><dd>#${s.tickIndex != null ? s.tickIndex : "\u2013"}</dd></div>` +
     `</dl>` +
     `<pre class="pulse-json">${JSON.stringify(s, null, 2)}</pre>` +
     (txOk
-      ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${st.txHash}" target="_blank" rel="noopener noreferrer">\u2197 verify payment on Arc ${shortHash(st.txHash)}</a>`
-      : `<div class="pulse-simnote">${st.shadow ? "shadow · signed + simulated against live chain, not broadcast" : "simulated settlement · no real funds moved"}</div>`);
+      ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${st.txHash}" target="_blank" rel="noopener noreferrer">${T("pulse.verifyPayment", { hash: shortHash(st.txHash) })}</a>`
+      : `<div class="pulse-simnote">${st.shadow ? T("pulse.shadowNote") : T("pulse.simNote")}</div>`);
   return card;
 }
 
@@ -5069,21 +5072,21 @@ function pulseLeaderCard() {
   const rows = (lb && Array.isArray(lb.rows)) ? lb.rows : [];
   const p = (lb && lb.pulse) || null;
   let html =
-    `<div class="pulse-title">trustless PnL leaderboard</div>` +
-    `<p class="pulse-blurb">Every agent ranked by realised USDC flow (earned \u2212 paid). Each address is a real on-chain wallet; the underlying settlements are re-verifiable through the deployed NeuralReceiptRegistry.</p>`;
+    `<div class="pulse-title">${T("pulse.leaderTitle")}</div>` +
+    `<p class="pulse-blurb">${T("pulse.leaderBlurb")}</p>`;
   if (p && p.enabled) {
     const txOk = p.lastTx && isRealTxHash(p.lastTx);
     html += `<div class="lb-pulse">` +
-      `<span><b>${p.sales || 0}</b> pulse reads sold</span>` +
-      `<span><b>${Number(p.grossUsdc || 0).toFixed(4)}</b> usdc gross</span>` +
-      (txOk ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${p.lastTx}" target="_blank" rel="noopener noreferrer">\u2197 last ${shortHash(p.lastTx)}</a>` : "") +
+      `<span><b>${p.sales || 0}</b> ${T("pulse.salesLabel")}</span>` +
+      `<span><b>${Number(p.grossUsdc || 0).toFixed(4)}</b> ${T("pulse.grossLabel")}</span>` +
+      (txOk ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${p.lastTx}" target="_blank" rel="noopener noreferrer">${T("pulse.lastLink", { hash: shortHash(p.lastTx) })}</a>` : "") +
       `</div>`;
   }
   if (!rows.length) {
-    html += `<p class="pulse-empty">no ranked agents yet — the economy has not settled a tick.</p>`;
+    html += `<p class="pulse-empty">${T("pulse.leaderEmpty")}</p>`;
   } else {
     const live = lb && lb.mode === "onchain";
-    html += `<div class="lb-head"><span>#</span><span>agent</span><span>net</span><span>bal</span><span>d/s</span></div>`;
+    html += `<div class="lb-head"><span>#</span><span>${T("pulse.colAgent")}</span><span>${T("pulse.colNet")}</span><span>${T("pulse.colBal")}</span><span>${T("pulse.colDS")}</span></div>`;
     html += rows.slice(0, 25).map((r, i) => {
       const addr = isRealAddr(r.address)
         ? (live
@@ -5099,7 +5102,7 @@ function pulseLeaderCard() {
     }).join("");
   }
   const regAddr = lb && isRealAddr(lb.registryAddress) ? lb.registryAddress : null;
-  if (regAddr) html += `<div class="lb-reg">registry <span class="fp">${shortHash(regAddr)}</span></div>`;
+  if (regAddr) html += `<div class="lb-reg">${T("pulse.registry")} <span class="fp">${shortHash(regAddr)}</span></div>`;
   card.innerHTML = html;
   return card;
 }
@@ -5115,21 +5118,21 @@ async function buySignal(btn) {
   const status = card ? card.querySelector(".pulse-status") : null;
   const setMsg = (m, cls) => { if (status) { status.textContent = m; status.className = "pulse-status" + (cls ? " " + cls : ""); } };
   const r = pulseReqs;
-  if (!r || !r.enabled) { setMsg("signal product unavailable", "bad"); return; }
-  if (!window.ethereum) { setMsg("no wallet found \u2014 install MetaMask to buy", "bad"); return; }
+  if (!r || !r.enabled) { setMsg(T("pulse.unavailable"), "bad"); return; }
+  if (!window.ethereum) { setMsg(T("pulse.noWallet"), "bad"); return; }
   pulseBuying = true;
   if (btn) btn.disabled = true;
   try {
-    setMsg("connecting wallet\u2026");
+    setMsg(T("pulse.connectingWallet"));
     const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
     const from = Array.isArray(accts) && accts[0];
-    if (!from) { setMsg("no account selected", "bad"); return; }
+    if (!from) { setMsg(T("pulse.noAccount"), "bad"); return; }
 
     // Make sure the wallet is on Arc (add the chain if MetaMask has never seen it).
     const chainHex = "0x" + Number(r.chainId).toString(16);
     const cur = await window.ethereum.request({ method: "eth_chainId" });
     if (String(cur).toLowerCase() !== chainHex.toLowerCase()) {
-      setMsg("switching network to Arc\u2026");
+      setMsg(T("pulse.switchingArc"));
       const testnet = Number(r.chainId) !== 5042;
       try {
         await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainHex }] });
@@ -5169,7 +5172,7 @@ async function buySignal(btn) {
       primaryType: "TransferWithAuthorization",
       domain, message,
     };
-    setMsg("sign the EIP-3009 authorization in your wallet\u2026 (gasless)");
+    setMsg(T("pulse.sign"));
     const signature = await window.ethereum.request({
       method: "eth_signTypedData_v4", params: [from, JSON.stringify(typed)],
     });
@@ -5184,7 +5187,7 @@ async function buySignal(btn) {
         },
       },
     };
-    setMsg("relaying your payment on-chain\u2026");
+    setMsg(T("pulse.relaying"));
     const res = await fetch(API + "/signal/pulse", {
       method: "GET", cache: "no-store",
       headers: { "X-PAYMENT": btoa(JSON.stringify(payload)) },
@@ -5192,18 +5195,18 @@ async function buySignal(btn) {
     if (res.status === 200) {
       const j = await res.json();
       pulsePaid = j;
-      setMsg("paid \u2713", "ok");
+      setMsg(T("pulse.paid"), "ok");
       paintPulse();
       // a sale bumps the revenue counter — refresh the leaderboard once, quietly
       getJSON("/leaderboard", 8000).then((lb) => { if (lb && pulseOpen) { pulseLB = lb; paintPulse(); } }).catch(() => {});
     } else {
-      let why = "payment rejected";
+      let why = T("pulse.rejected");
       try { const b = await res.json(); if (b && b.error) why = b.error; } catch { /* keep default */ }
       setMsg(why, "bad");
     }
   } catch (e) {
     const m = (e && (e.message || e.code)) || "failed";
-    setMsg(/user rejected|denied|reject/i.test(String(m)) ? "cancelled in wallet" : "error: " + m, "bad");
+    setMsg(/user rejected|denied|reject/i.test(String(m)) ? T("pulse.cancelled") : T("pulse.error", { msg: m }), "bad");
   } finally {
     pulseBuying = false;
     if (btn) btn.disabled = false;
@@ -5238,7 +5241,7 @@ function togglePredict() { if (predictOpen) closePredict(); else openPredict(); 
 
 async function renderPredict() {
   const body = $("predict-body"); if (!body) return;
-  body.innerHTML = `<p class="predict-loading">loading prediction market…</p>`;
+  body.innerHTML = `<p class="predict-loading">${T("pred.loading")}</p>`;
   const res = await getJSON("/predictions", 8000).catch(() => null);
   if (!predictOpen) return;                 // closed while fetching
   predictData = res || null;
@@ -5263,11 +5266,11 @@ function paintPredict() {
   const sub = $("predict-sub");
   const d = predictData;
   if (sub) sub.textContent = d && d.enabled
-    ? `${d.open ? "round #" + d.open.round + " open" : "between rounds"} · ${d.totals ? d.totals.roundsResolved : 0} settled`
-    : "neural stakes · parimutuel";
+    ? `${d.open ? T("pred.subOpen", { n: d.open.round }) : T("pred.subBetween")} · ${T("pred.subSettled", { n: d.totals ? d.totals.roundsResolved : 0 })}`
+    : T("pred.subDefault");
   body.innerHTML = "";
   if (!d || !d.enabled) {
-    body.innerHTML = `<p class="predict-empty">the prediction market is disabled on this deployment.</p>`;
+    body.innerHTML = `<p class="predict-empty">${T("pred.disabled")}</p>`;
     return;
   }
   body.appendChild(predictBookCard(d));
@@ -5279,12 +5282,12 @@ function paintPredict() {
 function predictBookCard(d) {
   const card = document.createElement("div"); card.className = "predict-card book";
   const o = d.open;
-  const mode = d.mode === "onchain" ? "settles on Arc mainnet" : "simulated · no real funds";
+  const mode = d.mode === "onchain" ? T("pred.modeOnchain") : T("pred.modeSim");
   let html =
-    `<div class="predict-title">live book <span class="predict-mode">${mode}</span></div>` +
-    `<p class="predict-blurb">Each fly reads its own connectome and stakes real USDC on whether the market temperature <b>rises</b> or <b>falls</b> by next tick. Pools are <b>parimutuel</b>: winners split the losers' pool, strictly zero-sum, and the net settles through the same on-chain netting path as every other trade.</p>`;
+    `<div class="predict-title">${T("pred.bookTitle")} <span class="predict-mode">${mode}</span></div>` +
+    `<p class="predict-blurb">${T("pred.blurb")}</p>`;
   if (!o) {
-    html += `<p class="predict-empty">no open round — the swarm is between ticks. a new book opens every cron.</p>`;
+    html += `<p class="predict-empty">${T("pred.noRound")}</p>`;
     card.innerHTML = html;
     return card;
   }
@@ -5294,25 +5297,25 @@ function predictBookCard(d) {
   const downPct = tot > 0 ? 100 - upPct : 50;
   const band = Number((d.config && d.config.flatBand) || 0);
   html +=
-    `<div class="pb-round">round <b>#${o.round}</b> · entry tick #${o.entryTick} · resolves next cron</div>` +
+    `<div class="pb-round">${T("pred.roundLine", { r: o.round, t: o.entryTick })}</div>` +
     `<div class="pb-pools">` +
-      `<div class="pb-pool up"><span class="pb-side">▲ up</span><span class="pb-amt">${upUsdc.toFixed(4)}</span></div>` +
-      `<div class="pb-pool down"><span class="pb-side">▼ down</span><span class="pb-amt">${downUsdc.toFixed(4)}</span></div>` +
+      `<div class="pb-pool up"><span class="pb-side">${T("pred.upSide")}</span><span class="pb-amt">${upUsdc.toFixed(4)}</span></div>` +
+      `<div class="pb-pool down"><span class="pb-side">${T("pred.downSide")}</span><span class="pb-amt">${downUsdc.toFixed(4)}</span></div>` +
     `</div>` +
     `<div class="pb-bar"><div class="pb-bar-up" style="width:${upPct.toFixed(1)}%"></div><div class="pb-bar-down" style="width:${downPct.toFixed(1)}%"></div></div>` +
     `<div class="pb-odds">` +
-      `<div><dt>up odds</dt><dd>${Number(o.oddsUp || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probUp || 0) * 100).toFixed(0)}%</dd></div>` +
-      `<div><dt>down odds</dt><dd>${Number(o.oddsDown || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probDown || 0) * 100).toFixed(0)}%</dd></div>` +
+      `<div><dt>${T("pred.oddsUp")}</dt><dd>${Number(o.oddsUp || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probUp || 0) * 100).toFixed(0)}%</dd></div>` +
+      `<div><dt>${T("pred.oddsDown")}</dt><dd>${Number(o.oddsDown || 0).toFixed(2)}×</dd><dd class="pb-prob">${(Number(o.probDown || 0) * 100).toFixed(0)}%</dd></div>` +
     `</div>` +
     `<dl class="pb-meta">` +
-      `<div><dt>entry temp</dt><dd>${Number(o.entryTemp || 0).toFixed(3)}</dd></div>` +
-      `<div><dt>momentum</dt><dd>${(Number(o.momentum || 0) >= 0 ? "+" : "") + Number(o.momentum || 0).toFixed(3)}</dd></div>` +
-      `<div><dt>bets</dt><dd>${o.betCount || 0}</dd></div>` +
-      `<div><dt>flat band</dt><dd>±${band.toFixed(3)}</dd></div>` +
+      `<div><dt>${T("pred.metaEntry")}</dt><dd>${Number(o.entryTemp || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>${T("pred.metaMomentum")}</dt><dd>${(Number(o.momentum || 0) >= 0 ? "+" : "") + Number(o.momentum || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>${T("pred.metaBets")}</dt><dd>${o.betCount || 0}</dd></div>` +
+      `<div><dt>${T("pred.metaFlatBand")}</dt><dd>±${band.toFixed(3)}</dd></div>` +
     `</dl>`;
   const bets = Array.isArray(o.bets) ? o.bets : [];
   if (bets.length) {
-    html += `<div class="pb-bets-title">neural stakes</div><div class="pb-bets">` +
+    html += `<div class="pb-bets-title">${T("pred.stakesTitle")}</div><div class="pb-bets">` +
       bets.slice(0, 48).map((b) =>
         `<span class="pb-bet ${b.side === "UP" ? "up" : "down"}">#${b.id} ${b.side === "UP" ? "▲" : "▼"} ${Number(b.stakeUsdc || 0).toFixed(4)}</span>`
       ).join("") + `</div>`;
@@ -5326,10 +5329,10 @@ function predictRecentCard(d) {
   const card = document.createElement("div"); card.className = "predict-card recent";
   const rows = Array.isArray(d.recent) ? d.recent : [];
   let html =
-    `<div class="predict-title">resolutions</div>` +
-    `<p class="predict-blurb">Every decisive round is hashed and committed to the on-chain NeuralReceiptRegistry. Recompute the receipt in your browser, then read the same commitment straight off Arc — no murmur server in the loop.</p>`;
+    `<div class="predict-title">${T("pred.recentTitle")}</div>` +
+    `<p class="predict-blurb">${T("pred.recentBlurb")}</p>`;
   if (!rows.length) {
-    html += `<p class="predict-empty">no resolved rounds yet — the first book resolves on the next cron.</p>`;
+    html += `<p class="predict-empty">${T("pred.recentEmpty")}</p>`;
     card.innerHTML = html; return card;
   }
   html += rows.slice(0, 12).map((r) => {
@@ -5344,14 +5347,14 @@ function predictRecentCard(d) {
         `<span class="pr-temp">${Number(r.entryTemp || 0).toFixed(3)} → ${Number(r.exitTemp || 0).toFixed(3)}</span>` +
       `</div>` +
       `<div class="pr-sub">` +
-        `<span>${r.betCount || 0} bets · ${Number(r.totalStakedUsdc || 0).toFixed(4)} usdc</span>` +
+        `<span>${T("pred.betsUsdcLine", { n: r.betCount || 0, amt: Number(r.totalStakedUsdc || 0).toFixed(4) })}</span>` +
         `<span class="pr-hash fp">${shortHash(r.receiptHash || "")}</span>` +
       `</div>` +
       `<div class="pr-actions">` +
-        `<button type="button" class="pr-verify" data-round="${r.round}">verify on-chain</button>` +
+        `<button type="button" class="pr-verify" data-round="${r.round}">${T("pred.verifyBtn")}</button>` +
         (committed
-          ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${r.commitTx}" target="_blank" rel="noopener noreferrer">↗ registry ${shortHash(r.commitTx)}</a>`
-          : `<span class="pr-simnote">${r.outcome === "FLAT" ? "flat · refunded · not committed" : "not committed"}</span>`) +
+          ? `<a class="tx-link" href="${ARC_EXPLORER}/tx/${r.commitTx}" target="_blank" rel="noopener noreferrer">${T("pred.registryLink", { hash: shortHash(r.commitTx) })}</a>`
+          : `<span class="pr-simnote">${r.outcome === "FLAT" ? T("pred.flatNote") : T("pred.notCommitted")}</span>`) +
       `</div>` +
       `<div class="pr-verifyout" hidden></div>` +
     `</div>`;
@@ -5366,23 +5369,23 @@ function predictLeaderCard(d) {
   const rows = Array.isArray(d.leaderboard) ? d.leaderboard : [];
   const t = d.totals || {};
   let html =
-    `<div class="predict-title">hit-rate leaderboard</div>` +
-    `<p class="predict-blurb">Agents ranked by prediction accuracy — the share of decisive rounds where the fly's neural read called the temperature move. Net PnL is realised USDC folded through the on-chain economy.</p>`;
+    `<div class="predict-title">${T("pred.leaderTitle")}</div>` +
+    `<p class="predict-blurb">${T("pred.leaderBlurb")}</p>`;
   if (t.roundsResolved != null) {
     html += `<div class="pl-totals">` +
-      `<span><b>${t.roundsResolved || 0}</b> rounds</span>` +
-      `<span><b>${t.committed || 0}</b> on-chain</span>` +
-      `<span><b>${Number(t.volumeUsdc || 0).toFixed(4)}</b> usdc</span>` +
-      `<span><b>${t.activeBettors || 0}</b> bettors</span>` +
+      `<span><b>${t.roundsResolved || 0}</b> ${T("pred.totRounds")}</span>` +
+      `<span><b>${t.committed || 0}</b> ${T("pred.totOnchain")}</span>` +
+      `<span><b>${Number(t.volumeUsdc || 0).toFixed(4)}</b> ${T("pred.totUsdc")}</span>` +
+      `<span><b>${t.activeBettors || 0}</b> ${T("pred.totBettors")}</span>` +
     `</div>`;
   }
   if (!rows.length) {
-    html += `<p class="predict-empty">no ranked agents yet — accuracy accrues as rounds resolve.</p>`;
+    html += `<p class="predict-empty">${T("pred.leaderEmpty")}</p>`;
     card.innerHTML = html; return card;
   }
   const live = d.mode === "onchain";
   const addrOf = (id) => { const a = econAgents.find((x) => x.id === id); return a && isRealAddr(a.address) ? a.address : null; };
-  html += `<div class="pl-head"><span>#</span><span>agent</span><span>hit</span><span>net</span><span>rnds</span></div>`;
+  html += `<div class="pl-head"><span>#</span><span>${T("pred.colAgent")}</span><span>${T("pred.colHit")}</span><span>${T("pred.colNet")}</span><span>${T("pred.colRnd")}</span></div>`;
   html += rows.slice(0, 25).map((r, i) => {
     const addr = addrOf(r.id);
     const agent = addr
@@ -5399,7 +5402,7 @@ function predictLeaderCard(d) {
       `<span class="pl-rounds">${r.hits || 0}/${r.rounds || 0}</span></div>`;
   }).join("");
   const regAddr = isRealAddr(d.registryAddress) ? d.registryAddress : null;
-  if (regAddr) html += `<div class="pl-reg">registry <span class="fp">${shortHash(regAddr)}</span></div>`;
+  if (regAddr) html += `<div class="pl-reg">${T("pred.registry")} <span class="fp">${shortHash(regAddr)}</span></div>`;
   card.innerHTML = html;
   return card;
 }
@@ -5413,18 +5416,18 @@ function predictLeaderCard(d) {
 async function verifyPredictRound(round, wrap) {
   if (predictVerifying[round]) return;
   const out = wrap ? wrap.querySelector(".pr-verifyout") : null;
-  if (out) { out.hidden = false; out.textContent = "checking…"; }
+  if (out) { out.hidden = false; out.textContent = T("pred.vChecking"); }
   predictVerifying[round] = true;
   try {
     const v = await getJSON(`/predictions/verify?round=${encodeURIComponent(round)}`, 9000);
-    if (!v.found) { if (out) out.textContent = "round not found in recent history"; return; }
+    if (!v.found) { if (out) out.textContent = T("pred.vNotFound"); return; }
     let clientHash = null;
     if (v.receipt) { try { clientHash = await sha256HexClient(v.receipt); } catch { clientHash = null; } }
     const selfOk = clientHash == null || clientHash === v.receiptHash;
     const serverOk = v.selfConsistent === true;
     let reg = null, regSource = "";
-    if (v.registryAddress) { reg = await readRegistryOnchain(v.registryAddress, v.receiptHash); regSource = reg ? "direct Arc RPC" : ""; }
-    if (!reg && v.registry) { reg = v.registry; regSource = "via murmur API"; }
+    if (v.registryAddress) { reg = await readRegistryOnchain(v.registryAddress, v.receiptHash); regSource = reg ? T("pred.vDirectRpc") : ""; }
+    if (!reg && v.registry) { reg = v.registry; regSource = T("pred.vViaApi"); }
     const regOk = !!reg && reg.committed === true;
     const expectCommit = v.outcome !== "FLAT";
     const ok = selfOk && serverOk && (!expectCommit || regOk);
@@ -5433,28 +5436,28 @@ async function verifyPredictRound(round, wrap) {
     const badge = document.createElement("span");
     badge.className = "pr-badge " + (ok ? "ok" : "bad");
     badge.textContent = ok
-      ? (expectCommit ? "✓ resolution verified on-chain" : "✓ receipt self-consistent (flat · refunded)")
-      : "✗ mismatch";
+      ? (expectCommit ? T("pred.vOkCommit") : T("pred.vOkFlat"))
+      : T("pred.vBad");
     const dl = document.createElement("dl"); dl.className = "pr-vmeta";
     dl.innerHTML =
-      `<div><dt>outcome</dt><dd>${v.outcome} · Δ ${(Number(v.delta || 0) >= 0 ? "+" : "") + Number(v.delta || 0).toFixed(4)} (band ±${Number(v.flatBand || 0).toFixed(3)})</dd></div>` +
-      `<div><dt>sha256(receipt) in your browser</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
-      `<div><dt>published receiptHash</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>`;
+      `<div><dt>${T("pred.vOutcome")}</dt><dd>${v.outcome} · Δ ${(Number(v.delta || 0) >= 0 ? "+" : "") + Number(v.delta || 0).toFixed(4)} (${T("pred.vBand")} ±${Number(v.flatBand || 0).toFixed(3)})</dd></div>` +
+      `<div><dt>${T("pred.vShaBrowser")}</dt><dd class="fp">${clientHash ? shortHash(clientHash) : "–"}</dd></div>` +
+      `<div><dt>${T("pred.vPublishedHash")}</dt><dd class="fp">${shortHash(v.receiptHash || "")}</dd></div>`;
     const regDiv = document.createElement("div");
     if (reg) {
       const headTxt = reg.chainHead ? shortHash(reg.chainHead) : "–";
       const isHead = reg.chainHead && v.receiptHash && reg.chainHead.toLowerCase() === ("0x" + v.receiptHash).toLowerCase();
-      const stateTxt = !reg.committed ? (expectCommit ? "not committed" : "refunded · not committed") : (isHead ? "chain head ✓" : "committed ✓");
+      const stateTxt = !reg.committed ? (expectCommit ? T("pred.vNotCommitted") : T("pred.vRefundedNotCommit")) : (isHead ? T("pred.vChainHeadOk") : T("pred.vCommittedOk"));
       regDiv.innerHTML =
-        `<div><dt>on-chain registry (${regSource})</dt><dd class="fp${regOk || !expectCommit ? " ok" : ""}">${stateTxt} · head ${headTxt}</dd></div>` +
-        (v.registryAddress ? `<div><dt>registry contract</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
+        `<div><dt>${T("pred.vRegistry", { src: regSource })}</dt><dd class="fp${regOk || !expectCommit ? " ok" : ""}">${stateTxt} · ${T("pred.vHeadLabel")} ${headTxt}</dd></div>` +
+        (v.registryAddress ? `<div><dt>${T("pred.vRegistryContract")}</dt><dd class="fp">${shortHash(v.registryAddress)}</dd></div>` : "");
     } else {
-      regDiv.innerHTML = `<div><dt>on-chain registry</dt><dd class="fp">${expectCommit ? "not configured" : "flat · no commit expected"}</dd></div>`;
+      regDiv.innerHTML = `<div><dt>${T("pred.vRegistryLabel")}</dt><dd class="fp">${expectCommit ? T("pred.vNotConfigured") : T("pred.vFlatNoCommit")}</dd></div>`;
     }
     dl.append(...regDiv.children);
     out.append(badge, dl);
   } catch {
-    if (out) out.textContent = "verify request failed (network)";
+    if (out) out.textContent = T("pred.vFailed");
   } finally {
     predictVerifying[round] = false;
   }
@@ -6204,6 +6207,14 @@ function rerenderAll() {
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
     if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderSocialSection(); }
+    // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
+    // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
+    if (proofsOpen) renderProofs();
+    if (brainOpen && !brainLoading && brainData) renderBrain();
+    if (lineageOpen && !lineageLoading && lineageData) renderLineage();
+    if (pulseOpen && (pulseReqs || pulseLB)) paintPulse();
+    if (predictOpen && predictData) paintPredict();
+    if (arenaOpen && arenaData) paintArena();
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;
@@ -6376,7 +6387,7 @@ function toggleArena() { if (arenaOpen) closeArena(); else openArena(); }
 
 async function renderArena() {
   const body = $("arena-body"); if (!body) return;
-  body.innerHTML = `<p class="ar-loading">loading arena\u2026</p>`;
+  body.innerHTML = `<p class="ar-loading">${T("arena.loading")}</p>`;
   const res = await getJSON("/arena", 8000).catch(() => null);
   if (!arenaOpen) return;                 // closed while fetching
   arenaData = res || null;
@@ -6437,16 +6448,16 @@ async function arenaReadUser() {
 
 // ---- wallet plumbing: connect + ensure Arc, then send a tx and wait for its receipt ----
 async function arenaEnsureWallet(setMsg) {
-  if (!window.ethereum) { setMsg("no wallet found \u2014 install MetaMask to bet", "bad"); return null; }
+  if (!window.ethereum) { setMsg(T("arena.noWallet"), "bad"); return null; }
   const d = arenaData;
-  if (!d || !d.enabled) { setMsg("arena unavailable on this deployment", "bad"); return null; }
+  if (!d || !d.enabled) { setMsg(T("arena.unavailableEnv"), "bad"); return null; }
   const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
   const from = Array.isArray(accts) && accts[0];
-  if (!from) { setMsg("no account selected", "bad"); return null; }
+  if (!from) { setMsg(T("arena.noAccount"), "bad"); return null; }
   const chainHex = "0x" + Number(d.chainId).toString(16);
   const cur = await window.ethereum.request({ method: "eth_chainId" });
   if (String(cur).toLowerCase() !== chainHex.toLowerCase()) {
-    setMsg("switching network to Arc\u2026");
+    setMsg(T("arena.switchingArc"));
     const testnet = Number(d.chainId) !== 5042;
     try {
       await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainHex }] });
@@ -6485,8 +6496,8 @@ function arenaMsgFn(btn) {
   return (m, cls) => { if (status) { status.textContent = m || ""; status.className = "ar-status" + (cls ? " " + cls : ""); } };
 }
 function arenaErr(e) {
-  const m = (e && (e.message || e.code)) || "failed";
-  return /user rejected|denied|reject/i.test(String(m)) ? "cancelled in wallet" : "error: " + m;
+  const m = (e && (e.message || e.code)) || T("arena.failed");
+  return /user rejected|denied|reject/i.test(String(m)) ? T("arena.cancelled") : T("arena.error", { msg: m });
 }
 
 // ---- actions ----
@@ -6495,13 +6506,13 @@ async function arenaConnect(btn) {
   const setMsg = arenaMsgFn(btn);
   arenaBusy = true; if (btn) btn.disabled = true;
   try {
-    setMsg("connecting wallet\u2026");
+    setMsg(T("arena.connecting"));
     const from = await arenaEnsureWallet(setMsg);
     if (!from) return;
     await arenaReadUser();
     if (!arenaOpen) return;
     paintArena();
-    arenaMsgFn(null)("connected " + shortHash(from), "ok");
+    arenaMsgFn(null)(T("arena.connected", { hash: shortHash(from) }), "ok");
   } catch (e) { setMsg(arenaErr(e), "bad"); }
   finally { arenaBusy = false; if (btn) btn.disabled = false; }
 }
@@ -6510,35 +6521,35 @@ async function arenaBet(side, btn) {
   if (arenaBusy) return;
   const setMsg = arenaMsgFn(btn);
   const d = arenaData;
-  if (!d || !d.enabled || !d.current) { setMsg("no live round to bet on", "bad"); return; }
+  if (!d || !d.enabled || !d.current) { setMsg(T("arena.noLiveRound"), "bad"); return; }
   const c = d.current;
-  if (c.resolved || Number(c.secondsToDeadline || 0) <= 0) { setMsg("betting closed for round #" + c.roundId, "bad"); return; }
+  if (c.resolved || Number(c.secondsToDeadline || 0) <= 0) { setMsg(T("arena.closedRound", { n: c.roundId }), "bad"); return; }
   const amtEl = $("ar-amount");
   const amt = murToAtomic(amtEl ? amtEl.value : "");
-  if (amt <= 0n) { setMsg("enter an amount to bet", "bad"); return; }
+  if (amt <= 0n) { setMsg(T("arena.enterAmount"), "bad"); return; }
   arenaBusy = true; if (btn) btn.disabled = true;
   let finalMsg = "", finalCls = "";
   try {
     const from = await arenaEnsureWallet(setMsg);
     if (!from) return;
     await arenaReadUser();
-    if (arenaUser && amt > arenaUser.balanceRaw) { setMsg("amount exceeds your MURMUR balance", "bad"); return; }
+    if (arenaUser && amt > arenaUser.balanceRaw) { setMsg(T("arena.exceedsBalance"), "bad"); return; }
     // approve the arena to move this stake first if the allowance doesn't already cover it
     if (!arenaUser || arenaUser.allowanceRaw < amt) {
-      setMsg("approve MURMUR in your wallet\u2026 (1 of 2)");
+      setMsg(T("arena.approve1of2"));
       const ah = await arenaSendTx(d.token, MUR_SEL_APPROVE + wordAddr(d.arenaAddress) + wordUint(amt));
-      setMsg("approval sent \u2014 confirming\u2026");
+      setMsg(T("arena.approvalSent"));
       const okA = await arenaWaitReceipt(ah);
-      if (okA !== true) { setMsg(okA === false ? "approval reverted" : "approval not confirmed \u2014 retry", "bad"); return; }
+      if (okA !== true) { setMsg(okA === false ? T("arena.approvalRevert") : T("arena.approvalNotConf"), "bad"); return; }
       await arenaReadUser();
     }
-    setMsg(`bet ${side === ARENA_SIDE_UP ? "UP \u25b2" : "DOWN \u25bc"} in your wallet\u2026 (2 of 2)`);
+    setMsg(T("arena.betInWallet", { dir: side === ARENA_SIDE_UP ? T("arena.betDirUp") : T("arena.betDirDown") }));
     const bh = await arenaSendTx(d.arenaAddress, ARENA_SEL_BET + wordUint(c.roundId) + wordUint(side) + wordUint(amt));
-    setMsg("bet sent \u2014 confirming\u2026");
+    setMsg(T("arena.betSentConfirm"));
     const okB = await arenaWaitReceipt(bh);
-    if (okB === true) { finalMsg = "bet placed \u2713 " + shortHash(bh); finalCls = "ok"; }
-    else if (okB === false) { finalMsg = "bet reverted \u2014 check the amount / window"; finalCls = "bad"; }
-    else { finalMsg = "bet sent " + shortHash(bh) + " \u2014 confirming\u2026"; finalCls = ""; }
+    if (okB === true) { finalMsg = T("arena.betPlaced", { hash: shortHash(bh) }); finalCls = "ok"; }
+    else if (okB === false) { finalMsg = T("arena.betReverted"); finalCls = "bad"; }
+    else { finalMsg = T("arena.betSentPending", { hash: shortHash(bh) }); finalCls = ""; }
     setMsg(finalMsg, finalCls);
     lastArenaPoll = 0; await pollArena(true);
     if (arenaOpen) arenaMsgFn(null)(finalMsg, finalCls);
@@ -6550,19 +6561,19 @@ async function arenaClaim(roundId, btn) {
   if (arenaBusy) return;
   const setMsg = arenaMsgFn(btn);
   const d = arenaData;
-  if (!d || !d.enabled || !isRealAddr(d.arenaAddress)) { setMsg("arena unavailable", "bad"); return; }
+  if (!d || !d.enabled || !isRealAddr(d.arenaAddress)) { setMsg(T("arena.unavailableShort"), "bad"); return; }
   arenaBusy = true; if (btn) btn.disabled = true;
   let finalMsg = "", finalCls = "";
   try {
     const from = await arenaEnsureWallet(setMsg);
     if (!from) return;
-    setMsg("claim in your wallet\u2026");
+    setMsg(T("arena.claimInWallet"));
     const ch = await arenaSendTx(d.arenaAddress, ARENA_SEL_CLAIM + wordUint(roundId));
-    setMsg("claim sent \u2014 confirming\u2026");
+    setMsg(T("arena.claimSent"));
     const ok = await arenaWaitReceipt(ch);
-    if (ok === true) { finalMsg = "claimed \u2713 " + shortHash(ch); finalCls = "ok"; }
-    else if (ok === false) { finalMsg = "claim reverted"; finalCls = "bad"; }
-    else { finalMsg = "claim sent " + shortHash(ch) + " \u2014 confirming\u2026"; finalCls = ""; }
+    if (ok === true) { finalMsg = T("arena.claimed", { hash: shortHash(ch) }); finalCls = "ok"; }
+    else if (ok === false) { finalMsg = T("arena.claimReverted"); finalCls = "bad"; }
+    else { finalMsg = T("arena.claimSentPending", { hash: shortHash(ch) }); finalCls = ""; }
     setMsg(finalMsg, finalCls);
     lastArenaPoll = 0; await pollArena(true);
     if (arenaOpen) arenaMsgFn(null)(finalMsg, finalCls);
@@ -6604,17 +6615,17 @@ function arenaUpdatePreview() {
   if (!c || c.resolved || Number(c.secondsToDeadline || 0) <= 0) { el.textContent = ""; return; }
   const amtEl = $("ar-amount");
   const amt = murToAtomic(amtEl ? amtEl.value : "");
-  if (amt <= 0n) { el.innerHTML = `<span class="ar-pv-hint">enter an amount to preview your payout</span>`; return; }
+  if (amt <= 0n) { el.innerHTML = `<span class="ar-pv-hint">${T("arena.enterAmountHint")}</span>`; return; }
   const staked = Number(amt) / 1e18;
   const cell = (side, cls, arrow) => {
     const pay = arenaEstPayout(c, side, amt);
-    if (pay == null) return `<span class="ar-pv ${cls}">${arrow} win <b>\u2013</b></span>`;
+    if (pay == null) return `<span class="ar-pv ${cls}">${arrow} ${T("arena.pvWin")} <b>\u2013</b></span>`;
     const payMur = Number(pay) / 1e18;
     const mult = staked > 0 ? payMur / staked : 0;
-    return `<span class="ar-pv ${cls}">${arrow} win <b>${fmtMur(payMur)}</b> <em>${mult.toFixed(2)}\u00d7 \u00b7 +${fmtMur(payMur - staked)}</em></span>`;
+    return `<span class="ar-pv ${cls}">${arrow} ${T("arena.pvWin")} <b>${fmtMur(payMur)}</b> <em>${mult.toFixed(2)}\u00d7 \u00b7 +${fmtMur(payMur - staked)}</em></span>`;
   };
   el.innerHTML = cell(ARENA_SIDE_UP, "up", "\u25b2") + cell(ARENA_SIDE_DOWN, "down", "\u25bc") +
-    `<span class="ar-pv-note">parimutuel estimate \u00b7 shifts as others bet \u00b7 FLAT refunds your stake</span>`;
+    `<span class="ar-pv-note">${T("arena.pvNote")}</span>`;
 }
 
 // ---- render ----
@@ -6623,11 +6634,11 @@ function paintArena() {
   const sub = $("arena-sub");
   const d = arenaData;
   if (sub) sub.textContent = d && d.enabled
-    ? (d.current ? "round #" + d.current.roundId + (d.current.resolved ? " closed" : " live") : "between rounds")
-    : "MURMUR \u00b7 you vs the swarm";
+    ? (d.current ? T("arena.subRound", { n: d.current.roundId, suffix: d.current.resolved ? T("arena.suffixClosed") : T("arena.suffixLive") }) : T("arena.subBetween"))
+    : T("arena.subDefault");
   body.innerHTML = "";
   if (!d || !d.enabled) {
-    body.innerHTML = `<p class="ar-empty">the human arena isn't enabled on this deployment yet. it goes live once the PredictionArena contract is deployed and <span class="fp">ARENA_ENABLED</span> is on \u2014 holders bet MURMUR on the same temperature move the swarm does, non-custodially, and the contract pays winners parimutuel.</p>`;
+    body.innerHTML = `<p class="ar-empty">${T("arena.disabled")}</p>`;
     return;
   }
   body.appendChild(arenaBookCard(d));
@@ -6640,40 +6651,41 @@ function paintArena() {
 function arenaBookCard(d) {
   const card = document.createElement("div"); card.className = "ar-card book";
   const c = d.current;
-  const mode = d.armed ? "settles on Arc \u00b7 MURMUR" : "resolver not armed \u00b7 read-only";
+  const mode = d.armed ? T("arena.modeArmed") : T("arena.modeNotArmed");
   let html =
-    `<div class="ar-title">live book <span class="ar-mode">${mode}</span></div>` +
-    `<p class="ar-blurb">Bet <b>MURMUR</b> on whether the Arc market temperature is <b>higher</b> or <b>lower</b> when this round closes than the entry the resolver committed at open. Pools are <b>parimutuel</b> and peer-to-peer: the winning side splits the losing side's pool, strictly zero-sum, no house. Inside the flat band \u21d2 FLAT \u21d2 everyone is refunded.</p>`;
+    `<div class="ar-title">${T("arena.bookTitle")} <span class="ar-mode">${mode}</span></div>` +
+    `<p class="ar-blurb">${T("arena.blurb")}</p>`;
   if (!c) {
-    html += `<p class="ar-empty">no live round right now. ${d.armed ? "the resolver opens a new one each cron." : "the resolver isn't armed on this deployment, so rounds aren't opening yet."}</p>`;
+    html += `<p class="ar-empty">${T("arena.noRound")} ${d.armed ? T("arena.noRoundArmed") : T("arena.noRoundNotArmed")}</p>`;
     card.innerHTML = html; return card;
   }
   const up = Number(c.poolUpMur || 0), down = Number(c.poolDownMur || 0), tot = up + down;
   const upPct = tot > 0 ? (up / tot) * 100 : 50, downPct = tot > 0 ? 100 - upPct : 50;
   const oc = ARENA_OUTCOME[c.outcome] || "";
+  const ocLabel = c.outcome ? (T("arena.outcome." + c.outcome) || oc) : "";
   html +=
-    `<div class="ar-round">round <b>#${c.roundId}</b> \u00b7 ` +
+    `<div class="ar-round">${T("arena.roundLabel")} <b>#${c.roundId}</b> \u00b7 ` +
       (c.resolved
-        ? `<span class="ar-outcome ${String(oc).toLowerCase().replace(/[^a-z]/g, "")}">${oc}</span>`
-        : `closes in <b id="ar-countdown">${arenaClock(c.secondsToDeadline)}</b>`) +
+        ? `<span class="ar-outcome ${String(oc).toLowerCase().replace(/[^a-z]/g, "")}">${ocLabel}</span>`
+        : `${T("arena.closesIn")} <b id="ar-countdown">${arenaClock(c.secondsToDeadline)}</b>`) +
     `</div>` +
     `<div class="ar-pools">` +
-      `<div class="ar-pool up"><span class="ar-side">\u25b2 up</span><span class="ar-amt">${fmtMur(up)}</span></div>` +
-      `<div class="ar-pool down"><span class="ar-side">\u25bc down</span><span class="ar-amt">${fmtMur(down)}</span></div>` +
+      `<div class="ar-pool up"><span class="ar-side">${T("arena.upSide")}</span><span class="ar-amt">${fmtMur(up)}</span></div>` +
+      `<div class="ar-pool down"><span class="ar-side">${T("arena.downSide")}</span><span class="ar-amt">${fmtMur(down)}</span></div>` +
     `</div>` +
     `<div class="ar-bar"><div class="ar-bar-up" style="width:${upPct.toFixed(1)}%"></div><div class="ar-bar-down" style="width:${downPct.toFixed(1)}%"></div></div>` +
     `<div class="ar-odds">` +
-      `<div><dt>up pays</dt><dd>${Number(c.oddsUp || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probUp || 0) * 100).toFixed(0)}% of pool</dd></div>` +
-      `<div><dt>down pays</dt><dd>${Number(c.oddsDown || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probDown || 0) * 100).toFixed(0)}% of pool</dd></div>` +
+      `<div><dt>${T("arena.upPays")}</dt><dd>${Number(c.oddsUp || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probUp || 0) * 100).toFixed(0)}${T("arena.ofPool")}</dd></div>` +
+      `<div><dt>${T("arena.downPays")}</dt><dd>${Number(c.oddsDown || 0).toFixed(2)}\u00d7</dd><dd class="ar-prob">${(Number(c.probDown || 0) * 100).toFixed(0)}${T("arena.ofPool")}</dd></div>` +
     `</div>` +
     `<dl class="ar-meta">` +
-      `<div><dt>entry temp</dt><dd>${Number(c.entryTemp || 0).toFixed(3)}</dd></div>` +
-      `<div><dt>${c.resolved ? "exit temp" : "window"}</dt><dd>${c.resolved ? Number(c.exitTemp || 0).toFixed(3) : arenaClock(c.secondsToDeadline)}</dd></div>` +
-      `<div><dt>flat band</dt><dd>\u00b1${Number(c.flatBand || 0).toFixed(3)}</dd></div>` +
-      `<div><dt>bettors</dt><dd>${c.bettorCount || 0}</dd></div>` +
+      `<div><dt>${T("arena.entryTemp")}</dt><dd>${Number(c.entryTemp || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>${c.resolved ? T("arena.exitTemp") : T("arena.window")}</dt><dd>${c.resolved ? Number(c.exitTemp || 0).toFixed(3) : arenaClock(c.secondsToDeadline)}</dd></div>` +
+      `<div><dt>${T("arena.flatBand")}</dt><dd>\u00b1${Number(c.flatBand || 0).toFixed(3)}</dd></div>` +
+      `<div><dt>${T("arena.bettors")}</dt><dd>${c.bettorCount || 0}</dd></div>` +
     `</dl>`;
   if (isRealAddr(d.arenaAddress)) {
-    html += `<div class="ar-contract">contract <a class="fp" href="${ARC_EXPLORER}/address/${d.arenaAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.arenaAddress)}</a></div>`;
+    html += `<div class="ar-contract">${T("arena.contract")} <a class="fp" href="${ARC_EXPLORER}/address/${d.arenaAddress}" target="_blank" rel="noopener noreferrer">${shortHash(d.arenaAddress)}</a></div>`;
   }
   card.innerHTML = html;
   return card;
@@ -6684,49 +6696,50 @@ function arenaYouCard(d) {
   const card = document.createElement("div"); card.className = "ar-card you";
   const c = d.current;
   let html =
-    `<div class="ar-title">your position</div>` +
-    `<p class="ar-blurb">Non-custodial: your MURMUR moves straight from your wallet into the arena contract (you approve, then bet). The murmur server never holds it, and only the contract can pay you back.</p>`;
+    `<div class="ar-title">${T("arena.youTitle")}</div>` +
+    `<p class="ar-blurb">${T("arena.youBlurb")}</p>`;
   if (!arenaAcct) {
-    html += `<div class="ar-actions"><button type="button" class="ar-btn connect">connect wallet</button></div><div class="ar-status"></div>`;
+    html += `<div class="ar-actions"><button type="button" class="ar-btn connect">${T("arena.connectBtn")}</button></div><div class="ar-status"></div>`;
     card.innerHTML = html; return card;
   }
   const u = arenaUser || {};
   const live = c && !c.resolved && Number(c.secondsToDeadline || 0) > 0;
-  const yourSide = u.side === ARENA_SIDE_UP ? "UP \u25b2" : u.side === ARENA_SIDE_DOWN ? "DOWN \u25bc" : null;
+  const yourSide = u.side === ARENA_SIDE_UP ? T("arena.yourSideUp") : u.side === ARENA_SIDE_DOWN ? T("arena.yourSideDown") : null;
   html +=
     `<dl class="ar-you-meta">` +
-      `<div><dt>wallet</dt><dd class="fp">${shortHash(arenaAcct)}</dd></div>` +
+      `<div><dt>${T("arena.wallet")}</dt><dd class="fp">${shortHash(arenaAcct)}</dd></div>` +
       `<div><dt>MURMUR</dt><dd>${fmtMur(u.balance || 0, 4)}</dd></div>` +
-      `<div><dt>approved</dt><dd>${fmtMur(u.allowance || 0, 2)}</dd></div>` +
+      `<div><dt>${T("arena.approved")}</dt><dd>${fmtMur(u.allowance || 0, 2)}</dd></div>` +
     `</dl>`;
   if (yourSide) {
-    html += `<div class="ar-yourbet">this round you bet <b class="${u.side === ARENA_SIDE_UP ? "up" : "down"}">${yourSide}</b> \u00b7 ${fmtMur(u.amount || 0, 2)} MURMUR</div>`;
+    html += `<div class="ar-yourbet">${T("arena.thisRoundYou", { cls: u.side === ARENA_SIDE_UP ? "up" : "down", side: yourSide, amt: fmtMur(u.amount || 0, 2) })}</div>`;
   }
   if (live) {
     html +=
       `<div class="ar-betrow">` +
-        `<input class="ar-amount" id="ar-amount" type="number" min="0" step="any" placeholder="amount" inputmode="decimal" />` +
+        `<input class="ar-amount" id="ar-amount" type="number" min="0" step="any" placeholder="${T("arena.amountPh")}" inputmode="decimal" />` +
         `<span class="ar-unit">MURMUR</span>` +
       `</div>` +
       `<div class="ar-chips">` +
         `<button type="button" class="ar-chip" data-frac="0.25">25%</button>` +
         `<button type="button" class="ar-chip" data-frac="0.5">50%</button>` +
-        `<button type="button" class="ar-chip" data-frac="1">max</button>` +
+        `<button type="button" class="ar-chip" data-frac="1">${T("arena.chipMax")}</button>` +
       `</div>` +
       `<div class="ar-preview" id="ar-preview"></div>` +
       `<div class="ar-actions">` +
-        `<button type="button" class="ar-btn up" data-side="${ARENA_SIDE_UP}">bet \u25b2 up</button>` +
-        `<button type="button" class="ar-btn down" data-side="${ARENA_SIDE_DOWN}">bet \u25bc down</button>` +
+        `<button type="button" class="ar-btn up" data-side="${ARENA_SIDE_UP}">${T("arena.betUp")}</button>` +
+        `<button type="button" class="ar-btn down" data-side="${ARENA_SIDE_DOWN}">${T("arena.betDown")}</button>` +
       `</div>` +
-      `<div class="ar-fine">betting the same side again adds to your stake; the opposite side is rejected by the contract. Approve + bet are two wallet prompts the first time.</div>`;
+      `<div class="ar-fine">${T("arena.fine")}</div>`;
   } else if (c && c.resolved) {
-    html += `<div class="ar-closed">round #${c.roundId} is closed \u2014 ${ARENA_OUTCOME[c.outcome] || "resolved"}. a new round opens next cron.</div>`;
+    const outLabel = (ARENA_OUTCOME[c.outcome] && T("arena.outcome." + c.outcome)) || T("arena.flatDefault");
+    html += `<div class="ar-closed">${T("arena.roundClosed", { n: c.roundId, outcome: outLabel })}</div>`;
   } else {
-    html += `<div class="ar-closed">no live betting window right now.</div>`;
+    html += `<div class="ar-closed">${T("arena.noLiveWindow")}</div>`;
   }
   if (Array.isArray(u.claims) && u.claims.length) {
     html += `<div class="ar-actions">` + u.claims.map((cl) =>
-      `<button type="button" class="ar-btn claim" data-claim="${cl.roundId}">claim #${cl.roundId} \u00b7 ${fmtMur(cl.payout, 2)} MURMUR</button>`
+      `<button type="button" class="ar-btn claim" data-claim="${cl.roundId}">${T("arena.claimBtn", { n: cl.roundId, amt: fmtMur(cl.payout, 2) })}</button>`
     ).join("") + `</div>`;
   }
   html += `<div class="ar-status"></div>`;
@@ -6739,24 +6752,27 @@ function arenaVsSwarmCard(d) {
   const card = document.createElement("div"); card.className = "ar-card vs";
   const s = d.swarm, c = d.current, prev = d.previous;
   let html =
-    `<div class="ar-title">you vs the swarm</div>` +
-    `<p class="ar-blurb">The 24 flies bet their own USDC on the same temperature move every cron; their lifetime hit-rate is below. The human side is the crowd's parimutuel lean. Same market, same flat band \u2014 whoever reads Arc better, wins.</p>`;
+    `<div class="ar-title">${T("arena.vsTitle")}</div>` +
+    `<p class="ar-blurb">${T("arena.vsBlurb")}</p>`;
   const hr = s ? Number(s.hitRate) * 100 : null;
   const crowdHasBets = c && (Number(c.probUp || 0) + Number(c.probDown || 0)) > 0;
   const lean = crowdHasBets
-    ? (Number(c.probUp) >= Number(c.probDown) ? `\u25b2 ${Math.round(Number(c.probUp) * 100)}% up` : `\u25bc ${Math.round(Number(c.probDown) * 100)}% down`)
-    : "no bets";
+    ? (Number(c.probUp) >= Number(c.probDown)
+        ? T("arena.leanUp", { pct: Math.round(Number(c.probUp) * 100) })
+        : T("arena.leanDown", { pct: Math.round(Number(c.probDown) * 100) }))
+    : T("arena.noBets");
   html += `<div class="ar-vs-row">` +
-    `<div class="ar-vs swarm"><span class="ar-vs-label">swarm</span><span class="ar-vs-big">${hr == null ? "\u2013" : hr.toFixed(0) + "%"}</span><span class="ar-vs-sub">${s ? `${s.hits}/${s.rounds} decisive \u00b7 ${s.bettors} flies` : "accruing\u2026"}</span></div>` +
-    `<div class="ar-vs human"><span class="ar-vs-label">humans</span><span class="ar-vs-big">${lean}</span><span class="ar-vs-sub">${c ? `${fmtMur(Number(c.totalMur || 0), 0)} MURMUR \u00b7 ${c.bettorCount || 0} bettors` : "\u2013"}</span></div>` +
+    `<div class="ar-vs swarm"><span class="ar-vs-label">${T("arena.swarmLabel")}</span><span class="ar-vs-big">${hr == null ? "\u2013" : hr.toFixed(0) + "%"}</span><span class="ar-vs-sub">${s ? T("arena.swarmSub", { hits: s.hits, rounds: s.rounds, n: s.bettors }) : T("arena.accruing")}</span></div>` +
+    `<div class="ar-vs human"><span class="ar-vs-label">${T("arena.humansLabel")}</span><span class="ar-vs-big">${lean}</span><span class="ar-vs-sub">${c ? T("arena.humansSub", { amt: fmtMur(Number(c.totalMur || 0), 0), n: c.bettorCount || 0 }) : "\u2013"}</span></div>` +
   `</div>`;
   if (prev && prev.resolved) {
     const oc = ARENA_OUTCOME[prev.outcome] || "?";
+    const ocLabel = T("arena.outcome." + prev.outcome) || oc;
     const crowdUp = Number(prev.probUp || 0) >= Number(prev.probDown || 0);
     const flat = prev.outcome === 3 || prev.outcome === 4;
     const crowdWon = (prev.outcome === 1 && crowdUp) || (prev.outcome === 2 && !crowdUp);
-    html += `<div class="ar-last">round #${prev.roundId} closed <b class="ar-outcome ${String(oc).toLowerCase().replace(/[^a-z]/g, "")}">${oc}</b> \u00b7 ` +
-      (flat ? `everyone refunded` : crowdWon ? `the crowd called it \u2713` : `the crowd missed \u2717`) + `</div>`;
+    const suffix = flat ? T("arena.everyoneRefunded") : crowdWon ? T("arena.crowdCalledIt") : T("arena.crowdMissed");
+    html += `<div class="ar-last">${T("arena.lastRound", { n: prev.roundId, cls: String(oc).toLowerCase().replace(/[^a-z]/g, ""), outcome: ocLabel })} ${suffix}</div>`;
   }
   card.innerHTML = html;
   return card;
