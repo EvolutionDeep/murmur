@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=62";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=65";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -1087,6 +1087,36 @@ function hideEpitaph() {
   const card = $("epitaph"); if (card) card.hidden = true;
 }
 
+/** Persistent top-centre HUD: the current chronicle era (roman era number + era name), so the field always
+ *  announces which age the swarm is living through. Read-only from chronMeta (the /annals poll): it draws
+ *  nothing until the chronicle reports and never touches sim / economy / money. */
+function drawEraHeader(pal) {
+  if (!chronMeta || (chronMeta.era == null && !chronMeta.eraName)) return;
+  const rn = (n) => {
+    if (!n || n <= 0) return String(n == null ? "" : n);
+    const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+    let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
+  };
+  const name = String(chronMeta.eraName || "").trim().toUpperCase();
+  const label = name ? `ERA ${rn(chronMeta.era)} · ${name}` : `ERA ${rn(chronMeta.era)}`;
+  const cx = VW / 2, cy = Math.max(46, VH * 0.078);   // drop below the top-bar chrome so it never grazes the language selector
+  ctx.save();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif";
+  // a faint vellum plate + hairline gold rule keeps the titulus legible over the coloured dominions
+  const tw = ctx.measureText(label).width, pad = 15, bw = tw + pad * 2, bh = 24;
+  const bx = cx - bw / 2, by = cy - bh / 2, rr = 12;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, rr);
+  else { ctx.moveTo(bx + rr, by); ctx.arcTo(bx + bw, by, bx + bw, by + bh, rr); ctx.arcTo(bx + bw, by + bh, bx, by + bh, rr); ctx.arcTo(bx, by + bh, bx, by, rr); ctx.arcTo(bx, by, bx + bw, by, rr); ctx.closePath(); }
+  ctx.fillStyle = rgba([248, 244, 236], 0.46); ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT, 0.5); ctx.stroke();
+  ctx.shadowColor = rgba([248, 244, 236], 0.85); ctx.shadowBlur = 3;
+  ctx.fillStyle = rgba(mix(INK, pal.accent, 0.22), 0.96);
+  ctx.fillText(label, cx, cy);
+  ctx.restore();
+}
+
 /** The chronicle made visible: every fresh ALLIANCE/FEUD/BETRAYAL/HOUSE_FOUNDED/ASSEMBLY/DECREE entry
  *  becomes a transient canvas event at the actors' live positions, so each annals sentence can be
  *  WATCHED happening on the field. */
@@ -1473,8 +1503,14 @@ function renderSocieties(pal, now) {
   //    The outline ring is recomputed EVERY frame (cheap bin math on reused scratch buffers, zero
   //    allocation) so the border tracks members smoothly at 60fps; only the radial glow gradient —
   //    the genuinely expensive object — is cached and rebuilt ~15Hz / on centroid move.
+  //    PERF: when the static TERRITORY MAP is on (the default), it already paints every house's dominion
+  //    with a richer hatched map, so these live-tracking blobs are redundant AND were the last uncached
+  //    per-frame cost (colonyBlob + Voronoi + gradient + measureText + shield labels) able to nudge
+  //    frameMsAvg over the 30ms budget and collapse fly anatomy to quality-0 comma-blobs. Skip them while
+  //    the map is shown; keep the bond/feud lines below (which the map doesn't carry). Turn the map off to
+  //    restore the classic live-societies view.
   const cents = societies.colonies.map((c) => { let x = 0, y = 0, n = 0; for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { x += f.x; y += f.y; n++; } } return { x: n ? x / n : 0, y: n ? y / n : 0, n }; });
-  for (let ci = 0; ci < societies.colonies.length; ci++) {
+  for (let ci = 0; !showTerritory && ci < societies.colonies.length; ci++) {
     const c = societies.colonies[ci];
     const pts = c._pts || (c._pts = []);
     pts.length = 0;
@@ -1642,7 +1678,10 @@ function renderTerritoryMap() {
   }
   if (!pol.length) { terrKey = ""; return; }
   pol.sort((a, b) => b.n - a.n || (a.p.name < b.p.name ? -1 : 1));   // biggest houses first ⇒ central seats
-  const key = VW + "x" + VH + "@" + DPR + ":" + ((chronMeta && chronMeta.eraName) || "") + ":" + pol.map((o) => o.p.name + o.n).join(",");
+  // structural-only key: field size / DPR / era / which houses are present — NOT the volatile living-member
+  // tally, so routine births & deaths never force a full (heavy) map repaint. Seats are name-deterministic;
+  // the small per-capital tally just reflects the last structural composition.
+  const key = VW + "x" + VH + "@" + DPR + ":" + ((chronMeta && chronMeta.eraName) || "") + ":" + pol.map((o) => o.p.name).join(",");
   if (!terrOff || terrKey !== key) {
     if (!terrOff) { terrOff = document.createElement("canvas"); terrOffCtx = terrOff.getContext("2d"); }
     const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
@@ -1779,9 +1818,15 @@ function render(pal, now) {
   for (let i = ripples.length - 1; i >= 0; i--) {
     const r = ripples[i], age = (now - r.t0) / 1700;
     if (age >= 1) { ripples.splice(i, 1); continue; }
-    const rad = age * Math.min(VW, VH) * 0.55;
-    ctx.strokeStyle = rgba(r.color, (1 - age) * 0.36);
-    ctx.lineWidth = 1.4 * (1 - age) + 0.3;
+    // r.t0 is stamped with performance.now() in the pointer handler, but `now` is the rAF timestamp, which
+    // can lag a hair BEHIND the event that just spawned the ripple → age < 0 → a NEGATIVE arc radius →
+    // IndexSizeError that aborts the whole render() (flies never drawn that frame). Clamp the age to the
+    // timeline so a sub-frame clock skew can never drop a frame.
+    const a = age < 0 ? 0 : age;
+    const rad = a * Math.min(VW, VH) * 0.55;
+    if (rad <= 0) continue;
+    ctx.strokeStyle = rgba(r.color, (1 - a) * 0.36);
+    ctx.lineWidth = 1.4 * (1 - a) + 0.3;
     ctx.beginPath(); ctx.arc(r.x, r.y, rad, 0, TAU); ctx.stroke();
   }
 
@@ -1799,6 +1844,9 @@ function render(pal, now) {
 
   // the chronicle made visible: transient alliance/feud/house/legislative events, over everything
   renderChronFx(pal, now);
+
+  // the current era, announced at the top-centre of the field (persistent HUD, above every ink layer)
+  drawEraHeader(pal);
 
   // the gilded manuscript border frames the whole field last, above every ink layer
   renderFrame(pal);

@@ -35,7 +35,7 @@ CHAIN_ID = "5042"                             # 5042 = Arc mainnet · 5042002 = 
 RPC_URL = "https://rpc.mainnet.arc.io"        # Arc mainnet public RPC
 
 # ===== Market temperature (Arc whole-chain activity) =====
-MARKET_SAMPLE_BLOCKS = "16"                   # recent blocks sampled per cron for tx/gas throughput
+MARKET_SAMPLE_BLOCKS = "64"                   # recent blocks sampled per cron for tx/gas throughput (4× the old 16: a wider window averages out block-to-block noise so cold↔hot stops flickering)
 MARKET_EWMA_ALPHA = "0.08"                    # baseline smoothing (slow ⇒ tracks the regime, not spikes)
 MARKET_GAIN = "3.0"                           # logistic sharpness ratio→temperature (calibrated on live Arc)
 REGIME_HOT = "0.66"                           # temperature ≥ this ⇒ HOT
