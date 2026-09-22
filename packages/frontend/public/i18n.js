@@ -12,8 +12,8 @@
 //   ct(kind, tokens, lang), applyDom(root), gl(glossGroup, word)
 // ============================================================================
 
-import { en, zh, fr, es, ja, ko, ar } from "./i18n-ui.js?v=59";
-import { CHRON_TPL } from "./i18n-chron.js?v=57";
+import { en, zh, fr, es, ja, ko, ar } from "./i18n-ui.js?v=60";
+import { CHRON_TPL } from "./i18n-chron.js?v=58";
 
 export const SUPPORTED = ["en", "zh", "fr", "es", "ja", "ko", "ar"];
 export const RTL = new Set(["ar"]);
@@ -76,6 +76,17 @@ export const GLOSS = {
     ko: { plague: "역병", age: "노령", predation: "포식", starvation: "기아", cold: "추위" },
     ar: { plague: "طاعون", age: "هرم", predation: "افتراس", starvation: "مجاعة", cold: "برد" },
   },
+  // ⑪ the three faces of the Tape (religion.ts God union): SCORCH|DRIFT|FROST, glossed as deity names so a
+  // line like "bears the {god} flame" and the faith drawer's reigning-god read in-language.
+  god: {
+    en: { SCORCH: "Scorch", DRIFT: "Drift", FROST: "Frost" },
+    zh: { SCORCH: "灼神", DRIFT: "澜神", FROST: "霜神" },
+    fr: { SCORCH: "l'Ardent", DRIFT: "la Dérive", FROST: "le Gel" },
+    es: { SCORCH: "el Ardor", DRIFT: "la Deriva", FROST: "la Escarcha" },
+    ja: { SCORCH: "灼熱神", DRIFT: "漂神", FROST: "霜神" },
+    ko: { SCORCH: "작열신", DRIFT: "표류신", FROST: "서리신" },
+    ar: { SCORCH: "الحارق", DRIFT: "الشارد", FROST: "الصقيع" },
+  },
 };
 
 let LANG = null;   // null until boot detection; t()/gl() fall back to English while null
@@ -117,7 +128,7 @@ function fillToken(k, fmt, value) {
   let str = String(value);
   // gloss a known word token (goods/role/regime/fap/cause) BEFORE applying case, so a
   // template like "the market has turned {regime~lower}" reads in-language, not English.
-  for (const group of ["regime", "goods", "role", "fap", "cause"]) {
+  for (const group of ["regime", "goods", "role", "fap", "cause", "god"]) {
     const g = GLOSS[group][LANG];
     const hit = g && (g[str] ?? g[str.toLowerCase()]);
     if (hit) { str = hit; break; }

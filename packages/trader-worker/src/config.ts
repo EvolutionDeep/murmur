@@ -189,6 +189,10 @@ export interface Env {
   LAW_IOU_RATE_BAND?: string;           // "min,max" the assembly may legislate iouRatePer10 into (default "0,0.05"); a HARD clamp on interest.
   DYNASTY_ENABLED?: string;             // "true"/"false" (default TRUE) — dynasty layer: houses (inherited names + sigils + tithe treasury) and mortality (penury / old-age / plague deaths with estate inheritance). Economic-ledger ONLY — it never touches the connectome, the shards or the live population; false restores the pre-dynasty economy byte-for-byte.
   CULTURE_ENABLED?: string;             // "true"/"false" (default TRUE) — Lamarckian culture layer: feeding-cohort FAP-creed contagion with bounded TTL, house traditions as breakwaters. Overrides the decoded READ-OUT line only (fap/role), before the snapshot + economy ever see it — the connectome, genomes and manifests never notice; false restores today's readings byte-for-byte.
+  RELIGION_ENABLED?: string;            // "true"/"false" (default TRUE) — ⑪ RELIGION layer: the faith membrane — three faces of the Tape (regime gods), house ancestor cults, prophet/sect contagion in the worship cohort, and a holy day every RELIGION_HOLY_EVERY crons when the devoted rest (read-out fap → REST for ONE cron). Overrides the decoded READ-OUT line only, exactly like culture; false restores today's readings byte-for-byte.
+  RELIGION_HOLY_EVERY?: string;         // crons between holy days (default 48; clamped 2..400)
+  RELIGION_DEVOTION_MIN?: string;       // devotion a fly needs to keep the holy rest / count on a pilgrimage (default 0.5; clamped 0..1)
+  RELIGION_SECT_CAP?: string;           // hard bound on simultaneous sects in the read-out (default 8; clamped 1..16)
   INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
     EPOCHS_ENABLED?: string;              // "true"/"false" (default TRUE) — epochs layer ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/DYNASTIC, or on a governance-injected miracle/cataclysm. PURE READ-OUT of existing state (never feeds back); false leaves only the slow regime-driven era logic of today.
   CREDIT_CAP_BASE_USDC?: string;        // base IOU credit line per fly, USDC (default 0.05; traders double it, reputation scales up to 3×). SIMULATED LEDGER ONLY — onchain balances have no offline credit. Bounded 0..1000 (0 ⇒ credit off, books stay).
@@ -420,6 +424,15 @@ export interface RuntimeConfig {
   // traditions as breakwaters). Pure read-out-line override — never the brain, never the ledger.
   culture: {
     enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+  };
+
+  // Religion (⑪ the faith membrane: regime gods, ancestor cults, prophets & sects, holy days). Pure
+  // read-out-line override on holy days only — never the brain, never the ledger.
+  religion: {
+    enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+    holyEvery: number;        // crons between holy days (default 48)
+    devotionMin: number;      // devotion for the holy rest / pilgrimage count (default 0.5)
+    sectCap: number;          // max simultaneous sects in the read-out (default 8)
   };
 
   // Institutions (layer ⑥: limit-book price discovery, professions, IOU credit, classes) — one
@@ -717,6 +730,16 @@ export function loadConfig(env: Env): RuntimeConfig {
       // readings catch fashions — so there is nothing riskier to gate than the ethogram read-out itself.
       // Set CULTURE_ENABLED=false to restore today's readings byte-for-byte.
       enabled: (env.CULTURE_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+
+    religion: {
+      // ON by default: faith moves no money and touches no neuron — on a holy day it only lets the devoted
+      // rest for one cron, and the chronicle gains a religion. Set RELIGION_ENABLED=false to restore today's
+      // readings byte-for-byte.
+      enabled: (env.RELIGION_ENABLED ?? "true").toLowerCase() !== "false",
+      holyEvery: clampInt(Number(env.RELIGION_HOLY_EVERY || "48"), 2, 400),
+      devotionMin: clamp(Number(env.RELIGION_DEVOTION_MIN || "0.5"), 0, 1),
+      sectCap: clampInt(Number(env.RELIGION_SECT_CAP || "8"), 1, 16),
     },
 
     institutions: {

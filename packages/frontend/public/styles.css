@@ -568,6 +568,14 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .cult-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .cult-row.cult-trend { color: #3f5a3a; }
 .cult-row.cult-trad { color: #5a4a33; }
+/* ⑪ faith membrane (chronicle panel): the reigning god + the ancestor cults and their prophets — mirrors the culture block */
+.chron-religion { flex: none; max-height: 30%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.rel-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.rel-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.rel-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.rel-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.rel-row.rel-reign { color: #7a5c1e; font-weight: 600; }
+.rel-row.rel-sect { color: #5a4a33; }
 /* ⑧ the commons in law — the seated assembly + the two knobs it re-prices (pure read-out of commons.ts) */
 .chron-commons { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .com-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1475,6 +1483,7 @@ html[dir="rtl"] .wsoc-row,
 html[dir="rtl"] .dyn-row,
 html[dir="rtl"] .dyn-grave,
 html[dir="rtl"] .cult-row,
+html[dir="rtl"] .rel-row,
 html[dir="rtl"] .com-row,
 html[dir="rtl"] .wmk-foot,
 html[dir="rtl"] .econ-line-txt,

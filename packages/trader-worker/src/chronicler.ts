@@ -74,7 +74,14 @@ export type ChronicleKind =
   | "TAX_LEVIED"
   // ⑩ TERRITORY CONQUEST narrative kind (a ledger-only zone seizure folded in off the war read-out, only while
   //     TERRITORY_ENABLED + TERR_SEIZE_ON_WIN are armed — so it never fires on the default dark deployment):
-  | "TERRITORY_SEIZED";
+  | "TERRITORY_SEIZED"
+  // ⑪ RELIGION narrative kinds (faith-membrane detectors off the religion read-out — a prophet rising, a
+  //     house schism, a sect revived from silence, a holy-day pilgrimage; only ever folded into the context
+  //     while RELIGION_ENABLED):
+  | "PROPHECY"
+  | "SCHISM"
+  | "REVIVAL"
+  | "PILGRIMAGE";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -154,12 +161,27 @@ export interface ChronicleContext {
    *  and the extra tax levied. Absent ⇒ no WAR/TAX line (WAR_ENABLED=false never folds it in — the events
    *  array stays empty, so the chronicle is byte-for-byte the pre-war build). Pure read-out, never feeds back. */
   war?: ChronicleWar | null;
+  /** ⑪ RELIGION read-out (religion.ts signals): the reigning god, the sect table with prophets, and this
+   *  cron's four faith events. Absent ⇒ no PROPHECY/SCHISM/REVIVAL/PILGRIMAGE (RELIGION_ENABLED=false never
+   *  folds these into the context). Pure read-out, never feeds back. */
+  religion?: ChronicleReligion | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
 export interface ChronicleCulture {
   trend: { fap: string; adherents: number; share: number } | null;
   tradition: { houseId: number; name: string; sigil: string; fap: string; streak: number } | null;
+}
+
+/** ⑪ the faith membrane's chronicle signals — the reigning god, the sects, and this cron's four events. */
+export interface ChronicleReligion {
+  reigning: string;
+  holyIn: number;
+  sects: { name: string; god: string; adherents: number; prophetId: number | null; houseId: number | null }[];
+  prophecy: { prophetId: number; sect: string; god: string; adherents: number } | null;
+  schism: { houseId: number; name: string; sigil: string; sect: string } | null;
+  revival: { sect: string; adherents: number } | null;
+  pilgrimage: { houseId: number; name: string; sigil: string; adherents: number } | null;
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -235,6 +257,10 @@ interface ChroniclerState {
   //     price break, a first credit, a run and a class ONCE each (per key / per transition), never a stutter ---
   lastTrendFap: string | null;      // the FAP of the last announced TREND (a new majority creed is news)
   lastTraditionKey: string | null;  // "houseId>creed" of the last announced TRADITION
+  lastProphetKey: string | null;    // "sect>prophetId" of the last announced PROPHECY (a new prophet is news)
+  lastSchismKey: string | null;     // "houseId>sect" of the last announced SCHISM
+  lastRevivalKey: string | null;    // sect of the last announced REVIVAL
+  lastPilgrimKey: string | null;    // "houseId>holyIndex" of the last announced PILGRIMAGE (one per holy day)
   lastMarks: Record<string, number>;// last cron's mark per good (a MARKET_SHIFT is a one-cron move off this)
   lastCreditCount: number;          // openIous seen last cron (an increase is a fresh issuance)
   lastRunActive: boolean;           // was a RUN live last cron? (RUN is told on the false→true edge)
@@ -293,6 +319,7 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   ASSEMBLY: 8, DECREE: 6,
   WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10,
   TERRITORY_SEIZED: 4,
+  PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -344,6 +371,12 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   // ⑩ TERRITORY CONQUEST — the ledger-only annexation that follows a resolved war (no money moves; the ground
   //     does). Mirrored byte-for-byte in CHRON_. Fires only while TERRITORY_ENABLED + TERR_SEIZE_ON_WIN are armed.
   TERRITORY_SEIZED: "Conquest follows the verdict — the House of {winner} annexes {zones} zone(s) held by the vanquished House of {loser}, which is stripped of its ground and cast out, landless and toll-bound in exile.",
+  // ⑪ RELIGION — the faith membrane's four events. Mirrored byte-for-byte in CHRON_. Fires only while
+  //     RELIGION_ENABLED is on (state.ts folds no `religion` into the context otherwise).
+  PROPHECY: "A prophet rises — fly #{prophet} of {sect} bears the {god} flame, and {adherents} souls follow the vision.",
+  SCHISM: "Schism in the House of {name} — {sigil} its kin turn from the old way to {sect}, and the ancestral shrine stands half-empty.",
+  REVIVAL: "Revival — {sect} rises from silence: {adherents} souls kindle the cold shrine anew.",
+  PILGRIMAGE: "Pilgrimage — on the holy day the House of {name} {sigil} walks to the ancestral shrine, {adherents} kin bearing candles.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -812,6 +845,52 @@ export class Chronicler {
       }
     }
 
+    // --- ⑪ RELIGION: the faith membrane's four moments this cron — a prophet rising, a house schism, a sect
+    //     revived from silence, a holy-day pilgrimage. Each is a pure read-out of religion.ts's OWN edge-detected
+    //     signals (never a per-cron census); RELIGION_ENABLED=false ⇒ state.ts folds no `religion` into the
+    //     context ⇒ this whole block is inert and the chronicle stays byte-for-byte the pre-faith build. Trackers
+    //     + cooldowns keep each event a one-time chapter. ---
+    const rel = ctx.religion;
+    if (rel) {
+      if (rel.prophecy) {
+        const key = `${rel.prophecy.sect}>${rel.prophecy.prophetId}`;
+        if (key !== s.lastProphetKey && this.ready("PROPHECY", ctx)) {
+          s.lastProphetKey = key;
+          out.push(await this.emit(ctx, "PROPHECY", 2, [rel.prophecy.prophetId],
+            { prophet: rel.prophecy.prophetId, sect: rel.prophecy.sect, god: rel.prophecy.god, adherents: rel.prophecy.adherents },
+            { prophetId: rel.prophecy.prophetId, adherents: rel.prophecy.adherents }));
+        }
+      }
+      if (rel.schism) {
+        const key = `${rel.schism.houseId}>${rel.schism.sect}`;
+        if (key !== s.lastSchismKey && this.ready("SCHISM", ctx)) {
+          s.lastSchismKey = key;
+          out.push(await this.emit(ctx, "SCHISM", 2, [],
+            { name: rel.schism.name, sigil: rel.schism.sigil, sect: rel.schism.sect },
+            { houseId: rel.schism.houseId }));
+        }
+      }
+      if (rel.revival) {
+        const key = rel.revival.sect;
+        if (key !== s.lastRevivalKey && this.ready("REVIVAL", ctx)) {
+          s.lastRevivalKey = key;
+          out.push(await this.emit(ctx, "REVIVAL", 2, [],
+            { sect: rel.revival.sect, adherents: rel.revival.adherents },
+            { adherents: rel.revival.adherents }));
+        }
+      }
+      if (rel.pilgrimage) {
+        const holyIndex = ctx.tick;   // a holy day's own tick — distinct per holy day, so one pilgrimage a day
+        const key = `${rel.pilgrimage.houseId}>${holyIndex}`;
+        if (key !== s.lastPilgrimKey && this.ready("PILGRIMAGE", ctx)) {
+          s.lastPilgrimKey = key;
+          out.push(await this.emit(ctx, "PILGRIMAGE", 2, [],
+            { name: rel.pilgrimage.name, sigil: rel.pilgrimage.sigil, adherents: rel.pilgrimage.adherents },
+            { houseId: rel.pilgrimage.houseId, adherents: rel.pilgrimage.adherents }));
+        }
+      }
+    }
+
     return out;
   }
 
@@ -940,6 +1019,7 @@ function freshState(): ChroniclerState {
     cronSeen: 0, lastShockCron: -1000, prevVolume: 0, maxCronVolume: 0, prevGini: 0, famineRun: 0,
     eraStartCron: 0, eraShock: null, eraShockWilled: false,
     lastTrendFap: null, lastTraditionKey: null, lastMarks: {}, lastCreditCount: 0, lastRunActive: false, classAnnounced: false,
+    lastProphetKey: null, lastSchismKey: null, lastRevivalKey: null, lastPilgrimKey: null,
     lastAssemblyEra: 0, lastDecreeEra: {},
     headHash: GENESIS_HASH,
   };

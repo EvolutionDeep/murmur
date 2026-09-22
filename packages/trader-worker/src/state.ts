@@ -60,6 +60,7 @@ import type { FlyReading, PopulationSnapshot } from "./population.js";
 import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement, type LeaderRow } from "./economy.js";
 import { CultureMembrane } from "./culture.js";
+import { FaithMembrane, type FaithSignals } from "./religion.js";
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
@@ -84,6 +85,9 @@ const KEY_ECONOMY = "economy:v1";
 /** Culture membrane (adopted FAP creeds + TTLs) — its OWN key: culture is a read-out overlay, so a
  *  corrupt/absent blob only loses fashions, never ledger state. Bounded (≤64 records), DO-safe. */
 const KEY_CULTURE = "culture:v1";
+/** ⑪ Faith membrane (god/sect/devotion per fly) — its OWN key: religion is a read-out overlay too, so a
+ *  corrupt/absent blob only loses faiths, never ledger state. Bounded (≤64 records), DO-safe. */
+const KEY_RELIGION = "religion:v1";
 const KEY_COMMONS = "commons:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
@@ -173,6 +177,8 @@ export class FlyStateDO {
   private economy: AgentEconomy | null = null;
   /** The Lamarckian culture membrane — null while CULTURE_ENABLED=false (byte-for-byte inert). */
   private culture: CultureMembrane | null = null;
+  /** ⑪ The faith membrane — null while RELIGION_ENABLED=false (byte-for-byte inert). */
+  private religion: FaithMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
@@ -347,6 +353,21 @@ export class FlyStateDO {
     this.culture = new CultureMembrane({ enabled: true });
     if (stored) this.culture.restore(stored);
     return this.culture;
+  }
+
+  /**
+   * ⑪ Lazily load the faith membrane (null while the switch is off — every hook below then no-ops).
+   * A corrupt stored blob restores an EMPTY membrane (faiths are forgotten, the ledger is untouched),
+   * so religion can never poison any other layer's state.
+   */
+  private async ensureReligion(): Promise<FaithMembrane | null> {
+    if (!this.cfg.religion.enabled) return null;
+    if (this.religion) return this.religion;
+    const stored = await this.state.storage.get<string>(KEY_RELIGION);
+    const r = this.cfg.religion;
+    this.religion = new FaithMembrane({ enabled: true, holyEvery: r.holyEvery, devotionMin: r.devotionMin, sectCap: r.sectCap });
+    if (stored) this.religion.restore(stored);
+    return this.religion;
   }
 
   /**
@@ -953,6 +974,7 @@ export class FlyStateDO {
     if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     if (this.culture) await this.state.storage.put(KEY_CULTURE, this.culture.serialize());
+    if (this.religion) await this.state.storage.put(KEY_RELIGION, this.religion.serialize());
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
@@ -1195,6 +1217,22 @@ export class FlyStateDO {
               : null,
           }
         : null;
+      // ⑪ RELIGION chronicle read-out, folded in ONLY while the switch is ON. Off ⇒ the field stays null ⇒
+      // the historian's PROPHECY/SCHISM/REVIVAL/PILGRIMAGE detectors never speak ⇒ byte-for-byte the pre-faith
+      // chronicle. A pure read of the membrane's own edge-detected signals (never feeds back).
+      const religionOn = this.cfg.religion.enabled;
+      const relSig = religionOn && this.religion && snapshot ? this.religion.signals(snapshot.flies, regime) : null;
+      const religion = relSig
+        ? {
+            reigning: relSig.reigning,
+            holyIn: relSig.holyIn,
+            sects: relSig.sects.map((x) => ({ name: x.name, god: x.god, adherents: x.adherents, prophetId: x.prophetId, houseId: x.houseId })),
+            prophecy: relSig.prophecy,
+            schism: relSig.schism,
+            revival: relSig.revival,
+            pilgrimage: relSig.pilgrimage,
+          }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1283,6 +1321,7 @@ export class FlyStateDO {
         market,
         commons,
         war,
+        religion,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1436,6 +1475,9 @@ export class FlyStateDO {
     // CULTURE — the Lamarckian overlay between the brain's decode and every consumer (snapshot,
     // economy, prediction). Null while CULTURE_ENABLED=false ⇒ byte-for-byte today's behaviour.
     const culture = await this.ensureCulture();
+    // ⑪ RELIGION — the faith overlay: the SAME read-out line culture occupies, but it rewrites only the
+    // devoted, and only on a holy day. Null while RELIGION_ENABLED=false ⇒ byte-for-byte today's behaviour.
+    const religion = await this.ensureReligion();
     // ⑧ THE COMMONS — apply last era's law to THIS cron's credit line before any sub-tick settles, so the
     // assembly's verdict is in force for the whole cron. ensureCommons() null (or a knob without a decree) ⇒
     // applyLaw(null,…) ⇒ base config, byte-for-byte. Convening the NEXT era's assembly is step 8 below.
@@ -1482,6 +1524,14 @@ export class FlyStateDO {
       if (culture && snapshot) {
         if (st === 0) culture.contagion(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null);
         culture.apply(snapshot.flies);
+      }
+      // 4a-religion) Faith moves at worship speed: ONE ritual round per cron (the st===0 cohort of huddlers/
+      // resters catches sects, devotion kindles in the gathering and cools in silence, the census names the
+      // prophets and the four events), then the holy-day rest override re-applies to EVERY sub-tick's readings
+      // — inert on a plain cron. Applied AFTER culture so the holy rest is the last word on the read-out line.
+      if (religion && snapshot) {
+        if (st === 0) religion.ritual(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null, regime);
+        religion.apply(snapshot.flies, swarm.getTickIndex());
       }
       // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
       //     of the neural layer — it never feeds back into the connectome.
@@ -1860,6 +1910,8 @@ export class FlyStateDO {
     if (economy) {
       const culture = await this.cultureReadout(snap);
       if (culture) (economy as { culture?: unknown }).culture = culture;
+      const religion = await this.religionReadout(snap);
+      if (religion) (economy as { religion?: unknown }).religion = religion;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -1901,11 +1953,14 @@ export class FlyStateDO {
     // ⑤ CULTURE folded into the same read-out the wallets drawer already draws — a pure read of the
     // membrane. Switch-off ⇒ cultureReadout() null ⇒ key absent ⇒ byte-for-byte the pre-culture /economy.
     const culture = await this.cultureReadout();
+    // ⑪ RELIGION folded into the same read-out the wallets drawer already draws — a pure read of the faith
+    // membrane. Switch-off ⇒ religionReadout() null ⇒ key absent ⇒ byte-for-byte the pre-faith /economy.
+    const religion = await this.religionReadout();
     // ⑧ THE COMMONS — the seated assembly + its live law, a pure read of commons.ts. LAW off ⇒ null ⇒ no
     // key ⇒ byte-for-byte the pre-law /economy.
     const commons = await this.commonsReadout();
-    if (!culture && !commons) return json(snap);
-    return json({ ...snap, ...(culture ? { culture } : null), ...(commons ? { commons } : null) });
+    if (!culture && !religion && !commons) return json(snap);
+    return json({ ...snap, ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null) });
   }
 
   /**
@@ -1940,6 +1995,21 @@ export class FlyStateDO {
         ? { houseId: sig.tradition.houseId, name: sig.tradition.name, sigil: sig.tradition.sigil, fap: String(sig.tradition.fap), streak: sig.tradition.streak }
         : null,
     };
+  }
+
+  /**
+   * ⑪ The live religion read-out (the reigning god, the holy-day countdown, the sect table with prophets, and
+   * this cron's four faith events), computed from the last population snapshot + the last market regime. Returns
+   * null while the RELIGION switch is off or no snapshot exists yet — callers then ship NO religion key, so every
+   * consumer stays byte-identical to the pre-faith build.
+   */
+  private async religionReadout(snapshot?: PopulationSnapshot | null): Promise<FaithSignals | null> {
+    const rel = await this.ensureReligion();
+    if (!rel) return null;
+    const snap = snapshot !== undefined ? snapshot : await this.loadSnapshot();
+    if (!snap) return null;
+    const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
+    return rel.signals(snap.flies, market?.regime ?? "CALM");
   }
 
   /**
@@ -2814,6 +2884,7 @@ export class FlyStateDO {
     );
     this.economy = this.makeEconomy();
     this.culture = null;   // a reset swallows the fashions too: culture starts from innate readings
+    this.religion = null;  // ⑪ and the faiths: religion restarts from an empty membrane
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -2823,6 +2894,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_LAST_SNAPSHOT);
     await this.state.storage.delete(KEY_MARKET);
     await this.state.storage.delete(KEY_CULTURE);
+    await this.state.storage.delete(KEY_RELIGION);
     return json({ ok: true });
   }
 }

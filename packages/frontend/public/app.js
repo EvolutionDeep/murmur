@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=69";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=70";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -305,6 +305,9 @@ let econDynasty = null;     // dynasty read-out {houses[], graves[], living, dea
 let econZones = null;       // territory read-out {flyId: homeZone} — the server-authoritative fixed zone grid (null ⇒ layer off)
 let econMarket = null;      // ⑥ institutions read-out {marks, professions, classes, openIous, debt, run, …} — the tape
 let econCulture = null;     // ⑤ culture read-out {trend, tradition} — the passing fashion & the houses holding the old way
+let econReligion = null;    // ⑪ faith read-out {reigning, holyIn, sects[], prophecy, schism, revival, pilgrimage} — gods, ancestor cults & holy days
+const prophetIds = new Set();   // fly ids currently heard as prophets (an ambient ✶ halo on the canvas)
+let holyDay = false;            // true while econReligion.holyIn === 0 (a warm candle wash over the field)
 let econCommons = null;     // ⑧ commons read-out {seatedEra, seats[], decrees[], effective} — the swarm's self-legislation
 let econWar = null;         // ⑨ war coffer read-out from /war {houses[], wars[], stats, …} — on-chain vaults, bouts, tax purse
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
@@ -864,6 +867,7 @@ const INK = [40, 32, 24];                 // sepia ink for engraved text
 const VELLUM = [236, 227, 208];           // aged parchment base tone
 let chronBanner = null;                   // the epic centre-caption flashed when the chronicle "happens"
 const LAW_GOLD = [186, 152, 66];          // the legislative shockwave tint (assembly / decree)
+const FAITH_GOLD = [226, 186, 96];        // ⑪ the candlelight tint of the faith membrane (prophet / pilgrimage / holy day)
 
 function rebuildHouseMap() {
   houseOf.clear();
@@ -1276,6 +1280,31 @@ function renderChronFx(pal, now) {
       ctx.restore();
       continue;
     }
+    if (fx.kind === "prophet") {
+      // ⑪ a prophet is heard: a candle-gold ring bursts from the fly and a ✶ rises over it
+      const f = sim.get(fx.a);
+      const x = f ? f.x : fx.x, y = f ? f.y : fx.y;
+      if (x == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(FAITH_GOLD, 0.85); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 12 + age * 40, 0, TAU); ctx.stroke();
+      ctx.font = "600 24px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(FAITH_GOLD, 0.95);
+      ctx.fillText("✶", x, y - 20 - age * 16);
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "holy") {
+      // ⑪ a pilgrimage walks on the holy day: a warm candle wash + one slow ring from the field's heart
+      ctx.fillStyle = rgba(FAITH_GOLD, (1 - age) * 0.05);
+      ctx.fillRect(0, 0, VW, VH);
+      const R = age * Math.min(VW, VH) * 0.6;
+      ctx.strokeStyle = rgba(FAITH_GOLD, (1 - age) * 0.4); ctx.lineWidth = 2.2 * (1 - age) + 0.4;
+      ctx.beginPath(); ctx.arc(VW / 2, VH / 2, R, 0, TAU); ctx.stroke();
+      continue;
+    }
     const a = sim.get(fx.a), b = sim.get(fx.b);
     if (!a || !b) continue;
     const colr = fx.kind === "alliance" ? GOLD_THREAD : CRACK_RED;
@@ -1293,6 +1322,31 @@ function renderChronFx(pal, now) {
       traceCrack(a, b); ctx.stroke();
     }
   }
+}
+
+/** ⑪ The faith membrane made visible: a soft ✶ halo over every prophet's fly, and on a holy day a warm
+ *  candle wash over the whole field. A pure read-out of econReligion (prophetIds / holyDay, refreshed in
+ *  renderReligionSection) — it simulates nothing and moves nothing; drawn in WORLD space beside the swarm. */
+function renderFaithFx(now) {
+  const pulse = 0.5 + 0.5 * Math.sin(now / 620);
+  if (holyDay) {
+    ctx.fillStyle = "rgba(214,168,86," + (0.035 + 0.02 * pulse).toFixed(3) + ")";
+    ctx.fillRect(0, 0, VW, VH);
+  }
+  if (!prophetIds.size) return;
+  ctx.save();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "600 15px ui-monospace, SFMono-Regular, Menlo, monospace";
+  for (const id of prophetIds) {
+    const f = sim.get(id);
+    if (!f || f.dying) continue;
+    ctx.strokeStyle = "rgba(226,186,96," + (0.16 + 0.12 * pulse).toFixed(3) + ")";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, 11 + pulse * 2.5, 0, TAU); ctx.stroke();
+    ctx.fillStyle = "rgba(226,186,96," + (0.55 + 0.35 * pulse).toFixed(3) + ")";
+    ctx.fillText("✶", f.x, f.y - 16 - pulse * 2.5);
+  }
+  ctx.restore();
 }
 
 /** Turn one fresh chronicle entry into a canvas event (+ a one-shot social impulse so an alliance
@@ -1345,6 +1399,24 @@ function spawnChronFx(e) {
       winner: t.winner || "?", loser: t.loser || "?", zones: t.zones != null ? t.zones : "",
     }), [196, 62, 48]);
     invalidateTerritory();
+  } else if (e.kind === "PROPHECY") {
+    // ⑪ a prophet is heard: burst a candle-gold ✶ over the fly that bears the flame
+    const t = e.tokens || {};
+    if (a != null) { const f = sim.get(a); chronFx.push({ kind: "prophet", a, x: f ? f.x : null, y: f ? f.y : null, t0: now, dur: 3200 }); }
+    setBanner(T("banner.prophecy"), T("banner.prophecyOf", { sect: t.sect || "?", id: a != null ? a : "?" }), FAITH_GOLD);
+  } else if (e.kind === "SCHISM") {
+    // ⑪ a house tears from its ancestor cult: name the house and the foreign sect it turned to
+    const t = e.tokens || {};
+    setBanner(T("banner.schism"), T("banner.schismOf", { name: t.name || "?", sect: t.sect || "?" }), CRACK_RED);
+  } else if (e.kind === "REVIVAL") {
+    // ⑪ a silent shrine rekindles
+    const t = e.tokens || {};
+    setBanner(T("banner.revival"), T("banner.revivalOf", { sect: t.sect || "?", n: t.adherents != null ? t.adherents : "" }), FAITH_GOLD);
+  } else if (e.kind === "PILGRIMAGE") {
+    // ⑪ the holy day: the faithful walk — a warm candle wash over the whole field
+    const t = e.tokens || {};
+    chronFx.push({ kind: "holy", t0: now, dur: 3600 });
+    setBanner(T("banner.pilgrimage"), T("banner.pilgrimageOf", { name: t.name || "?", n: t.adherents != null ? t.adherents : "" }), FAITH_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -2341,6 +2413,9 @@ function render(pal, now) {
 
   // the chronicle made visible: transient alliance/feud/house/legislative events, over the swarm
   renderChronFx(pal, now);
+
+  // ⑪ the faith membrane made visible: prophet halos + the holy-day candle wash (a pure read-out)
+  renderFaithFx(now);
   ctx.restore();               // ---- back to SCREEN space: the manuscript chrome and captions never move ----
 
   // a slow day/night + temperature tone drift laid over the whole field (kept LIGHT: this is a parchment atlas)
@@ -2802,6 +2877,7 @@ function applyEconomy(econ) {
   if (econ.social) { econSocial = econ.social; renderSocialSection(); rebuildSocieties(); sgMarkDirty(); }
   if (econ.dynasty) { econDynasty = econ.dynasty; renderDynastySection(); rebuildGraveField(); }
   if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
+  if (econ.religion) { econReligion = econ.religion; renderReligionSection(); }
   if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
@@ -3258,6 +3334,38 @@ function renderCultureSection() {
   }
 }
 
+// ================= the faith section (in the chronicle panel) =================
+// ⑪ The faith membrane made legible: the god reigning over the tape this cron, the holy-day countdown, and
+// the ancestor cults with their living flock and prophets. A pure read-out of religion.ts — it converts no
+// brain and moves no money; on a holy day the devout simply rest. Hidden while RELIGION_ENABLED is off.
+function renderReligionSection() {
+  const c = econReligion;
+  // keep the canvas read-out in sync whether or not the drawer is open (prophet halos + the holy-day wash)
+  holyDay = !!(c && c.holyIn === 0);
+  prophetIds.clear();
+  if (c && Array.isArray(c.sects)) for (const s of c.sects) if (s && s.prophetId != null) prophetIds.add(s.prophetId);
+  const host = $("chron-religion");
+  const body = $("rel-body");
+  if (!host || !body) return;
+  if (!c) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  const head = document.createElement("div");
+  head.className = "rel-row rel-reign";
+  head.textContent = T("rel.reigning", { god: gl("god", c.reigning) }) + " · " +
+    (c.holyIn === 0 ? T("rel.holyNow") : T("rel.holyIn", { n: c.holyIn }));
+  head.title = T("rel.reigningTitle");
+  body.appendChild(head);
+  for (const s of (c.sects || [])) {
+    const row = document.createElement("div");
+    row.className = "rel-row rel-sect";
+    row.textContent = T("rel.sect", { name: s.name, n: s.adherents }) +
+      (s.prophetId != null ? " " + T("rel.prophet", { id: s.prophetId }) : "");
+    row.title = T("rel.sectTitle");
+    body.appendChild(row);
+  }
+}
+
 // ================= the commons section (in the chronicle panel) =================
 // The commons in law: the assembly the swarm seats when a new era dawns, the two knobs it re-prices, and
 // the law now in force. A pure read-out of commons.ts — it moves no money, only re-prices the credit line
@@ -3408,6 +3516,7 @@ function openWallets() {
     if (e.dynasty) { econDynasty = e.dynasty; renderDynastySection(); renderWallets(); }
     if (e.market) { econMarket = e.market; renderMarketSection(); }
     if (e.culture) { econCulture = e.culture; renderCultureSection(); }
+    if (e.religion) { econReligion = e.religion; renderReligionSection(); }
     if (e.commons) { econCommons = e.commons; renderCommonsSection(); }
   }).catch(() => {});
 }
@@ -3877,6 +3986,7 @@ const CHRON_ICONS = {
   MARKET_SHIFT: "↕", CREDIT: "⛁", RUN: "⇊", CLASS: "☰",
   ASSEMBLY: "⛬", DECREE: "✎",
   WAR_DECLARED: "⚔", WAR_RESOLVED: "⚑", TAX_LEVIED: "⛃", TERRITORY_SEIZED: "♜",
+  PROPHECY: "✶", SCHISM: "⚡", REVIVAL: "❋", PILGRIMAGE: "⚘",
 };
 
 function renderChron() {
@@ -4001,13 +4111,17 @@ const CHRON_ = {
     WAR_RESOLVED: "The coffer renders its verdict — the House of {winner} takes the {potUsdc} USDC pot from the House of {loser}; the feud is settled in coin, not in word.",
     TAX_LEVIED: "Beyond the swarm's own tithe, the coffer levies its tax — {taxUsdc} USDC drawn from {houseCount} houses' on-chain vaults into the commons purse.",
     TERRITORY_SEIZED: "Conquest follows the verdict — the House of {winner} annexes {zones} zone(s) held by the vanquished House of {loser}, which is stripped of its ground and cast out, landless and toll-bound in exile.",
+    PROPHECY: "A prophet rises — fly #{prophet} of {sect} bears the {god} flame, and {adherents} souls follow the vision.",
+    SCHISM: "Schism in the House of {name} — {sigil} its kin turn from the old way to {sect}, and the ancestral shrine stands half-empty.",
+    REVIVAL: "Revival — {sect} rises from silence: {adherents} souls kindle the cold shrine anew.",
+    PILGRIMAGE: "Pilgrimage — on the holy day the House of {name} {sigil} walks to the ancestral shrine, {adherents} kin bearing candles.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -5406,6 +5520,7 @@ async function poll() {
       if (Array.isArray(econ.agents)) applyEconAgents(econ.agents);
       if (econ.market) { econMarket = econ.market; renderMarketSection(); }
       if (econ.culture) { econCulture = econ.culture; renderCultureSection(); }
+      if (econ.religion) { econReligion = econ.religion; renderReligionSection(); }
       if (econ.commons) { econCommons = econ.commons; renderCommonsSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
@@ -6088,7 +6203,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderCommonsSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderSocialSection(); }
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;

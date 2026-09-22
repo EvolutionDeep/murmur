@@ -43,6 +43,10 @@ const zh = {
   WAR_RESOLVED: "金库降下裁决 —— {winner} 家族从 {loser} 家族手中夺走 {potUsdc} USDC 的战池；宿怨以铸币而非言语了结。",
   TAX_LEVIED: "在蜂群自身的什一税之外，金库征收其税 —— 从 {houseCount} 个家族的链上金库中抽取 {taxUsdc} USDC 入公库。",
   TERRITORY_SEIZED: "征服紧随裁决 —— {winner} 家族吞并被征服的 {loser} 家族所据的 {zones} 块领地；后者被剥去地盘、逐出流放，无立锥之地，处处须缴过路费。",
+  PROPHECY: "先知兴起 —— {sect} 的 #{prophet} 号果蝇承载{god}之焰，{adherents} 个灵魂追随这异象。",
+  SCHISM: "{name} 家族分裂 —— {sigil} 其亲族背弃旧道转投{sect}，祖祠半空。",
+  REVIVAL: "复兴 —— {sect} 自沉寂中崛起：{adherents} 个灵魂重燃冰冷的圣祠。",
+  PILGRIMAGE: "朝圣 —— 圣日里 {name} 家族 {sigil} 走向祖祠，{adherents} 名亲族手持烛火。",
 };
 
 const fr = {
@@ -78,6 +82,10 @@ const fr = {
   WAR_RESOLVED: "Le coffre rend son verdict — la Maison {winner} prend le pot de {potUsdc} USDC à la Maison {loser} ; la querelle est réglée en pièce, non en parole.",
   TAX_LEVIED: "Au-delà de la dîme de l'essaim, le coffre lève son impôt — {taxUsdc} USDC tirés des coffres on-chain de {houseCount} maisons dans la bourse commune.",
   TERRITORY_SEIZED: "La conquête suit le verdict — la Maison {winner} annexe {zones} zone(s) tenues par la Maison {loser} vaincue, qui est dépouillée de son sol et chassée, sans terre et soumise au péage en exil.",
+  PROPHECY: "Un prophète s'élève — la mouche #{prophet} de {sect} porte la flamme de {god}, et {adherents} âmes suivent la vision.",
+  SCHISM: "Schisme dans la Maison {name} — {sigil} les siens quittent l'ancienne voie pour {sect}, et le sanctuaire ancestral reste à demi vide.",
+  REVIVAL: "Renouveau — {sect} renaît du silence : {adherents} âmes rallument le sanctuaire froid.",
+  PILGRIMAGE: "Pèlerinage — au jour saint la Maison {name} {sigil} marche vers le sanctuaire ancestral, {adherents} des siens portant des cierges.",
 };
 
 const es = {
@@ -113,6 +121,10 @@ const es = {
   WAR_RESOLVED: "El cofre emite su veredicto — la Casa {winner} toma el bote de {potUsdc} USDC de la Casa {loser}; la disputa se zanja en moneda, no en palabras.",
   TAX_LEVIED: "Más allá del diezmo del enjambre, el cofre cobra su impuesto — {taxUsdc} USDC sacados de las bóvedas on-chain de {houseCount} casas hacia la bolsa común.",
   TERRITORY_SEIZED: "La conquista sigue al veredicto — la Casa {winner} anexa {zones} zona(s) en poder de la vencida Casa {loser}, que es despojada de su suelo y expulsada, sin tierra y sujeta al peaje en el exilio.",
+  PROPHECY: "Un profeta se alza — la mosca #{prophet} de {sect} porta la llama de {god}, y {adherents} almas siguen la visión.",
+  SCHISM: "Cisma en la Casa {name} — {sigil} los suyos dejan el viejo camino por {sect}, y el santuario ancestral queda medio vacío.",
+  REVIVAL: "Revival — {sect} surge del silencio: {adherents} almas encienden de nuevo el santuario frío.",
+  PILGRIMAGE: "Peregrinación — en el día santo la Casa {name} {sigil} camina al santuario ancestral, {adherents} de los suyos portando velas.",
 };
 
 const ja = {
@@ -148,6 +160,10 @@ const ja = {
   WAR_RESOLVED: "金庫が裁定を下す —— {winner}家が{loser}家から{potUsdc} USDCの戦池を奪い取る；遺恨は言でなく金で決着す。",
   TAX_LEVIED: "群れ自身の十分の一税を超えて、金庫がその税を課す —— {houseCount}家のオンチェーン金庫から{taxUsdc} USDCが共域の財布へ。",
   TERRITORY_SEIZED: "征服は裁定に続く —— {winner}家が、敗れた{loser}家の保持する{zones}の領域を併合；敗者は地を剥がれ追放され、所領なく流謫の身で至る所で関銭を課される。",
+  PROPHECY: "預言者立つ —— {sect}のハエ#{prophet}が{god}の炎を戴き、{adherents}の魂が幻視に従う。",
+  SCHISM: "{name}家に分裂 —— {sigil}一門が古の道を捨て{sect}へ転じ、祖の聖祠は半ば空く。",
+  REVIVAL: "復興 —— {sect}が沈黙から起きる：{adherents}の魂が冷たき聖祠を新たに灯す。",
+  PILGRIMAGE: "巡礼 —— 聖なる日に{name}家{sigil}が祖の聖祠へ歩み、{adherents}の一門が蝋燭を掲げる。",
 };
 
 const ko = {
@@ -183,6 +199,10 @@ const ko = {
   WAR_RESOLVED: "금고가 평결을 내린다 — {winner} 가문이 {loser} 가문으로부터 {potUsdc} USDC 전비를 취한다; 원한은 말이 아닌 화폐로 정리된다.",
   TAX_LEVIED: "군집 자체의 십일조 위에, 금고가 자신의 세를 거둔다 — {houseCount} 가문의 온체인 금고에서 {taxUsdc} USDC 가 공역의 지갑으로.",
   TERRITORY_SEIZED: "정복은 평결을 잇는다 — {winner} 가문이 패배한 {loser} 가문이 보유하던 {zones}개 구역을 병합한다; 패자는 땅을 박탈당하고 쫓겨나, 영지 없이 유배지에서 통행세에 매인다.",
+  PROPHECY: "예언자 일어서다 — {sect}의 파리 #{prophet}가 {god}의 불꽃을 이고, {adherents}의 혼이 환시를 따른다.",
+  SCHISM: "{name} 가문의 분열 — {sigil} 일문이 옛길을 저버리고 {sect}(으)로 돌아서, 조상의 성소가 반쯤 빈다.",
+  REVIVAL: "부흥 — {sect}이 침묵에서 일어선다: {adherents}의 혼이 차가운 성소를 다시 밝힌다.",
+  PILGRIMAGE: "순례 — 성스러운 날에 {name} 가문 {sigil}이 조상의 성소로 향하고, {adherents}의 일문이 촛불을 든다.",
 };
 
 const ar = {
@@ -218,6 +238,10 @@ const ar = {
   WAR_RESOLVED: "تُصدر الخزينة حُكمها — تأخذ عائلة {winner} وعاءَ {potUsdc} USDC من عائلة {loser}؛ يُفصَل في الخصومة بالعملة لا بالكلام.",
   TAX_LEVIED: "فضلاً عن عُشر السرب، تجبي الخزينة ضريبتها — {taxUsdc} USDC تُسحب من خزائن {houseCount} عائلات على السلسلة إلى كيس العام.",
   TERRITORY_SEIZED: "الفتح يعقب الحُكم — تضمّ عائلة {winner} إليها {zones} منطقةً كانت بيد عائلة {loser} المهزومة، التي تُجرّد من أرضها وتُطرَد، بلا أرضٍ وقد لزمها الجزيةُ في المنفى.",
+  PROPHECY: "نبيٌّ ينهض — الذبابة #{prophet} من {sect} تحمل لهب {god}، و{adherents} نفسًا تتبع الرؤيا.",
+  SCHISM: "انشقاقٌ في عائلة {name} — {sigil} ذووها يرتدّون عن الطريق القديم إلى {sect}، والمقام العتيق يقف نصف فارغ.",
+  REVIVAL: "إحياءٌ — {sect} ينهض من الصمت: {adherents} نفسًا تُوقد المقام البارد من جديد.",
+  PILGRIMAGE: "حجٌّ — في اليوم المقدّس تسير عائلة {name} {sigil} إلى المقام العتيق، و{adherents} من ذويها يحملون الشموع.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
