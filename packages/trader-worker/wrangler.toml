@@ -18,7 +18,7 @@ crons = ["* * * * *"]
 
 # ---------- Variables (non-sensitive, committed with the code) ----------
 # PRODUCTION PHASE — 10x LIVE + GROWTH ARMED (Phase C). The swarm runs 10,800-neuron brains sharded across
-# 24 FlyShardDO isolates (SHARD_COUNT = "24" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
+# 50 FlyShardDO isolates (SHARD_COUNT = "50" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
 # a REAL EIP-3009 USDC broadcast on Arc mainnet, bounded by the daily/per-agent caps + kill switch below. The
 # 10x behaviour decoder is recalibrated (band collapse fixed: inject() normalises against a fixed reference
 # channel size and proboscis uses a fixed fan-in, so all 5 motor channels stay live and unsaturated at 10x).
@@ -47,17 +47,18 @@ POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = bas
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
 # Swarm sharding (see swarm.ts / shard.ts). "1" = the original single-DO swarm — every brain in FlyStateDO,
-# the FLY_SHARD binding inert (ZERO shards). "24" fans the HEAVY per-fly LIF advance out to 24 FlyShardDO
+# the FLY_SHARD binding inert (ZERO shards). "50" fans the HEAVY per-fly LIF advance out to 50 FlyShardDO
 # isolates, each with its own 128 MB + CPU budget and its own SQLite, so each brain can grow past the
 # single-isolate memory ceiling. Only the compact motor/sensory read-out crosses the boundary, so the
 # coordinator stays small at any size. MUST stay paired with EVOLUTION_MAX_LIVE_POPULATION: shardCount =
 # ceil(cap/2) keeps ≤2 flies/shard (2 of the 10,800-neuron brains serialise to ~1.4 MB, under the 2 MB
-# single-value cap) — cap=48 ⇒ 24 shards (the startup guard forces hatchLive=false if flies/shard > 2).
-# Because slices derive from the STABLE cap, shardSlice(48,24,k) = shardSlice(24,12,k) = [2k,2k+2) for
-# k=0..11 — the 24 genesis brains NEVER migrate when growth is armed; shards 12..23 are new + empty until an
-# offspring hatches. Cloudflare QUEUES subrequests past the 6th (never rejects), so 24 fan out safely.
-# Rollback = SHARD_COUNT back to "12" + EVOLUTION_MAX_LIVE_POPULATION back to "24" (or "1" for single-DO).
-SHARD_COUNT = "24"
+# single-value cap) — cap=100 ⇒ 50 shards (the startup guard forces hatchLive=false if flies/shard > 2).
+# Because slices derive from the STABLE cap, shardSlice(100,50,k) = shardSlice(48,24,k) = [2k,2k+2) for
+# k=0..23 — the existing 48 brains NEVER migrate when the ceiling is raised 48→100; shards 24..49 are new +
+# empty until an offspring hatches into slots 48..99. Cloudflare QUEUES subrequests past the 6th (never
+# rejects), so 50 fan out safely (50/6≈9 waves × ~0.35 s ≈ 3 s per sub-tick, well inside the 60 s cadence).
+# Rollback = SHARD_COUNT back to "24" + EVOLUTION_MAX_LIVE_POPULATION back to "48" (or "1" for single-DO).
+SHARD_COUNT = "50"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
@@ -309,7 +310,7 @@ EVOLUTION_TREASURY = "0x307D8a9333Bd3e4FCe93FfAC6468eB7478423a0d"   # revenue ad
 EVOLUTION_FEE_USDC = "0.002"                  # breeding fee per offspring (USDC), paid by the parent from its own wallet (~1 base good)
 EVOLUTION_MAX_PER_CRON = "1"                  # max offspring bred per cron tick (bounds CPU + spend); 0 = disabled
 EVOLUTION_PER_AGENT_DAILY = "1"               # max offspring ONE agent may fund per UTC day; 0 = no per-agent limit
-EVOLUTION_GLOBAL_DAILY = "12"                 # max offspring bred per UTC day across the whole swarm (raised 4→12 so the live population can grow toward the cap 48); 0 = no global limit
+EVOLUTION_GLOBAL_DAILY = "12"                 # max offspring bred per UTC day across the whole swarm (raised 4→12 so the live population can grow toward the cap 100); 0 = no global limit
 EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, P(cross the top two) else mutate the champion
 
 # ----- Live-population GROWTH (Phase C — hatch bred offspring into REAL trading flies) -----
@@ -321,10 +322,11 @@ EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, 
 # to the child's fresh HD address (same x402/EIP-3009 rails + caps as a trade; the child goes live ONLY once
 # that transfer is MINED). EVOLUTION_MAX_LIVE_POPULATION is the hard live ceiling (genesis 24 .. 256) AND the
 # STABLE basis for shard slicing — keep it paired with SHARD_COUNT = ceil(cap/2) so ≤2 flies/shard. Genesis
-# slots 0..23 keep their shard across the (24,12)→(48,24) change (zero brain migration); growth fills the
-# empty slots 24..47. Set EVOLUTION_HATCH_LIVE = "false" to freeze the live population instantly (bred genomes
+# slots 0..23 (and the bred slots 24..47) keep their shard across the (48,24)→(100,50) change (zero brain
+# migration — the slice [2k,2k+2) is unchanged for every existing id); growth fills the empty slots 48..99.
+# Set EVOLUTION_HATCH_LIVE = "false" to freeze the live population instantly (bred genomes
 # still commit on-chain; the 24 genesis flies are untouched either way).
-EVOLUTION_MAX_LIVE_POPULATION = "48"          # hard live-population ceiling (genesis 24 → 48); ALSO the stable shard-slice basis — keep paired with SHARD_COUNT = ceil(cap/2) = 24
+EVOLUTION_MAX_LIVE_POPULATION = "100"         # hard live-population ceiling (genesis 24 → 100); ALSO the stable shard-slice basis — keep paired with SHARD_COUNT = ceil(cap/2) = 50
 EVOLUTION_HATCH_LIVE = "true"                 # LIVE: a bred offspring hatches into a new live trading fly (parent-funded, memory-gated); set "false" to freeze the live population
 EVOLUTION_HATCH_SEED_USDC = "0.002"           # real USDC bootstrap the PARENT sends the child's own wallet at hatch (~1 base good); bounded by the per-agent/global daily caps
 
@@ -334,7 +336,7 @@ EVOLUTION_HATCH_SEED_USDC = "0.002"           # real USDC bootstrap the PARENT s
 # connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically
 # with layer size — keeping 0.02 at 10x would give ~837k synapses/fly (~66 MB heap). 0.002 holds it to
 # ~116k/fly (~11 MB), which fits 2 flies/shard under 128 MB and ~1.4 MB serialised under the 2 MB value cap
-# (hence SHARD_COUNT = ceil(cap/2) = 24 at cap 48 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
+# (hence SHARD_COUNT = ceil(cap/2) = 50 at cap 100 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
 # the 10x drive distribution needs recalibration — which is exactly why ECONOMY_SHADOW stays on until then.
 BRAIN_N_SENSORY = "1800"
 BRAIN_N_INTER_L1 = "4000"
