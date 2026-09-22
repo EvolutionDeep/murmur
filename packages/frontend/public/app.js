@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=61";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=62";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -370,6 +370,7 @@ let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0
 const MIND_REBUILD_MS = 320;                          // offscreen + low-frequency rebuild (per-frame is one drawImage)
 // ---- illuminated-manuscript layers: an aged-parchment base + a gilded frame (offscreen, rebuilt rarely) ----
 let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
+let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (static ⇒ repaint on change, blit per frame)
 
 // ================= canvas field =================
 const canvas = $("field");
@@ -406,6 +407,7 @@ function resize() {
   cachedRect = null;             // canvas box changed — drop the cached rect
   mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
   parchOff = null; parchKey = "";   // parchment re-tiles at the new size (the gilt frame draws direct each frame)
+  terrOff = null; terrKey = "";     // the cached territory map must re-render at the new field size
   rebuildGraveField();           // the headstone band is laid out in field coordinates → re-place on resize
   initMotes();
 }
@@ -1565,31 +1567,32 @@ function rebuildTerritoryPolities() {
   territories = polities.length ? polities : null;
 }
 
-/** A cached diagonal-line pattern in the polity's hue, laid over the fill for the map's engraved texture. */
-function makeHatch(color) {
+/** A cached diagonal-line pattern in the polity's hue, laid over the fill for the map's engraved texture.
+ *  Built on the target context `g` (the offscreen map canvas) so the pattern is valid where it's used. */
+function makeHatch(g, color) {
   const c = document.createElement("canvas"); c.width = c.height = 8;
-  const g = c.getContext("2d");
-  g.strokeStyle = rgba(mix(color, [255, 255, 255], 0.22), 0.15); g.lineWidth = 1.3;
-  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.moveTo(2, 14); g.lineTo(14, 2); g.stroke();
-  return ctx.createPattern(c, "repeat");
+  const hg = c.getContext("2d");
+  hg.strokeStyle = rgba(mix(color, [255, 255, 255], 0.22), 0.15); hg.lineWidth = 1.3;
+  hg.beginPath(); hg.moveTo(-2, 10); hg.lineTo(10, -2); hg.moveTo(2, 14); hg.lineTo(14, 2); hg.stroke();
+  return g.createPattern(c, "repeat");
 }
 
 /** Two deterministic meandering "rivers" across the field — pure parchment decoration, seeded once. */
-function drawRivers() {
-  ctx.save(); ctx.lineCap = "round";
+function drawRivers(g) {
+  g.save(); g.lineCap = "round";
   const RIVER = [104, 140, 176];
   for (let r = 0; r < 2; r++) {
     const ph = (fnv1a("river:" + r) % 360) * Math.PI / 180;
     const yb = VH * (r ? 0.66 : 0.34), amp = VH * 0.07;
-    ctx.beginPath();
+    g.beginPath();
     for (let i = 0; i <= 44; i++) {
       const t = i / 44, x = t * VW, y = yb + Math.sin(t * 5 + ph + r) * amp + Math.sin(t * 13 + ph) * amp * 0.28;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
     }
-    ctx.strokeStyle = rgba(RIVER, 0.15); ctx.lineWidth = 4.2; ctx.stroke();
-    ctx.strokeStyle = rgba(mix(RIVER, [255, 255, 255], 0.4), 0.22); ctx.lineWidth = 1.3; ctx.stroke();
+    g.strokeStyle = rgba(RIVER, 0.15); g.lineWidth = 4.2; g.stroke();
+    g.strokeStyle = rgba(mix(RIVER, [255, 255, 255], 0.4), 0.22); g.lineWidth = 1.3; g.stroke();
   }
-  ctx.restore();
+  g.restore();
 }
 
 /** Reference-style layout: spread the living houses across the WHOLE canvas as stable "capitals" (a
@@ -1625,81 +1628,98 @@ function layoutTerritoryMap(pol) {
   }
 }
 
-/** Paint the house dominions as a full-canvas political map. Same scratch-reused blob model as
- *  renderSocieties (cheap per frame): fills + engraved hatch → rivers → ink double borders →
- *  capitals + serif names sized by strength → the bottom-left map key. */
+/** Blit the cached territory map. The map is fully STATIC (deterministic seats — unlike the societies
+ *  layer, nothing here tracks moving flies), so the expensive work (per-polity colonyBlob, clipped hatch
+ *  fills, shadowBlur labels) runs only when the living house partition / era / field size changes; every
+ *  other frame is a single drawImage. This keeps the default-on map off the hot path so it can never
+ *  nudge frameMsAvg over the 30ms budget and collapse fly detail to quality-0 blobs. */
 function renderTerritoryMap() {
-  if (!showTerritory || !territories || !territories.length) return;
+  if (!showTerritory || !territories || !territories.length) { terrKey = ""; return; }
   const pol = [];
   for (const p of territories) {
     let cnt = 0; for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) cnt++; }
     if (cnt > 0) pol.push({ p, n: cnt });
   }
-  if (!pol.length) return;
+  if (!pol.length) { terrKey = ""; return; }
   pol.sort((a, b) => b.n - a.n || (a.p.name < b.p.name ? -1 : 1));   // biggest houses first ⇒ central seats
-  layoutTerritoryMap(pol);
+  const key = VW + "x" + VH + "@" + DPR + ":" + ((chronMeta && chronMeta.eraName) || "") + ":" + pol.map((o) => o.p.name + o.n).join(",");
+  if (!terrOff || terrKey !== key) {
+    if (!terrOff) { terrOff = document.createElement("canvas"); terrOffCtx = terrOff.getContext("2d"); }
+    const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
+    if (terrOff.width !== w || terrOff.height !== h) { terrOff.width = w; terrOff.height = h; }
+    terrKey = key;
+    layoutTerritoryMap(pol);
+    const g = terrOffCtx; g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
+    paintTerritoryMap(g, pol);
+  }
+  ctx.drawImage(terrOff, 0, 0, VW, VH);
+}
+
+/** Actually draw the dominions onto a target context `g` (the offscreen): fills + engraved hatch → rivers
+ *  → ink double borders → capitals + serif names sized by strength → the bottom-left map key. */
+function paintTerritoryMap(g, pol) {
   const seats = pol.map((o) => o.seat);
   // 1) territory fills + engraved diagonal hatch
   for (let i = 0; i < pol.length; i++) {
     const o = pol[i], p = o.p;
     const blob = colonyBlob(o.ring, seats.filter((_, k) => k !== i), p._scr);
     p._blob = blob;
-    traceBlob(ctx, p._scr.P);
-    ctx.fillStyle = rgba(p.color, 0.32); ctx.fill();
-    if (!p._hatch) p._hatch = makeHatch(p.color);
-    if (p._hatch) { ctx.save(); traceBlob(ctx, p._scr.P); ctx.clip(); ctx.fillStyle = p._hatch; ctx.fillRect(blob.cx - blob.rmax, blob.cy - blob.rmax, blob.rmax * 2, blob.rmax * 2); ctx.restore(); }
+    traceBlob(g, p._scr.P);
+    g.fillStyle = rgba(p.color, 0.32); g.fill();
+    const hatch = makeHatch(g, p.color);   // cheap: only runs on a rebuild, and always on the live offscreen ctx
+    if (hatch) { g.save(); traceBlob(g, p._scr.P); g.clip(); g.fillStyle = hatch; g.fillRect(blob.cx - blob.rmax, blob.cy - blob.rmax, blob.rmax * 2, blob.rmax * 2); g.restore(); }
   }
   // 2) the two meandering rivers run across the dominions
-  drawRivers();
+  drawRivers(g);
   // 3) ink double-line borders, drawn over fills + rivers so the map reads crisp
-  ctx.lineJoin = "round";
+  g.lineJoin = "round";
   for (const o of pol) {
     const p = o.p;
-    ctx.strokeStyle = rgba(INK, 0.5); ctx.lineWidth = 3.6; traceBlob(ctx, p._scr.P); ctx.stroke();
-    ctx.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.92); ctx.lineWidth = 1.4; traceBlob(ctx, p._scr.P); ctx.stroke();
+    g.strokeStyle = rgba(INK, 0.5); g.lineWidth = 3.6; traceBlob(g, p._scr.P); g.stroke();
+    g.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.92); g.lineWidth = 1.4; traceBlob(g, p._scr.P); g.stroke();
   }
   // 4) capital dot + serif house name (bigger houses get bigger type, like the ref) + strength tally
   for (const o of pol) {
     const p = o.p, s = o.seat;
     const capR = 3.2 + Math.min(4.5, o.n * 0.7);
-    ctx.beginPath(); ctx.arc(s.x, s.y, capR, 0, TAU);
-    ctx.fillStyle = rgba(INK, 0.92); ctx.fill();
-    ctx.lineWidth = 1.2; ctx.strokeStyle = rgba([248, 244, 236], 0.9); ctx.stroke();
-    ctx.save();
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.shadowColor = rgba([248, 244, 236], 0.9); ctx.shadowBlur = 6;
-    ctx.font = "700 " + Math.round(Math.min(30, 17 + o.n * 1.7)) + "px Fraunces, Cinzel, Georgia, serif";
-    ctx.fillStyle = rgba(mix(p.color, INK, 0.55), 0.97);
-    ctx.fillText((p.sigil ? p.sigil + " " : "") + p.name, s.x, s.y - capR - 13);
-    ctx.shadowBlur = 0;
-    ctx.font = "600 11px Georgia, serif"; ctx.fillStyle = rgba(INK, 0.55);
-    ctx.fillText(String(o.n), s.x, s.y + capR + 11);
-    ctx.restore();
+    g.beginPath(); g.arc(s.x, s.y, capR, 0, TAU);
+    g.fillStyle = rgba(INK, 0.92); g.fill();
+    g.lineWidth = 1.2; g.strokeStyle = rgba([248, 244, 236], 0.9); g.stroke();
+    g.save();
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.shadowColor = rgba([248, 244, 236], 0.9); g.shadowBlur = 6;
+    g.font = "700 " + Math.round(Math.min(30, 17 + o.n * 1.7)) + "px Fraunces, Cinzel, Georgia, serif";
+    g.fillStyle = rgba(mix(p.color, INK, 0.55), 0.97);
+    g.fillText((p.sigil ? p.sigil + " " : "") + p.name, s.x, s.y - capR - 13);
+    g.shadowBlur = 0;
+    g.font = "600 11px Georgia, serif"; g.fillStyle = rgba(INK, 0.55);
+    g.fillText(String(o.n), s.x, s.y + capR + 11);
+    g.restore();
   }
-  drawTerritoryLegend(pol);
+  drawTerritoryLegend(g, pol);
 }
 
 /** A bottom-left map key: the era title + the largest dominions with their colour swatches (the ref's legend). */
-function drawTerritoryLegend(pol) {
+function drawTerritoryLegend(g, pol) {
   const ranked = pol.slice(0, 6);
   const era = (chronMeta && chronMeta.eraName) ? chronMeta.eraName : "the swarm's dominions";
   const pad = 12, lh = 16, w = 180, h = pad * 2 + lh * (ranked.length + 1);
   const bx = 16, by = VH - h - 16;
-  ctx.save();
-  ctx.fillStyle = rgba([248, 244, 236], 0.74); ctx.strokeStyle = rgba(INK, 0.35); ctx.lineWidth = 1;
-  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6); ctx.fill(); ctx.stroke(); }
-  else { ctx.fillRect(bx, by, w, h); ctx.strokeRect(bx, by, w, h); }
-  ctx.textBaseline = "middle"; ctx.textAlign = "left";
-  ctx.font = "700 12px Fraunces, Cinzel, Georgia, serif"; ctx.fillStyle = rgba(INK, 0.9);
-  ctx.fillText(era, bx + pad, by + pad + lh * 0.5);
+  g.save();
+  g.fillStyle = rgba([248, 244, 236], 0.74); g.strokeStyle = rgba(INK, 0.35); g.lineWidth = 1;
+  if (g.roundRect) { g.beginPath(); g.roundRect(bx, by, w, h, 6); g.fill(); g.stroke(); }
+  else { g.fillRect(bx, by, w, h); g.strokeRect(bx, by, w, h); }
+  g.textBaseline = "middle"; g.textAlign = "left";
+  g.font = "700 12px Fraunces, Cinzel, Georgia, serif"; g.fillStyle = rgba(INK, 0.9);
+  g.fillText(era, bx + pad, by + pad + lh * 0.5);
   for (let i = 0; i < ranked.length; i++) {
     const y = by + pad + lh * (i + 1.5);
-    ctx.fillStyle = rgba(ranked[i].p.color, 0.95); ctx.fillRect(bx + pad, y - 5, 10, 10);
-    ctx.strokeStyle = rgba(INK, 0.5); ctx.lineWidth = 0.8; ctx.strokeRect(bx + pad + 0.5, y - 4.5, 9, 9);
-    ctx.font = "600 11px Georgia, serif"; ctx.fillStyle = rgba(INK, 0.85);
-    ctx.fillText(ranked[i].p.name + "  ·  " + ranked[i].n, bx + pad + 16, y);
+    g.fillStyle = rgba(ranked[i].p.color, 0.95); g.fillRect(bx + pad, y - 5, 10, 10);
+    g.strokeStyle = rgba(INK, 0.5); g.lineWidth = 0.8; g.strokeRect(bx + pad + 0.5, y - 4.5, 9, 9);
+    g.font = "600 11px Georgia, serif"; g.fillStyle = rgba(INK, 0.85);
+    g.fillText(ranked[i].p.name + "  ·  " + ranked[i].n, bx + pad + 16, y);
   }
-  ctx.restore();
+  g.restore();
 }
 
 function render(pal, now) {
