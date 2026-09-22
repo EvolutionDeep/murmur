@@ -509,10 +509,10 @@ const KEY_VERSION = "economy:v1";
 const RECENT_CAP = 48;
 // --- social-memory tuning (all deterministic; sizes are hard caps so DO storage stays bounded) ---
 const BOND_TOP_K = 8;                    // directed bonds remembered per agent (top-K by |score|/trades)
-const BOND_HALF_LIFE = 30000;            // sub-ticks until an untouched POSITIVE bond fades to half (~28h)
+const BOND_HALF_LIFE = 6000;              // sub-ticks until an untouched POSITIVE bond fades to half (~17h) — accelerated so trust churns on the swarm's own clock, not the human one
 // Grudges outlast favours: a negative bond heals on a ~3x slower clock, so a wound is remembered far longer
 // than a deal is. Asymmetric memory — a society lets a kindness go sooner than a betrayal.
-const BOND_WOUND_HALF_LIFE = 90000;      // sub-ticks until an untouched NEGATIVE bond fades to half (~83h)
+const BOND_WOUND_HALF_LIFE = 18000;      // sub-ticks until an untouched NEGATIVE bond fades to half (~50h) — wounds still outlast favours (~3×), but grudges now heal in days, not ~10
 const REP_HALF_LIFE = 60000;             // reputation forgets slower than a single bond (~56h)
 const GRUDGE_CAP = 24;                   // grudge book ring size
 const BOND_TRADE_STEP = 0.03;            // trust earned per settled deal (0.08→0.03: friendly trades no longer flood out accumulating grudges)

@@ -2673,6 +2673,10 @@ export class FlyStateDO {
       eraShockWilled: info.eraShockWilled, // was it governance-injected ("willed by the commons")?
       seq: info.seq,
       headHash: info.headHash,
+      // ⑫ ACCELERATED AGES: the fast civilizational clock's current reading (a pure eraInfo projection).
+      generation: info.generation,
+      civLevel: info.civLevel,
+      civPhase: info.civPhase,
       chroniclerHash: await this.getChroniclerRulesHash(),
       order: asc ? "asc" : "desc",
       count: rows.length,

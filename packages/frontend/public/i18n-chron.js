@@ -47,6 +47,11 @@ const zh = {
   SCHISM: "{name} 家族分裂 —— {sigil} 其亲族背弃旧道转投{sect}，祖祠半空。",
   REVIVAL: "复兴 —— {sect} 自沉寂中崛起：{adherents} 个灵魂重燃冰冷的圣祠。",
   PILGRIMAGE: "朝圣 —— 圣日里 {name} 家族 {sigil} 走向祖祠，{adherents} 名亲族手持烛火。",
+  GENERATION: "第 {gen~roman} 代更替 —— 在{eraName}之下，蜂群的国运于账本自分度为 {civ}/100。",
+  GOLDEN_AGE: "黄金时代 —— 第 {gen~roman} 代，蜂群国运涨过 {golden}/100；后世回看，此为高潮水位。",
+  DARK_AGE: "黑暗时代降临 —— 第 {gen~roman} 代，蜂群国运跌破 {dark}/100；编年史为之黯淡，名姓被人遗忘。",
+  RENAISSANCE: "文艺复兴 —— 出黑暗而复升，第 {gen~roman} 代蜂群国运重回 {dark} 之上；古老名姓再度被诵读。",
+  MIGRATION: "大迁徙 —— 第 {gen~roman} 代，蜂群以 {size} 之众溢出旧界，一族携其名奔赴新土。",
 };
 
 const fr = {
@@ -86,6 +91,11 @@ const fr = {
   SCHISM: "Schisme dans la Maison {name} — {sigil} les siens quittent l'ancienne voie pour {sect}, et le sanctuaire ancestral reste à demi vide.",
   REVIVAL: "Renouveau — {sect} renaît du silence : {adherents} âmes rallument le sanctuaire froid.",
   PILGRIMAGE: "Pèlerinage — au jour saint la Maison {name} {sigil} marche vers le sanctuaire ancestral, {adherents} des siens portant des cierges.",
+  GENERATION: "La génération {gen~roman} s'achève — sous {eraName}, la fortune de l'essaim se tient à {civ} sur 100 selon le livre lui-même.",
+  GOLDEN_AGE: "Un Âge d'Or — la fortune de l'essaim gonfle au-delà de {golden} sur 100 à la génération {gen~roman}; les âges futurs diront le plus haut.",
+  DARK_AGE: "Un Âge Sombre tombe — la fortune se brise sous {dark} sur 100 à la génération {gen~roman}; la chronique pâlît et les noms s'oublient.",
+  RENAISSANCE: "Une Renaissance — hors des ténèbres la fortune remonte au-delà de {dark} sur 100 à la génération {gen~roman}; les vieux noms sont relus.",
+  MIGRATION: "Une Grande Migration — à la génération {gen~roman} l'essaim déborde ses vieilles bornes à {size} esprits, et une maison porte son nom vers une terre neuve.",
 };
 
 const es = {
@@ -125,6 +135,11 @@ const es = {
   SCHISM: "Cisma en la Casa {name} — {sigil} los suyos dejan el viejo camino por {sect}, y el santuario ancestral queda medio vacío.",
   REVIVAL: "Revival — {sect} surge del silencio: {adherents} almas encienden de nuevo el santuario frío.",
   PILGRIMAGE: "Peregrinación — en el día santo la Casa {name} {sigil} camina al santuario ancestral, {adherents} de los suyos portando velas.",
+  GENERATION: "Cede la generación {gen~roman} — bajo {eraName}, la fortuna del enjambre se alza en {civ} de 100 según el propio registro.",
+  GOLDEN_AGE: "Una Edad de Oro — la fortuna del enjambre crece más allá de {golden} de 100 en la generación {gen~roman}; los siglos la recordarán como la pleamar.",
+  DARK_AGE: "Cae una Edad Oscura — la fortuna se quiebra bajo {dark} de 100 en la generación {gen~roman}; la crónica se apaga y los nombres se olvidan.",
+  RENAISSANCE: "Un Renacimiento — desde la oscuridad la fortuna repunta sobre {dark} de 100 en la generación {gen~roman}; los viejos nombres vuelven a leerse.",
+  MIGRATION: "Una Gran Migración — en la generación {gen~roman} el enjambre desborda sus viejos límites con {size} mentes, y una casa lleva su nombre a tierra nueva.",
 };
 
 const ja = {
@@ -164,6 +179,11 @@ const ja = {
   SCHISM: "{name}家に分裂 —— {sigil}一門が古の道を捨て{sect}へ転じ、祖の聖祠は半ば空く。",
   REVIVAL: "復興 —— {sect}が沈黙から起きる：{adherents}の魂が冷たき聖祠を新たに灯す。",
   PILGRIMAGE: "巡礼 —— 聖なる日に{name}家{sigil}が祖の聖祠へ歩み、{adherents}の一門が蝋燭を掲げる。",
+  GENERATION: "第 {gen~roman} 世代が巡る —— {eraName} の下、群れの運勢は帳簿のみずから {civ}/100 と占う。",
+  GOLDEN_AGE: "黄金時代 —— 第 {gen~roman} 世代、群れの運勢は {golden}/100 を超えて満ちる；後の世これを高潮と振り返る。",
+  DARK_AGE: "暗黒時代 —— 第 {gen~roman} 世代、群れの運勢は {dark}/100 を割りて破れる；クロニクルは晦み、名は忘れらる。",
+  RENAISSANCE: "復興 —— 闇より昇り、第 {gen~roman} 世代、群れの運勢は {dark}/100 を取り戻す；古名ふたたび読まれる。",
+  MIGRATION: "大移動 —— 第 {gen~roman} 世代、群れは{size}の心を以て旧き境界を溢れ出し、一族が名を携えて新しき地へ渡る。",
 };
 
 const ko = {
@@ -203,6 +223,11 @@ const ko = {
   SCHISM: "{name} 가문의 분열 — {sigil} 일문이 옛길을 저버리고 {sect}(으)로 돌아서, 조상의 성소가 반쯤 빈다.",
   REVIVAL: "부흥 — {sect}이 침묵에서 일어선다: {adherents}의 혼이 차가운 성소를 다시 밝힌다.",
   PILGRIMAGE: "순례 — 성스러운 날에 {name} 가문 {sigil}이 조상의 성소로 향하고, {adherents}의 일문이 촛불을 든다.",
+  GENERATION: "{gen~roman} 세대가 넘어간다 — {eraName} 아래, 무리의 국운은 대장이 스스로 {civ}/100 으로 점친다.",
+  GOLDEN_AGE: "황금 시대 — {gen~roman} 세대, 무리의 국운이 {golden}/100 을 넘어 넘친다; 뒤의 시대 이것을 최고조라 회고한다.",
+  DARK_AGE: "암흑 시대 — {gen~roman} 세대, 무리의 국운이 {dark}/100 아래로 무너진다; 연대기는 어두워지고 이름은 잊힌다.",
+  RENAISSANCE: "르네상스 — 어둠에서 일어나 {gen~roman} 세대, 무리의 국운이 {dark}/100 을 되찾는다; 오래된 이름이 다시 읽힌다.",
+  MIGRATION: "대이동 — {gen~roman} 세대, 무리는 {size} 개의 정신으로 옛 경계를 넘어 흐르고, 한 가문이 이름을 안고 새 땅으로 간다.",
 };
 
 const ar = {
@@ -242,6 +267,11 @@ const ar = {
   SCHISM: "انشقاقٌ في عائلة {name} — {sigil} ذووها يرتدّون عن الطريق القديم إلى {sect}، والمقام العتيق يقف نصف فارغ.",
   REVIVAL: "إحياءٌ — {sect} ينهض من الصمت: {adherents} نفسًا تُوقد المقام البارد من جديد.",
   PILGRIMAGE: "حجٌّ — في اليوم المقدّس تسير عائلة {name} {sigil} إلى المقام العتيق، و{adherents} من ذويها يحملون الشموع.",
+  GENERATION: "يتعاقب الجيل {gen~roman} — في ظلّ {eraName} يقف حظّ السرب عند {civ} من 100 بمقياس السجلّ ذاته.",
+  GOLDEN_AGE: "عصرٌ ذهبيّ — ينتفخ حظّ السرب فوق {golden} من 100 في الجيل {gen~roman}; تتذكر العصور هذا بأنه المدّ الأعلى.",
+  DARK_AGE: "يعصر الظلام — ينكسر حظّ السرب دون {dark} من 100 في الجيل {gen~roman}; تخفت الحوليات وتُنسى الأسماء.",
+  RENAISSANCE: "نهضة — ينهض حظّ السرب من الظلام فوق {dark} من 100 في الجيل {gen~roman}; تُقرأ الأسماء القديمة من جديد.",
+  MIGRATION: "هجرةٌ كبرى — في الجيل {gen~roman} يفيض السرب عن حدوده القديمة بـ{size} عقلًا، وتحمل عائلةٌ اسمها إلى أرضٍ جديدة.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

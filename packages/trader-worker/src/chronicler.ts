@@ -81,7 +81,16 @@ export type ChronicleKind =
   | "PROPHECY"
   | "SCHISM"
   | "REVIVAL"
-  | "PILGRIMAGE";
+  | "PILGRIMAGE"
+  // ⑫ ACCELERATED AGES — the historian's own fast civilizational clock (a "generation" turns over every
+  //     GEN_CRONS crons, decoupled from the slow ~hourly era). A pure narrative layer over real prosperity
+  //     signals (volume/gini/size/feud/run/shock): it never mutates the economy, only RECKONS the swarm's
+  //     fortune up and down and names the ages that rise and fall on that clock.
+  | "GENERATION"
+  | "GOLDEN_AGE"
+  | "DARK_AGE"
+  | "RENAISSANCE"
+  | "MIGRATION";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -268,6 +277,15 @@ interface ChroniclerState {
   // --- ⑧ commons trackers: a council is one chapter per era, each knob's law one decree per era ---
   lastAssemblyEra: number;          // era the last ASSEMBLY line told (0 ⇒ never)
   lastDecreeEra: Record<string, number>; // param → era of its last DECREE
+  // --- ⑫ ACCELERATED AGES: the fast generational clock + the running civilizational-fortune reckoning. All
+  //     additive: an older stored blob lacks them ⇒ restore's {...freshState(),...st} seeds the defaults, so
+  //     the existing hash chain (headHash) and era counters are untouched by this upgrade. ---
+  generation: number;               // swarm-generations counted on the fast clock (0 ⇒ not yet turned)
+  genStartCron: number;             // cronSeen the current generation began (0 ⇒ prime on first sight)
+  civLevel: number;                 // the historian's bounded 0..100 reckoning of the swarm's fortune
+  prevCivVolume: number;            // lifetime volume at the last generation (a generation's rise/fall)
+  civGolden: boolean;               // a GOLDEN_AGE is currently lit (edge-tracked, never re-spammed)
+  civDark: boolean;                 // a DARK_AGE is lit (a climb back past the band is a RENAISSANCE)
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -320,6 +338,9 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10,
   TERRITORY_SEIZED: 4,
   PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6,
+  // ⑫ AGES: GENERATION is the clock itself (one line per generation, ~84 ticks); the age-phase lines are rare
+  //     chapters (a golden/dark/renaissance age should not stutter), a migration rarer still.
+  GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -329,6 +350,20 @@ const ERA_MIN_AGE = 8;
 // this many crons (60 = ~1h at 1 cron/min). Time-slice turnover — keeps the era (and the commons that convenes
 // per era) moving on a human clock without faking a season change (a distinct, honest ERA_PASSAGE line).
 const ERA_MAX_AGE_CRONS = 60;
+
+// ⑫ ACCELERATED AGES — the historian's OWN fast calendar, measured in crons and decoupled from the slow
+// regime-driven era. A "generation" turns over every GEN_CRONS crons (~15 min at 1 cron/min), and on each
+// turn the historian RECKONS the swarm's civilizational fortune (`civLevel`, 0..100) up or down from the real
+// prosperity signals already in the context (a volume trend, equity, growth, a live feud/run, a shock age).
+// Crossing a band lights a Golden/Dark/Renaissance age; a boom-time growth sparks a Great Migration. These are
+// landscape DETECTOR thresholds (they shape WHEN a line is written, never its text), so — exactly like the
+// culture/institution ones above — they are NOT folded into chroniclerRulesHash; only the templates + cooldowns
+// these kinds add rotate the genome.
+const GEN_CRONS = 15;        // crons per swarm-generation (~15 min): the fast civilizational heartbeat
+const CIV_START = 40;        // a mid-history seed for a fresh/restore'd historian
+const CIV_MAX = 100;
+const CIV_GOLDEN = 75;       // fortune swelling to ≥ this dawns a GOLDEN_AGE
+const CIV_DARK = 25;         // fortune breaking to ≤ this falls a DARK_AGE
 
 /** The narrative templates. `{key}` inserts tokens[key]; `{key~roman}` / `{key~kth}` / `{key~lower}` apply a
  *  tiny, fully-deterministic formatter (see renderToken). This exact map is shipped to the browser verbatim. */
@@ -377,6 +412,13 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   SCHISM: "Schism in the House of {name} — {sigil} its kin turn from the old way to {sect}, and the ancestral shrine stands half-empty.",
   REVIVAL: "Revival — {sect} rises from silence: {adherents} souls kindle the cold shrine anew.",
   PILGRIMAGE: "Pilgrimage — on the holy day the House of {name} {sigil} walks to the ancestral shrine, {adherents} kin bearing candles.",
+  // ⑫ ACCELERATED AGES — the fast civilizational clock's five moments. Mirrored byte-for-byte in the browser
+  //     CHRON_ map. Every number they cite (gen, civ, size) is a real read-out value the caller passed as tokens.
+  GENERATION: "Generation {gen~roman} turns over — under {eraName} the swarm's fortune stands at {civ} of 100.",
+  GOLDEN_AGE: "A Golden Age — the swarm's fortune swells past {golden} of 100 in Generation {gen~roman}; the ages look back on this as the high water.",
+  DARK_AGE: "A Dark Age falls — the swarm's fortune breaks below {dark} of 100 in Generation {gen~roman}; the chronicle dims, and names are forgotten.",
+  RENAISSANCE: "A Renaissance — out of the dark the swarm's fortune climbs back over {dark} of 100 in Generation {gen~roman}; the old names are read again.",
+  MIGRATION: "A Great Migration — in Generation {gen~roman} the swarm spills past its old bounds at {size} minds, and a house carries its name to new ground.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -891,6 +933,58 @@ export class Chronicler {
       }
     }
 
+    // --- ⑫ ACCELERATED AGES: the swarm's OWN fast civilizational clock. Independent of the slow era, a
+    //     "generation" turns over every GEN_CRONS crons; the historian RECKONS the swarm's fortune (civLevel)
+    //     up or down from the real prosperity signals already in the context, and names the ages that rise
+    //     (Golden), fall (Dark), recover (Renaissance) or spill outward (a Great Migration). PURE READ-OUT:
+    //     it reads only the context + its own trackers, mutates nothing, and never feeds back into any
+    //     decision. Gated on epochsOn ⇒ EPOCHS_ENABLED=false returns the chronicle byte-for-byte pre-ages. ---
+    if (this.epochsOn) {
+      if (s.genStartCron === 0) s.genStartCron = s.cronSeen;   // prime, so a mid-history start doesn't jump
+      if (s.cronSeen - s.genStartCron >= GEN_CRONS) {
+        s.genStartCron = s.cronSeen;
+        s.generation += 1;
+        // a bounded, deterministic step taken on the swarm's real condition this generation
+        let d = 0;
+        if (s.prevCivVolume > 0) d += ctx.volumeUsdc > s.prevCivVolume ? 3 : -2;
+        d += ctx.gini <= 0.4 ? 2 : (ctx.gini >= 0.6 ? -3 : 0);
+        if (ctx.size > 0 && ctx.size >= s.maxSize) d += 1;
+        if (ctx.social?.topFeud) d -= 1;
+        if (ctx.market?.run) d -= 4;
+        if (s.eraShock) d -= 5;                                // an age of famine/plague/war dims the spirit
+        const wasDark = s.civDark, wasGolden = s.civGolden;
+        s.civLevel = Math.max(0, Math.min(CIV_MAX, s.civLevel + d));
+        s.prevCivVolume = ctx.volumeUsdc;
+        const civ = Math.round(s.civLevel);
+        // age-phase EDGES — each a chapter, guarded by its long cooldown so a standing age never re-spams
+        if (!wasGolden && s.civLevel >= CIV_GOLDEN) {
+          s.civGolden = true; s.civDark = false;
+          out.push(await this.emit(ctx, "GOLDEN_AGE", 4, [],
+            { gen: s.generation, golden: CIV_GOLDEN, civ }, { civLevel: s.civLevel }));
+        } else if (!wasDark && s.civLevel <= CIV_DARK) {
+          s.civDark = true; s.civGolden = false;
+          out.push(await this.emit(ctx, "DARK_AGE", 4, [],
+            { gen: s.generation, dark: CIV_DARK, civ }, { civLevel: s.civLevel }));
+        } else if (wasDark && s.civLevel > CIV_DARK + 10) {
+          s.civDark = false;
+          out.push(await this.emit(ctx, "RENAISSANCE", 3, [],
+            { gen: s.generation, dark: CIV_DARK, civ }, { civLevel: s.civLevel }));
+        } else if (wasGolden && s.civLevel < CIV_GOLDEN - 10) {
+          s.civGolden = false;                                 // the high water recedes quietly, no line
+        }
+        // a Great Migration: outward expansion on a rising, record-size swarm with a house bold enough to lead
+        if (d > 0 && ctx.size > 0 && ctx.size >= s.maxSize && ctx.dynasty?.dominance && this.ready("MIGRATION", ctx)) {
+          out.push(await this.emit(ctx, "MIGRATION", 3, [],
+            { gen: s.generation, size: ctx.size }, { size: ctx.size, civLevel: s.civLevel }));
+        }
+        // the generation itself always turns over — the fast clock's heartbeat, one honest line per turn
+        if (this.ready("GENERATION", ctx)) {
+          out.push(await this.emit(ctx, "GENERATION", 2, [],
+            { gen: s.generation, eraName: s.eraName, civ }, { civLevel: s.civLevel }));
+        }
+      }
+    }
+
     return out;
   }
 
@@ -993,10 +1087,16 @@ export class Chronicler {
   eraInfo(): {
     era: number; eraName: string; eraRegime: ChronicleContext["regime"]; seq: number; headHash: string;
     eraShock: ShockKind | null; eraShockWilled: boolean;
+    // ⑫ ACCELERATED AGES (additive): the fast clock's state, for the /annals header read-out. Pure projection
+    //     of the trackers above — a new field on an existing object, so every older caller still compiles.
+    generation: number; civLevel: number; civPhase: "golden" | "dark" | "ascendant" | "declining";
   } {
+    const phase: "golden" | "dark" | "ascendant" | "declining" =
+      this.s.civDark ? "dark" : this.s.civGolden ? "golden" : (this.s.civLevel >= 50 ? "ascendant" : "declining");
     return {
       era: this.s.era, eraName: this.s.eraName, eraRegime: this.s.eraRegime, seq: this.s.seq, headHash: this.s.headHash,
       eraShock: this.s.eraShock, eraShockWilled: this.s.eraShockWilled,
+      generation: this.s.generation, civLevel: Math.round(this.s.civLevel), civPhase: phase,
     };
   }
 
@@ -1021,6 +1121,7 @@ function freshState(): ChroniclerState {
     lastTrendFap: null, lastTraditionKey: null, lastMarks: {}, lastCreditCount: 0, lastRunActive: false, classAnnounced: false,
     lastProphetKey: null, lastSchismKey: null, lastRevivalKey: null, lastPilgrimKey: null,
     lastAssemblyEra: 0, lastDecreeEra: {},
+    generation: 0, genStartCron: 0, civLevel: CIV_START, prevCivVolume: 0, civGolden: false, civDark: false,
     headHash: GENESIS_HASH,
   };
 }

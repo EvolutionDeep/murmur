@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=74";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=75";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -3979,7 +3979,11 @@ async function pollChron() {
       chronRows = Array.isArray(r.entries) ? r.entries.slice() : [];   // already desc by seq
       chronMeta = { era: r.era, eraName: r.eraName, eraRegime: r.eraRegime, seq: r.seq,
         eraShock: r.eraShock || null, eraShockWilled: !!r.eraShockWilled,
-        headHash: r.headHash || null, chroniclerHash: r.chroniclerHash || null, version: r.version || null };
+        headHash: r.headHash || null, chroniclerHash: r.chroniclerHash || null, version: r.version || null,
+        // ⑫ ACCELERATED AGES: the fast civilizational clock (absent on an older worker ⇒ null, header stays as-is)
+        generation: Number.isFinite(r.generation) ? r.generation : null,
+        civLevel: Number.isFinite(r.civLevel) ? r.civLevel : null,
+        civPhase: r.civPhase || null };
       // the chronicle made visible: hand every entry newer than the last-shown seq to the canvas FX
       if (chronSeenSeq > 0) for (const e of chronRows) { if ((e.seq || 0) <= chronSeenSeq) break; spawnChronFx(e); }
       renderChron();
@@ -4020,6 +4024,7 @@ const CHRON_ICONS = {
   ASSEMBLY: "⛬", DECREE: "✎",
   WAR_DECLARED: "⚔", WAR_RESOLVED: "⚑", TAX_LEVIED: "⛃", TERRITORY_SEIZED: "♜",
   PROPHECY: "✶", SCHISM: "⚡", REVIVAL: "❋", PILGRIMAGE: "⚘",
+  GENERATION: "∞", GOLDEN_AGE: "❂", DARK_AGE: "☾", RENAISSANCE: "✹", MIGRATION: "➤",
 };
 
 function renderChron() {
@@ -4058,6 +4063,11 @@ function renderChron() {
       }
     }
     if (sub)  sub.textContent = chronRows.length ? T("chron.subEntries", { n: chronRows.length, seq: chronMeta.seq }) : T("chron.subAwaiting");
+    // ⑫ append the fast clock's reading when the worker exposes it (undefined on an older worker ⇒ no change)
+    if (sub && chronMeta.generation != null && chronMeta.civLevel != null) {
+      const phase = chronMeta.civPhase ? T("chron.phase." + chronMeta.civPhase) : "";
+      sub.textContent += ` · ${T("chron.gen", { gen: chronRoman(chronMeta.generation).toLowerCase() })} · ${phase} ${chronMeta.civLevel}/100`;
+    }
   } else if (sub) sub.textContent = T("chron.subOffline");
   if (!chronRows.length) {
     list.innerHTML = `<li class="chron-empty">${escapeHtml(T("chron.empty"))}</li>`;
@@ -4148,13 +4158,20 @@ const CHRON_ = {
     SCHISM: "Schism in the House of {name} — {sigil} its kin turn from the old way to {sect}, and the ancestral shrine stands half-empty.",
     REVIVAL: "Revival — {sect} rises from silence: {adherents} souls kindle the cold shrine anew.",
     PILGRIMAGE: "Pilgrimage — on the holy day the House of {name} {sigil} walks to the ancestral shrine, {adherents} kin bearing candles.",
+    // ⑫ ACCELERATED AGES — byte-for-byte the server chronicler TEMPLATES (a single drifted char and every
+    //     visitor's "prove no LLM" banner goes red on these lines). Keep them in lockstep with chronicler.ts.
+    GENERATION: "Generation {gen~roman} turns over — under {eraName} the swarm's fortune stands at {civ} of 100.",
+    GOLDEN_AGE: "A Golden Age — the swarm's fortune swells past {golden} of 100 in Generation {gen~roman}; the ages look back on this as the high water.",
+    DARK_AGE: "A Dark Age falls — the swarm's fortune breaks below {dark} of 100 in Generation {gen~roman}; the chronicle dims, and names are forgotten.",
+    RENAISSANCE: "A Renaissance — out of the dark the swarm's fortune climbs back over {dark} of 100 in Generation {gen~roman}; the old names are read again.",
+    MIGRATION: "A Great Migration — in Generation {gen~roman} the swarm spills past its old bounds at {size} minds, and a house carries its name to new ground.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },

@@ -709,3 +709,113 @@ test("a commons history passes in-browser-style verifyChain end to end", async (
   assert.ok(v.ok, `chain over commons entries intact: ${v.reason} @${v.brokenAt}`);
 });
 
+// ============================================================================================
+// ⑫ ACCELERATED AGES — the historian's OWN fast civilizational clock. It runs on crons (one observe
+// = one cron) and turns a "generation" every GEN_CRONS=15, fully decoupled from the slow ~hourly era.
+// We advance `tick` well past every AGE cooldown (max 400) so the phase edges are gated ONLY by the
+// generation cadence, not by anti-stutter timers — letting the tests assert the reckoning itself.
+// ============================================================================================
+
+const AGE_KINDS = ["GENERATION", "GOLDEN_AGE", "DARK_AGE", "RENAISSANCE", "MIGRATION"];
+
+/** Build `n` crons of context; each cron's tick is `idx*TICK_STEP` so cooldowns never mask an AGE line. */
+function ageCrons(n: number, at: (idx: number) => Partial<ChronicleContext>, tickStep = 600): ChronicleContext[] {
+  const seq: ChronicleContext[] = [];
+  for (let i = 1; i <= n; i++) seq.push(ctx({ tick: i * tickStep, ...at(i) }));
+  return seq;
+}
+
+test("⑫ a GENERATION turns over every GEN_CRONS crons, decoupled from the slow era (which stays Era I)", async () => {
+  const c = new Chronicler();
+  // steady held COLD regime, no economy drama — just crons passing. Keep under ERA_MAX_AGE_CRONS (60)
+  // so the era itself never turns, proving the fast clock is independent of the era clock.
+  const all = await run(c, ageCrons(46, () => ({ regime: "COLD", temperature: 0.3 })));
+  const gens = all.filter((e) => e.kind === "GENERATION");
+  // genStartCron primes at cron 1; turns at cron 16/31/46 → three generations.
+  assert.equal(gens.length, 3, `expected 3 GENERATION lines in 46 crons, got ${gens.length}`);
+  assert.deepEqual(gens.map((e) => Number(e.tokens.gen)), [1, 2, 3]);
+  assert.equal(c.eraInfo().era, 1, "the era clock must NOT have turned while three generations passed");
+  assert.equal(c.eraInfo().generation, 3);
+});
+
+test("⑫ civLevel stays bounded within 0..100 under an infinite boom", async () => {
+  const c = new Chronicler();
+  // volume rising, gini low, size holding at its record → a strongly positive per-generation step.
+  await run(c, ageCrons(300, (i) => ({ regime: "CALM", temperature: 0.5, volumeUsdc: i, gini: 0.2, size: 30, settlements: i })));
+  const civ = c.eraInfo().civLevel;
+  assert.ok(civ >= 0 && civ <= 100, `civLevel must be bounded 0..100, saw ${civ}`);
+  assert.equal(civ, 100, "a long sustained boom should saturate the fortune at the ceiling (never exceed it)");
+});
+
+test("⑫ a sustained boom lights GOLDEN_AGE exactly once and holds it lit (edge, not spam)", async () => {
+  const c = new Chronicler();
+  const all = await run(c, ageCrons(150, (i) => ({ regime: "CALM", temperature: 0.5, volumeUsdc: i, gini: 0.2, size: 30, settlements: i })));
+  const golden = all.filter((e) => e.kind === "GOLDEN_AGE");
+  assert.equal(golden.length, 1, `GOLDEN_AGE must fire once on the rising edge, got ${golden.length}`);
+  assert.ok(Number(golden[0].tokens.civ) >= 75, "golden must be declared at/above the CIV_GOLDEN band");
+  assert.match(golden[0].text, /Golden Age/);
+  assert.equal(c.eraInfo().civPhase, "golden", "the reading stays 'golden' while fortune holds high");
+});
+
+test("⑫ collapse falls a DARK_AGE, recovery reads a RENAISSANCE (both single-edge)", async () => {
+  const d = new Chronicler();
+  // phase 1 — a long drought: volume flat (a non-rising step), high gini, a live credit run → deep negatives.
+  const fall = await run(d, ageCrons(90, () => ({
+    regime: "COLD", temperature: 0.2, volumeUsdc: 5, gini: 0.7, size: 20, settlements: 5,
+    market: { marks: {}, openIous: 3, topIou: null, run: true, badRate: 0.5, creditors: 3, creditorNetShare: 0.2 },
+  })));
+  const dark = fall.filter((e) => e.kind === "DARK_AGE");
+  assert.equal(dark.length, 1, `DARK_AGE must fall exactly once, got ${dark.length}`);
+  assert.match(dark[0].text, /Dark Age/);
+  // phase 2 — recovery: boom back over the dark band + hysteresis (CIV_DARK+10 = 35).
+  const rise = await run(d, ageCrons(150, (i) => ({
+    regime: "CALM", temperature: 0.5, volumeUsdc: 1000 + i, gini: 0.2, size: 40, settlements: 1000 + i,
+  })));
+  const ren = rise.filter((e) => e.kind === "RENAISSANCE");
+  assert.equal(ren.length, 1, `RENAISSANCE must fire once climbing out of the dark, got ${ren.length}`);
+  assert.match(ren[0].text, /Renaissance/);
+});
+
+test("⑫ EPOCHS_ENABLED=false returns the chronicle byte-for-byte pre-ages (no AGE lines, no fast clock)", async () => {
+  const seq = ageCrons(60, (i) => ({ regime: "CALM", temperature: 0.5, volumeUsdc: i, gini: 0.2, size: 30, settlements: i }));
+  const off = new Chronicler(false);
+  const offAll = await run(off, seq.map((x) => ({ ...x })));
+  assert.ok(!offAll.some((e) => AGE_KINDS.includes(e.kind)), "the fast clock must be totally inert when epochs are off");
+  assert.equal(off.eraInfo().generation, 0, "generation must not advance when epochs are off");
+});
+
+test("⑫ an older stored blob lacking the AGES fields restores with fresh defaults and preserves the chain head", async () => {
+  const c = new Chronicler();
+  await run(c, ageCrons(20, (i) => ({ regime: "COLD", volumeUsdc: i, gini: 0.2, size: 24, settlements: i })));
+  const headBefore = c.eraInfo().headHash;
+  void c.eraInfo().generation;   // (a live run has turned at least one generation; the restore proves it resets)
+  // simulate restoring a pre-AGES record: strip every new field from the persisted state.
+  const legacy = c.snapshot();
+  const strip = legacy as unknown as Record<string, unknown>;
+  delete strip.generation;
+  delete strip.genStartCron;
+  delete strip.civLevel;
+  delete strip.prevCivVolume;
+  delete strip.civGolden;
+  delete strip.civDark;
+  const c2 = new Chronicler();
+  c2.restore(legacy);
+  const info = c2.eraInfo();
+  assert.equal(info.headHash, headBefore, "the hash chain head must survive an additive-field restore");
+  assert.equal(info.generation, 0, "a legacy blob with no generation re-seeds to the fresh default (0)");
+  assert.equal(info.civLevel, 40, "a missing civLevel re-seeds to CIV_START (40)");
+});
+
+test("⑫ replaying the same cron sequence is byte-identical (the fast clock is deterministic)", async () => {
+  const mk = () => ageCrons(80, (i) => ({ regime: i % 2 ? "CALM" : "COLD", temperature: 0.5, volumeUsdc: i * 3, gini: 0.35, size: 25, settlements: i * 3 }));
+  const a = await run(new Chronicler(), mk());
+  const b = await run(new Chronicler(), mk());
+  assert.equal(a.length, b.length);
+  for (let i = 0; i < a.length; i++) {
+    assert.equal(a[i].kind, b[i].kind);
+    assert.equal(a[i].text, b[i].text);
+    assert.equal(a[i].hash, b[i].hash);
+  }
+  assert.ok(a.some((e) => e.kind === "GENERATION"), "the deterministic replay still turns generations");
+});
+
