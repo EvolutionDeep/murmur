@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=65";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=66";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -1099,7 +1099,7 @@ function drawEraHeader(pal) {
   };
   const name = String(chronMeta.eraName || "").trim().toUpperCase();
   const label = name ? `ERA ${rn(chronMeta.era)} · ${name}` : `ERA ${rn(chronMeta.era)}`;
-  const cx = VW / 2, cy = Math.max(46, VH * 0.078);   // drop below the top-bar chrome so it never grazes the language selector
+  const cx = VW / 2, cy = Math.max(92, VH * 0.14);   // clear the top-centre layer-toggle bar (fixed at ~pad+26) and the top corner panels
   ctx.save();
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif";
@@ -1743,7 +1743,9 @@ function drawTerritoryLegend(g, pol) {
   const ranked = pol.slice(0, 6);
   const era = (chronMeta && chronMeta.eraName) ? chronMeta.eraName : "the swarm's dominions";
   const pad = 12, lh = 16, w = 180, h = pad * 2 + lh * (ranked.length + 1);
-  const bx = 16, by = VH - h - 16;
+  // the bottom-left is claimed by the temperature DOM panel and the bottom-right by the chronicle button,
+  // so the map key lives in the clear band on the right flank, vertically centred (never under a panel).
+  const bx = VW - w - 16, by = Math.round((VH - h) / 2);
   g.save();
   g.fillStyle = rgba([248, 244, 236], 0.74); g.strokeStyle = rgba(INK, 0.35); g.lineWidth = 1;
   if (g.roundRect) { g.beginPath(); g.roundRect(bx, by, w, h, 6); g.fill(); g.stroke(); }
