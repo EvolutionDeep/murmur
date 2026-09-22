@@ -605,7 +605,10 @@ function updateSim(dt, now) {
     }
     for (const p of societies.allies) {
       const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, s = p.w * SOCIETY_ALLY_K;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      // a spring with a REST LENGTH: a bond holds friends NEAR, not on top of each other. Without the rest
+      // length the 0.5-accel pull overpowered personal-space separation and knotted bonded flies into a blob.
+      const s = p.w * SOCIETY_ALLY_K * clamp((d - SOCIETY_ALLY_REST) / SOCIETY_ALLY_REST, -0.7, 1);
       a.sx += (dx / d) * s; a.sy += (dy / d) * s; b.sx -= (dx / d) * s; b.sy -= (dy / d) * s;
     }
     for (const p of societies.feuds) {
@@ -821,6 +824,7 @@ const SOCIETY_FEUD_MAX = -0.6;     // bond score at/under which two flies active
 const SOCIETY_ANCHOR_K = 0.0025;   // spring toward the colony's home anchor (gentle, ~ cohesion scale)
 const SOCIETY_SLOT_R = 52;         // css px — radius of the disc a colony's members are slotted onto (anti-clump)
 const SOCIETY_ALLY_K = 0.5;        // ally pull accel (unit vector × bond weight)
+const SOCIETY_ALLY_REST = 40;      // css px — bond rest length; closer than this the spring PUSHES apart (anti-knot)
 const SOCIETY_FEUD_K = 1.1;        // feud push accel, faded out beyond SOCIETY_FEUD_RANGE
 const SOCIETY_FEUD_RANGE = 220;    // css px — grudges only shove when the flies are this close
 const SOCIETY_PAD = 30;            // territory outline padding beyond the outermost member
