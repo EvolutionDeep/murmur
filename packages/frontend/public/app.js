@@ -575,7 +575,16 @@ function updateSim(dt, now) {
     for (const f of list) { f.sx = 0; f.sy = 0; }
     for (const c of societies.colonies) {
       const axp = smx + c.ax * (VW - 2 * smx), ayp = smy + c.ay * (VH - 2 * smy);
-      for (const id of c.ids) { const f = sim.get(id); if (f && !f.dying) { f.sx += (axp - f.x) * SOCIETY_ANCHOR_K; f.sy += (ayp - f.y) * SOCIETY_ANCHOR_K; } }
+      // spread members on a deterministic disc around the anchor (even polar packing) so a colony reads
+      // as a loose cluster; a single-point spring let a calm colony pile all its flies into one blob.
+      const m = Math.max(1, c.ids.length);
+      for (let k = 0; k < c.ids.length; k++) {
+        const f = sim.get(c.ids[k]); if (!f || f.dying) continue;
+        const ang = (k / m) * TAU + (c.founder ?? 0) * 0.7;
+        const rad = SOCIETY_SLOT_R * Math.sqrt((k + 0.5) / m);
+        const tx = axp + Math.cos(ang) * rad, ty = ayp + Math.sin(ang) * rad;
+        f.sx += (tx - f.x) * SOCIETY_ANCHOR_K; f.sy += (ty - f.y) * SOCIETY_ANCHOR_K;
+      }
     }
     // territories are exclusive jurisdictions: repel whole colonies so their bodies never merge
     const cents = [];
@@ -810,6 +819,7 @@ let territories = null; // the house-territory MAP partition: [{name,sigil,color
 const SOCIETY_BOND_MIN = 0.25;     // min bond score to count as an alliance edge
 const SOCIETY_FEUD_MAX = -0.6;     // bond score at/under which two flies actively shun each other
 const SOCIETY_ANCHOR_K = 0.0025;   // spring toward the colony's home anchor (gentle, ~ cohesion scale)
+const SOCIETY_SLOT_R = 52;         // css px — radius of the disc a colony's members are slotted onto (anti-clump)
 const SOCIETY_ALLY_K = 0.5;        // ally pull accel (unit vector × bond weight)
 const SOCIETY_FEUD_K = 1.1;        // feud push accel, faded out beyond SOCIETY_FEUD_RANGE
 const SOCIETY_FEUD_RANGE = 220;    // css px — grudges only shove when the flies are this close

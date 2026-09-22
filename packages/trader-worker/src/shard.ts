@@ -31,6 +31,13 @@ import { neuralSnapshotOf } from "./swarm.js";
  *  is stable across schema bumps (renaming it would orphan live shards' state); the payload's `version`
  *  field tracks the schema — v1 genesis-only, v2 adds a hatched fly's genome inside vitals. */
 const KEY_SHARD_POPULATION = "shardPopulation:v1";
+/** v4 schema: ONE key per fly (~0.7 MB each) + a tiny tombstone list, replacing the single ~1.4 MB
+ *  whole-slice blob. Halving the largest single value keeps every write well clear of the Durable Object
+ *  2 MB single-value wall that a full-blob put could brush and time out on. The legacy key above is kept
+ *  only as a read/migration source for shards persisted before v4. */
+const KEY_SHARD_FLY_PREFIX = "shardFly:v1:";
+const KEY_SHARD_META = "shardMeta:v1";
+const flyKey = (id: number) => `${KEY_SHARD_FLY_PREFIX}${id}`;
 
 export class FlyShardDO {
   private state: DurableObjectState;
@@ -44,6 +51,9 @@ export class FlyShardDO {
    *  v3 payload so a cold-boot ensureFlies NEVER resurrects a retired founder from the config genesis seed.
    *  A recycled slot lifts its id back out (a new offspring hatched into it). */
   private retiredIds: Set<number> | null = null;
+  /** True when this shard's brains were loaded from the legacy single-blob key and still need to be
+   *  re-written as per-fly keys (one-time v3→v4 migration on the next persist). */
+  private legacyPending = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -101,8 +111,26 @@ export class FlyShardDO {
    *  Reads the v1 (genesis-only), v2 (adds a hatched genome) and v3 (adds retiredIds tombstones) payloads;
    *  always refreshes this.retiredIds from the stored tombstone list. */
   private async loadArchived(): Promise<Map<number, { brain: string; genome?: Genome }> | null> {
+    // v4: per-fly keys. `list` returns key→value, so one call both detects the schema and reads the brains.
+    const perFly = await this.state.storage.list<string>({ prefix: KEY_SHARD_FLY_PREFIX });
+    if (perFly.size > 0) {
+      const map = new Map<number, { brain: string; genome?: Genome }>();
+      for (const [k, v] of perFly) {
+        const id = Number(k.slice(KEY_SHARD_FLY_PREFIX.length));
+        if (!Number.isInteger(id) || typeof v !== "string") continue;
+        try {
+          const rec = JSON.parse(v);
+          if (typeof rec?.brain === "string") map.set(id, { brain: rec.brain, ...(rec?.genome ? { genome: rec.genome as Genome } : {}) });
+        } catch { /* a torn per-fly value wakes that one brain fresh */ }
+      }
+      const meta = await this.state.storage.get<{ retiredIds?: number[] }>(KEY_SHARD_META);
+      this.retiredIds = new Set((meta?.retiredIds ?? []).map(Number).filter((n) => Number.isInteger(n)));
+      return map.size > 0 ? map : null;
+    }
+    // legacy single-blob (pre-v4): read it, and migrate to per-fly keys on the next persist.
     const stored = await this.state.storage.get<string>(KEY_SHARD_POPULATION);
     if (!stored) { this.retiredIds = new Set(); return null; }
+    this.legacyPending = true;
     try {
       const parsed = JSON.parse(stored);
       const map = new Map<number, { brain: string; genome?: Genome }>();
@@ -128,13 +156,19 @@ export class FlyShardDO {
    *  v3 adds the retiredIds tombstone so a cold boot can't resurrect a retired founder. */
   private async persistFlies(): Promise<void> {
     if (!this.flies) return;
-    const payload = JSON.stringify({
-      version: 3,   // v3 adds the retiredIds tombstone; v2 added a hatched genome; reader tolerates v1/v2
-      shardIndex: this.shardIndex,
-      flies: this.flies.map((f) => ({ vitals: f.vitals, brain: f.brain.serialize() })),
-      retiredIds: Array.from(this.retiredIds ?? []).sort((a, b) => a - b),
-    });
-    await this.state.storage.put(KEY_SHARD_POPULATION, payload);
+    // v4: one value per fly (~0.7 MB) instead of one ~1.4 MB blob for the whole slice — halves the largest
+    // single value this shard ever writes, keeping it well clear of the DO 2 MB wall. Batched in ONE
+    // transaction so a crash can't leave half a slice archived.
+    const writes = new Map<string, string>();
+    for (const f of this.flies) {
+      writes.set(flyKey(f.id), JSON.stringify({ brain: f.brain.serialize(), ...(f.vitals.genome ? { genome: f.vitals.genome } : {}) }));
+    }
+    const ops: Promise<unknown>[] = [
+      this.state.storage.put(Object.fromEntries(writes)),
+      this.state.storage.put(KEY_SHARD_META, { retiredIds: Array.from(this.retiredIds ?? []).sort((a, b) => a - b) }),
+    ];
+    if (this.legacyPending) { ops.push(this.state.storage.delete(KEY_SHARD_POPULATION)); this.legacyPending = false; }
+    await Promise.all(ops);
   }
 
   // ---------- Internal RPC (coordinator → shard only) ----------
@@ -224,6 +258,7 @@ export class FlyShardDO {
     if (i >= 0) flies.splice(i, 1);
     this.retiredIds = this.retiredIds ?? new Set();
     this.retiredIds.add(id);
+    await this.state.storage.delete(flyKey(id));   // drop the retired brain's own value
     await this.persistFlies();
     return json({ ok: true, id, shardIndex: this.shardIndex });
   }
@@ -254,7 +289,9 @@ export class FlyShardDO {
   /** Wipe this shard back to a fresh founding slice (rebuilt deterministically from the seeds). */
   private async reset(): Promise<Response> {
     this.flies = null;
-    await this.state.storage.delete(KEY_SHARD_POPULATION);
+    this.legacyPending = false;
+    const stale = await this.state.storage.list({ prefix: KEY_SHARD_FLY_PREFIX });
+    await this.state.storage.delete([...stale.keys(), KEY_SHARD_META, KEY_SHARD_POPULATION]);
     const flies = await this.ensureFlies();
     await this.persistFlies();
     return json({ ok: true, shardIndex: this.shardIndex, flies: flies.length });

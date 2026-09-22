@@ -540,7 +540,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wr-rep { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 5px; border: 1px solid; border-radius: 2px; white-space: nowrap; }
 .wr-rep.good { color: #3f5a3a; border-color: rgba(63, 90, 58, 0.45); }
 .wr-rep.dead { color: #9c3b2e; border-color: rgba(156, 59, 46, 0.5); }
-.wallets-social { flex: none; max-height: 42%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.wallets-social { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .wsoc-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .wsoc-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .wsoc-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -551,7 +551,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wsoc-head-grudge { margin-top: 8px; font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 1px dashed var(--hair); padding-bottom: 3px; }
 
 /* --- chronicle panel: dynasty (houses of note + monuments) — ink-on-paper, same family as wsoc --- */
-.chron-dynasty { flex: none; max-height: 46%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.chron-dynasty { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .dyn-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .dyn-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .dyn-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -561,7 +561,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .dyn-grave { font-family: var(--mono); font-size: 10.5px; color: rgba(26, 26, 24, 0.66); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 
 /* ⑤ culture (chronicle panel): the passing fashion + the houses holding the old way — mirrors the dynasty block */
-.chron-culture { flex: none; max-height: 30%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.chron-culture { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .cult-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .cult-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .cult-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -569,7 +569,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .cult-row.cult-trend { color: #3f5a3a; }
 .cult-row.cult-trad { color: #5a4a33; }
 /* ⑪ faith membrane (chronicle panel): the reigning god + the ancestor cults and their prophets — mirrors the culture block */
-.chron-religion { flex: none; max-height: 30%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.chron-religion { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .rel-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .rel-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .rel-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -577,7 +577,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .rel-row.rel-reign { color: #7a5c1e; font-weight: 600; }
 .rel-row.rel-sect { color: #5a4a33; }
 /* ⑧ the commons in law — the seated assembly + the two knobs it re-prices (pure read-out of commons.ts) */
-.chron-commons { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.chron-commons { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .com-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .com-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .com-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -590,7 +590,7 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .com-row.com-void-head { color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; font-size: 9px; margin-top: 9px; opacity: 0.72; }
 .com-row.com-voided { color: var(--muted); opacity: 0.5; text-decoration: line-through; text-decoration-color: rgba(120,110,95,0.4); }
 /* ⑨ the war coffer — houses' on-chain vaults, live/just-closed bouts & the extra tax purse (pure read-out of /war) */
-.chron-war { flex: none; max-height: 34%; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.chron-war { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
 .war-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
 .war-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .war-head { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }

@@ -382,22 +382,30 @@ export class ShardedSwarm implements SwarmBackend {
     // a fresh 30 s CPU budget and only integrates ONE sub-tick (simSteps), not the whole cron — which is
     // why sharding also lifts the single-isolate CPU ceiling, not just the 128 MB memory one.
     const body = JSON.stringify({ pulse, stimuli, simSteps, persist: commit });
-    const results = await Promise.all(
-      this.stubs.map((stub) =>
-        stub
-          .fetch(
+    // One misbehaving shard (e.g. its storage write timing out and the DO resetting) must NOT abort the
+    // whole cron: a rejected Promise.all here would skip the coordinator's persist() and freeze lastCron.
+    // So each shard gets ONE bounded retry, then degrades to "no read-outs this sub-tick" — that shard's
+    // flies simply hold still for this cron and catch up on the next, instead of stalling the clock.
+    const advanceOne = async (stub: (typeof this.stubs)[number], k: number): Promise<{ readOuts: FlyReadOut[] }> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const r = await stub.fetch(
             new Request("https://shard.internal/advance", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body,
             }),
-          )
-          .then(async (r) => {
-            if (!r.ok) throw new Error(`shard advance failed: HTTP ${r.status}`);
-            return (await r.json()) as { readOuts: FlyReadOut[] };
-          }),
-      ),
-    );
+          );
+          if (!r.ok) throw new Error(`shard advance failed: HTTP ${r.status}`);
+          return (await r.json()) as { readOuts: FlyReadOut[] };
+        } catch (e) {
+          if (attempt === 0) continue;
+          console.warn(`[swarm] shard ${k} advance failed twice; skipping its read-outs this sub-tick:`, (e as Error).message);
+          return { readOuts: [] };
+        }
+      }
+    };
+    const results = await Promise.all(this.stubs.map((stub, k) => advanceOne(stub, k)));
     const readOuts: FlyReadOut[] = [];
     for (const res of results) readOuts.push(...res.readOuts);
 
