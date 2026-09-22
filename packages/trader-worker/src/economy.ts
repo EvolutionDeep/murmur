@@ -2347,7 +2347,7 @@ export class AgentEconomy {
         if (h) zoneOwners.push({ zone: z, houseId: hid, name: h.name, sigil: h.sigil });
       }
     }
-    return { houses: houses.slice(0, 8), graves, living, dead: this.dead.size, ...(zoneOwners ? { zoneOwners } : {}), ...(war ? { war } : {}) };
+    return { houses: houses.slice(0, 24), graves, living, dead: this.dead.size, ...(zoneOwners ? { zoneOwners } : {}), ...(war ? { war } : {}) };
   }
 
   /**

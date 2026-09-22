@@ -122,3 +122,37 @@ test("commons: read-out is a bounded, pure projection (DO-safe caps, no law leak
     assert.ok(Number.isFinite(s.balanceUsdc) && s.balanceUsdc >= 0, "read-out balances are human USDC, never atomic strings");
   }
 });
+
+test("commons: a re-seat ARCHIVES the outgoing assembly (newest first) WITHOUT changing the live law", () => {
+  const c = new CommonsAssembly(ON);
+  c.convene(1, roster());
+  assert.equal(c.readout().history.length, 0, "a first-ever council has no past");
+  const lawBefore = JSON.stringify(c.effectiveParams());
+  c.convene(2, roster());          // era II seats a successor ⇒ era I is archived
+  const hist = c.readout().history;
+  assert.equal(hist.length, 1, "the superseded era-I assembly is kept as memory");
+  assert.equal(hist[0].era, 1, "archived newest-first, and it is the OUTGOING era that is stored");
+  assert.ok(Array.isArray(hist[0].seats) && hist[0].seats.length > 0, "a voided record keeps its full roster");
+  assert.equal(JSON.stringify(c.effectiveParams()), lawBefore, "archiving history never re-prices the live law");
+});
+
+test("commons: the history ring is bounded (24) and survives an eviction/reload byte-for-byte", () => {
+  const c = new CommonsAssembly(ON);
+  for (let era = 1; era <= 60; era++) c.convene(era, roster(6 + (era % 8)));
+  const hist = c.readout().history;
+  assert.equal(hist.length, 24, "at most 24 past assemblies are retained, newest first");
+  assert.equal(hist[0].era, 59, "the freshest superseded era sits at the front");
+  const blob = c.serialize();
+  const twin = new CommonsAssembly(ON);
+  twin.restore(blob);
+  assert.equal(twin.serialize(), blob, "the history ring round-trips through the DO store");
+  assert.deepEqual(twin.readout().history, hist, "a restored commons remembers the SAME past sessions");
+});
+
+test("commons: an older blob with no history key restores clean (additive field, no forced re-seat)", () => {
+  const legacy = JSON.stringify({ version: 1, era: 7, seats: [{ id: 3, address: "0x0003", balanceAtomic: "9000000", rep: 0.2 }], decrees: [] });
+  const c = new CommonsAssembly(ON);
+  c.restore(legacy);
+  assert.equal(c.size, 1, "the live seats still load from a pre-history payload");
+  assert.deepEqual(c.readout().history, [], "a pre-history blob simply starts the ring empty");
+});

@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=73";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=74";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -3414,6 +3414,38 @@ function renderCommonsSection() {
   eRow.textContent = T("com.eff", { line, rate });
   eRow.title = T("com.effTitle");
   body.appendChild(eRow);
+  // every past assembly, newest first: the law they made was superseded when a newer room took the seats,
+  // so each is shown voided but kept complete — its full roster and its decrees, as memory (bounded to 24).
+  const hist = Array.isArray(c.history) ? c.history : [];
+  if (hist.length) {
+    const hHead = document.createElement("div");
+    hHead.className = "com-row com-void-head";
+    hHead.textContent = T("com.voidHead");
+    body.appendChild(hHead);
+    for (const a of hist) {
+      const hs = Array.isArray(a.seats) ? a.seats : [];
+      const hd = Array.isArray(a.decrees) ? a.decrees : [];
+      const row = document.createElement("div");
+      row.className = "com-row com-voided";
+      row.textContent = T("com.voided", { era: roman(a.era), n: hs.length, d: hd.length });
+      row.title = T("com.voidedTitle");
+      body.appendChild(row);
+      if (hs.length) {
+        const r2 = document.createElement("div");
+        r2.className = "com-row com-roster com-voided";
+        r2.textContent = hs.map((s) => `#${s.id}·${Number(s.balanceUsdc).toFixed(3)}ᵁ·${(Number(s.rep) * 100).toFixed(0)}r`).join("  ");
+        r2.title = T("com.rosterTitle");
+        body.appendChild(r2);
+      }
+      for (const d of hd) {
+        const dr = document.createElement("div");
+        dr.className = "com-row com-decree com-voided";
+        dr.textContent = T("com.decree", { param: label(d.param), val: Number(d.target).toFixed(4), era: roman(d.passedEra) });
+        dr.title = T("com.decreeTitle");
+        body.appendChild(dr);
+      }
+    }
+  }
 }
 
 // ================= ⑨ the war coffer section (in the chronicle panel) =================

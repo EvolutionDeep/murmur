@@ -51,17 +51,28 @@ export interface Decree {
   passedEra: number;
 }
 
+/** A superseded assembly, archived the moment a new era seats its successor. Pure read-out history —
+ *  it never feeds back: effectiveParams() only ever reads the LIVE `decrees`, never this ring. */
+export interface AssemblyRecord {
+  era: number;
+  seats: { id: number; balanceUsdc: number; rep: number }[];   // the room as it was seated that era
+  decrees: Decree[];
+  effective: { creditCapBaseUsdc: number | null; iouRatePer10: number | null };
+}
+
 /** The /economy read-out of the commons (pure; nulls mean "the base config still stands"). */
 export interface CommonsReadout {
   seatedEra: number;                            // the era this assembly was convened for (0 ⇒ never yet)
   seats: { id: number; address: string; balanceUsdc: number; rep: number }[];
   decrees: Decree[];
   effective: { creditCapBaseUsdc: number | null; iouRatePer10: number | null };
+  history: AssemblyRecord[];                    // past assemblies, newest first (voided law), bounded to HISTORY_CAP
 }
 
 const LAW_VERSION = 1;
 const SEAT_CAP = 16;          // hard bound on persisted seats (config clamps the live size lower anyway)
 const DECREE_CAP = 4;         // at most one live decree per knob; a small headroom, never a growth vector
+const HISTORY_CAP = 24;       // past assemblies kept (newest first) so the chronicle can show every voided session
 
 // Salts differ from culture's (0xc0de/0x1cea/…) so a commons ballot can never alias a cultural draw.
 const SEAT_SALT = 0x5ea7;     // tiny jitter that breaks a rank tie between two otherwise-equal flies
@@ -76,6 +87,7 @@ const VOTE_SALT = 0x1707;     // the roll call itself, keyed on (address, era, p
 export class CommonsAssembly {
   private seated: { id: number; address: string; balanceAtomic: string; rep: number }[] = [];
   private decrees: Decree[] = [];
+  private history: AssemblyRecord[] = [];   // past (superseded) assemblies, newest first — read-out only
   private lastConvenedEra = 0;   // 0 ⇒ never convened; the historian's era counter is 1-based
 
   constructor(private readonly cfg: CommonsConfig) {}
@@ -102,6 +114,13 @@ export class CommonsAssembly {
       return 0.5 * standing + 0.5 * stake + hash01(SEAT_SALT, s.id, eraNow) * 1e-9;
     };
     const k = Math.max(2, Math.min(this.cfg.assemblySize, SEAT_CAP, living.length));
+    // ARCHIVE the outgoing assembly (its law is now superseded) before the new room overwrites it, so the
+    // chronicle can show every past session — newest first, hard-capped. Pure read-out: this ring is NEVER
+    // consulted by effectiveParams(), so it cannot change what the commons legislates or how money moves.
+    if (this.lastConvenedEra > 0 && this.seated.length) {
+      this.history.unshift(this.snapshot(this.lastConvenedEra));
+      if (this.history.length > HISTORY_CAP) this.history.length = HISTORY_CAP;
+    }
     this.seated = living
       .map((s) => ({ s, score: seatScore(s) }))
       .sort((a, b) => b.score - a.score || a.s.id - b.s.id)
@@ -178,6 +197,19 @@ export class CommonsAssembly {
     return out;
   }
 
+  /** A frozen snapshot of the CURRENT (about-to-be-replaced) assembly, for the history ring. Called from
+   *  convene() BEFORE the new room overwrites `seated`/`decrees`, so effectiveParams() still reads the
+   *  outgoing law — the snapshot captures the law that era actually left in force. */
+  private snapshot(era: number): AssemblyRecord {
+    const eff = this.effectiveParams();
+    return {
+      era,
+      seats: this.seated.slice(0, SEAT_CAP).map((s) => ({ id: s.id, balanceUsdc: round6(Number(s.balanceAtomic) / 1e6), rep: s.rep })),
+      decrees: this.decrees.slice(0, DECREE_CAP).map((d) => ({ ...d })),
+      effective: { creditCapBaseUsdc: eff.creditCapBaseUsdc, iouRatePer10: eff.iouRatePer10 },
+    };
+  }
+
   /** Bounded read-out for /economy (never the source of truth — a pure projection of the fields above). */
   readout(): CommonsReadout {
     const eff = this.effectiveParams();
@@ -188,6 +220,7 @@ export class CommonsAssembly {
       })),
       decrees: this.decrees.slice(0, DECREE_CAP),
       effective: eff,
+      history: this.history.slice(0, HISTORY_CAP),
     };
   }
 
@@ -200,6 +233,7 @@ export class CommonsAssembly {
       era: this.lastConvenedEra,
       seats: this.seated.slice(0, SEAT_CAP),
       decrees: this.decrees.slice(0, DECREE_CAP),
+      history: this.history.slice(0, HISTORY_CAP),
     });
   }
 
@@ -207,6 +241,7 @@ export class CommonsAssembly {
   restore(data?: string): void {
     this.seated = [];
     this.decrees = [];
+    this.history = [];
     this.lastConvenedEra = 0;
     if (!data) return;
     try {
@@ -232,9 +267,34 @@ export class CommonsAssembly {
           this.decrees.push({ param: d.param, target: Number(d.target), passedEra: Number(d.passedEra) });
         }
       }
+      // history is ADDITIVE: an older blob has no `history` key ⇒ the ring simply starts empty and refills
+      // as future eras seat successors. LAW_VERSION stays 1, so restoring never forces a re-seat.
+      if (Array.isArray(p.history)) {
+        for (const h of p.history) {
+          if (!h || !Number.isInteger(h.era)) continue;
+          if (this.history.length >= HISTORY_CAP) break;
+          const seats = Array.isArray(h.seats)
+            ? h.seats.filter((s: Record<string, unknown>) => s && Number.isInteger(s.id)).slice(0, SEAT_CAP)
+                .map((s: Record<string, unknown>) => ({ id: Number(s.id), balanceUsdc: Number(s.balanceUsdc) || 0, rep: Number.isFinite(Number(s.rep)) ? Number(s.rep) : 0 }))
+            : [];
+          const decs = Array.isArray(h.decrees)
+            ? h.decrees.filter((d: Record<string, unknown>) => d && (d.param === "creditCap" || d.param === "iouRate") && Number.isFinite(Number(d.target))).slice(0, DECREE_CAP)
+                .map((d: Record<string, unknown>) => ({ param: d.param as LawParam, target: Number(d.target), passedEra: Number.isInteger(Number(d.passedEra)) ? Number(d.passedEra) : Number(h.era) }))
+            : [];
+          const he = (h.effective && typeof h.effective === "object") ? h.effective as Record<string, unknown> : {};
+          this.history.push({
+            era: h.era, seats, decrees: decs,
+            effective: {
+              creditCapBaseUsdc: he.creditCapBaseUsdc != null ? Number(he.creditCapBaseUsdc) : null,
+              iouRatePer10: he.iouRatePer10 != null ? Number(he.iouRatePer10) : null,
+            },
+          });
+        }
+      }
     } catch {
       this.seated = [];
       this.decrees = [];
+      this.history = [];
       this.lastConvenedEra = 0;
     }
   }
