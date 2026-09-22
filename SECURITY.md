@@ -14,7 +14,9 @@ The **repository itself ships no secret** — a fresh checkout with no `ECONOMY_
 Use a private channel instead:
 
 1. **Preferred:** GitHub → *Security* tab → **“Report a vulnerability”** (private vulnerability reporting).
-2. **Alternatively:** contact a maintainer privately (see the repository's *About* / maintainer profile).
+2. **Alternatively:** email a maintainer at the public address listed on the repository's *About* / GitHub profile
+   (please include “murmur security” in the subject so it isn’t missed).
+3. As a last resort, reach a maintainer privately via the repository's *About* / maintainer profile.
 
 Include as much detail as you can: the affected component (`fly-brain`, `trader-worker`, `frontend`, `x402`,
 `keys`), steps or a PoC, and the impact. We will acknowledge receipt as quickly as we can and aim to give you an
@@ -64,6 +66,45 @@ See [docs/AGENT-ECONOMY.md](./docs/AGENT-ECONOMY.md) for the full model.
 2. Move any remaining USDC out of the derived agent/facilitator addresses to a fresh wallet.
 3. Rotate: generate a **new** mnemonic, `wrangler secret put ECONOMY_MNEMONIC`, re-derive/re-fund, and only then
    re-enable. Never reuse a compromised seed.
+
+---
+
+## Independent verification & audit status
+
+**Honest state:** murmur has **not** yet been reviewed by an external professional auditing firm, and there is no
+third-party report we can point to. We are actively seeking one. In the meantime we are building trust through
+*provable transparency* rather than authority — the system is designed so **you can verify it yourself**, without
+trusting us:
+
+- **Deterministic, keyless verification.** The public read-only API ([`/openapi.json`](https://api.muros.live/openapi.json),
+  docs at [muros.live/developers](https://muros.live/developers)) is a live window into the economy — no key required.
+- **Provably-not-an-LLM chronicle.** Every history line is rendered from a public template and folded into a
+  SHA-256 hash chain; the rule-set has a single fingerprint (`chroniclerHash`, served on `/annals`) that your browser
+  re-derives. Any tampering breaks the chain or the fingerprint.
+- **On-chain, non-custodial money flow.** All value movement is EIP-3009 USDC on **Arc mainnet (chainId 5042)**.
+  The contracts holding/deciding funds are immutable and public — read them directly, no operator trust:
+
+  | Contract | Address (Arc mainnet) | Role |
+  |---|---|---|
+  | USDC (native) | `0x3600000000000000000000000000000000000000` | settlement asset |
+  | WarCoffer | `0x3d900b8d1d48b46fc18a3f57dfd15a4a28bb454b` | escrows war stakes; winner computed on-chain |
+  | NeuralReceiptRegistry | `0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815` | on-chain receipt hash-chain head |
+  | NeuralManifestRegistry | `0x3412eb909252adb983aaf793f97a3754ca029a37` | commits each brain manifest |
+  | ConnectomeLineage | `0x482b7a3bbef796c9627d86d5a23c67728a78096f` | on-chain family tree |
+
+  Reproduce a balance or a settlement independently, e.g.:
+
+  ```bash
+  cast call 0x3d900b8d1d48b46fc18a3f57dfd15a4a28bb454b "warCount()(uint256)" --rpc-url https://rpc.mainnet.arc.io
+  cast call 0x94d0c38bcc9957eaf8f318e6bbc6557f8cc3c815 "chainHead()(bytes32)" --rpc-url https://rpc.mainnet.arc.io
+  ```
+
+  The Worker’s `/proofs/verify` endpoint reports whether its head matches the on-chain registry head and tx.
+- **In-repo assurance.** 372 unit tests (behavioural, chain-free) + Foundry unit/fuzz invariants under
+  `packages/trader-worker/contracts`, run by CI on every push.
+
+If you have run — or want to run — an independent audit or a reproduction of the on-chain flows, we would welcome
+it: open a private report (above) or reach out for credit.
 
 ---
 

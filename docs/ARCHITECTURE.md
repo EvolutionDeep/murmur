@@ -136,7 +136,7 @@ never stall the tab. If the Worker is unreachable, an offline circuit-breaker ru
 Four CI gates run on every push/PR, all keyless and chain-free: `typecheck → test → build → smoke`.
 
 ```bash
-npm test          # 357 unit tests across the three packages (node:test, run via tsx)
+npm test          # 372 unit tests across the three packages (node:test, run via tsx)
 npm run smoke     # end-to-end neural smoke: grow brains, spike, decode, settle
 ```
 

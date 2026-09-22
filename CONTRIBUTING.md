@@ -13,7 +13,7 @@ funds** on Arc — [SECURITY.md](./SECURITY.md).
 
 ```bash
 npm install                 # Node >= 20, npm workspaces
-npm test                    # 357 unit tests — connectome · LIF · motor decoder · economy · x402 · arc-circle client (no chain, no keys)
+npm test                    # 372 unit tests — connectome · LIF · motor decoder · economy · x402 · arc-circle client (no chain, no keys)
 npm run smoke               # neural smoke test — no chain, no keys
 npm run dev:worker          # local Worker → http://localhost:8787/health
 ```
@@ -45,7 +45,7 @@ the piece. (The committed *production* config is LIVE and moves real USDC — se
 
    ```bash
    npm run typecheck     # tsc --noEmit for fly-brain + trader-worker + arc-circle-x402 (must be clean)
-   npm test              # 357 unit tests (must pass)
+   npm test              # 372 unit tests (must pass)
    npm run smoke         # neural smoke test (must pass)
    npm run build         # workspace builds where present
    ```
@@ -72,6 +72,29 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `f
   without understanding [docs/NEURAL-SIM.md](./docs/NEURAL-SIM.md#the-lif-network-and-the-winner-take-all-latch).
 - **Keep the frontend smooth.** Per-frame canvas work and click-driven network calls are the historic source of
   jank; heavy visuals are offscreen-cached and polled behind guards. Follow that pattern.
+
+---
+
+## Maintainers & project continuity
+
+Today murmur is effectively a **single-maintainer project** (one primary author) — which means its *bus factor is 1*.
+We are explicit about that risk and about how we are reducing it:
+
+- **Everything needed to run the system is written down, not held in one head.** Setup is in this file, production
+  operation in [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md), the money-handling model and the real-money go-live
+  runbook in [docs/AGENT-ECONOMY.md](./docs/AGENT-ECONOMY.md), key rotation and incident response in
+  [SECURITY.md](./SECURITY.md). A new operator can be brought up from these documents alone.
+- **No hidden state.** The whole system is deterministic and reproducible from a fresh clone: it is keyless by
+  default (no secret ⇒ simulated ledger, nothing moves), tests/CI are chain-free, and the production rules have a
+  public fingerprint. The history of *why* things are the way they are lives in git, [CHANGELOG.md](./CHANGELOG.md)
+  and the comment-dense code — not in private notes.
+- **We want more maintainers.** Contributions that add depth here are valued as much as code: reviews, tests,
+  the external audit we are seeking (see [SECURITY.md](./SECURITY.md#independent-verification--audit-status)),
+  docs, and operational runbooks. Regular, high-quality contributors will be offered commit access; ownership is
+  meant to spread, not stay concentrated. If you are interested, open an issue or email a maintainer.
+
+Until then: assume review by the current maintainer for any change to `main`, and treat the real-money rails and
+secret handling as requiring explicit operator sign-off (see ground rules above).
 
 ---
 

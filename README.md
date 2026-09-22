@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![CI](https://img.shields.io/badge/CI-typecheck%20%2B%20test%20%2B%20build%20%2B%20smoke-2ea44f)](./.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
+[![Tests](https://img.shields.io/badge/tests-372%20passing-brightgreen)](./docs/ARCHITECTURE.md#testing)
 
 </div>
 
@@ -157,7 +157,7 @@ docs/
 ## Testing
 
 CI runs four gates, all keyless and chain-free (`npm run typecheck && npm test && npm run build && npm run smoke`).
-The **357 unit tests** (47 in `fly-brain`, 286 in `trader-worker`, 24 in `arc-circle-x402`) are real behavioural assertions, not a smoke stub.
+The **372 unit tests** (47 in `fly-brain`, 301 in `trader-worker`, 24 in `arc-circle-x402`) are real behavioural assertions, not a smoke stub.
 Key suites:
 
 ```bash

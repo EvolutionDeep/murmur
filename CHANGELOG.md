@@ -8,6 +8,12 @@ All notable changes to **murmur** are documented in this file. The format is bas
 > into an **agent economy on Arc** that now settles **real USDC on mainnet**. The legacy trading stack was removed
 > wholesale; see `0.2.0` below, and `[Unreleased]` for the go-live.
 
+> **Current live numbers — single source of truth.** Each fly runs a **10,800-neuron** production LIF connectome
+> (the `@fly/fly-brain` library *default* is 1,080; production overrides it via `BRAIN_N_*`). The population
+> **founds at 24 and breeds live toward a 48 cap** (`EVOLUTION_MAX_LIVE_POPULATION`) — 24 is genesis, not a fixed
+> cast. **372 unit tests** pass (47 `fly-brain` + 301 `trader-worker` + 24 `arc-circle-x402`). The dated entries
+> below are historical snapshots and legitimately reflect the smaller values of their own release.
+
 ## [Unreleased]
 
 ### Added
