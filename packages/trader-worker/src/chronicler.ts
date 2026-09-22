@@ -38,6 +38,7 @@ export const GENESIS_HASH = "0".repeat(64);
 export type ChronicleKind =
   | "ERA_OPEN"
   | "ERA_SHIFT"
+  | "ERA_PASSAGE"
   | "EPOCH_OPEN"
   | "EPOCH_CLOSE"
   | "FIRST_TRADE"
@@ -297,12 +298,17 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
 const ERA_MIN_RUN = 6;
 const ERA_MIN_AGE = 8;
+// The swarm's own slow calendar: even with no regime turn, an age is remembered as PASSING once it has run
+// this many crons (60 = ~1h at 1 cron/min). Time-slice turnover — keeps the era (and the commons that convenes
+// per era) moving on a human clock without faking a season change (a distinct, honest ERA_PASSAGE line).
+const ERA_MAX_AGE_CRONS = 60;
 
 /** The narrative templates. `{key}` inserts tokens[key]; `{key~roman}` / `{key~kth}` / `{key~lower}` apply a
  *  tiny, fully-deterministic formatter (see renderToken). This exact map is shipped to the browser verbatim. */
 export const TEMPLATES: Record<ChronicleKind, string> = {
   ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds tend the swarm on the Arc market, and the chronicle opens.",
   ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
+  ERA_PASSAGE: "Era {era~roman} · {eraName} turns over — an age of the {regime~lower} middle, measured by the swarm's own slow clock.",
   EPOCH_CLOSE: "And so closes Era {era~roman} · {eraName} — its {span} crons fold into the record, an age cut short by upheaval.",
   EPOCH_OPEN: "Era {era~roman} · {eraName} — {sign} falls upon the swarm{willed}. A new age, compelled by shock.",
   FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
@@ -391,6 +397,7 @@ export function chroniclerRulesHash(): Promise<string> {
     cooldown: COOLDOWN,
     eraMinRun: ERA_MIN_RUN,
     eraMinAge: ERA_MIN_AGE,
+    eraMaxAge: ERA_MAX_AGE_CRONS,
     shockNames: SHOCK_NAMES,
     shockCooldown: SHOCK_COOLDOWN,
     famineCrons: FAMINE_CRONS,
@@ -499,6 +506,7 @@ export class Chronicler {
         await this.applyShock(ctx, shock, !!ctx.governanceShock, out);
       } else {
         const eraAge = ctx.tick - s.eraStartTick;
+        const cronAge = s.cronSeen - s.eraStartCron;
         if (ctx.regime !== s.eraRegime && s.regimeRun >= ERA_MIN_RUN && eraAge >= ERA_MIN_AGE) {
           s.era += 1;
           s.eraRegime = ctx.regime;
@@ -510,6 +518,19 @@ export class Chronicler {
           // avoid ever repeating the exact same title back-to-back
           s.eraName = pick === s.eraName ? pool[s.era % pool.length] : pick;
           out.push(await this.emit(ctx, "ERA_SHIFT", 3, [],
+            { era: s.era, eraName: s.eraName, regime: ctx.regime, temperature: round(ctx.temperature) },
+            { era: s.era, temperature: round(ctx.temperature) }));
+        } else if (cronAge >= ERA_MAX_AGE_CRONS && !s.eraShock) {
+          // TIME-SLICE ERA: the season never turned and no shock forced it, but the age has simply run its
+          // course on the swarm's own clock — the calendar rolls one hour older. Honest passage of time.
+          s.era += 1;
+          s.eraRegime = ctx.regime;
+          s.eraStartTick = ctx.tick;
+          s.eraStartCron = s.cronSeen;
+          const pool = ERA_NAMES[ctx.regime];
+          const pick = pool[(s.era - 1) % pool.length];
+          s.eraName = pick === s.eraName ? pool[s.era % pool.length] : pick;
+          out.push(await this.emit(ctx, "ERA_PASSAGE", 2, [],
             { era: s.era, eraName: s.eraName, regime: ctx.regime, temperature: round(ctx.temperature) },
             { era: s.era, temperature: round(ctx.temperature) }));
         }

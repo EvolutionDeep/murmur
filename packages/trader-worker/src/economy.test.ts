@@ -1066,8 +1066,9 @@ test("conflict ON (all four armed): the whole layer is deterministic and mints n
 
 test("houseFeuds blend: a diluted cluster of deep grudges stays above -0.6 on the pure mean but crosses it once weighted", () => {
   // Build a real two-house economy, then hand-craft its social memory so the SAME pair (2,5) carries eight
-  // cross-house bonds: three at the deepest -1 and five friendly +0.05. This is the exact dilution that kept
-  // the pure mean from ever surfacing a war — no loop needed, we drive the aggregation directly.
+  // cross-house bonds: three at the deepest -1, two at -0.5 and three friendly +0.2 — a cluster that runs FIVE
+  // bonds deep, since FEUD_WORST_K=5 now averages the five worst bonds (was three) into the blend. This is the
+  // exact dilution that kept the pure mean from ever surfacing a war — no loop needed, we drive the aggregation directly.
   const base = new AgentEconomy(cfg({ dynasty: {} }));
   void base.step(population("AGITATE"), collective(0.8), 5);
   base.noteHatch(2, 10, HASH_A);                                    // house 2 ⇒ members {2,10}
@@ -1076,16 +1077,16 @@ test("houseFeuds blend: a diluted cluster of deep grudges stays above -0.6 on th
   const fr = { trades: 0, lastTick: 0 };
   p.social = {
     mem: [
-      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
-      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
-      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: 0.05, ...fr }] },
-      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.05, ...fr }, { other: 10, score: 0.05, ...fr }] },
+      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: -0.5, ...fr }] },
+      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.2, ...fr }] },
+      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: -0.5, ...fr }] },
+      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.2, ...fr }, { other: 10, score: 0.2, ...fr }] },
     ],
     grudges: [],
   };
   const blob = JSON.stringify(p);
 
-  // mean = (3×-1 + 5×0.05)/8 = -0.34375 (diluted, above the -0.6 line); blend=1 ⇒ worst-3 mean = -1.
+  // mean = (3×-1 + 2×-0.5 + 3×0.2)/8 = -0.425 (diluted, above the -0.6 line); blend=1 ⇒ worst-5 mean = -0.8.
   const meanEcon = new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { feudBlend: 0 }) }), blob);
   const blendEcon = new AgentEconomy(cfg({ dynasty: {}, conflict: conflict(true, { feudBlend: 1 }) }), blob);
 

@@ -500,10 +500,13 @@ const KEY_VERSION = "economy:v1";
 const RECENT_CAP = 48;
 // --- social-memory tuning (all deterministic; sizes are hard caps so DO storage stays bounded) ---
 const BOND_TOP_K = 8;                    // directed bonds remembered per agent (top-K by |score|/trades)
-const BOND_HALF_LIFE = 30000;            // sub-ticks until an untouched bond fades to half (~28h)
+const BOND_HALF_LIFE = 30000;            // sub-ticks until an untouched POSITIVE bond fades to half (~28h)
+// Grudges outlast favours: a negative bond heals on a ~3x slower clock, so a wound is remembered far longer
+// than a deal is. Asymmetric memory — a society lets a kindness go sooner than a betrayal.
+const BOND_WOUND_HALF_LIFE = 90000;      // sub-ticks until an untouched NEGATIVE bond fades to half (~83h)
 const REP_HALF_LIFE = 60000;             // reputation forgets slower than a single bond (~56h)
 const GRUDGE_CAP = 24;                   // grudge book ring size
-const BOND_TRADE_STEP = 0.08;            // trust earned per settled deal
+const BOND_TRADE_STEP = 0.03;            // trust earned per settled deal (0.08→0.03: friendly trades no longer flood out accumulating grudges)
 const BOND_BETRAY_STEP = 0.55;           // grudge taken by the stiffed seller
 const REP_KEEP_STEP = 0.05;              // reputation for paying/delivering as promised
 const REP_BETRAY_STEP = 0.35;            // reputation lost when defaulting (simulated stiff)
@@ -511,7 +514,7 @@ const REP_FAIL_STEP = 0.1;               // reputation lost on an onchain failed
 const BOND_BLACKLIST = -0.6;             // bond at or below this ⇒ flat-out refusal ("never trade with #N")
 const ALLIANCE_MIN_TRADES = 8;           // a partnership is only chronicle-worthy once seasoned
 const PICK_CANDIDATES = 5;               // pool size re-weighted inside the neural span
-const FEUD_WORST_K = 3;                  // houseFeuds blend: how many of a pair's deepest bonds the "worst mean" averages
+const FEUD_WORST_K = 5;                  // houseFeuds blend: how many of a pair's deepest bonds the "worst mean" averages (3→5: a broader grudge cluster can tip a house feud)
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
 // --- dynasty tuning (all deterministic; every collection is a hard cap so DO storage stays bounded) ---
@@ -1195,6 +1198,12 @@ export class AgentEconomy {
 
   private static clampSigned(x: number): number { return x < -1 ? -1 : x > 1 ? 1 : x; }
 
+  /** A bond forgets on TWO clocks: a positive (trust) fades on BOND_HALF_LIFE, a negative (grudge) on the
+   *  slower BOND_WOUND_HALF_LIFE — wounds outlast favours. Callers pass the raw stored score; the sign picks. */
+  private static fadeBond(value: number, lastTick: number, tick: number): number {
+    return AgentEconomy.fade(value, lastTick, tick, value < 0 ? BOND_WOUND_HALF_LIFE : BOND_HALF_LIFE);
+  }
+
   /** Fetch (creating on first touch) one agent's social-memory record. */
   private memOf(id: number): AgentSocial {
     let m = this.social.get(id);
@@ -1205,7 +1214,7 @@ export class AgentEconomy {
   /** The bond `id` currently holds toward `other` at `tick` (−1 grudge .. +1 old partner; 0 = no past). */
   private effectiveBond(id: number, other: number, tick: number): number {
     const b = this.social.get(id)?.bonds.find((x) => x.other === other);
-    return b ? AgentEconomy.clampSigned(AgentEconomy.fade(b.score, b.lastTick, tick, BOND_HALF_LIFE)) : 0;
+    return b ? AgentEconomy.clampSigned(AgentEconomy.fadeBond(b.score, b.lastTick, tick)) : 0;
   }
 
   /** The reputation `id` currently carries at `tick` (decays with silence — forgotten either way). */
@@ -1219,7 +1228,7 @@ export class AgentEconomy {
     const m = this.memOf(a);
     let bond = m.bonds.find((x) => x.other === b);
     if (!bond) { bond = { other: b, score: 0, trades: 0, lastTick: tick }; m.bonds.push(bond); }
-    bond.score = AgentEconomy.clampSigned(AgentEconomy.fade(bond.score, bond.lastTick, tick, BOND_HALF_LIFE) + delta);
+    bond.score = AgentEconomy.clampSigned(AgentEconomy.fadeBond(bond.score, bond.lastTick, tick) + delta);
     if (traded) bond.trades++;
     bond.lastTick = tick;
     if (m.bonds.length > BOND_TOP_K) {
@@ -1276,7 +1285,7 @@ export class AgentEconomy {
         rep.push({ id, score: Math.round(score * 1000) / 1000, kept: m.kept, broken: m.broken });
       }
       for (const b of m.bonds) {
-        const s = AgentEconomy.clampSigned(AgentEconomy.fade(b.score, b.lastTick, tick, BOND_HALF_LIFE));
+        const s = AgentEconomy.clampSigned(AgentEconomy.fadeBond(b.score, b.lastTick, tick));
         if (Math.abs(s) >= 0.02) bonds.push({ a: id, b: b.other, score: Math.round(s * 1000) / 1000, trades: b.trades });
       }
     }

@@ -277,8 +277,9 @@ test("pairKey is order-independent", () => {
 });
 
 test("the conflict blend aggregation unblocks feudPairs: a diluted cluster of grudges is war once weighted, not on the pure mean", () => {
-  // Two houses with real (positive) vaults, plus a HAND-CRAFTED cross-house bond cluster: three -1 grudges
-  // diluted by five +0.05 friendly bonds. This is the exact shape that kept a war from ever surfacing while
+  // Two houses with real (positive) vaults, plus a HAND-CRAFTED cross-house bond cluster: three -1 grudges and
+  // two -0.5 grudges diluted by three +0.2 friendly bonds — a cluster five bonds deep, since FEUD_WORST_K=5 now
+  // averages the five worst (was three). This is the exact shape that kept a war from ever surfacing while
   // houseFeuds was a pure mean — the ONLY thing that changes the outcome is the feudBlend aggregation.
   const base = new AgentEconomy(econCfg({ dynasty: {} }));
   base.noteHatch(2, 10, HASH_A);
@@ -289,10 +290,10 @@ test("the conflict blend aggregation unblocks feudPairs: a diluted cluster of gr
   const fr = { trades: 0, lastTick: 0 };
   p.social = {
     mem: [
-      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
-      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.05, ...fr }] },
-      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: 0.05, ...fr }] },
-      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.05, ...fr }, { other: 10, score: 0.05, ...fr }] },
+      { id: 2, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: -0.5, ...fr }] },
+      { id: 10, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 5, score: -1, ...fr }, { other: 15, score: 0.2, ...fr }] },
+      { id: 5, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: -1, ...fr }, { other: 10, score: -0.5, ...fr }] },
+      { id: 15, rep: 0, repTick: 0, kept: 0, broken: 0, bonds: [{ other: 2, score: 0.2, ...fr }, { other: 10, score: 0.2, ...fr }] },
     ],
     grudges: [],
   };

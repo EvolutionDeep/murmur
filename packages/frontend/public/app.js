@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=66";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=67";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -322,7 +322,7 @@ let histRows = [];            // ascending by tick: {tick, ts, temperature, regi
 let histSummary = null;       // {ticks, firstTick, lastTick, firstTs, lastTs, settlements, volumeUsdc}
 let histEnabled = false;      // false until /history reports a bound D1
 let historyOpen = false;      // right-side "swarm history" drawer
-const HIST_POLL_MS = 60000;   // the archive advances ~1×/min, so a 60s poll matches its true cadence
+const HIST_POLL_MS = 300000;  // the /history "since launch" aggregate is now a cheap DO-cached summary, but the underlying rows only add ~1×/min — a 5-min poll keeps the ribbon fresh while cutting the (paginated) history query 5×
 // Client-side netting surfacing (this session): how many per-trade placeholders we saw fold into nets, and
 // how many netted settlements actually reached the chain — a live read-out of the gas-amortisation upgrade.
 const netting = { folded: 0, settled: 0 };
@@ -3363,7 +3363,7 @@ function chronTimeAgo(ts) {
 }
 
 const CHRON_ICONS = {
-  ERA_OPEN: "✦", ERA_SHIFT: "✧", FIRST_TRADE: "⚡", MILESTONE: "◆",
+  ERA_OPEN: "✦", ERA_SHIFT: "✧", ERA_PASSAGE: "⧖", FIRST_TRADE: "⚡", MILESTONE: "◆",
   BIRTH: "✿", PANIC: "⚡", STORM: "☀", HUDDLE: "❄", FEAST: "✿",
   RECORD_CONC: "⚖", LEAD_CHANGE: "♛",
   FEUD: "⚔", ALLIANCE: "❖", BETRAYAL: "✕", REPUTATION: "☠",
@@ -3461,9 +3461,11 @@ const CHRON_ = {
   genesis: "0".repeat(64),
   eraMinRun: 6,
   eraMinAge: 8,
+  eraMaxAge: 60,
   templates: {
     ERA_OPEN: "Era {era~roman} · {eraName} — {size} minds tend the swarm on the Arc market, and the chronicle opens.",
     ERA_SHIFT: "Era {era~roman} · {eraName} dawns — the market has turned {regime~lower} and held it. An age begins.",
+    ERA_PASSAGE: "Era {era~roman} · {eraName} turns over — an age of the {regime~lower} middle, measured by the swarm's own slow clock.",
     FIRST_TRADE: "The first exchange settles on-chain — agents trade real USDC for the first time across {liveAgents} wallets. A swarm becomes a market.",
     MILESTONE: "Milestone — the ledger records its {settlements~kth} verifiable exchange. {settlements} settlements, {volumeUsdc} USDC moved.",
     BIRTH: "A new generation hatches into the live swarm — it now numbers {size} minds, a record for the species.",
@@ -3544,6 +3546,7 @@ async function chronRulesHash() {
   return sha256HexClient({
     v: CHRON_.version, templates: CHRON_.templates, eraNames: CHRON_.eraNames,
     cooldown: CHRON_.cooldown, eraMinRun: CHRON_.eraMinRun, eraMinAge: CHRON_.eraMinAge,
+    eraMaxAge: CHRON_.eraMaxAge,
     shockNames: CHRON_.shockNames, shockCooldown: CHRON_.shockCooldown,
     famineCrons: CHRON_.famineCrons, famineRichness: CHRON_.famineRichness,
     plageraDeaths: CHRON_.plageraDeaths, greatHuddleCrons: CHRON_.greatHuddleCrons,

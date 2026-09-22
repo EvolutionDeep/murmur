@@ -102,6 +102,20 @@ const KEY_CHRONICLER = "chronicler:v3";
 const KEY_ANNALS = "annals:v3";
 /** How many recent chronicle entries to keep hot in the DO (and serve from /annals) — bounded, DO-safe. */
 const ANNALS_CAP = 300;
+/** Cached /history aggregate (see bumpHistSummary/getHistory): a monotonic running summary kept in the DO so
+ *  the history ribbon never has to scan the whole ticks table again. Seeded once from a full aggregate on cold
+ *  start, then maintained incrementally per archived tick. Independent of economy state — a /reset that keeps the
+ *  D1 archive leaves it valid (the rows it counts are still there). */
+const KEY_HIST_SUMMARY = "histSummary:v1";
+interface HistSummary {
+  n: number;
+  firstTick: number | null;
+  lastTick: number | null;
+  firstTs: number | null;
+  lastTs: number | null;
+  settlements: number | null;   // lifetime cumulative (monotonic ⇒ running MAX)
+  volumeUsdc: number | null;    // lifetime cumulative (monotonic ⇒ running MAX)
+}
 
 /** Lifetime stats for the paid x402 "Arc Pulse" signal product (persisted across evictions). */
 interface PulseSales {
@@ -196,6 +210,8 @@ export class FlyStateDO {
   /** The deterministic historian (era/record trackers) + its hot recent-chronicle buffer, lazily loaded. */
   private chronicler: Chronicler | null = null;
   private annals: ChronicleEntry[] = [];
+  /** Cached /history running summary (see KEY_HIST_SUMMARY); null until loaded/seeded from DO storage. */
+  private histSummary: HistSummary | null = null;
   /** Set once the D1 chronicle table has been ensured this DO lifetime. */
   private d1ChronicleReady = false;
   /** Cached sha256 of the historian's deterministic rule-set (a pure function of the source tables). */
@@ -988,6 +1004,7 @@ export class FlyStateDO {
     if (!db) return;   // D1 not bound (local dev / older deploy) — archival is strictly optional
     try {
       await this.ensureD1Schema(db);
+      const ts = Date.now();
       const states = snapshot?.collective.states ?? null;
       let topState: string | null = null;
       if (states) {
@@ -1004,7 +1021,7 @@ export class FlyStateDO {
         )
         .bind(
           tick,
-          Date.now(),
+          ts,
           temperature,
           regime,
           snapshot?.collective.size ?? null,
@@ -1016,9 +1033,67 @@ export class FlyStateDO {
           states ? JSON.stringify(states) : null,
         )
         .run();
+      // Fold this just-written row into the running /history summary — incremental, so the endpoint never
+      // re-scans the whole ticks table. Swallowed with the archive itself (a summary miss is non-fatal).
+      await this.bumpHistSummary(db, {
+        tick,
+        ts,
+        settlements: totals?.count ?? null,
+        volumeUsdc: totals?.volumeUsdc ?? null,
+      });
     } catch (e) {
       console.warn("[DO] D1 archive failed (non-fatal):", (e as Error).message);
     }
+  }
+
+  /** Load the cached /history summary from DO storage, or seed it ONCE from a full-table aggregate when the DO
+   *  has none (a fresh isolate over an existing archive). After this, getHistory reads it straight from memory —
+   *  the per-request full-table scan is gone. */
+  private async ensureHistSummary(db: D1Database): Promise<HistSummary> {
+    if (this.histSummary) return this.histSummary;
+    const stored = await this.state.storage.get<HistSummary>(KEY_HIST_SUMMARY);
+    if (stored && typeof stored.n === "number") { this.histSummary = stored; return stored; }
+    const agg = await db
+      .prepare(
+        `SELECT COUNT(*) AS n, MIN(tick) AS firstTick, MAX(tick) AS lastTick, MIN(ts) AS firstTs,
+                MAX(ts) AS lastTs, MAX(settlements) AS settlements, MAX(volume_usdc) AS volumeUsdc FROM ticks`,
+      )
+      .all();
+    const a: any = (agg.results ?? [])[0] ?? {};
+    const seeded: HistSummary = {
+      n: Number(a.n ?? 0),
+      firstTick: a.firstTick ?? null,
+      lastTick: a.lastTick ?? null,
+      firstTs: a.firstTs ?? null,
+      lastTs: a.lastTs ?? null,
+      settlements: a.settlements ?? null,
+      volumeUsdc: a.volumeUsdc ?? null,
+    };
+    this.histSummary = seeded;
+    await this.state.storage.put(KEY_HIST_SUMMARY, seeded).catch(() => {});
+    return seeded;
+  }
+
+  /** Fold one archived row into the running summary. ticks rise monotonically, so a tick > lastTick is a new
+   *  record (count++, advance last/first anchors); a tick == lastTick is an INSERT OR REPLACE rewrite of the
+   *  newest row (refresh lifetime MAXes, never double-count). */
+  private async bumpHistSummary(
+    db: D1Database,
+    row: { tick: number; ts: number; settlements: number | null; volumeUsdc: number | null },
+  ): Promise<void> {
+    const s = await this.ensureHistSummary(db);
+    if (s.lastTick == null || row.tick > s.lastTick) {
+      s.n += 1;
+      s.lastTick = row.tick;
+      s.lastTs = row.ts;
+      if (s.firstTick == null) { s.firstTick = row.tick; s.firstTs = row.ts; }
+    } else if (row.tick === s.lastTick) {
+      s.lastTs = Math.max(s.lastTs ?? row.ts, row.ts);
+    }
+    if (s.firstTick == null || row.tick < s.firstTick) { s.firstTick = row.tick; s.firstTs = row.ts; }
+    if (row.settlements != null) s.settlements = s.settlements == null ? row.settlements : Math.max(s.settlements, row.settlements);
+    if (row.volumeUsdc != null) s.volumeUsdc = s.volumeUsdc == null ? row.volumeUsdc : Math.max(s.volumeUsdc, row.volumeUsdc);
+    await this.state.storage.put(KEY_HIST_SUMMARY, s).catch(() => {});
   }
 
   // ---------- the chronicle (a deterministic historian over the same read-out the economy uses) ----------
@@ -2475,26 +2550,21 @@ export class FlyStateDO {
       const page = hasBefore
         ? await db.prepare(`SELECT ${COLS} FROM ticks WHERE tick < ? ORDER BY tick ${order} LIMIT ?`).bind(Number(beforeRaw), limit).all()
         : await db.prepare(`SELECT ${COLS} FROM ticks ORDER BY tick ${order} LIMIT ?`).bind(limit).all();
-      const agg = await db
-        .prepare(
-          `SELECT COUNT(*) AS n, MIN(tick) AS firstTick, MAX(tick) AS lastTick, MIN(ts) AS firstTs,
-                  MAX(ts) AS lastTs, MAX(settlements) AS settlements, MAX(volume_usdc) AS volumeUsdc FROM ticks`,
-        )
-        .all();
       const rows = (page.results ?? []).map(parseHistoryRow);
-      const a: any = (agg.results ?? [])[0] ?? {};
+      // The cheap aggregate is a cached running summary (see bumpHistSummary) — no full-table scan here.
+      const a = await this.ensureHistSummary(db);
       return json({
         enabled: true,
         order,
         count: rows.length,
         summary: {
-          ticks: Number(a.n ?? 0),
-          firstTick: a.firstTick ?? null,
-          lastTick: a.lastTick ?? null,
-          firstTs: a.firstTs ?? null,
-          lastTs: a.lastTs ?? null,
-          settlements: a.settlements ?? null,   // lifetime cumulative (monotonic ⇒ MAX)
-          volumeUsdc: a.volumeUsdc ?? null,
+          ticks: a.n,
+          firstTick: a.firstTick,
+          lastTick: a.lastTick,
+          firstTs: a.firstTs,
+          lastTs: a.lastTs,
+          settlements: a.settlements,   // lifetime cumulative (monotonic ⇒ running MAX)
+          volumeUsdc: a.volumeUsdc,
         },
         rows,
       });
