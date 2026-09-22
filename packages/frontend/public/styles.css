@@ -20,7 +20,7 @@
   --accent: #9a8c6e;                /* regime accent (calm = taupe) */
   --accent-rgb: 154, 140, 110;
   --hair: rgba(26, 26, 24, 0.14);   /* hairline borders */
-  --muted: rgba(26, 26, 24, 0.5);
+  --muted: rgba(26, 26, 24, 0.62);
 
   /* --- static behavioural-state palette (earth tones) --- */
   --agitate: #c05e3c;
@@ -102,12 +102,17 @@ body { transition: background 1.6s linear; }
 .topmeta {
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; letter-spacing: 0.14em; text-transform: lowercase;
-  color: var(--muted);
+  color: rgba(26, 26, 24, 0.82);
+  background: var(--panel);
+  border: 1px solid rgba(96, 74, 52, 0.38);
+  border-radius: 2px;
+  padding: 7px 12px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 8px 26px rgba(50, 38, 26, 0.2);
 }
 .topmeta .sep { opacity: 0.4; }
 .x-link, .gh-link, .api-link {
   display: inline-flex; align-items: center; gap: 5px;
-  color: var(--muted); text-decoration: none;
+  color: rgba(26, 26, 24, 0.8); text-decoration: none;
   transition: color 0.35s ease;
 }
 .x-link:hover, .gh-link:hover, .api-link:hover { color: var(--ink); }
@@ -130,8 +135,8 @@ body { transition: background 1.6s linear; }
 .lang-select {
   appearance: none; -webkit-appearance: none; -moz-appearance: none;
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
-  color: var(--muted); background: transparent;
-  border: 1px solid var(--hair); border-radius: 2px;
+  color: rgba(26, 26, 24, 0.82); background: transparent;
+  border: 1px solid rgba(96, 74, 52, 0.35); border-radius: 2px;
   padding: 2px 20px 2px 8px; margin-right: 2px; cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 11px) 55%, calc(100% - 7px) 55%;
@@ -147,10 +152,10 @@ body { transition: background 1.6s linear; }
 .panel {
   position: fixed; z-index: 10;
   background: var(--panel);
-  border: 1px solid var(--hair);
+  border: 1px solid rgba(96, 74, 52, 0.38);
   border-radius: 2px;
   padding: 14px 16px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset, 0 8px 30px rgba(var(--ink-rgb), 0.05);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 10px 34px rgba(50, 38, 26, 0.22);
   transition: background 1.6s linear, border-color 1.6s linear, opacity 0.45s ease;
 }
 .panel-title {
@@ -288,6 +293,26 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 .layer-toggles .layer-btn:hover { color: var(--ink); }
 .layer-toggles .layer-btn.is-on {
   color: var(--ink); border-color: rgba(var(--accent-rgb), 0.7); background: rgba(var(--accent-rgb), 0.14);
+}
+
+/* camera controls: a compact vertical +/−/reset cluster pinned to the free LEFT-MIDDLE edge
+   (econ top-left, temp bottom-left, territory legend right-middle, era HUD top-centre — all avoided).
+   Buttons only; the field itself also takes wheel / drag / pinch. */
+.zoom-controls {
+  position: fixed; z-index: 9; left: var(--pad); top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.zoom-controls .zoom-btn {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  font-family: var(--mono); font-size: 15px; line-height: 1; cursor: pointer;
+  border: 1px solid var(--hair); background: rgba(var(--paper-rgb, 242, 238, 230), 0.5); color: var(--muted);
+  backdrop-filter: blur(3px); transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+.zoom-controls .zoom-btn:hover { color: var(--ink); border-color: rgba(var(--accent-rgb), 0.6); }
+.zoom-controls .zoom-reset { font-size: 16px; }
+@media (max-width: 680px), (max-height: 600px) {
+  /* touch devices get pinch + drag directly on the field; drop the chrome to keep the column clean */
+  .zoom-controls { display: none; }
 }
 .layer-toggles .layer-btn:not(.is-on) { opacity: 0.5; }
 

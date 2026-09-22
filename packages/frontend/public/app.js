@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=68";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=69";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -70,7 +70,8 @@ function paletteAt(T) {
 function applyPaletteToDOM(pal) {
   const p = pal.paper, a = pal.accent, s = document.documentElement.style;
   s.setProperty("--paper", rgb(p));
-  s.setProperty("--panel", `rgba(${p[0] | 0},${p[1] | 0},${p[2] | 0},0.88)`);
+  const pp = mix(p, [26, 26, 24], 0.06);   // a touch darker than the paper so panels stand off the parchment map
+  s.setProperty("--panel", `rgba(${pp[0] | 0},${pp[1] | 0},${pp[2] | 0},0.94)`);
   s.setProperty("--accent", rgb(a));
   s.setProperty("--accent-rgb", `${a[0] | 0},${a[1] | 0},${a[2] | 0}`);
 }
@@ -343,9 +344,13 @@ const CHRON_POLL_MS = 45000;  // chronicle advances rarely (threshold events); 4
 let flowTime = 0;
 let motes = [];
 
-// pointer (stirs the swarm)
-const pointer = { x: 0, y: 0, inside: false, down: false };
+// pointer (stirs the swarm) — x/y are WORLD coords (camera-inverted), sx/sy raw SCREEN for zoom anchoring
+const pointer = { x: 0, y: 0, sx: 0, sy: 0, inside: false, down: false };
 let lastClickAt = 0;             // click-storm guard: cap interaction-driven work
+// drag-to-pan + wheel/pinch zoom bookkeeping (camera is a pure view transform, see render())
+const pan = { active: false, moved: false, sx0: 0, sy0: 0, camX0: 0, camY0: 0 };
+const pinch = { active: false, d0: 0, z0: 1, mx0: 0, my0: 0, camX0: 0, camY0: 0 };
+const ptrs = new Map();          // active pointerId → {x,y} screen, for two-finger pinch detection
 
 // temperature history ribbon — now D1-backed. The live in-memory tail is merged with the archived per-cron
 // series on a shared wall-clock axis, so the ribbon survives a reload and reaches back ~20 min (toward launch)
@@ -371,12 +376,67 @@ const MIND_REBUILD_MS = 320;                          // offscreen + low-frequen
 // ---- illuminated-manuscript layers: an aged-parchment base + a gilded frame (offscreen, rebuilt rarely) ----
 let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
 let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (static ⇒ repaint on change, blit per frame)
+let terrPol = null;                                    // last built province list — the screen-space map key reads it
 let territorySeizureSig = "";                            // a stable signature of which zones changed hands in war — folded into terrKey so a conquest repaints the dominion map
 
 // ================= canvas field =================
 const canvas = $("field");
 const ctx = canvas.getContext("2d");
 let VW = 0, VH = 0, DPR = 1;
+
+// ================= camera: the whole field is one zoomable/pannable map =================
+// A single world→screen affine (screen = world*cam.z + cam.{x,y}) wraps every WORLD layer in render();
+// the gilded frame, the era HUD and the chronicle banner stay in SCREEN space (drawn after restore) so the
+// manuscript chrome never moves. Flies, the dominion map and all ambient life live in WORLD coordinates
+// (unchanged 0..VW / 0..VH), so zoom is purely a view transform — no sim, economy or pointer model changes.
+// cam.z is clamped so the map can never be zoomed into the void, and cam.{x,y} clamped to keep the world
+// covering the viewport (zoomed in) or centred-band (zoomed out).
+let cam = { z: 1, x: 0, y: 0 };
+// The parchment atlas is a WORLD map bigger than the viewport: the home continent (where the living houses hold
+// their provinces) is framed at the default zoom z=1, and zooming OUT reveals the whole world — the other
+// continents sit unclaimed until future houses settle them. MAP is the atlas rect in WORLD (sim) coords.
+let MAP = { x0: 0, y0: 0, w: 1, h: 1 };
+function layoutWorldMap() {
+  // the home continent spans ~[0.18,0.73]x[0.12,0.86] of the atlas (bbox w=0.55 h=0.74, centre 0.455/0.49).
+  // Size the atlas so the continent fills the viewport HEIGHT at z=1, and keep the world rect at the SAME
+  // aspect as the viewport — that guarantees the atlas covers the screen at EVERY zoom (no letterbox bands).
+  const CH = 0.74, CX = 0.455, CY = 0.49;
+  const aspect = VW / VH;
+  MAP.h = VH / CH; MAP.w = MAP.h * aspect;
+  if (MAP.w < VW) { MAP.w = VW; MAP.h = MAP.w / aspect; }
+  MAP.x0 = VW / 2 - CX * MAP.w; MAP.y0 = VH / 2 - CY * MAP.h;
+  CAM_Z_MIN = VW / MAP.w;   // the zoom at which the whole world map exactly fills the viewport
+}
+const mw = (t) => ({ x: MAP.x0 + t[0] * MAP.w, y: MAP.y0 + t[1] * MAP.h });   // atlas-normalised → world
+let CAM_Z_MIN = 0.74, CAM_Z_MAX = 4;   // min = whole world map fills the viewport; max = close inspection
+function screenToWorld(sx, sy) { return { x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z }; }
+function applyCam() { ctx.translate(cam.x, cam.y); ctx.scale(cam.z, cam.z); }
+function clampCam() {
+  const wx0 = MAP.x0, wx1 = MAP.x0 + MAP.w, wy0 = MAP.y0, wy1 = MAP.y0 + MAP.h;
+  const loX = VW - wx1 * cam.z, hiX = -wx0 * cam.z;
+  cam.x = loX > hiX ? (VW - (wx1 - wx0) * cam.z) / 2 - wx0 * cam.z : clamp(cam.x, loX, hiX);
+  const loY = VH - wy1 * cam.z, hiY = -wy0 * cam.z;
+  cam.y = loY > hiY ? (VH - (wy1 - wy0) * cam.z) / 2 - wy0 * cam.z : clamp(cam.y, loY, hiY);
+}
+/** Zoom by `factor` keeping the world point under screen (sx,sy) pinned — the natural cursor-centred zoom. */
+function zoomAt(sx, sy, factor) {
+  const nz = clamp(cam.z * factor, CAM_Z_MIN, CAM_Z_MAX);
+  const w = screenToWorld(sx, sy);
+  cam.z = nz; cam.x = sx - w.x * nz; cam.y = sy - w.y * nz; clampCam();
+}
+function resetView() { cam.z = 1; cam.x = 0; cam.y = 0; clampCam(); }   // back to the framed home continent
+
+// ================= painterly backdrop textures (golden-hour war-plain) =================
+// Three pre-rendered textures give the field its cinematic depth: an earth base, a god-ray light shaft and a
+// rolling ground fog. They load async and NEVER block a frame — until (or unless) an image is ready the layer
+// falls back to the procedural parchment / gradients, so a slow or failed fetch just reverts to the old look.
+function mkTex(src) {
+  const im = new Image(); im.decoding = "async"; let ok = false;
+  im.onload = () => { ok = im.naturalWidth > 0; }; im.onerror = () => { ok = false; };
+  im.src = src;
+  return { im, get ready() { return ok; } };
+}
+const TEX = { ground: mkTex("./assets/ground.jpg"), rays: mkTex("./assets/rays.jpg"), mist: mkTex("./assets/mist.jpg") };
 
 // Pre-rendered soft halo sprite: drawing one cached radial is far cheaper than
 // building a fresh createRadialGradient for every fly every frame.
@@ -409,6 +469,8 @@ function resize() {
   mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
   parchOff = null; parchKey = "";   // parchment re-tiles at the new size (the gilt frame draws direct each frame)
   terrOff = null; terrKey = "";     // the cached territory map must re-render at the new field size
+  layoutWorldMap();                  // the atlas world-rect is derived from the field size
+  clampCam();                        // the world/viewport relationship moved — pull the camera back in bounds
   rebuildGraveField();           // the headstone band is laid out in field coordinates → re-place on resize
   initMotes();
 }
@@ -1088,9 +1150,9 @@ function hideEpitaph() {
   const card = $("epitaph"); if (card) card.hidden = true;
 }
 
-/** Persistent top-centre HUD: the current chronicle era (roman era number + era name), so the field always
- *  announces which age the swarm is living through. Read-only from chronMeta (the /annals poll): it draws
- *  nothing until the chronicle reports and never touches sim / economy / money. */
+/** Persistent BOTTOM-CENTRE HUD: the current chronicle era as a monumental gilded banner (vellum plate, double
+ *  gilt rule, side flourishes with diamond terminals and fleurons), so the age of the swarm crowns the foot of
+ *  the map like an atlas cartouche. Read-only from chronMeta (the /annals poll); never touches sim / money. */
 function drawEraHeader(pal) {
   if (!chronMeta || (chronMeta.era == null && !chronMeta.eraName)) return;
   const rn = (n) => {
@@ -1100,29 +1162,43 @@ function drawEraHeader(pal) {
   };
   const name = String(chronMeta.eraName || "").trim().toUpperCase();
   const label = name ? `ERA ${rn(chronMeta.era)} · ${name}` : `ERA ${rn(chronMeta.era)}`;
-  const cx = VW / 2, cy = Math.max(92, VH * 0.14);   // clear the top-centre layer-toggle bar (fixed at ~pad+26) and the top corner panels
+  const cx = VW / 2, cy = VH - 96;   // bottom-centre, well clear of the hint line and the corner panels / chron button
   ctx.save();
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif";
-  // a faint vellum plate + hairline gold rule keeps the titulus legible over the coloured dominions
-  const tw = ctx.measureText(label).width, pad = 15, bw = tw + pad * 2, bh = 24;
-  const bx = cx - bw / 2, by = cy - bh / 2, rr = 12;
+  ctx.font = "700 21px Cinzel, Fraunces, Georgia, serif";
+  try { ctx.letterSpacing = "3px"; } catch { /* older engines */ }
+  const tw = ctx.measureText(label).width, pad = 40, bw = tw + pad * 2, bh = 46;
+  const bx = cx - bw / 2, by = cy - bh / 2;
+  // the vellum plate + a double gilt rule (monumental cartouche)
   ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, rr);
-  else { ctx.moveTo(bx + rr, by); ctx.arcTo(bx + bw, by, bx + bw, by + bh, rr); ctx.arcTo(bx + bw, by + bh, bx, by + bh, rr); ctx.arcTo(bx, by + bh, bx, by, rr); ctx.arcTo(bx, by, bx + bw, by, rr); ctx.closePath(); }
-  ctx.fillStyle = rgba([248, 244, 236], 0.46); ctx.fill();
-  ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT, 0.5); ctx.stroke();
-  ctx.shadowColor = rgba([248, 244, 236], 0.85); ctx.shadowBlur = 3;
-  ctx.fillStyle = rgba(mix(INK, pal.accent, 0.22), 0.96);
-  ctx.fillText(label, cx, cy);
+  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 4);
+  else ctx.rect(bx, by, bw, bh);
+  ctx.fillStyle = rgba([248, 244, 236], 0.74); ctx.fill();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = rgba(GILT, 0.8); ctx.stroke();
+  ctx.lineWidth = 1; ctx.strokeStyle = rgba(GILT_HI, 0.55); ctx.strokeRect(bx + 4, by + 4, bw - 8, bh - 8);
+  // side flourishes: gilt rules reaching out of the plate, closed by diamond terminals
+  ctx.strokeStyle = rgba(GILT, 0.65); ctx.lineWidth = 1.2; ctx.fillStyle = rgba(GILT, 0.75);
+  for (const s of [-1, 1]) {
+    const x0 = cx + s * (bw / 2 + 10), x1 = cx + s * (bw / 2 + 62);
+    ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1 + s * 6, cy); ctx.lineTo(x1, cy - 4.5); ctx.lineTo(x1 - s * 6, cy); ctx.lineTo(x1, cy + 4.5); ctx.closePath(); ctx.fill();
+  }
+  // fleurons guarding the titulus inside the plate
+  ctx.font = "600 13px Georgia, serif"; ctx.fillStyle = rgba(GILT, 0.85);
+  ctx.fillText("❦", bx + 18, cy + 1); ctx.fillText("❦", bx + bw - 18, cy + 1);
+  // the titulus itself: deep ink warmed with gilt, haloed in gold — epic, legible over any province
+  ctx.font = "700 21px Cinzel, Fraunces, Georgia, serif";
+  ctx.shadowColor = rgba(GILT, 0.55); ctx.shadowBlur = 10;
+  ctx.fillStyle = rgba(mix(INK, [122, 92, 40], 0.35), 0.97);
+  ctx.fillText(label, cx, cy + 1);
   ctx.restore();
 }
 
 /** The chronicle made visible: every fresh ALLIANCE/FEUD/BETRAYAL/HOUSE_FOUNDED/ASSEMBLY/DECREE entry
  *  becomes a transient canvas event at the actors' live positions, so each annals sentence can be
  *  WATCHED happening on the field. */
-function renderChronFx(pal, now) {
-  // the epic centre-caption: the chronicle announcing itself in big serif type
+function renderChronBanner(pal, now) {
+  // the epic centre-caption: the chronicle announcing itself in big serif type (SCREEN space)
   if (chronBanner) {
     const ba = (now - chronBanner.t0) / chronBanner.dur;
     if (ba >= 1) chronBanner = null;
@@ -1164,6 +1240,9 @@ function renderChronFx(pal, now) {
       ctx.restore();
     }
   }
+}
+
+function renderChronFx(pal, now) {
   for (let i = chronFx.length - 1; i >= 0; i--) {
     const fx = chronFx[i];
     const age = (now - fx.t0) / fx.dur;
@@ -1699,35 +1778,321 @@ function drawRivers(g) {
   g.restore();
 }
 
-/** Reference-style layout: spread the living houses across the WHOLE canvas as stable "capitals" (a
- *  centre-out grid so the biggest houses claim the middle), each wrapped in an organic domain ring, so
- *  their Voronoi-capped territories tile the map like the warring-kingdoms ref — independent of whether
- *  the swarm is huddled or dispersed this moment. Seats are deterministic (name-hashed jitter) so they
- *  never flicker frame to frame; recomputed cheaply each draw so they reflow on resize. */
-function layoutTerritoryMap(pol) {
-  const n = pol.length;
-  const mx = VW * 0.11, my = VH * 0.13;
-  const uw = VW - mx * 2, uh = VH - my * 2;
-  const cols = Math.max(1, Math.round(Math.sqrt(n * (VW / VH))));
-  const rows = Math.max(1, Math.ceil(n / cols));
-  const cw = uw / cols, ch = uh / rows;
-  const cells = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push([c, r]);
-  const d2 = (cell) => ((cell[0] + 0.5) / cols - 0.5) ** 2 + ((cell[1] + 0.5) / rows - 0.5) ** 2;
-  cells.sort((a, b) => d2(a) - d2(b));                 // centre-out
-  const Rseat = Math.max(cw, ch) * 1.18;               // big enough that outer regions overflow to the edges
+// ================= the land comes alive: ambient war & earth motion =================
+// Pure decoration laid on top of the dominion map (WORLD space, so it pans/zooms with the map) and BELOW
+// the flies. Everything is time-driven (no state, no sim writes) and cheap; the per-frame count is capped
+// and the whole call is try/caught at the site so it can never drop a frame. Each family's "capital" tracks
+// its swarm's live centroid, so banners and hearths read as a living settlement rather than a fixed label.
+const FIRE_HOT = [255, 206, 120], FIRE_MID = [240, 132, 48], FIRE_LO = [188, 54, 30];
+const SMOKE = [120, 112, 100];
+/** A deterministic 0..1 flicker in [lo,hi] from a time + seed — cheap stand-in for real noise. */
+function flick(now, ph, hz, lo, hi) {
+  const v = 0.5 + 0.5 * Math.sin(now * hz + ph) * Math.sin(now * hz * 0.63 + ph * 1.7);
+  return lo + (hi - lo) * clamp(v);
+}
+/** A polity's capital position: the map's FIXED seat when present (so the stronghold aligns with the baked
+ *  name label), else the live swarm centroid as a fallback (e.g. the very first frames before a map rebuild). */
+function politySeat(p) {
+  if (p.seat) return { x: p.seat.x, y: p.seat.y, n: p.ids.length };
+  let sx = 0, sy = 0, n = 0;
+  for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) { sx += f.x; sy += f.y; n++; } }
+  return n ? { x: sx / n, y: sy / n, n } : null;
+}
+function renderLandLife(pal, now) {
+  if (!showTerritory || !territories || !territories.length) return;   // the living diorama belongs to the dominion map
+  const q = quality;
+  if (!TEX.ground.ready) riverShimmer(now, q);   // procedural river glints only until the painted plain loads
+  // gather the live capitals once — reused by the march roads and the stronghold/landmark pass
+  const seats = [];
+  for (const p of territories) { if (seats.length >= 10) break; const s = politySeat(p); if (s) seats.push({ p, s }); }
+  if (!seats.length) return;
+  if (q >= 1) drawMarchRoutes(seats, now, q);     // torch-lit columns marching between the capitals
+  for (const { p, s } of seats) {
+    if (q >= 1) drawCity(p, s, now, q);            // a walled, fire-lit stronghold on its capital
+    if (p.occupied) drawBeacon(p, s, now, q); else drawHearth(p, s, now, q);
+    if (q >= 1) drawBanner(p, s, now);
+  }
+  if (q >= 1) drawFlock(now);
+}
+/** Rolling ground fog drifting low across the plain — a screen-blended band of the mist texture, tiled to wrap.
+ *  Screen-space (it layers over the static backdrop), and only at the top quality tier (a full-width
+ *  screen-blend is expensive, so weak machines skip it rather than let it collapse the swarm's detail). */
+function drawGroundFog(now, q) {
+  if (q < 2 || !TEX.mist.ready) return;
+  const im = TEX.mist.im;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const off = (now * 0.006) % VW;
+  const y = VH * 0.52, h = VH * 0.5;
+  ctx.globalAlpha = 0.075;
+  ctx.drawImage(im, -off, y, VW, h);
+  ctx.drawImage(im, VW - off, y, VW, h);
+  ctx.restore();
+}
+/** Golden-hour light shafts raking down over the whole field — a screen-blended, slowly swaying god-ray plate.
+ *  Top-quality only, kept faint so it grades the scene without washing out the swarm. */
+function drawGodRays(now, q) {
+  if (q < 2 || !TEX.rays.ready) return;
+  const im = TEX.rays.im;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const sway = Math.sin(now * 0.00007) * 0.04;
+  ctx.globalAlpha = 0.10 + 0.04 * Math.sin(now * 0.0004);
+  ctx.drawImage(im, -VW * 0.08 + sway * VW, -VH * 0.06, VW * 1.16, VH * 1.12);
+  ctx.restore();
+}
+/** A walled, fire-lit stronghold at a capital: an oval ring-wall with crenellations, a central keep and flickering windows, sized by the swarm gathered there. */
+function drawCity(p, s, now, q) {
+  const R = clamp(11 + s.n * 0.5, 12, 26);
+  const wall = mix(p.color, INK, 0.42), wallLit = mix(p.color, [255, 238, 205], 0.45), roof = mix(p.color, [30, 22, 16], 0.55);
+  ctx.save();
+  // long cast shadow to the lower-left (the low sun sits upper-right)
+  ctx.fillStyle = rgba([20, 16, 12], 0.22);
+  ctx.beginPath(); ctx.ellipse(s.x - R * 0.5, s.y + R * 0.55, R * 1.5, R * 0.6, 0, 0, TAU); ctx.fill();
+  // the ring wall (squashed for a bird's-eye read) + a sunlit top edge
+  ctx.lineWidth = Math.max(2, R * 0.28); ctx.strokeStyle = rgba(wall, 0.95);
+  ctx.beginPath(); ctx.ellipse(s.x, s.y, R, R * 0.62, 0, 0, TAU); ctx.stroke();
+  ctx.lineWidth = Math.max(1, R * 0.12); ctx.strokeStyle = rgba(wallLit, 0.5);
+  ctx.beginPath(); ctx.ellipse(s.x, s.y - R * 0.06, R, R * 0.62, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+  // crenellations around the wall
+  const teeth = q >= 2 ? 12 : 8;
+  ctx.strokeStyle = rgba(wall, 0.8); ctx.lineWidth = 1.2;
+  for (let i = 0; i < teeth; i++) { const a = (i / teeth) * TAU, cx = s.x + Math.cos(a) * R, cy = s.y + Math.sin(a) * R * 0.62; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 3); ctx.stroke(); }
+  // the keep + a lit gable roof
+  const kw = R * 0.5, kh = R * 0.7;
+  ctx.fillStyle = rgba(roof, 0.95); ctx.fillRect(s.x - kw / 2, s.y - kh, kw, kh);
+  ctx.fillStyle = rgba(wallLit, 0.9);
+  ctx.beginPath(); ctx.moveTo(s.x - kw / 2 - 1, s.y - kh); ctx.lineTo(s.x, s.y - kh - R * 0.4); ctx.lineTo(s.x + kw / 2 + 1, s.y - kh); ctx.closePath(); ctx.fill();
+  // flickering warm windows
+  const wins = q >= 2 ? 4 : 2;
+  for (let i = 0; i < wins; i++) {
+    const wx = s.x - kw / 2 + (i + 0.5) / wins * kw, wy = s.y - kh * 0.55, fl = flick(now, i * 3 + (fnv1a(p.name) % 10), 0.01, 0.5, 1);
+    ctx.fillStyle = rgba(FIRE_HOT, 0.5 + 0.4 * fl); ctx.fillRect(wx - 0.8, wy - 1, 1.6, 2);
+  }
+  ctx.restore();
+}
+/** A closed march network between the capitals: a faint road each, with a column of torch glints marching along it. */
+function drawMarchRoutes(seats, now, q) {
+  if (seats.length < 2) return;
+  let cx = 0, cy = 0; for (const o of seats) { cx += o.s.x; cy += o.s.y; } cx /= seats.length; cy /= seats.length;
+  const ord = seats.slice().sort((a, b) => Math.atan2(a.s.y - cy, a.s.x - cx) - Math.atan2(b.s.y - cy, b.s.x - cx));
+  const n = ord.length, dots = q >= 2 ? 8 : 5;
+  ctx.save(); ctx.lineCap = "round";
   for (let i = 0; i < n; i++) {
-    const o = pol[i], cell = cells[i % cells.length];
-    const h = fnv1a("seat:" + o.p.name);
-    const jx = ((h >>> 4) % 1000) / 1000 - 0.5, jy = ((h >>> 14) % 1000) / 1000 - 0.5;
-    const sx = mx + (cell[0] + 0.5) * cw + jx * cw * 0.30;
-    const sy = my + (cell[1] + 0.5) * ch + jy * ch * 0.30;
-    o.seat = { x: sx, y: sy };
-    const ring = o.ring || (o.ring = []); ring.length = 0;
-    for (let k = 0; k < 28; k++) {
-      const a = (k / 28) * TAU;
-      const rr = Rseat * (0.80 + 0.34 * (((fnv1a(o.p.name + ":" + k) >>> 3) % 1000) / 1000));
-      ring.push({ x: sx + Math.cos(a) * rr, y: sy + Math.sin(a) * rr });
+    const a = ord[i].s, b = ord[(i + 1) % n].s;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const ctrlx = mx - dy / len * len * 0.12, ctrly = my + dx / len * len * 0.12;   // a gentle bow
+    ctx.strokeStyle = rgba([120, 96, 64], 0.12); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(ctrlx, ctrly, b.x, b.y); ctx.stroke();
+    const ph = (fnv1a("march:" + i) % 1000) / 1000;
+    for (let k = 0; k < dots; k++) {
+      const t = ((now * 0.00006 + k / dots + ph) % 1), it = 1 - t;
+      const px = it * it * a.x + 2 * it * t * ctrlx + t * t * b.x, py = it * it * a.y + 2 * it * t * ctrly + t * t * b.y;
+      const fl = 0.7 + 0.3 * Math.sin(now * 0.02 + k * 1.7);
+      ctx.fillStyle = rgba(FIRE_MID, 0.07 * fl); ctx.beginPath(); ctx.arc(px, py, 3, 0, TAU); ctx.fill();
+      ctx.fillStyle = rgba(FIRE_HOT, 0.55 * fl); ctx.beginPath(); ctx.arc(px, py, 0.9, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+/** A compact pennant flying off the keep — a short pole with a small cloth rippling in the wind, in house colours. */
+function drawBanner(p, s, now) {
+  const ph = (fnv1a("banner:" + p.name) % 1000) / 1000 * TAU;
+  const px = s.x + 6, py = s.y - 18, pole = 13, w = 13, h = 8;   // perched on the stronghold, not a lone tall pole
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = rgba(mix(INK, [70, 52, 30], 0.5), 0.7); ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - pole); ctx.stroke();
+  // the cloth: a quad whose right edge flutters; we stroke a few vertical ribs so the wave reads as fabric
+  const topY = py - pole + 1;
+  ctx.beginPath(); ctx.moveTo(px, topY);
+  const steps = 6, pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps, cx = px + t * w;
+    const cy = topY + Math.sin(now * 0.006 + ph + t * 4.2) * (1.6 + t * 2.6);
+    pts.push([cx, cy]);
+  }
+  for (const [cx, cy] of pts) ctx.lineTo(cx, cy);
+  for (let i = steps; i >= 0; i--) {
+    const t = i / steps, cx = px + t * w;
+    const cy = topY + h + Math.sin(now * 0.006 + ph + t * 4.2) * (1.6 + t * 2.6);
+    ctx.lineTo(cx, cy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = rgba(mix(p.color, [250, 246, 236], 0.28), 0.82); ctx.fill();
+  ctx.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.6); ctx.lineWidth = 0.8; ctx.stroke();
+  if (p.sigil) {
+    ctx.fillStyle = rgba(INK, 0.85); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "700 9px 'Fraunces', Georgia, serif";
+    ctx.fillText(String(p.sigil).slice(0, 1), px + w * 0.5, topY + h * 0.5 + 1);
+  }
+  ctx.restore();
+}
+/** A thin column of hearth-smoke rising and dissipating above a peaceful capital. */
+function drawHearth(p, s, now, q) {
+  const ph = (fnv1a("hearth:" + p.name) % 1000) / 1000 * 100;
+  const puffs = q >= 2 ? 4 : 2;
+  ctx.save();
+  for (let i = 0; i < puffs; i++) {
+    const life = ((now * 0.00012 + i / puffs + ph) % 1);
+    const ry = s.y - 6 - life * 26;                        // rises
+    const rx = s.x + Math.sin(life * 5 + i + ph) * (2 + life * 5);   // drifts sideways
+    const rr = 1.5 + life * 5;
+    ctx.fillStyle = rgba(SMOKE, (1 - life) * 0.16);        // fades as it climbs
+    ctx.beginPath(); ctx.arc(rx, ry, rr, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+/** A beacon tower with a flickering fire + smoke on SEIZED ground, plus a pulsing signal ring — the war front made visible. */
+function drawBeacon(p, s, now, q) {
+  const bx = s.x, by = s.y - 8;
+  ctx.save();
+  // the stone tower
+  ctx.fillStyle = rgba(mix(INK, [92, 74, 54], 0.55), 0.8);
+  ctx.beginPath(); ctx.moveTo(bx - 5, by); ctx.lineTo(bx + 5, by); ctx.lineTo(bx + 3.4, by - 12); ctx.lineTo(bx - 3.4, by - 12); ctx.closePath(); ctx.fill();
+  const ftop = by - 12;
+  const flame = flick(now, (fnv1a("fire:" + p.name) % 100) / 10, 0.02, 0.75, 1.25);
+  if (q >= 1) {
+    // warm glow halo
+    const gr = ctx.createRadialGradient(bx, ftop, 0, bx, ftop, 20 * flame);
+    gr.addColorStop(0, rgba(FIRE_HOT, 0.5)); gr.addColorStop(0.4, rgba(FIRE_MID, 0.26)); gr.addColorStop(1, rgba(FIRE_LO, 0));
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(bx, ftop, 20 * flame, 0, TAU); ctx.fill();
+  }
+  // the fire tongue (a tapered flame stretched by the flicker)
+  ctx.fillStyle = rgba(FIRE_MID, 0.9);
+  ctx.beginPath(); ctx.moveTo(bx - 3, ftop);
+  ctx.quadraticCurveTo(bx - 1.2, ftop - 8 * flame, bx, ftop - 13 * flame);
+  ctx.quadraticCurveTo(bx + 1.2, ftop - 8 * flame, bx + 3, ftop); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = rgba(FIRE_HOT, 0.95);
+  ctx.beginPath(); ctx.moveTo(bx - 1.4, ftop);
+  ctx.quadraticCurveTo(bx, ftop - 5 * flame, bx + 1.4, ftop); ctx.closePath(); ctx.fill();
+  // black smoke above the flame
+  const puffs = q >= 2 ? 4 : 2;
+  for (let i = 0; i < puffs; i++) {
+    const life = ((now * 0.00016 + i / puffs) % 1);
+    ctx.fillStyle = rgba([70, 64, 58], (1 - life) * 0.34);
+    ctx.beginPath(); ctx.arc(bx + Math.sin(life * 6 + i) * (2 + life * 6), ftop - 12 - life * 30, 1.6 + life * 5, 0, TAU); ctx.fill();
+  }
+  // a slow pulse ring announcing the hot front line (expands + fades every ~3.2s)
+  const pulse = (now % 3200) / 3200;
+  ctx.strokeStyle = rgba(FIRE_LO, (1 - pulse) * 0.4); ctx.lineWidth = 1.6 * (1 - pulse) + 0.3;
+  ctx.beginPath(); ctx.arc(bx, ftop, 6 + pulse * 46, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
+/** A handful of white glints drifting along the two deterministic rivers — the water catching the light. */
+function riverShimmer(now, q) {
+  const RIVER = [104, 140, 176];
+  const n = q >= 2 ? 7 : 4;
+  ctx.save();
+  for (let r = 0; r < 2; r++) {
+    const ph = (fnv1a("river:" + r) % 360) * Math.PI / 180;
+    const yb = VH * (r ? 0.66 : 0.34), amp = VH * 0.07;
+    for (let i = 0; i < n; i++) {
+      const t = ((now * 0.00003 + (i / n) + r * 0.13) % 1);
+      const x = t * VW, y = yb + Math.sin(t * 5 + ph + r) * amp + Math.sin(t * 13 + ph) * amp * 0.28;
+      const tw = 0.4 + 0.6 * Math.abs(Math.sin(now * 0.004 + i * 1.7 + r));
+      ctx.fillStyle = rgba(mix(RIVER, [255, 255, 255], 0.7), 0.16 * tw);
+      ctx.beginPath(); ctx.ellipse(x, y, 3.2 * tw + 0.6, 0.9, 0, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+/** A lone V-shaped flock drifting across the top of the map, wrapping off-screen — pure slow ambience. */
+function drawFlock(now) {
+  const span = VW + 320;
+  const lead = ((now * 0.012) % span) - 160;             // left→right, re-enters from the left
+  const baseY = VH * 0.22 + Math.sin(now * 0.0006) * VH * 0.05;
+  const bob = Math.sin(now * 0.012) * 2;
+  ctx.save();
+  ctx.strokeStyle = rgba(mix(INK, [90, 84, 74], 0.4), 0.4); ctx.lineWidth = 1.1; ctx.lineCap = "round";
+  for (let i = 0; i < 7; i++) {
+    const row = i - 3;
+    const bx = lead - Math.abs(row) * 13, by = baseY + row * 6 + Math.sin(now * 0.012 + i) * 2;
+    const w = 5, flap = 2 + bob * (i % 2 ? 1 : -1) * 0.4;
+    ctx.beginPath(); ctx.moveTo(bx - w, by); ctx.quadraticCurveTo(bx, by - flap, bx, by);
+    ctx.quadraticCurveTo(bx, by - flap, bx + w, by); ctx.stroke();
+  }
+  ctx.restore();
+}
+/** A cinematic golden-hour grade laid over the whole field: warm sunlit sky up top, cool shadow below, a slow
+ *  warm↔cool breathe cross-faded with the market temperature, and a strong corner vignette for the diorama depth. */
+function renderDayNight(pal, now) {
+  const cyc = 0.5 + 0.5 * Math.sin(now * 0.00025);            // very slow (≈7-min) light cycle
+  // a LIGHT parchment grade: a warm sunlit wash up top, a faint cool sea-shadow below, and a soft brown vignette
+  // at the corners — aged-atlas depth without ever darkening the land into murk.
+  const warm = mix([255, 246, 224], pal.accent, 0.18);
+  const cool = mix([126, 156, 150], INK, 0.12);
+  const g = ctx.createLinearGradient(0, 0, 0, VH);
+  g.addColorStop(0, rgba(warm, 0.06 + 0.04 * cyc));
+  g.addColorStop(0.5, rgba(mix(warm, cool, 0.6), 0.015));
+  g.addColorStop(1, rgba(cool, 0.06 + 0.04 * (1 - cyc)));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+  const r = ctx.createRadialGradient(VW / 2, VH * 0.46, Math.min(VW, VH) * 0.42, VW / 2, VH / 2, Math.max(VW, VH) * 0.75);
+  r.addColorStop(0, rgba([0, 0, 0], 0)); r.addColorStop(1, rgba([96, 74, 52], 0.14));
+  ctx.fillStyle = r; ctx.fillRect(0, 0, VW, VH);
+}
+
+
+// ================= the painted realm: provinces of the home continent =================
+// The atlas (assets/ground.jpg) is a WORLD map; the living houses hold provinces on the HOME continent only
+// (the other continents stay unclaimed until future houses settle them). The continent outline below is traced
+// in atlas-normalised coords; each province is an organic region grown from a landmark seed (the peak, the river
+// bend, the forest heart…) and Voronoi-capped against the other seeds, then CLIPPED to the continent — so the
+// provinces tile the landmass exactly like the pastel regions of a fantasy atlas, never spilling into the sea.
+const CONTINENT = [
+  [0.52, 0.125], [0.56, 0.12], [0.60, 0.13], [0.635, 0.155], [0.66, 0.185], [0.665, 0.22], [0.685, 0.25], [0.70, 0.285],
+  [0.69, 0.32], [0.705, 0.355], [0.72, 0.39], [0.735, 0.41], [0.72, 0.44], [0.71, 0.475], [0.70, 0.51], [0.695, 0.55],
+  [0.685, 0.585], [0.67, 0.62], [0.655, 0.655], [0.635, 0.69], [0.61, 0.72], [0.585, 0.75], [0.56, 0.78], [0.535, 0.81],
+  [0.505, 0.835], [0.475, 0.855], [0.445, 0.86], [0.42, 0.845], [0.40, 0.82], [0.375, 0.80], [0.35, 0.78], [0.325, 0.755],
+  [0.30, 0.73], [0.28, 0.70], [0.26, 0.67], [0.24, 0.64], [0.22, 0.61], [0.20, 0.575], [0.185, 0.54], [0.18, 0.505],
+  [0.185, 0.47], [0.20, 0.44], [0.215, 0.415], [0.235, 0.395], [0.25, 0.375], [0.255, 0.345], [0.27, 0.315], [0.29, 0.285],
+  [0.31, 0.255], [0.335, 0.225], [0.365, 0.20], [0.395, 0.175], [0.425, 0.155], [0.455, 0.14], [0.49, 0.13],
+];
+const PROVINCES = [
+  { name: "the High Peaks",  t: [0.52, 0.35] },
+  { name: "the North Downs", t: [0.62, 0.25] },
+  { name: "the Westwood",    t: [0.30, 0.48] },
+  { name: "the River Plain", t: [0.45, 0.62] },
+  { name: "the East March",  t: [0.64, 0.52] },
+  { name: "the South Reach", t: [0.47, 0.78] },
+];
+// The OTHER continents & isles of the world atlas — unclaimed until future houses settle them. They get the same
+// pastel-block treatment as the home provinces (neutral tint + brown border) plus an English cartouche label.
+const UNCLAIMED = [
+  { poly: [[0.00, 0.02], [0.06, 0.00], [0.13, 0.00], [0.165, 0.03], [0.16, 0.09], [0.145, 0.15], [0.16, 0.21], [0.135, 0.27], [0.10, 0.32], [0.065, 0.37], [0.03, 0.395], [0.00, 0.38]], label: [0.075, 0.18] },
+  { poly: [[0.185, 0.00], [0.30, 0.00], [0.365, 0.01], [0.355, 0.06], [0.325, 0.10], [0.285, 0.135], [0.24, 0.165], [0.205, 0.175], [0.185, 0.14], [0.18, 0.08], [0.182, 0.03]], label: [0.27, 0.075] },
+  { poly: [[0.775, 0.00], [0.90, 0.00], [0.945, 0.02], [0.94, 0.08], [0.925, 0.14], [0.90, 0.19], [0.875, 0.235], [0.845, 0.27], [0.815, 0.275], [0.795, 0.235], [0.782, 0.18], [0.77, 0.12], [0.768, 0.05]], label: [0.86, 0.12] },
+  { poly: [[0.895, 0.245], [0.925, 0.25], [0.94, 0.285], [0.925, 0.325], [0.905, 0.365], [0.885, 0.34], [0.883, 0.29]] },
+  { poly: [[0.755, 0.685], [0.79, 0.64], [0.83, 0.605], [0.865, 0.58], [0.90, 0.565], [0.935, 0.575], [0.965, 0.59], [1.00, 0.60], [1.00, 0.90], [0.955, 0.885], [0.91, 0.865], [0.865, 0.835], [0.825, 0.80], [0.79, 0.76], [0.762, 0.725]], label: [0.895, 0.72] },
+  { poly: [[0.00, 0.715], [0.045, 0.735], [0.085, 0.775], [0.125, 0.815], [0.165, 0.855], [0.205, 0.895], [0.235, 0.945], [0.245, 1.00], [0.00, 1.00]], label: [0.09, 0.88] },
+  { poly: [[0.655, 0.905], [0.695, 0.865], [0.745, 0.845], [0.795, 0.85], [0.835, 0.875], [0.86, 0.925], [0.865, 1.00], [0.67, 1.00], [0.652, 0.955]], label: [0.76, 0.945] },
+];
+/** Trace the home-continent coastline (atlas-normalised → world) onto context `g`. */
+function traceContinent(g) {
+  g.beginPath();
+  for (let i = 0; i < CONTINENT.length; i++) {
+    const w = mw(CONTINENT[i]);
+    if (i === 0) g.moveTo(w.x, w.y); else g.lineTo(w.x, w.y);
+  }
+  g.closePath();
+}
+
+/** Province layout: the biggest living house claims the first landmark seed and so on; each province is grown
+ *  as an organic Voronoi-capped region around its seed and clipped to the continent at paint time. Houses beyond
+ *  the six provinces are landless (no seat, no tint) — matching the economy's exile concept. */
+function layoutTerritoryMap(pol) {
+  const R = Math.max(VW, VH) * 0.6;      // big seed ring: the Voronoi capping (not the ring) carves the province
+  for (let i = 0; i < pol.length; i++) {
+    const o = pol[i];
+    const prov = i < PROVINCES.length ? PROVINCES[i] : null;
+    o.region = prov;
+    o.p.region = prov;
+    const w = prov ? mw(prov.t) : null;
+    o.seat = w ? { x: w.x, y: w.y } : null;
+    o.p.seat = o.seat;   // publish the landmark so the animated land-life (cities/torches/beacons) sits on the province
+    if (w) {
+      const ring = o.ring || (o.ring = []); ring.length = 0;
+      for (let k = 0; k < 28; k++) { const a = (k / 28) * TAU; ring.push({ x: w.x + Math.cos(a) * R, y: w.y + Math.sin(a) * R }); }
     }
   }
 }
@@ -1738,7 +2103,7 @@ function layoutTerritoryMap(pol) {
  *  other frame is a single drawImage. This keeps the default-on map off the hot path so it can never
  *  nudge frameMsAvg over the 30ms budget and collapse fly detail to quality-0 blobs. */
 function renderTerritoryMap() {
-  if (!showTerritory || !territories || !territories.length) { terrKey = ""; return; }
+  if (!showTerritory || !territories || !territories.length) { terrKey = ""; terrPol = null; return; }
   const pol = [];
   for (const p of territories) {
     let cnt = 0; for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) cnt++; }
@@ -1759,73 +2124,102 @@ function renderTerritoryMap() {
     const g = terrOffCtx; g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
     paintTerritoryMap(g, pol);
   }
+  terrPol = pol;
   ctx.drawImage(terrOff, 0, 0, VW, VH);
 }
 
-/** Actually draw the dominions onto a target context `g` (the offscreen): fills + engraved hatch → rivers
- *  → ink double borders → capitals + serif names sized by strength → the bottom-left map key. */
+/** Actually draw the dominions onto a target context `g` (the offscreen): each house's province is an organic
+ *  Voronoi region grown from its landmark seed, CLIPPED to the home continent, filled with a soft pastel of the
+ *  house colour (fantasy-atlas style), bordered, then labelled in dark serif at the landmark → the map key. */
 function paintTerritoryMap(g, pol) {
-  const seats = pol.map((o) => o.seat);
-  // 1) territory fills + engraved diagonal hatch
-  for (let i = 0; i < pol.length; i++) {
-    const o = pol[i], p = o.p;
-    const blob = colonyBlob(o.ring, seats.filter((_, k) => k !== i), p._scr);
-    p._blob = blob;
+  const land = pol.filter((o) => o.region);
+  const seats = land.map((o) => o.seat);
+  // 1) pastel province fills, clipped to the continent so they never spill into the sea
+  g.save();
+  traceContinent(g); g.clip();
+  for (let i = 0; i < land.length; i++) {
+    const o = land[i], p = o.p;
+    colonyBlob(o.ring, seats.filter((_, k) => k !== i), p._scr);
     traceBlob(g, p._scr.P);
-    g.fillStyle = rgba(p.color, 0.32); g.fill();
-    const hatch = makeHatch(g, p.color);   // cheap: only runs on a rebuild, and always on the live offscreen ctx
-    if (hatch) { g.save(); traceBlob(g, p._scr.P); g.clip(); g.fillStyle = hatch; g.fillRect(blob.cx - blob.rmax, blob.cy - blob.rmax, blob.rmax * 2, blob.rmax * 2); g.restore(); }
+    g.fillStyle = rgba(mix(p.color, [250, 246, 238], 0.45), 0.55); g.fill();   // soft pastel region
   }
-  // 2) the two meandering rivers run across the dominions
-  drawRivers(g);
-  // 3) ink double-line borders, drawn over fills + rivers so the map reads crisp
+  // 2) province borders (the Voronoi seams) + a dashed crimson ring on seized ground
   g.lineJoin = "round";
-  for (const o of pol) {
-    const p = o.p;
-    g.strokeStyle = rgba(INK, 0.5); g.lineWidth = 3.6; traceBlob(g, p._scr.P); g.stroke();
-    g.strokeStyle = rgba(mix(p.color, INK, 0.5), 0.92); g.lineWidth = 1.4; traceBlob(g, p._scr.P); g.stroke();
-    // a polity whose ground was SEIZED in war wears a dashed crimson border over its own hue — the occupation
+  for (let i = 0; i < land.length; i++) {
+    const o = land[i], p = o.p;
+    colonyBlob(o.ring, seats.filter((_, k) => k !== i), p._scr);
+    g.strokeStyle = rgba([120, 96, 70], 0.5); g.lineWidth = 1.6; traceBlob(g, p._scr.P); g.stroke();
     if (p.occupied) {
-      g.save(); g.setLineDash([7, 5]); g.lineWidth = 2.6; g.strokeStyle = rgba([176, 42, 32], 0.95);
+      g.save(); g.setLineDash([7, 5]); g.lineWidth = 2.4; g.strokeStyle = rgba([176, 42, 32], 0.9);
       traceBlob(g, p._scr.P); g.stroke(); g.restore();
     }
   }
-  // 4) capital dot + serif house name (bigger houses get bigger type, like the ref) + strength tally
-  for (const o of pol) {
+  g.restore();
+  // 3) the continent coastline, inked over the province seams so the landmass reads as one bounded realm
+  traceContinent(g);
+  g.strokeStyle = rgba([110, 86, 62], 0.6); g.lineWidth = 2.2; g.stroke();
+  // 4) a small capital pin at the landmark + the dark serif house name + the province's terrain name
+  for (const o of land) {
     const p = o.p, s = o.seat;
-    const capR = 3.2 + Math.min(4.5, o.n * 0.7);
+    const capR = 2.2 + Math.min(2.5, o.n * 0.4);
     g.beginPath(); g.arc(s.x, s.y, capR, 0, TAU);
-    g.fillStyle = rgba(INK, 0.92); g.fill();
-    g.lineWidth = 1.2; g.strokeStyle = rgba([248, 244, 236], 0.9); g.stroke();
+    g.fillStyle = rgba(INK, 0.85); g.fill();
+    g.lineWidth = 1; g.strokeStyle = rgba([250, 246, 238], 0.8); g.stroke();
     g.save();
     g.textAlign = "center"; g.textBaseline = "middle";
-    g.shadowColor = rgba([248, 244, 236], 0.9); g.shadowBlur = 6;
+    g.shadowColor = rgba([250, 246, 238], 0.85); g.shadowBlur = 4;   // a light halo so dark ink reads on any pastel
     g.font = "700 " + Math.round(Math.min(30, 17 + o.n * 1.7)) + "px Fraunces, Cinzel, Georgia, serif";
-    g.fillStyle = rgba(mix(p.color, INK, 0.55), 0.97);
-    g.fillText((p.sigil ? p.sigil + " " : "") + p.name, s.x, s.y - capR - 13);
+    g.fillStyle = rgba(mix(p.color, INK, 0.55), 0.96);
+    g.fillText((p.sigil ? p.sigil + " " : "") + p.name, s.x, s.y - 54);   // lifted clear of the stronghold + pennant
     g.shadowBlur = 0;
-    g.font = "600 11px Georgia, serif"; g.fillStyle = rgba(INK, 0.55);
-    g.fillText(String(o.n), s.x, s.y + capR + 11);
-    // the conqueror's banner flying over an occupied dominion: ♜ + the house that now holds the ground
+    // the province's terrain name, small and muted, so the map reads "House X holds the High Peaks"
+    g.font = "600 11px Georgia, serif"; g.fillStyle = rgba([92, 74, 56], 0.75);
+    g.fillText(o.region.name, s.x, s.y - 38);
+    // the conqueror's banner flying over a seized province: ♜ + the house that now holds the ground
     if (p.occupied) {
-      g.font = "700 12px Fraunces, Cinzel, Georgia, serif"; g.fillStyle = rgba([176, 42, 32], 0.97);
-      g.fillText("♜ " + p.occupiedBy, s.x, s.y - capR - 30);
+      g.font = "700 12px Fraunces, Cinzel, Georgia, serif"; g.fillStyle = rgba([176, 42, 32], 0.95);
+      g.fillText("♜ " + p.occupiedBy, s.x, s.y - 70);
     }
     g.restore();
   }
-  drawTerritoryLegend(g, pol);
 }
 
-/** A bottom-left map key: the era title + the largest dominions with their colour swatches (the ref's legend). */
+/** The UNCLAIMED lands: every other continent / isle of the world atlas wears the same pastel-block template as
+ *  the home provinces (neutral tint + brown border) plus an English "UNCLAIMED TERRITORY" cartouche. Drawn LIVE
+ *  in WORLD space each frame — these landmasses sit OUTSIDE the viewport-sized territory offscreen, so baking
+ *  them into that cache would clip them away entirely. */
+function renderUnclaimed() {
+  ctx.lineJoin = "round";
+  for (const u of UNCLAIMED) {
+    ctx.beginPath();
+    for (let i = 0; i < u.poly.length; i++) { const w = mw(u.poly[i]); i ? ctx.lineTo(w.x, w.y) : ctx.moveTo(w.x, w.y); }
+    ctx.closePath();
+    ctx.fillStyle = rgba([214, 206, 186], 0.42); ctx.fill();
+    ctx.strokeStyle = rgba([120, 96, 70], 0.45); ctx.lineWidth = 1.4; ctx.stroke();
+    if (u.label) {
+      const c = mw(u.label);
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      try { ctx.letterSpacing = "2px"; } catch { /* older engines */ }
+      ctx.shadowColor = rgba([250, 246, 238], 0.85); ctx.shadowBlur = 4;
+      ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif"; ctx.fillStyle = rgba([92, 74, 56], 0.72);
+      ctx.fillText("UNCLAIMED TERRITORY", c.x, c.y);
+      ctx.restore();
+    }
+  }
+}
+
+/** The map key, pinned to the RIGHT EDGE of the SCREEN (screen space, so it never zooms or pans with the map):
+ *  the era title + the largest dominions with their colour swatches (the ref's legend). */
 function drawTerritoryLegend(g, pol) {
   const ranked = pol.slice(0, 6);
   const era = (chronMeta && chronMeta.eraName) ? chronMeta.eraName : "the swarm's dominions";
   const pad = 12, lh = 16, w = 180, h = pad * 2 + lh * (ranked.length + 1);
   // the bottom-left is claimed by the temperature DOM panel and the bottom-right by the chronicle button,
   // so the map key lives in the clear band on the right flank, vertically centred (never under a panel).
-  const bx = VW - w - 16, by = Math.round((VH - h) / 2);
+  const bx = VW - w - 14, by = Math.round((VH - h) / 2);
   g.save();
-  g.fillStyle = rgba([248, 244, 236], 0.74); g.strokeStyle = rgba(INK, 0.35); g.lineWidth = 1;
+  g.fillStyle = rgba([248, 244, 236], 0.88); g.strokeStyle = rgba([96, 74, 52], 0.45); g.lineWidth = 1;
   if (g.roundRect) { g.beginPath(); g.roundRect(bx, by, w, h, 6); g.fill(); g.stroke(); }
   else { g.fillRect(bx, by, w, h); g.strokeRect(bx, by, w, h); }
   g.textBaseline = "middle"; g.textAlign = "left";
@@ -1846,12 +2240,27 @@ function render(pal, now) {
   // fade slowly, smearing moving flies AND every glyph/label into ghosts that read as stutter.
   // Crisp clear removes all ghosting with no quality loss (motion feel stays via the per-fly ink
   // trail stroke), and an opaque fill is cheaper than an alpha-blended wash.
-  // aged-parchment base (offscreen, rebuilt on resize / temperature-bucket change / ~2s): one blit per frame.
-  const pkey = VW + "x" + VH + ":" + Math.round(tempSmoothed * 8);
-  if (!parchOff || parchKey !== pkey || now - parchLast > 2000) { parchKey = pkey; parchLast = now; rebuildParchment(pal); }
-  ctx.drawImage(parchOff, 0, 0, VW, VH);
-  // a thin temperature wash keeps the market's warm/cool read on the page without rebuilding the texture
-  ctx.fillStyle = rgba(pal.accent, 0.03 + tempSmoothed * 0.05); ctx.fillRect(0, 0, VW, VH);
+  // The parchment atlas is world-mapped and the camera clamps to the atlas bounds, so the sea/land always covers
+  // the viewport at every zoom; a parchment-cream screen base sits underneath (the 30% show-through + fallback).
+  // A parchment-cream base fills the SCREEN first: the atlas is laid over it at 70% opacity so the map sits
+  // BACK and the flies stay the protagonists (and it doubles as the missing-texture fallback — no void).
+  ctx.fillStyle = "rgb(238, 232, 219)"; ctx.fillRect(0, 0, VW, VH);
+  ctx.save(); applyCam();     // ---- WORLD space: the atlas, its provinces, the swarm and ambient life move as one ----
+  if (TEX.ground.ready) {
+    // The parchment WORLD atlas drawn over its full world rect (bigger than the viewport): the home continent
+    // lands exactly on world [0,VW]x[0,VH] (framed at z=1, where the flies live) and the other continents lie
+    // beyond it, revealed as you zoom out. Provinces are clipped to the continent, so the dominions ARE the land.
+    // 70% opacity: the engraved atlas recedes into a backdrop and never competes with the living swarm.
+    ctx.globalAlpha = 0.7;
+    ctx.drawImage(TEX.ground.im, MAP.x0, MAP.y0, MAP.w, MAP.h);
+    ctx.globalAlpha = 1;
+  } else {
+    // aged-parchment base (offscreen, rebuilt on resize / temperature-bucket change / ~2s): one blit per frame.
+    const pkey = VW + "x" + VH + ":" + Math.round(tempSmoothed * 8);
+    if (!parchOff || parchKey !== pkey || now - parchLast > 2000) { parchKey = pkey; parchLast = now; rebuildParchment(pal); }
+    ctx.drawImage(parchOff, 0, 0, VW, VH);
+    ctx.fillStyle = rgba(pal.accent, 0.03 + tempSmoothed * 0.05); ctx.fillRect(0, 0, VW, VH);
+  }
 
   // the swarm's ambient neural aura — deepest background layer, breathing with the collective mood
   renderMind(pal, now);
@@ -1859,8 +2268,16 @@ function render(pal, now) {
   // ambient flow ink (under everything)
   if (quality >= 1) renderMotes(pal);
 
+  // the UNCLAIMED continents & isles of the world atlas, tinted + labelled in world space (never clipped)
+  if (showTerritory) renderUnclaimed();
+
   // the TERRITORY map: each house a coloured dominion (rivers + hatched regions + names), beneath the societies web
   renderTerritoryMap();
+
+  // the LAND COMES ALIVE: beacon fires over seized ground, waving house banners, capital hearth-smoke,
+  // river shimmer and a passing flock — all world-locked to the map, drawn over it but under the flies.
+  // Wrapped so a decoration bug can never veto the rest of the frame (the flies must still be drawn).
+  try { renderLandLife(pal, now); } catch { /* ambient only — never break the frame */ }
 
   // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
   renderSocieties(pal, now);
@@ -1922,11 +2339,21 @@ function render(pal, now) {
   // x402 settlement packets flying payer → payee (over the swarm, so the money is visible)
   renderPayments(pal, now);
 
-  // the chronicle made visible: transient alliance/feud/house/legislative events, over everything
+  // the chronicle made visible: transient alliance/feud/house/legislative events, over the swarm
   renderChronFx(pal, now);
+  ctx.restore();               // ---- back to SCREEN space: the manuscript chrome and captions never move ----
 
-  // the current era, announced at the top-centre of the field (persistent HUD, above every ink layer)
+  // a slow day/night + temperature tone drift laid over the whole field (kept LIGHT: this is a parchment atlas)
+  try { renderDayNight(pal, now); } catch { /* ambient only */ }
+
+  // the current era, announced at the BOTTOM-CENTRE of the field as a monumental gilded banner
   drawEraHeader(pal);
+
+  // the map key (era + house swatches) pinned to the RIGHT EDGE of the SCREEN — screen space, never zooms
+  if (terrPol) drawTerritoryLegend(ctx, terrPol);
+
+  // the epic centre-caption (chronicle banner) — pinned to the screen centre, independent of the camera
+  renderChronBanner(pal, now);
 
   // the gilded manuscript border frames the whole field last, above every ink layer
   renderFrame(pal);
@@ -1956,7 +2383,7 @@ function drawFly(f, acc, alpha, now) {
 
   // soft halo (cached sprite) + a valence-tinted rim: warm when appetitive, cool/alert when aversive
   if (haloSprite) {
-    ctx.globalAlpha = (0.09 + f.aro * 0.15) * alpha;
+    ctx.globalAlpha = (0.10 + f.aro * 0.14) * alpha;   // a soft lift so each fly separates from the parchment
     ctx.drawImage(haloSprite, f.x - haloR, f.y - haloR, haloR * 2, haloR * 2);
     ctx.globalAlpha = 1;
     if (quality >= 2 && Math.abs(valence) > 0.22) {
@@ -5497,43 +5924,105 @@ function pickHover() {
   if (showGraves) { for (const g of graveField) { if (Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y) < 16) { onGrave = true; break; } } }
   canvas.style.cursor = (hoverId != null || onGrave) ? "pointer" : "";
 }
+const PAN_THRESHOLD = 5;   // px of travel that turns a press into a camera-pan instead of a tap
 function bindPointer() {
+  canvas.style.touchAction = "none";   // let us own pinch/drag on the field (no browser page-zoom or scroll)
   const toLocal = (e) => {
     const rect = getRect();          // cached — pointermove fires constantly; don't reflow each time
-    pointer.x = e.clientX - rect.left;
-    pointer.y = e.clientY - rect.top;
+    pointer.sx = e.clientX - rect.left;
+    pointer.sy = e.clientY - rect.top;
+    const w = screenToWorld(pointer.sx, pointer.sy);   // picking & ripples live in WORLD space
+    pointer.x = w.x; pointer.y = w.y;
   };
-  canvas.addEventListener("pointermove", (e) => { toLocal(e); pointer.inside = true; pickHover(); });
-  canvas.addEventListener("pointerleave", () => { pointer.inside = false; pointer.down = false; hoverId = null; canvas.style.cursor = ""; });
-  canvas.addEventListener("pointerdown", (e) => {
-    // swallow click-storms: cap interaction-driven work so rapid clicking can never stall the tab
-    const pn = performance.now();
-    if (pn - lastClickAt < 90) return;
-    lastClickAt = pn;
-    toLocal(e);
-    pointer.inside = true;
-    pointer.down = true;
-    // a headstone tap opens its epitaph and swallows the gesture (never stirs the swarm or selects a fly)
-    if (showGraves) {
-      let gg = null, gd = 16;
-      for (const g of graveField) { const d = Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y); if (d < gd) { gd = d; gg = g; } }
-      if (gg) { showEpitaph(gg); return; }
-    }
-    hideEpitaph();   // any tap that misses a stone dismisses an open epitaph
+  // a tap (press that never travelled far) on empty ground stirs the swarm; on a fly it selects; on a stone it opens the epitaph
+  const handleTap = () => {
+    hideEpitaph();
     let best = null, bd = Infinity;
     for (const f of sim.values()) {
       if (f.dying) continue;
       const d = Math.hypot(f.x - pointer.x, f.y - pointer.y);
       if (d < bd) { bd = d; best = f; }
     }
-    if (best && bd < 34) {
+    if (best && bd < 34 / cam.z) {
       if (best.id !== selectedId) select(best.id);   // debounce: never restart the feed on the same fly
     } else {
       if (selectedId != null) deselect();
-      spawnRippleAt(pointer.x, pointer.y, STIR_COL);  // a little stir where you tapped
+      spawnRippleAt(pointer.x, pointer.y, STIR_COL);  // a little stir where you tapped (world coords)
     }
+  };
+  canvas.addEventListener("pointermove", (e) => {
+    if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX - getRect().left, y: e.clientY - getRect().top });
+    toLocal(e); pointer.inside = true;
+    if (pinch.active) { movePinch(); return; }
+    if (pan.active) {
+      const dx = pointer.sx - pan.sx0, dy = pointer.sy - pan.sy0;
+      if (!pan.moved && Math.hypot(dx, dy) > PAN_THRESHOLD) pan.moved = true;
+      if (pan.moved) { cam.x = pan.camX0 + dx; cam.y = pan.camY0 + dy; clampCam(); canvas.style.cursor = "grabbing"; }
+      return;
+    }
+    pickHover();
   });
-  window.addEventListener("pointerup", () => { pointer.down = false; });
+  canvas.addEventListener("pointerdown", (e) => {
+    const rect = getRect();
+    ptrs.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    if (ptrs.size >= 2) { startPinch(); return; }   // second finger: switch to pinch-zoom, cancel any pan/tap
+    const pn = performance.now();
+    if (pn - lastClickAt < 90) return;               // swallow click-storms
+    lastClickAt = pn;
+    toLocal(e);
+    pointer.inside = true; pointer.down = true;
+    // a headstone under the press owns the gesture immediately (never pans or stirs)
+    if (showGraves) {
+      let gg = null, gd = 16 / cam.z;
+      for (const g of graveField) { const d = Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y); if (d < gd) { gd = d; gg = g; } }
+      if (gg) { showEpitaph(gg); ptrs.delete(e.pointerId); return; }
+    }
+    pan.active = true; pan.moved = false; pan.sx0 = pointer.sx; pan.sy0 = pointer.sy; pan.camX0 = cam.x; pan.camY0 = cam.y;
+  });
+  const endPointer = (e) => {
+    ptrs.delete(e.pointerId);
+    if (pinch.active) { if (ptrs.size < 2) { pinch.active = false; } return; }
+    pointer.down = false;
+    if (pan.active) {
+      const wasTap = !pan.moved;
+      pan.active = false; canvas.style.cursor = "";
+      if (wasTap) handleTap();     // a press that never moved = a tap; a drag just panned the camera
+    }
+  };
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
+  canvas.addEventListener("pointerleave", () => { if (!pan.active && !pinch.active) { pointer.inside = false; pointer.down = false; hoverId = null; canvas.style.cursor = ""; } });
+  // wheel = cursor-centred zoom (native, no page scroll); shift-wheel nudges horizontally
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = getRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    zoomAt(sx, sy, clamp(factor, 0.8, 1.25));
+  }, { passive: false });
+}
+function startPinch() {
+  const p = Array.from(ptrs.values()); if (p.length < 2) return;
+  pinch.d0 = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
+  pinch.z0 = cam.z;
+  const w = screenToWorld((p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2);
+  pinch.w0x = w.x; pinch.w0y = w.y;
+  pinch.active = true; pan.active = false; pointer.down = false;
+}
+function movePinch() {
+  const p = Array.from(ptrs.values()); if (p.length < 2) return;
+  const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
+  const mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
+  cam.z = clamp(pinch.z0 * (d / pinch.d0), CAM_Z_MIN, CAM_Z_MAX);
+  cam.x = mx - pinch.w0x * cam.z; cam.y = my - pinch.w0y * cam.z; clampCam();
+}
+// the +/−/reset cluster on the left edge — same zoomAt path as the wheel, anchored to the field centre
+function bindZoomControls() {
+  const zi = $("zoom-in"), zo = $("zoom-out"), zr = $("zoom-reset");
+  if (zi) zi.addEventListener("click", () => zoomAt(VW / 2, VH / 2, 1.28));
+  if (zo) zo.addEventListener("click", () => zoomAt(VW / 2, VH / 2, 1 / 1.28));
+  if (zr) zr.addEventListener("click", () => resetView());
 }
 
 function spawnRippleAt(x, y, color) {
@@ -6296,6 +6785,7 @@ function boot() {
   populateLangSelect();
     { const tca = $("tca-copy"); if (tca) tca.title = T("econ.copyTip", { ca: tca.dataset.ca || "" }); }   // fill the {ca} param applyDom can't
   bindPointer();
+    bindZoomControls();
   offlineTick();   // seed the field + the agent economy so it is alive immediately
   applyPaletteToDOM(paletteAt(tempSmoothed));
   setStatusKind("connecting");
