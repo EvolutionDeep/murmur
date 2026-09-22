@@ -11,6 +11,14 @@ All notable changes to **murmur** are documented in this file. The format is bas
 ## [Unreleased]
 
 ### Added
+- **`packages/fly-brain-rs` — a bit-exact Rust port of `fly-brain`** (connectome, LIF network, `FlyBrain`
+  incl. `serialize`/`deserialize`, genome operators, brain manifest) for offline replay, research and a future
+  Wasm build. Parity is asserted with no tolerance against traces generated from the TypeScript
+  (`tests/gen/gen_fixtures.ts`; an opt-in fuzz set covers 230 genomes across `GENOME_BOUNDS` for 263k steps).
+  Getting there documented that V8's `Math.log/cos/tanh` differ in the last bit between arm64 (FMA-contracted)
+  and x86-64 Node builds — the connectome's f32 weights and the dynamics are identical on both, so nothing
+  observable changes; the crate's `fma` feature selects which build to match. CI gained a `fly-brain-rs` job
+  (ubuntu x86-64 + macOS arm64) that regenerates the fixtures on the runner and replays them.
 - **Real unit-test suite (36 tests)** replacing the smoke-only gap: `connectome.test.ts` (laminar FlyWire
   downsample, mutually-inhibitory L2 winner-take-all, per-seed determinism), `lif.test.ts` (leak / spike /
   refractory / synaptic propagation and the spike-frequency-adaptation fatigue that breaks the WTA latch),
