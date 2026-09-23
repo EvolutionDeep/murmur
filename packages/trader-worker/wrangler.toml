@@ -285,6 +285,26 @@ CITY_TOWN_MIN = "5"                           # …a town
 CITY_CITY_MIN = "9"                           # …a city
 CITY_URBAN_SHARE = "0.35"                     # share of the swarm in settlements that makes it "urban" (one line, then only after a 0.1 fall)
 
+# ===== ① NEURAL FEEDBACK BUS (the civilizational climate fed BACK into the connectome — src/socialStimulus.ts) =====
+# Every other civilizational layer here is a PURE READ-OUT: it narrates the society into the chronicle but the
+# flies never feel it. This one closes the loop — it turns the historian's OWN reckoning (eraInfo's civPhase /
+# civLevel / eraShock, already a distilled read-out of the real volume, equity, feuds, runs and burials) into a
+# BOUNDED ambient on the FOUR existing visitor stimulus channels (food / threat / light / dark), so a golden age
+# brightens the world and tastes of plenty, a dark age dims it, and a plague / famine / oligarchy is a sustained
+# aversive stress. It rides the EXACT visitor-poke injection path (advanceFlies → encodeStimulus → injectCurrent).
+# SAFETY: it adds NO sensory channel (so manifestHash NEVER rotates), writes NO chronicle kind (so
+# chroniclerRulesHash never rotates ⇒ no frontend mirror, worker-only deploy), touches NO genome and moves NO
+# money. It is PURE + DETERMINISTIC (integer civLevel in ⇒ bounded floats out; no RNG/clock/LLM) and NaN-guarded
+# at both the config boundary and the module, so a malformed knob can never poison a neuron membrane.
+# ROLLOUT (mirrors ⑬⑭ — shipped LIVE): SOCIAL_STIMULUS_ENABLED="true" arms the bus, so each cron the swarm
+# feels its own civilizational climate on top of the market pulse. It is bounded well INSIDE the already-proven
+# visitor-poke envelope: the strongest climate (peak golden + boom) is light 0.5 + food 0.375, MILDER than a
+# single visitor poke (which may reach intensity 1.0 on the same four channels). Rollback = set "false" and
+# redeploy (no code change) ⇒ the cron injects only today's visitor stimuli, byte-for-byte. SOCIAL_STIMULUS_MAX
+# is the master ceiling/scale on any one felt channel (0..1); 0 ⇒ the bus emits nothing (a finer kill).
+SOCIAL_STIMULUS_ENABLED = "true"              # ① master switch — ARMED: each cron the swarm feels its civilizational climate (set "false" for a one-deploy byte-for-byte rollback)
+SOCIAL_STIMULUS_MAX = "0.5"                   # master ceiling/scale on any one felt channel's intensity, 0..1 (0 ⇒ emits nothing)
+
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
 # fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /

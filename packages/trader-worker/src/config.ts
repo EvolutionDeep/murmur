@@ -201,6 +201,17 @@ export interface Env {
   CITY_TOWN_MIN?: string;               // …to grow into a town (default 5; clamped 1..128)
   CITY_CITY_MIN?: string;               // …to be counted a city (default 9; clamped 1..256)
   CITY_URBAN_SHARE?: string;            // share of the live swarm living in settlements that makes the swarm "urban" (default 0.35; clamped 0..1) — announced once, and only again after the share falls 0.1 below it
+
+  // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
+  //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
+  //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
+  //     connectome as a BOUNDED ambient on the four existing visitor stimulus channels (food / threat / light /
+  //     dark) — a golden age brightens and tastes of plenty, a dark age dims, a plague/famine is a sustained
+  //     aversive stress. It adds NO sensory channel (manifestHash never rotates), touches NO genome, moves NO
+  //     money, and writes NO chronicle kind (chroniclerRulesHash never rotates ⇒ no frontend mirror, worker-only).
+  //     OFF by default (dark deploy) ⇒ an OFF cron appends nothing, byte-for-byte today's neural input.
+  SOCIAL_STIMULUS_ENABLED?: string;     // "true"/"false" (default false) — feed the civilizational climate back into the connectome
+  SOCIAL_STIMULUS_MAX?: string;         // master ceiling on any one felt channel's intensity, 0..1 (default 0.5; 0 ⇒ the bus emits nothing)
   INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
     EPOCHS_ENABLED?: string;              // "true"/"false" (default TRUE) — epochs layer ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/DYNASTIC, or on a governance-injected miracle/cataclysm. PURE READ-OUT of existing state (never feeds back); false leaves only the slow regime-driven era logic of today.
   CREDIT_CAP_BASE_USDC?: string;        // base IOU credit line per fly, USDC (default 0.05; traders double it, reputation scales up to 3×). SIMULATED LEDGER ONLY — onchain balances have no offline credit. Bounded 0..1000 (0 ⇒ credit off, books stay).
@@ -459,6 +470,15 @@ export interface RuntimeConfig {
     townMin: number;          // …a town (default 5)
     cityMin: number;          // …a city (default 9)
     urbanShare: number;       // share of the swarm in settlements that makes it urban (default 0.35)
+  };
+
+  // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
+  // connectome as a bounded ambient on the four visitor stimulus channels. Pure + deterministic; it adds NO
+  // channel (manifestHash unchanged), touches NO genome, moves NO money and writes NO chronicle kind
+  // (chroniclerRulesHash unchanged). OFF ⇒ nothing is appended, byte-for-byte today's neural input.
+  socialStimulus: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): false ⇒ the cron injects only today's visitor stimuli
+    maxIntensity: number;     // ceiling (and master scale) on any one emitted channel's intensity, 0..1 (default 0.5)
   };
 
   // Institutions (layer ⑥: limit-book price discovery, professions, IOU credit, classes) — one
@@ -791,6 +811,20 @@ export function loadConfig(env: Env): RuntimeConfig {
       townMin: clampInt(Number(env.CITY_TOWN_MIN || "5"), 1, 128),
       cityMin: clampInt(Number(env.CITY_CITY_MIN || "9"), 1, 256),
       urbanShare: clamp(Number(env.CITY_URBAN_SHARE || "0.35"), 0, 1),
+    },
+
+    socialStimulus: {
+      // OFF by default (dark deploy): the bus writes straight into the live neural input that drives real
+      // trades, so it ships gated and is opened only after an OFF deploy proves the cron byte-for-byte
+      // unchanged. Set SOCIAL_STIMULUS_ENABLED=true to let the swarm feel its own civilizational climate.
+      enabled: (env.SOCIAL_STIMULUS_ENABLED ?? "false").toLowerCase() === "true",
+      // NaN-safe on purpose: this ceiling scales a CURRENT injected into the connectome, so a malformed env
+      // var must fall back to 0.5 rather than leak NaN (which would poison every neuron membrane irreversibly).
+      // clamp() alone does NOT guard NaN (unlike clampInt), so the finite check is explicit here.
+      maxIntensity: (() => {
+        const mi = Number(env.SOCIAL_STIMULUS_MAX ?? "0.5");
+        return clamp(Number.isFinite(mi) ? mi : 0.5, 0, 1);
+      })(),
     },
 
     institutions: {

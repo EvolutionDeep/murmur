@@ -63,6 +63,7 @@ import { CultureMembrane } from "./culture.js";
 import { FaithMembrane, type FaithSignals } from "./religion.js";
 import { TechMembrane, type TechSignals } from "./invention.js";
 import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
+import { socialStimuli } from "./socialStimulus.js";
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
@@ -1595,6 +1596,30 @@ export class FlyStateDO {
 
     // 3) Collect the visitor stimuli queued since the last tick (injected on the first sub-tick only).
     const stimuli = this.pendingStimuli.splice(0, this.pendingStimuli.length);
+    // 3b) ① NEURAL FEEDBACK BUS — fold the civilizational climate the historian ALREADY reckoned (eraInfo's
+    //     phase / level / shock, a pure persisted read-out of last cron's society) into the SAME stimulus array,
+    //     so the connectome FEELS the age it lives in exactly as it feels a visitor's poke — closing the loop
+    //     the read-out membranes (⑤⑦⑨⑩⑬⑭) only ever narrated. Gated behind SOCIAL_STIMULUS_ENABLED (default
+    //     OFF ⇒ this appends nothing and `stimuli` is byte-for-byte today's pendingStimuli). It reuses the four
+    //     existing visitor channels, so it adds NO sensory channel (manifestHash never rotates), touches no
+    //     genome and moves no money; it rides the identical injection path (advanceFlies → encodeStimulus).
+    //     this.chronicler is loaded lazily by the historian AFTER the sub-ticks, so on a cold/evicted first cron
+    //     it is still null here — the bus simply skips that one cron and the ambient resumes next tick.
+    //     Best-effort: a throw can never block the live tick.
+    if (this.cfg.socialStimulus.enabled) {
+      try {
+        const era = this.chronicler ? this.chronicler.eraInfo() : null;
+        if (era) {
+          const civic = socialStimuli(
+            { civPhase: era.civPhase, civLevel: era.civLevel, eraShock: era.eraShock },
+            { maxIntensity: this.cfg.socialStimulus.maxIntensity },
+          );
+          if (civic.length) stimuli.push(...civic);
+        }
+      } catch (e) {
+        console.warn("[DO] social stimulus failed (non-fatal):", (e as Error).message);
+      }
+    }
 
     // 4) Run the decision sub-ticks. The agent economy now settles on EVERY sub-tick (not just once per
     //    cron), sharing ONE per-cron deal budget — so trades are ~5× more frequent while the total real
