@@ -640,6 +640,15 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .appr-row.appr-keeper { color: #4a3f6a; }
 .appr-row.appr-school { color: #3f5a3a; margin-top: 6px; font-style: italic; }
 
+/* ⑰ archive: the written word — records, decodings, burnings */
+.chron-archive { flex: 1 1 0; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }
+.arch-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.arch-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.arch-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.arch-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.arch-row.arch-head { color: var(--ink); }
+.arch-row.arch-record { color: #6a4a3f; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }

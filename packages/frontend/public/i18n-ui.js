@@ -5671,4 +5671,76 @@ Object.assign(ja, jaL);
 Object.assign(ko, koL);
 Object.assign(ar, arL);
 
+// --- ⑰ ARCHIVE UI keys (7 languages) ---
+const enArch = {
+  "vol.archTitle": "the written word",
+  "vol.archSub": "· records, decodings & burnings",
+  "arch.head": "{records} records survive · {recorded} inscribed · {decodes} decodings",
+  "arch.headTitle": "the archive's inventory — what was carved, what was read, what remains",
+  "arch.record": "fly #{id} carved rung {rune} · {name}",
+  "arch.recordTitle": "inscribed at tick {tick} — the art outlives every hand that held it",
+  "chron.records": "{n} carved in stone",
+};
+const zhArch = {
+  "vol.archTitle": "文字之力",
+  "vol.archSub": "· 石刻、解读与灰烬",
+  "arch.head": "{records} 篇记录尚存 · 已刻 {recorded} 篇 · 已解读 {decodes} 次",
+  "arch.headTitle": "档案馆清单 —— 刻了什么、读了什么、还剩什么",
+  "arch.record": "第{id}号蝇刻下第{rune}阶 · {name}",
+  "arch.recordTitle": "刻于第{tick}刻 —— 这门艺比每一只握过它的手都长寿",
+  "chron.records": "{n} 篇石刻",
+};
+const frArch = {
+  "vol.archTitle": "la parole écrite",
+  "vol.archSub": "· gravures, décodages & cendres",
+  "arch.head": "{records} registres survivent · {recorded} gravés · {decodes} décodages",
+  "arch.headTitle": "l’inventaire des archives — ce qui fut gravé, lu, et ce qui reste",
+  "arch.record": "mouche #{id} a gravi le rang {rune} · {name}",
+  "arch.recordTitle": "gravé au tick {tick} — l’art survit à chaque main qui l’a tenu",
+  "chron.records": "{n} gravures dans la pierre",
+};
+const esArch = {
+  "vol.archTitle": "la palabra escrita",
+  "vol.archSub": "· registros, decodificaciones & cenizas",
+  "arch.head": "{records} registros sobreviven · {recorded} grabados · {decodes} decodificaciones",
+  "arch.headTitle": "el inventario del archivo — lo que fue grabado, leído, y lo que queda",
+  "arch.record": "mosca #{id} grabó escalón {rune} · {name}",
+  "arch.recordTitle": "grabado en tick {tick} — el arte sobrevive a cada mano que lo sostuvo",
+  "chron.records": "{n} grabados en piedra",
+};
+const jaArch = {
+  "vol.archTitle": "文字の力",
+  "vol.archSub": "· 刻印、解読と灰燼",
+  "arch.head": "{records} 件の記録現存 · {recorded} 刻まれ · {decodes} 回解読された",
+  "arch.headTitle": "書庫の目録 —— 何を刻み、何を読み、何が残ったか",
+  "arch.record": "第{id}号蠅が第{rune}階を刻んだ · {name}",
+  "arch.recordTitle": "tick {tick} に刻まれた —— この芸はそれを握った全ての手より長生きする",
+  "chron.records": "{n} 篇の石刻",
+};
+const koArch = {
+  "vol.archTitle": "글자의 힘",
+  "vol.archSub": "· 기록, 해독 & 재",
+  "arch.head": "{records}개 기록 생존 · {recorded}개 새김 · {decodes}회 해독",
+  "arch.headTitle": "기록실 목록 —— 무엇을 새기고, 무엇을 읽었으며, 무엇이 남았는가",
+  "arch.record": "{id}번 파리 · {rune}단을 새김 · {name}",
+  "arch.recordTitle": "tick {tick}에 새김 —— 이 기술은 이를 쥔 모든 손보다 오래 살리라",
+  "chron.records": "{n}개 돌에 새김",
+};
+const arArch = {
+  "vol.archTitle": "الكلمة المكتوبة",
+  "vol.archSub": "· نقوش، فكّ شيفرة ورماد",
+  "arch.head": "{records} نقش باقٍ · {recorded} نُقش · {decodes} فُكّ",
+  "arch.headTitle": "جرد الأرشيف — ما نُقش، ما قُرئ، وما بقي",
+  "arch.record": "الذبابة #{id} نقشت الدرجة {rune} · {name}",
+  "arch.recordTitle": "نُقش في النبضة {tick} — الفنّ يبقى بعد كل يد حملته",
+  "chron.records": "{n} نقوش في الحجر",
+};
+Object.assign(en, enArch);
+Object.assign(zh, zhArch);
+Object.assign(fr, frArch);
+Object.assign(es, esArch);
+Object.assign(ja, jaArch);
+Object.assign(ko, koArch);
+Object.assign(ar, arArch);
+
 export { en, zh, fr, es, ja, ko, ar };

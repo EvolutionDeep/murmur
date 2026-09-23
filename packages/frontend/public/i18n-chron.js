@@ -67,6 +67,9 @@ const zh = {
   SURPASS: "学徒超越了老师 —— 第{apprentice}号蝇把{name}举到了第{master}号蝇——那第一位把它拉起来的手——之上；梯子就在学徒的掌握中上升。",
   SCHOOL: "{name}的学派 —— {house}家族{sigil}下{adherents}只手如今同修一艺，它将活得比其中任何一命更长。",
   CRAFT_LOST: "一门技艺随它的守艺者而去 —— 第{last}号蝇是最后活过{name}的手；未有学徒及时受业，技艺就此陷入黑暗，尽管阶梯仍刻其名。",
+  RECORDING: "刻于石上 —— 第{id}号蝇将{name}刻下，使其比每一只握过它的心都长寿；蜂群的知识不再只是手的形状。",
+  DECODE: "一个心灵读石 —— 第{id}号蝇研读{name}的记录，领悟了没有活师能传的技艺；艺术回归一颗从未遇见过手的首领。",
+  ARCHIVE_BURNED: "档案馆在燃烧 —— 第{recordedBy}号蝇刻下的{name}最后一篇记录毁于一个读不懂它的黑暗时代；这门艺在所有意义上真正消失了。",
 };
 
 const fr = {
@@ -126,6 +129,9 @@ const fr = {
   SURPASS: "L'élève dépasse le maître — la mouche #{apprentice} porte {name} au-delà de la mouche #{master}, la première main qui l'instruisit ; l'échelle monte dans la prise de l'apprenti.",
   SCHOOL: "Une école de {name} — {adherents} mains de la Maison {house} {sigil} travaillent désormais le même art, et il survivra à toute vie isolée parmi elles.",
   CRAFT_LOST: "Un art meurt avec sa gardienne — la mouche #{last} fut la dernière main vivante à tenir {name} ; nul apprenti ne fut instruit à temps, et l'art s'éteint quoique l'échelle le nomme encore.",
+  RECORDING: "Gravé dans la pierre — la mouche #{id} pose {name} pour qu'il survive à chaque esprit qui l'a porté ; le savoir de l'essaim n'est plus seulement la forme d'une main.",
+  DECODE: "Un esprit lit la pierre — la mouche #{id} étudie le registre de {name} et saisit ce qu'aucun maître vivant ne pouvait transmettre ; l'art retourne à une tête qui n'a jamais rencontré de main.",
+  ARCHIVE_BURNED: "Les archives brûlent — le dernier registre écrit de {name}, gravé par la mouche #{recordedBy}, est perdu dans un âge sombre qui ne savait pas le lire ; l'art est maintenant perdu en tout sens.",
 };
 
 const es = {
@@ -185,6 +191,9 @@ const es = {
   SURPASS: "El discípulo supera al maestro — la mosca #{apprentice} lleva {name} más allá de la mosca #{master}, la primera mano que la instruyó ; la escalera sube en el puño del aprendiz.",
   SCHOOL: "Una escuela de {name} — {adherents} manos de la Casa {house} {sigil} trabajan ya un mismo arte, y sobrevivirá a cualquier vida individual entre ellas.",
   CRAFT_LOST: "Un oficio muere con su guardián — la mosca #{last} fue la última mano viva en sostener {name} ; ningún aprendiz fue instruido a tiempo, y el arte se apaga aunque la escalera aún lo nombre.",
+  RECORDING: "Grabado en piedra — la mosca #{id} fija {name} para que sobreviva a cada mente que lo sostuvo ; el saber del enjambre ya no es solo la forma de una mano.",
+  DECODE: "Una mente lee la piedra — la mosca #{id} estudia el registro de {name} y comprende lo que ningún maestro vivo podía transmitir ; el arte regresa a una cabeza que nunca conoció una mano.",
+  ARCHIVE_BURNED: "El archivo arde — el último registro escrito de {name}, grabado por la mosca #{recordedBy}, se pierde en una edad oscura que no supo leerlo ; el arte ya se ha ido en todo sentido.",
 };
 
 const ja = {
@@ -244,6 +253,9 @@ const ja = {
   SURPASS: "弟子、師を越える —— 蠅#{apprentice}は{name}を、それを最初に教えた手たる蠅#{master}のうえへ挙げよ；階梯は学徒の掌中に上がる。",
   SCHOOL: "{name}の学派 —— {house}家{sigil}の許に{adherents}手が同一の芸を習い、それはその内のただ一つの生をも越えて生き残らん。",
   CRAFT_LOST: "芸、守芸者と共に死す —— 蠅#{last}が{name}を活かす最期の手なりし；学徒に伝う間なく、芸は暗みに沈む、階梯にその名は残れり。",
+  RECORDING: "石に刻まる —— 蠅#{id}、{name}を刻み、之を握りし全て心より長らえしむ；蜂群の知識、もはや手の形のみあらず。",
+  DECODE: "一霊、石を読む —— 蠅#{id}、{name}の記録を読み解き、生ける師の伝え得ざりし芸を悟る；芸、いまだ手に逢わざりし頭へ帰る。",
+  ARCHIVE_BURNED: "書庫、焼く —— 蠅#{recordedBy}の刻みし{name}の最後の一巻、之を読まざりし暗黒の時代に失わる；芸、全ての意味にて消え去れり。",
 };
 
 const ko = {
@@ -303,6 +315,9 @@ const ko = {
   SURPASS: "제자가 스승을 넘다 — 파리 #{apprentice}이(가) {name}을(를) 처음 자신을 이끈 손이었던 파리 #{master} 위로 들어 올린다; 사다리는 제자의 손아귀에서 올라간다.",
   SCHOOL: "{name}의 학파 — {house}가(家) {sigil} 아래 손 {adherents}이 하나의 기예를 함께 익히니, 그 기예는 무리 중 그 어떤 한 생명보다 오래 이어질 것이다.",
   CRAFT_LOST: "기예가 그 수장자와 함께 죽다 — 파리 #{last}이 {name}을 쥔 마지막 살아 있는 손이었으니, 마땅히 전수할 제자가 없었고, 사다리가 그 이름을 새기고 있음에도 기예는 어둠에 잠기었다.",
+  RECORDING: "돌에 새기다 — 파리 #{id}이 {name}을 새겨, 이를 쥔 모든 마음보다 오래 살게 하다; 벌떼의 지식은 더 이상 손의 모양만이 아니다.",
+  DECODE: "한 마음이 돌을 읽다 — 파리 #{id}이 {name}의 기록을 파고들어, 살아 있는 스승이 전할 수 없었던 기예를 깨닫다; 기예, 아직 손을 만나지 못한 머리로 돌아가다.",
+  ARCHIVE_BURNED: "기록실이 타다 — 파리 #{recordedBy}이 새긴 {name}의 마지막 기록을 읽을 줄 모르던 암흑 시대에 잃다; 기예, 모든 의미로 사라지다.",
 };
 
 const ar = {
@@ -362,6 +377,9 @@ const ar = {
   SURPASS: "التلميذ يسبق المعلّم — الذبابة #{apprentice} تحمل {name} فوق الذبابة #{master}، أول يد علّمتها؛ فالسلّم يصير في قبضة المتعلّم.",
   SCHOOL: "مدرسة {name} — {adherents} يداً من دار {house} {sigil} تعمل بالحرفة ذاتها، وستبقى بعد أعمار أفرادها.",
   CRAFT_LOST: "تموت حرفة مع حرّاسها — كانت الذبابة #{last} آخر يد حيّة تمسك {name}؛ فلم يُعلَّم تلميذٌ في الوقت، وأظلمت الحرفة والسلّم ما يزال يذكر اسمها.",
+  RECORDING: "محفور في الحجر — الذبابة #{id} تنقش {name} ليبقى بعد كل عقلٍ حمله؛ معرفة السرب لم تعد مجرّد شكل اليد.",
+  DECODE: "عقلٌ يقرأ الحجر — الذبابة #{id} تدرس سجلّ {name} وتدرك ما عجز أي معلّم حيّ عن نقله؛ الفنّ يعود إلى رأسٍ لم يلتقِ يدًا قطّ.",
+  ARCHIVE_BURNED: "الأرشيف يحترق — آخر سجلٍّ مكتوب لـ{name}، نقشته الذبابة #{recordedBy}، يضيع في عصرٍ مظلمٍ لم يعرف قراءته؛ الفنّ ضاع الآن بكل معنى.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

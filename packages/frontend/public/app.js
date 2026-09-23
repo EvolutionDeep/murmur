@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=78";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=79";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -316,6 +316,7 @@ let econWar = null;         // ⑨ war coffer read-out from /war {houses[], wars
 let econTech = null;        // ⑬ ladder read-out {rungs[], lost[], next, discovery, diffusion, lostArt} — the arts the swarm has found
 let econCities = null;      // ⑭ settlement read-out {settlements[], urbanPop, road, demography, …} — named places & the census
 let econApprentice = null;  // ⑯ apprenticeship read-out {keepers[], skilled, topCraft, lineages, schools[], transmission, surpass, school, craftLost} — who remembers what
+let econArchive = null;     // ⑰ archive read-out {records[], recorded, decodes, recording, decode, archiveBurned} — what's been carved in stone
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -2902,6 +2903,7 @@ function applyEconomy(econ) {
   if (econ.tech) { econTech = econ.tech; renderTechSection(); }
   if (econ.cities) { econCities = econ.cities; renderCitiesSection(); }
   if (econ.apprentice) { econApprentice = econ.apprentice; renderApprenticeSection(); }
+  if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -3612,6 +3614,32 @@ function renderApprenticeSection() {
   }
 }
 
+// ⑰ ARCHIVE section — the records carved in stone, the minds that read them, the fires that took them.
+function renderArchiveSection() {
+  const host = $("chron-archive");
+  const body = $("arch-body");
+  if (!host || !body) return;
+  const a = econArchive;
+  const records = (a && Array.isArray(a.records)) ? a.records : [];
+  if (!a || (!records.length && !a.recorded && !a.decodes)) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  // header: records surviving / cumulative inscriptions / cumulative decodes.
+  const head = document.createElement("div");
+  head.className = "arch-row arch-head";
+  head.textContent = T("arch.head", { records: records.length, recorded: a.recorded, decodes: a.decodes });
+  head.title = T("arch.headTitle");
+  body.appendChild(head);
+  // each surviving record: rung, name, who carved it.
+  for (const r of records.slice(0, 16)) {
+    const row = document.createElement("div");
+    row.className = "arch-row arch-record";
+    row.textContent = T("arch.record", { id: r.recordedBy, rung: r.rung, name: r.name || "" });
+    row.title = T("arch.recordTitle", { tick: r.tick });
+    body.appendChild(row);
+  }
+}
+
 // ================= ⑨ the war coffer section (in the chronicle panel) =================
 // The on-chain WarCoffer: which houses hold a real-USDC vault, the live + just-closed bouts (winner derived
 // inside the contract, cross-checked independently here), and the extra tax purse. A pure read-out of /war —
@@ -3719,6 +3747,7 @@ function openWallets() {
     if (e.tech) { econTech = e.tech; renderTechSection(); }
     if (e.cities) { econCities = e.cities; renderCitiesSection(); }
     if (e.apprentice) { econApprentice = e.apprentice; renderApprenticeSection(); }
+  if (e.archive) { econArchive = e.archive; renderArchiveSection(); }
   }).catch(() => {});
 }
 
@@ -4198,6 +4227,7 @@ const CHRON_ICONS = {
   INVENTION: "✵", DIFFUSION: "≋", LOST_ART: "☒",
   CITY_FOUNDED: "⌂", URBANIZATION: "♜", CENSUS: "⌗", PLAGUE_WAVE: "☠",
   TRANSMISSION: "✋", SURPASS: "▲", SCHOOL: "⛫", CRAFT_LOST: "☠",
+  RECORDING: "✒", DECODE: "◉", ARCHIVE_BURNED: "▲",
 };
 
 function renderChron() {
@@ -4251,6 +4281,10 @@ function renderChron() {
     // ⑯ append the ladder's own memory (skilled minds / top craft carried), absent while APPRENTICE is off
     if (sub && econApprentice && econApprentice.skilled > 0) {
       sub.textContent += ` · ${T("chron.crafts", { n: econApprentice.skilled, top: econApprentice.topCraft })}`;
+    }
+    // ⑰ append the archive tally (records surviving), absent while ARCHIVE is off
+    if (sub && econArchive && econArchive.records && econArchive.records.length > 0) {
+      sub.textContent += ` · ${T("chron.records", { n: econArchive.records.length })}`;
     }
   } else if (sub) sub.textContent = T("chron.subOffline");
   if (!chronRows.length) {
@@ -4365,13 +4399,16 @@ const CHRON_ = {
     SURPASS: "The student outstrips the teacher — fly #{apprentice} carries {name} past fly #{master}, the first hand that taught it; the ladder rises in the apprentice's grip.",
     SCHOOL: "A school of {name} — {adherents} hands in the House of {house} {sigil} now work the one art, and it will outlive any single life among them.",
     CRAFT_LOST: "A craft dies with its keeper — fly #{last} was the last living hand to hold {name}; no apprentice was taught in time, and the art goes dark though the ladder still names it.",
+    RECORDING: "Carved in stone — fly #{id} sets down {name} so it will outlive every mind that held it; the swarm's knowledge is no longer only the shape of a hand.",
+    DECODE: "A mind reads the stone — fly #{id} studies the record of {name} and grasps what no living teacher could pass; the art returns to a head that never met a hand.",
+    ARCHIVE_BURNED: "The archive burns — the last written record of {name}, set down by fly #{recordedBy}, is lost to a dark age that could not read it; the art is now gone in every sense.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -6099,6 +6136,7 @@ async function poll() {
       if (econ.tech) { econTech = econ.tech; renderTechSection(); }
       if (econ.cities) { econCities = econ.cities; renderCitiesSection(); }
       if (econ.apprentice) { econApprentice = econ.apprentice; renderApprenticeSection(); }
+    if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -6781,7 +6819,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

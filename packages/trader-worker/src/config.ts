@@ -206,6 +206,12 @@ export interface Env {
   APPRENTICE_SELF_PCT?: string;         // 0..1 — per cron, the probability a cohort feeder independently grasps the highest invented art, seeding a first keeper where none exists (default 0.05; clamped 0..1)
   APPRENTICE_SCHOOL_MIN?: string;       // living same-house keepers of one art that make it a named SCHOOL (default 3; clamped 2..64)
 
+  // --- ⑰ ARCHIVE: externalized knowledge — the swarm's first rebellion against CRAFT_LOST (see src/archive.ts) ---
+  ARCHIVE_ENABLED?: string;             // "true"/"false" (default TRUE)
+  ARCHIVE_RECORD_PCT?: string;          // 0..1 — per keeper per cron, P they inscribe their craft (default 0.02)
+  ARCHIVE_DECODE_PCT?: string;          // 0..1 — per unskilled fly per cron, P they are seen studying a record (default 0.08)
+  ARCHIVE_BURN_CIV_MAX?: string;        // civLevel at or below this, records may burn (default 15; clamped 0..100)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -496,6 +502,12 @@ export interface RuntimeConfig {
     learnPct: number;         // per contact pair per cron, P a feeder is taught its cohort-mate's art (default 0.22)
     selfPct: number;          // per cron, P a feeder independently grasps the top invented art (default 0.05)
     schoolMin: number;        // living same-house keepers of one art that make it a school (default 3)
+  };
+  archive: {
+    enabled: boolean;
+    recordP: number;          // per keeper per cron, P they inscribe (default 0.02)
+    decodeP: number;          // per unskilled fly per cron, P they decode (default 0.08)
+    burnCivMax: number;       // civLevel ≤ this ⇒ records may burn (default 15)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -857,6 +869,13 @@ export function loadConfig(env: Env): RuntimeConfig {
       learnPct: clamp(Number(env.APPRENTICE_LEARN_PCT || "0.22"), 0, 1),
       selfPct: clamp(Number(env.APPRENTICE_SELF_PCT || "0.05"), 0, 1),
       schoolMin: clampInt(Number(env.APPRENTICE_SCHOOL_MIN || "3"), 2, 64),
+    },
+
+    archive: {
+      enabled: (env.ARCHIVE_ENABLED ?? "true").toLowerCase() !== "false",
+      recordP: clamp(Number(env.ARCHIVE_RECORD_PCT || "0.02"), 0, 1),
+      decodeP: clamp(Number(env.ARCHIVE_DECODE_PCT || "0.08"), 0, 1),
+      burnCivMax: clampInt(Number(env.ARCHIVE_BURN_CIV_MAX || "15"), 0, 100),
     },
 
     socialStimulus: {

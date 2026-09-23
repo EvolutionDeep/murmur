@@ -64,6 +64,7 @@ import { FaithMembrane, type FaithSignals } from "./religion.js";
 import { TechMembrane, type TechSignals } from "./invention.js";
 import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { ApprenticeMembrane, type ApprenticeSignals } from "./apprentice.js";
+import { ArchiveMembrane, type ArchiveSignals } from "./archive.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -106,6 +107,7 @@ const KEY_CITIES = "cities:v1";
  *  key, same law: a corrupt/absent blob only forgets the arts people knew, never ledger state. Bounded (≤ the
  *  live population), DO-safe. */
 const KEY_APPRENTICE = "apprentice:v1";
+const KEY_ARCHIVE = "archive:v1";
 const KEY_COMMONS = "commons:v1";
 /** ⑮ The Laureate's poem hash chain — its OWN key: a poem is a pure read-out, so a corrupt/absent blob only
  *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
@@ -206,6 +208,8 @@ export class FlyStateDO {
   private cities: CityMembrane | null = null;
     /** ⑯ The apprenticeship membrane (education + cumulative culture) — null while APPRENTICE_ENABLED=false (byte-for-byte inert). */
   private apprentice: ApprenticeMembrane | null = null;
+  /** ⑰ The Archive (externalized knowledge) — null while ARCHIVE_ENABLED is off. */
+  private archive: ArchiveMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** ⑮ The Laureate (the swarm's poet) — null while POET_ENABLED=false (byte-for-byte inert). */
@@ -449,6 +453,20 @@ export class FlyStateDO {
     this.apprentice = new ApprenticeMembrane({ enabled: true, learnPct: a.learnPct, selfPct: a.selfPct, schoolMin: a.schoolMin });
     if (stored) this.apprentice.restore(stored);
     return this.apprentice;
+  }
+
+  /**
+   * Lazily load the Archive membrane (null while ARCHIVE_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts with an empty archive; it can never poison the ledger.
+   */
+  private async ensureArchive(): Promise<ArchiveMembrane | null> {
+    if (!this.cfg.archive.enabled) return null;
+    if (this.archive) return this.archive;
+    const stored = await this.state.storage.get<string>(KEY_ARCHIVE);
+    const a = this.cfg.archive;
+    this.archive = new ArchiveMembrane({ enabled: true, recordP: a.recordP, decodeP: a.decodeP, burnCivMax: a.burnCivMax });
+    if (stored) this.archive.restore(stored);
+    return this.archive;
   }
 
   /**
@@ -1080,6 +1098,7 @@ export class FlyStateDO {
     if (this.tech) await this.state.storage.put(KEY_TECH, this.tech.serialize());
     if (this.cities) await this.state.storage.put(KEY_CITIES, this.cities.serialize());
         if (this.apprentice) await this.state.storage.put(KEY_APPRENTICE, this.apprentice.serialize());
+    if (this.archive) await this.state.storage.put(KEY_ARCHIVE, this.archive.serialize());
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.poet) await this.state.storage.put(KEY_POET, this.poet.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
@@ -1461,6 +1480,19 @@ export class FlyStateDO {
             topCraft: apprSig.topCraft,
           }
         : null;
+      // ⑰ ARCHIVE: fold the externalized-knowledge read-out ONLY while ARCHIVE is on. Off ⇒ no `archive` key
+      // ⇒ the historian's RECORDING/DECODE/ARCHIVE_BURNED detectors never speak.
+      const archSig = this.cfg.archive.enabled ? this.archive?.signals() ?? null : null;
+      const archive = archSig
+        ? {
+            recording: archSig.recording,
+            decode: archSig.decode,
+            archiveBurned: archSig.archiveBurned,
+            records: archSig.records.length,
+            recorded: archSig.recorded,
+            decodes: archSig.decodes,
+          }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1553,6 +1585,7 @@ export class FlyStateDO {
         tech,
         cities,
         apprentice,
+        archive,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1638,6 +1671,29 @@ export class FlyStateDO {
       appr.round(tick, snapshot.flies, inventedTop, (id) => econ?.houseOf(id) ?? null);
     } catch (e) {
       console.warn("[DO] apprentice drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑰ ARCHIVE: drive the externalized-knowledge membrane over ONE cron. Reads ⑯'s keeper map, ⑬'s invented top,
+   * civLevel from eraInfo, and the live fly list. PURE READ-OUT — never modifies ⑯ or any economic state.
+   * Best-effort: a throw can never block the live tick.
+   */
+  private async driveArchive(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const arch = await this.ensureArchive();
+    if (!arch || !snapshot) return;
+    try {
+      const apprSig = this.cfg.apprentice.enabled ? this.apprentice?.signals() ?? null : null;
+      const keeperMap = new Map<number, number>();
+      if (apprSig) for (const k of apprSig.keepers) keeperMap.set(k.id, k.craft);
+      let inventedTop = 0;
+      if (apprSig) inventedTop = apprSig.topCraft;
+      const era = this.chronicler ? this.chronicler.eraInfo() : null;
+      const civLevel = era ? era.civLevel : 0;
+      const flyIds = snapshot.flies.map((f) => f.id);
+      arch.round(tick, keeperMap, inventedTop, civLevel, flyIds);
+    } catch (e) {
+      console.warn("[DO] archive drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2067,6 +2123,8 @@ export class FlyStateDO {
     await this.driveTechAndCities(swarm.getTickIndex(), snapshot);
     // ⑥ APPRENTICESHIP rides immediately after the ladder so a lesson's ceiling is the rung count THIS cron.
     await this.driveApprentice(swarm.getTickIndex(), snapshot);
+    // ⑰ ARCHIVE rides after apprenticeship: it reads ⑯'s keeper map to decide who inscribes.
+    await this.driveArchive(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2324,6 +2382,8 @@ export class FlyStateDO {
       if (cities) (economy as { cities?: unknown }).cities = cities;
       const apprentice = await this.apprenticeReadout();
       if (apprentice) (economy as { apprentice?: unknown }).apprentice = apprentice;
+      const archive = await this.archiveReadout();
+      if (archive) (economy as { archive?: unknown }).archive = archive;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2377,11 +2437,14 @@ export class FlyStateDO {
     const cities = await this.citiesReadout();
     // ⑯ APPRENTICESHIP folded the same way — pure read of the membrane. Switch-off ⇒ null ⇒ key absent.
     const apprentice = await this.apprenticeReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice) return json(snap);
+    // ⑰ ARCHIVE folded identically.
+    const archive = await this.archiveReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
       ...(tech ? { tech } : null), ...(cities ? { cities } : null), ...(apprentice ? { apprentice } : null),
+      ...(archive ? { archive } : null),
     });
   }
 
@@ -2467,6 +2530,16 @@ export class FlyStateDO {
     const appr = await this.ensureApprentice();
     if (!appr) return null;
     return appr.signals();
+  }
+
+  /**
+   * ⑰ The Archive read-out (records, cumulative tallies, this cron's edge events). Null while ARCHIVE_ENABLED
+   * is off — callers then ship NO archive key, staying byte-identical to the pre-archive build.
+   */
+  private async archiveReadout(): Promise<ArchiveSignals | null> {
+    const arch = await this.ensureArchive();
+    if (!arch) return null;
+    return arch.signals();
   }
 
   /**
@@ -3466,6 +3539,7 @@ export class FlyStateDO {
     this.tech = null;      // ⑬ and the arts: the ladder is forgotten with everything else
     this.cities = null;    // ⑭ and the places: the map goes back to open ground
         this.apprentice = null;  // ⑯ and the educations: every personal art is unwitnessed with everything else
+    this.archive = null;     // ⑰ and the archive: every record is burned with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -3480,6 +3554,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_TECH);
     await this.state.storage.delete(KEY_CITIES);
     await this.state.storage.delete(KEY_APPRENTICE);
+    await this.state.storage.delete(KEY_ARCHIVE);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

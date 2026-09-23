@@ -112,7 +112,10 @@ export type ChronicleKind =
     | "TRANSMISSION"
     | "SURPASS"
     | "SCHOOL"
-    | "CRAFT_LOST";
+    | "CRAFT_LOST"
+    | "RECORDING"
+    | "DECODE"
+    | "ARCHIVE_BURNED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -206,6 +209,7 @@ export interface ChronicleContext {
    *  craft this cron, plus how much the swarm actually REMEMBERS. Absent ⇒ no TRANSMISSION/SURPASS/SCHOOL/
    *  CRAFT_LOST (APPRENTICE_ENABLED=false never folds these in). */
   apprentice?: ChronicleApprentice | null;
+  archive?: ChronicleArchive | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -257,6 +261,16 @@ export interface ChronicleApprentice {
   craftLost: { rung: number; name: string; last: number } | null;
   skilled: number;                 // living minds that carry at least one art
   topCraft: number;                // the highest rung any living hand holds (0..12)
+}
+
+/** ⑰ the Archive's chronicle signals — externalized knowledge surviving individual death. */
+export interface ChronicleArchive {
+  recording: { id: number; rung: number; name: string } | null;
+  decode: { id: number; rung: number; name: string } | null;
+  archiveBurned: { rung: number; name: string; recordedBy: number } | null;
+  records: number;                 // surviving records at this cron
+  recorded: number;                // cumulative inscriptions ever made
+  decodes: number;                 // cumulative decode observations
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -364,6 +378,9 @@ lastTransmissionKey: string | null; // apprentice>rung of the last announced TRA
 lastSurpassKey: string | null;      // apprentice of the last announced SURPASS (the membrane gates it one-shot per fly)
 lastSchoolKey: string | null;       // rung:houseId of the last announced SCHOOL
 lastCraftLostKey: string | null;    // the dying keeper id of the last announced CRAFT_LOST
+  lastRecordingKey: string | null;      // the keeper id of the last announced RECORDING
+  lastDecodeKey: string | null;         // the fly id of the last announced DECODE
+  lastArchiveBurnedKey: string | null;  // the rung+recorder of the last announced ARCHIVE_BURNED
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -432,6 +449,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     hinge (the student passing the master) and is deliberately rare; a SCHOOL is one chapter per (art,house);
   //     a CRAFT_LOST is mourned like a dark age's toll. The membrane already gates each to one pending per cron.
   TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120,
+  // ⑰ Archive: a RECORDING is rare (a keeper chooses to inscribe); DECODE is one-per-cohort; ARCHIVE_BURNED
+  //     is mourned like a dark age's toll on the written word.
+  RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -530,6 +550,9 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   SURPASS: "The student outstrips the teacher — fly #{apprentice} carries {name} past fly #{master}, the first hand that taught it; the ladder rises in the apprentice's grip.",
   SCHOOL: "A school of {name} — {adherents} hands in the House of {house} {sigil} now work the one art, and it will outlive any single life among them.",
   CRAFT_LOST: "A craft dies with its keeper — fly #{last} was the last living hand to hold {name}; no apprentice was taught in time, and the art goes dark though the ladder still names it.",
+  RECORDING: "Carved in stone — fly #{id} sets down {name} so it will outlive every mind that held it; the swarm's knowledge is no longer only the shape of a hand.",
+  DECODE: "A mind reads the stone — fly #{id} studies the record of {name} and grasps what no living teacher could pass; the art returns to a head that never met a hand.",
+  ARCHIVE_BURNED: "The archive burns — the last written record of {name}, set down by fly #{recordedBy}, is lost to a dark age that could not read it; the art is now gone in every sense.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1223,6 +1246,41 @@ export class Chronicler {
       }
     }
 
+    // ⑰ ARCHIVE — externalized knowledge: a keeper inscribes, a mind decodes, a dark age burns.
+    const arch = ctx.archive;
+    if (arch) {
+      if (arch.recording) {
+        const key = String(arch.recording.id);
+        if (key !== s.lastRecordingKey && this.ready("RECORDING", ctx)) {
+          const r = arch.recording;
+          s.lastRecordingKey = key;
+          out.push(await this.emit(ctx, "RECORDING", 2, [r.id],
+            { id: r.id, rung: r.rung, name: r.name },
+            { rung: r.rung, id: r.id }));
+        }
+      }
+      if (arch.decode) {
+        const key = String(arch.decode.id);
+        if (key !== s.lastDecodeKey && this.ready("DECODE", ctx)) {
+          const d = arch.decode;
+          s.lastDecodeKey = key;
+          out.push(await this.emit(ctx, "DECODE", 2, [d.id],
+            { id: d.id, rung: d.rung, name: d.name },
+            { rung: d.rung, id: d.id }));
+        }
+      }
+      if (arch.archiveBurned) {
+        const key = `${arch.archiveBurned.rung}:${arch.archiveBurned.recordedBy}`;
+        if (key !== s.lastArchiveBurnedKey && this.ready("ARCHIVE_BURNED", ctx)) {
+          const b = arch.archiveBurned;
+          s.lastArchiveBurnedKey = key;
+          out.push(await this.emit(ctx, "ARCHIVE_BURNED", 4, [b.recordedBy],
+            { rung: b.rung, name: b.name, recordedBy: b.recordedBy },
+            { rung: b.rung, recordedBy: b.recordedBy }));
+        }
+      }
+    }
+
     return out;
   }
 
@@ -1362,6 +1420,7 @@ function freshState(): ChroniclerState {
     generation: 0, genStartCron: 0, civLevel: CIV_START, prevCivVolume: 0, civGolden: false, civDark: false,
     lastInventionKey: null, lastDiffusionKey: null, lastLostArtKey: null, lastFoundingKey: null, lastCensusGen: -1,
 lastTransmissionKey: null, lastSurpassKey: null, lastSchoolKey: null, lastCraftLostKey: null,
+    lastRecordingKey: null, lastDecodeKey: null, lastArchiveBurnedKey: null,
     headHash: GENESIS_HASH,
   };
 }
