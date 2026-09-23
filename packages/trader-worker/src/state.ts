@@ -66,7 +66,7 @@ import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
-  POET_VERSION, POET_POLICY, POET_HONESTY,
+  POET_VERSION, POET_POLICY, POET_HONESTY, type PoemEntry,
 } from "./poet.js";
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
@@ -244,6 +244,11 @@ export class FlyStateDO {
   private histSummary: HistSummary | null = null;
   /** Set once the D1 chronicle table has been ensured this DO lifetime. */
   private d1ChronicleReady = false;
+  /** Set once the D1 poems table (the Laureate's permanent archive) has been ensured this DO lifetime. */
+  private d1PoemsReady = false;
+  /** Set once the DO hot ring has been folded into the permanent D1 archive this DO lifetime — a one-time
+   *  backfill so poems composed BEFORE the archive shipped are never lost when they age out of the ring. */
+  private d1PoemsBackfilled = false;
   /** Cached sha256 of the historian's deterministic rule-set (a pure function of the source tables). */
   private chroniclerRulesHash: string | null = null;
   /** ⑦ EPOCHS — a governance-injected shock awaiting the next historian read (a passed miracle/cataclysm of
@@ -1262,6 +1267,76 @@ export class FlyStateDO {
     }
   }
 
+  /** Lazy DDL for the Laureate's permanent poem archive (mirrored in schema.sql; belt-and-braces like chronicle). */
+  private async ensureD1Poems(db: D1Database): Promise<void> {
+    if (this.d1PoemsReady) return;
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS poems (
+         seq INTEGER PRIMARY KEY, tick INTEGER NOT NULL, ts INTEGER NOT NULL, era INTEGER NOT NULL,
+         era_name TEXT NOT NULL, phase TEXT, laureate_id INTEGER, hash TEXT NOT NULL, prev_hash TEXT,
+         entry TEXT NOT NULL )`,
+    ).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_poems_ts ON poems (ts)`).run();
+    this.d1PoemsReady = true;
+  }
+
+  /**
+   * Archive ONE composed poem to D1 so the collection is PERMANENT (the DO ring only keeps POEMS_CAP for the
+   * live chain head). Best-effort: a missing binding or any D1 error is logged and swallowed, so it can never
+   * block a tick. `entry` is stored verbatim, so /poem/archive serves byte-identical PoemEntry objects that any
+   * verifier can recompute (poemReceiptHash) and replay (compose) offline. PURE READ-OUT — no brain/wallet touched.
+   */
+  private async archivePoem(entry: PoemEntry): Promise<void> {
+    const db = this.env.DB;
+    if (!db) return;
+    try {
+      await this.ensureD1Poems(db);
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO poems
+             (seq, tick, ts, era, era_name, phase, laureate_id, hash, prev_hash, entry)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          entry.seq, entry.composedAtTick, Date.now(), entry.era.era, entry.era.eraName,
+          entry.era.civPhase ?? null, entry.laureate?.id ?? null, entry.hash, entry.prevHash,
+          JSON.stringify(entry),
+        )
+        .run();
+    } catch (e) {
+      console.warn("[DO] poem D1 archive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /** Read ONE archived poem's full entry back from D1 (best-effort; null when unbound/absent). Lets /poem/verify
+   *  recompute + replay poems the DO hot ring has already evicted, so every archived poem stays verifiable. */
+  private async readPoemArchiveEntry(seq: number): Promise<PoemEntry | null> {
+    const db = this.env.DB;
+    if (!db || !Number.isFinite(seq)) return null;
+    try {
+      await this.ensureD1Poems(db);
+      const r = await db.prepare(`SELECT entry FROM poems WHERE seq = ?`).bind(seq).first<{ entry: string }>();
+      if (!r) return null;
+      const e = JSON.parse(r.entry) as PoemEntry;
+      return e && typeof e.seq === "number" ? e : null;
+    } catch { return null; }
+  }
+
+  /** One-time, best-effort backfill: fold every poem currently in the DO hot ring into the permanent D1
+   *  archive, so poems composed before this archive shipped (the ring head at deploy) survive aging out of
+   *  the 64-cap ring. Idempotent (archivePoem is INSERT OR REPLACE on the seq PK) and guarded, so it runs
+   *  once per DO life; triggered from both drivePoet (the first cron) and getPoemArchive (a drawer open).
+   *  PURE READ-OUT — touches no brain, genome or USDC. */
+  private async backfillPoemRing(poet: Poet | null): Promise<void> {
+    if (this.d1PoemsBackfilled || !poet || !this.env.DB) return;
+    this.d1PoemsBackfilled = true;   // set first: even a partial backfill leaves new poems archiving normally
+    try {
+      for (const prior of poet.recent(500)) await this.archivePoem(prior);
+    } catch (e) {
+      console.warn("[DO] poem ring backfill failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   /**
    * Run the historian once per cron. PURE READ-OUT: it observes the collective + ethogram + lifetime economy
    * totals and appends any detected history. It never touches a brain, drive, wallet or settlement — so the
@@ -1542,6 +1617,7 @@ export class FlyStateDO {
     const poet = await this.ensurePoet();
     if (!poet || !this.chronicler || !snapshot) return;
     try {
+      await this.backfillPoemRing(poet);   // preserve any pre-archive ring poems on the first cron post-deploy
       const liveIds = snapshot.flies.map((f) => f.id);
       if (!liveIds.length) return;
       const era = this.chronicler.eraInfo();
@@ -1566,6 +1642,7 @@ export class FlyStateDO {
       });
       if (entry) {
         console.log(`[DO] poet: seq#${entry.seq} crowned #${entry.laureate.id} (era ${entry.era.era}) — "${entry.lines[0]} …"`);
+        await this.archivePoem(entry);   // permanent D1 archive (the DO ring is only the hot head)
       }
     } catch (e) {
       console.warn("[DO] poet drive failed (non-fatal):", (e as Error).message);
@@ -1602,6 +1679,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/poem") return await this.getPoem(url);
       if (req.method === "GET" && path === "/poem/verify") return await this.getPoemVerify(url);
       if (req.method === "GET" && path === "/poem/all") return await this.getPoemAll(url);
+      if (req.method === "GET" && path === "/poem/archive") return await this.getPoemArchive(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -3078,7 +3156,7 @@ export class FlyStateDO {
     if (!poet) return json({ enabled: this.cfg.poet.enabled, version: POET_VERSION, policy: POET_POLICY, grammarHash, found: false, honesty: POET_HONESTY });
     const seqRaw = url.searchParams.get("seq");
     const seq = seqRaw != null && Number.isFinite(Number(seqRaw)) ? Number(seqRaw) : poet.headSeq;
-    const entry = poet.get(seq);
+    const entry = poet.get(seq) ?? (await this.readPoemArchiveEntry(seq));   // hot ring first, then the permanent D1 archive
     if (!entry) return json({ enabled: true, version: POET_VERSION, grammarHash, found: false, seq, honesty: POET_HONESTY }, 404);
     const recomputedHash = await recomputePoemHash(entry);
     const replay = replayCompose(entry);
@@ -3108,6 +3186,49 @@ export class FlyStateDO {
     const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 64));
     const entries = poet.recent(limit);
     return json({ enabled: true, version: POET_VERSION, policy: POET_POLICY, grammarHash, chainHead: poet.chainHead, headSeq: poet.headSeq, count: entries.length, entries });
+  }
+
+  /**
+   * GET /poem/archive — the PERMANENT collection from D1 (every poem ever composed, not just the DO hot ring).
+   * Query: limit (default 200, max 1000), order (desc default | asc), before (seq cursor for older pages).
+   * Serves full PoemEntry objects (byte-identical to the chain) so the frontend can recompute each receipt hash
+   * in-browser and replay it. Graceful when D1 is unbound: falls back to the hot ring, flagged archived:false.
+   */
+  private async getPoemArchive(url: URL): Promise<Response> {
+    const poet = await this.ensurePoet();
+    const grammarHash = await this.getPoetGrammarHash();
+    const enabled = this.cfg.poet.enabled;
+    const order = url.searchParams.get("order") === "asc" ? "ASC" : "DESC";
+    const ringFallback = (note: string) => {
+      const entries = poet ? poet.recent(500).slice().reverse() : [];
+      return json({ enabled, version: POET_VERSION, policy: POET_POLICY, grammarHash, archived: false, order, count: entries.length, total: entries.length, headSeq: poet?.headSeq ?? 0, chainHead: poet?.chainHead ?? "", laureate: poet?.currentLaureate() ?? null, entries, honesty: POET_HONESTY, note });
+    };
+    const db = this.env.DB;
+    if (!db) return ringFallback("D1 not bound; serving the hot ring");
+    const rawLimit = Number(url.searchParams.get("limit") ?? "200");
+    const limit = Math.min(1000, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 200));
+    const beforeRaw = url.searchParams.get("before");
+    const before = beforeRaw != null && Number.isFinite(Number(beforeRaw)) ? Number(beforeRaw) : null;
+    try {
+      await this.ensureD1Poems(db);
+      await this.backfillPoemRing(poet);   // a drawer open also folds the ring in immediately (idempotent)
+      let sql = `SELECT entry FROM poems`;
+      const args: (number | string)[] = [];
+      if (before != null) { sql += ` WHERE seq < ?`; args.push(before); }
+      sql += ` ORDER BY seq ${order} LIMIT ?`;
+      args.push(limit);
+      const { results } = await db.prepare(sql).bind(...args).all<{ entry: string }>();
+      const entries: PoemEntry[] = [];
+      for (const r of results ?? []) {
+        try { const e = JSON.parse(r.entry) as PoemEntry; if (e && typeof e.seq === "number") entries.push(e); } catch { /* skip a malformed row */ }
+      }
+      let total = entries.length;
+      try { const c = await db.prepare(`SELECT COUNT(*) AS n FROM poems`).first<{ n: number }>(); total = Number(c?.n) || entries.length; } catch { /* keep entries.length */ }
+      return json({ enabled: true, version: POET_VERSION, policy: POET_POLICY, grammarHash, archived: true, order, limit, before, count: entries.length, total, headSeq: poet?.headSeq ?? 0, chainHead: poet?.chainHead ?? "", laureate: poet?.currentLaureate() ?? null, entries, honesty: POET_HONESTY });
+    } catch (e) {
+      console.warn("[DO] poem archive read failed (non-fatal):", (e as Error).message);
+      return ringFallback("archive read failed; serving the hot ring");
+    }
   }
 
   private async getMarket() {

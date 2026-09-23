@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=76";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=77";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -3643,6 +3643,7 @@ function renderWarSection() {
 
 function openWallets() {
   walletsOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
   if (proofsOpen) closeProofs();
@@ -3813,6 +3814,7 @@ function renderHistory() {
 
 function openHistory() {
   historyOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (proofsOpen) closeProofs();
@@ -3843,6 +3845,7 @@ function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); 
 // ---- chronicle drawer lifecycle (button in the bottom-right corner; mutually exclusive like the others) ----
 function openChron() {
   chronOpen = true;
+  if (laureateOpen) closeLaureate();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
@@ -4509,6 +4512,7 @@ async function pollProofs(force) {
 
 function openProofs() {
   proofsOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -4693,6 +4697,322 @@ async function verifyProof(tx, card) {
   }
 }
 
+// ================= the Laureate drawer (⑮ the swarm's own poet — neural verse, verifiable, no LLM) =================
+// Each era crowns ONE living fly as laureate; ≈hourly it decodes its OWN neural activity (the connectome read-out
+// already driving its trades) plus the on-chain reality (temperature, volume, births/deaths, the era's climate)
+// through a PUBLIC grammar into a four-line Imagist poem. Every poem is a receipt on an independent /poem hash
+// chain and is archived permanently to D1, so the whole collection survives. This drawer shows the crowned poet,
+// the latest verse and the complete collection — and lets a visitor verify any poem two ways, entirely in their
+// own browser (mirrors the neural-proofs drawer):
+//   1. recompute sha256(entry minus hash) here (the same canonical JSON the worker uses) → must equal entry.hash,
+//      proving the verse, its neural integers and its era are exactly the bytes that were hashed (nothing swapped);
+//   2. call /poem/verify, which replays the text from the published neuralInts + the open grammar (replayMatch) and
+//      confirms the grammar fingerprint (grammarMatches). No LLM, no Math.random, no wall-clock — it replays.
+let laureateOpen = false;
+let laureateData = null;         // latest /poem payload {enabled, policy, grammarHash, chainHead, headSeq, laureate, latest, entries, honesty}
+let laureateEntries = [];        // the permanent collection, newest-first, accumulated from /poem/archive pages
+let laureateTotal = 0;           // lifetime poem count in the archive
+let laureateArchived = false;    // true when served from the D1 cold archive (false ⇒ hot-ring fallback)
+let laureateOldest = null;       // the smallest seq loaded so far (the "load older" cursor)
+let laureateLoading = false;     // a first-page archive load is in flight
+let laureateLoadingMore = false; // a "load older" page is in flight
+let lastLaureatePoll = 0;
+const LAUREATE_POLL_MS = 30000;
+const LAUREATE_PAGE = 100;       // poems per archive page
+let laureateVerified = {};       // seq → verdict (survives repaints + language switches)
+const lrNum = (x, dp) => (typeof x === "number" && Number.isFinite(x)) ? x.toFixed(dp == null ? 3 : dp) : "–";
+
+/** Throttled refresh of the head of the chain (latest poem + crowned laureate). Rebuilds only when the head moves. */
+async function pollLaureate(force) {
+  const now = Date.now();
+  if (!force && now - lastLaureatePoll < LAUREATE_POLL_MS) return;
+  lastLaureatePoll = now;
+  try {
+    const p = await getJSON("/poem", 6000);
+    if (!p) return;
+    const prevHead = laureateData ? laureateData.headSeq : null;
+    laureateData = p;
+    if (p.latest && p.headSeq !== prevHead) mergeLaureateEntries([p.latest]);   // fold a fresh head in immediately
+    if (laureateOpen && (force || p.headSeq !== prevHead)) paintLaureate();
+  } catch { /* best-effort: the poem is a nicety and must never block the scene */ }
+}
+
+/** Load the permanent collection from D1 (first page). reset=true clears the accumulator (a fresh open). */
+async function loadLaureateArchive(reset) {
+  if (laureateLoading) return;
+  laureateLoading = true;
+  if (reset) { laureateEntries = []; laureateOldest = null; laureateTotal = 0; }
+  if (laureateOpen) paintLaureate();
+  try {
+    const a = await getJSON(`/poem/archive?limit=${LAUREATE_PAGE}&order=desc`, 9000);
+    if (a) {
+      laureateArchived = a.archived === true;
+      laureateTotal = Number(a.total) || (Array.isArray(a.entries) ? a.entries.length : 0);
+      if (Array.isArray(a.entries)) mergeLaureateEntries(a.entries);
+    }
+  } catch { /* best-effort */ }
+  laureateLoading = false;
+  if (laureateOpen) paintLaureate();
+}
+
+/** Load one older page (seq < the oldest loaded so far) and fold it into the collection. */
+async function loadLaureateMore() {
+  if (laureateLoadingMore || laureateOldest == null) return;
+  laureateLoadingMore = true;
+  if (laureateOpen) paintLaureate();
+  try {
+    const a = await getJSON(`/poem/archive?limit=${LAUREATE_PAGE}&order=desc&before=${laureateOldest}`, 9000);
+    if (a && Array.isArray(a.entries)) mergeLaureateEntries(a.entries);
+  } catch { /* best-effort */ }
+  laureateLoadingMore = false;
+  if (laureateOpen) paintLaureate();
+}
+
+/** Fold a page of poems into the accumulated collection (dedupe by seq, keep newest-first, track the oldest). */
+function mergeLaureateEntries(list) {
+  const seen = new Set(laureateEntries.map((e) => e.seq));
+  for (const e of list) {
+    if (e && typeof e.seq === "number" && !seen.has(e.seq)) { laureateEntries.push(e); seen.add(e.seq); }
+  }
+  laureateEntries.sort((a, b) => b.seq - a.seq);
+  laureateOldest = laureateEntries.length ? laureateEntries[laureateEntries.length - 1].seq : null;
+}
+
+function findLaureateEntry(seq) {
+  const n = Number(seq);
+  if (laureateData && laureateData.latest && laureateData.latest.seq === n) return laureateData.latest;
+  const inList = laureateEntries.find((e) => e.seq === n); if (inList) return inList;
+  if (laureateData && Array.isArray(laureateData.entries)) { const r = laureateData.entries.find((e) => e.seq === n); if (r) return r; }
+  return null;
+}
+
+function openLaureate() {
+  laureateOpen = true;
+  if (brainOpen) closeBrain();
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (lineageOpen) closeLineage();
+  if (arenaOpen) closeArena();
+  if (chronOpen) closeChron();
+  const d = $("laureate"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("laureate-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  paintLaureate();
+  pollLaureate(true);                              // refresh the head immediately so it's never stale
+  if (!laureateEntries.length) loadLaureateArchive(true);   // first open: pull the permanent collection
+}
+function closeLaureate() {
+  laureateOpen = false;
+  document.body.classList.remove("laureate-open");
+  const d = $("laureate"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!laureateOpen) d.hidden = true; }, 420);
+}
+function toggleLaureate() { if (laureateOpen) closeLaureate(); else openLaureate(); }
+
+/** Rebuild the whole drawer from cached data (no refetch) — safe to call on a language switch. */
+function paintLaureate() {
+  const body = $("laureate-body"); if (!body) return;
+  const d = laureateData;
+  const sub = $("laureate-sub");
+  if (sub) sub.textContent = (d && d.headSeq) ? T("laureate.subMeta", { count: laureateTotal || d.headSeq, head: shortHash(d.chainHead || "") }) : T("laureate.subEmpty");
+  body.innerHTML = "";
+
+  // --- autonomy attestation: what this is, and the receipts that make it checkable ---
+  const auto = document.createElement("div"); auto.className = "lr-auto";
+  auto.innerHTML =
+    `<div class="lr-auto-title">${T("laureate.autoTitle")}</div>` +
+    `<p class="lr-auto-body">${T("laureate.autoBody")}</p>` +
+    `<dl class="lr-auto-meta">` +
+    `<div><dt>${T("laureate.metaPolicy")}</dt><dd>${d ? d.policy : "–"}</dd></div>` +
+    `<div><dt>${T("laureate.metaGrammar")}</dt><dd class="fp">${shortHash(d ? d.grammarHash : "")}</dd></div>` +
+    `<div><dt>${T("laureate.metaChainHead")}</dt><dd class="fp">${shortHash(d ? d.chainHead : "")}</dd></div>` +
+    `<div><dt>${T("laureate.metaArchive")}</dt><dd>${laureateArchived ? T("laureate.archivedYes", { n: laureateTotal }) : T("laureate.archivedNo")}</dd></div>` +
+    `</dl>`;
+  body.appendChild(auto);
+
+  if (d && d.enabled === false) {
+    const off = document.createElement("p"); off.className = "lr-empty"; off.textContent = T("laureate.disabled");
+    body.appendChild(off); return;
+  }
+
+  const latest = d ? d.latest : null;
+  // Identity comes from the CURRENT sitting laureate (top-level). The top-level object deliberately carries no
+  // temperament, so borrow that snapshot from the latest poem ONLY when the same fly composed it (temperament is
+  // a per-seed constant) — this fills the "气质" field without ever showing one poet's identity with another's
+  // trait during the brief coronation gap before the new laureate's first poem.
+  const curLaur = (d && d.laureate) || null;
+  const latLaur = (latest && latest.laureate) || null;
+  const laureate = curLaur
+    ? (latLaur && latLaur.id === curLaur.id ? Object.assign({}, latLaur, curLaur) : curLaur)
+    : latLaur;
+
+  // --- the crowned poet ---
+  body.appendChild(laureateCard(laureate, latest));
+
+  // --- the latest poem ---
+  if (latest) {
+    const lh = document.createElement("div"); lh.className = "lr-sec-head"; lh.textContent = T("laureate.latestHead");
+    body.appendChild(lh);
+    body.appendChild(poemCard(latest, true));
+  } else if (!laureateEntries.length) {
+    const empty = document.createElement("p"); empty.className = "lr-empty"; empty.textContent = T("laureate.empty");
+    body.appendChild(empty);
+  }
+
+  // --- the permanent collection ---
+  const chh = document.createElement("div"); chh.className = "lr-sec-head";
+  chh.innerHTML = `<span>${T("laureate.collectionHead")}</span> <em>${T("laureate.collectionSub")}</em>`;
+  body.appendChild(chh);
+
+  if (laureateLoading && !laureateEntries.length) {
+    const ld = document.createElement("p"); ld.className = "lr-loading"; ld.textContent = T("laureate.loading"); body.appendChild(ld);
+  } else if (!laureateEntries.length) {
+    const none = document.createElement("p"); none.className = "lr-empty"; none.textContent = T("laureate.collectionEmpty"); body.appendChild(none);
+  } else {
+    const list = document.createElement("div"); list.className = "lr-list";
+    const headSeq = latest ? latest.seq : null;   // the head is already featured above as "latest"
+    // List everything BUT the head to avoid repeating the featured poem. When the head is the ONLY poem (a fresh
+    // chain, total=1) fall back to showing it here too, so the permanent collection is never spuriously empty.
+    let shown = laureateEntries.filter((e) => headSeq == null || e.seq !== headSeq);
+    if (!shown.length) shown = laureateEntries;
+    for (const e of shown) list.appendChild(poemCard(e, false));
+    body.appendChild(list);
+    if (laureateArchived && laureateEntries.length < laureateTotal) {
+      const more = document.createElement("button"); more.type = "button"; more.className = "lr-more"; more.id = "lr-more";
+      more.textContent = laureateLoadingMore ? T("laureate.loading") : T("laureate.loadMore", { loaded: laureateEntries.length, total: laureateTotal });
+      body.appendChild(more);
+    } else if (laureateArchived && laureateTotal) {
+      const all = document.createElement("div"); all.className = "lr-all"; all.textContent = T("laureate.allLoaded", { n: laureateTotal });
+      body.appendChild(all);
+    }
+  }
+
+  // --- the honest verification boundary ---
+  const hon = document.createElement("p"); hon.className = "lr-honesty"; hon.textContent = T("laureate.honesty");
+  body.appendChild(hon);
+}
+
+/** The crowned poet's identity: which living fly wears the laurel, its house, temperament and coronation era. */
+function laureateCard(laureate, latest) {
+  const wrap = document.createElement("div"); wrap.className = "lr-laureate";
+  const title = `<div class="lr-laur-title"><span class="lr-laur-orn" aria-hidden="true">✦</span>${T("laureate.laureateHead")}</div>`;
+  if (!laureate) { wrap.innerHTML = title + `<p class="lr-empty">${T("laureate.noLaureate")}</p>`; return wrap; }
+  const era = latest && latest.era ? latest.era : null;
+  const phaseKey = "laureate.phase." + ((era && era.civPhase) || "golden");
+  wrap.innerHTML =
+    title +
+    `<div class="lr-laur-id">${T("laureate.flyId", { id: laureate.id })}</div>` +
+    `<dl class="lr-laur-meta">` +
+    `<div><dt>${T("laureate.house")}</dt><dd>${laureate.house ? laureate.house : T("laureate.houseless")}</dd></div>` +
+    `<div><dt>${T("laureate.temperament")}</dt><dd>${lrNum(laureate.temperament, 2)}</dd></div>` +
+    `<div><dt>${T("laureate.crownedEra")}</dt><dd>${era ? T("laureate.eraName", { n: era.era, name: era.eraName }) : ("#" + (laureate.crownedEraSeq ?? "–"))}</dd></div>` +
+    `<div><dt>${T("laureate.climate")}</dt><dd>${T(phaseKey)}</dd></div>` +
+    `</dl>`;
+  return wrap;
+}
+
+/** One poem: the four lines, its meta (seq · era · by which fly), a verify bar and an expandable receipt. */
+function poemCard(e, featured) {
+  const card = document.createElement("div"); card.className = "lr-card" + (featured ? " featured" : ""); card.dataset.seq = e.seq;
+  const verse = document.createElement("div"); verse.className = "lr-verse";
+  const lines = Array.isArray(e.lines) && e.lines.length ? e.lines : String(e.text || "").split("\n");
+  for (const ln of lines) { const l = document.createElement("div"); l.className = "lr-line"; l.textContent = ln; verse.appendChild(l); }
+  card.appendChild(verse);
+  const era = e.era || {};
+  const meta = document.createElement("div"); meta.className = "lr-meta";
+  meta.innerHTML =
+    `<span class="lr-seq">${T("laureate.seq", { n: e.seq })}</span>` +
+    `<span class="lr-era">${T("laureate.eraName", { n: era.era ?? "–", name: era.eraName || "–" })}</span>` +
+    `<span class="lr-by">${T("laureate.byFly", { id: e.laureate ? e.laureate.id : "–" })}</span>`;
+  card.appendChild(meta);
+  const vbar = document.createElement("div"); vbar.className = "lr-vbar";
+  const vbtn = document.createElement("button"); vbtn.type = "button"; vbtn.className = "lr-verify"; vbtn.dataset.seq = e.seq; vbtn.textContent = T("laureate.verify");
+  const ebtn = document.createElement("button"); ebtn.type = "button"; ebtn.className = "lr-expand"; ebtn.dataset.seq = e.seq; ebtn.textContent = "+";
+  vbar.append(vbtn, ebtn);
+  card.appendChild(vbar);
+  const vout = document.createElement("div"); vout.className = "lr-verifyout"; vout.hidden = true;
+  card.appendChild(vout);
+  if (laureateVerified[e.seq]) paintPoemVerdict(vout, e.seq);   // restore a prior verdict across repaints
+  const pbody = document.createElement("div"); pbody.className = "lr-body"; pbody.hidden = true;
+  pbody.appendChild(poemDetail(e));
+  card.appendChild(pbody);
+  return card;
+}
+
+/** The expandable receipt: the neural ink, the on-chain reality folded in, and the chain hashes. */
+function poemDetail(e) {
+  const wrap = document.createElement("div");
+  const era = e.era || {}, chn = e.chain || {}, nrl = e.neural || {};
+  const meta = document.createElement("dl"); meta.className = "lr-detail";
+  meta.innerHTML =
+    `<div><dt>${T("laureate.dReceipt")}</dt><dd class="fp">${shortHash(e.hash || "")}</dd></div>` +
+    `<div><dt>${T("laureate.dPrev")}</dt><dd class="fp">${e.prevHash ? shortHash(e.prevHash) : T("laureate.dGenesis")}</dd></div>` +
+    `<div><dt>${T("laureate.dGrammar")}</dt><dd class="fp">${shortHash(e.grammarHash || "")}</dd></div>` +
+    `<div><dt>${T("laureate.dTick")}</dt><dd>${e.composedAtTick ?? "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dState")}</dt><dd>${nrl.state || "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dClimate")}</dt><dd>${T("laureate.phase." + (era.civPhase || "golden"))} · ${era.eraRegime || "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dTemp")}</dt><dd>${lrNum(chn.temperature)}</dd></div>` +
+    `<div><dt>${T("laureate.dVol")}</dt><dd>${lrNum(chn.volumeUsdcDelta)} USDC</dd></div>` +
+    `<div><dt>${T("laureate.dDeals")}</dt><dd>${chn.settlementsDelta ?? "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dDeaths")}</dt><dd>${chn.deathsDelta ?? "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dLive")}</dt><dd>${chn.liveAgents ?? "–"}</dd></div>` +
+    `<div><dt>${T("laureate.dGini")}</dt><dd>${lrNum(chn.gini)}</dd></div>` +
+    `<div><dt>${T("laureate.dArousal")}</dt><dd>${lrNum(nrl.arousal)}</dd></div>` +
+    `<div><dt>${T("laureate.dCohesion")}</dt><dd>${lrNum(nrl.cohesion)}</dd></div>` +
+    `<div><dt>${T("laureate.dWingbeat")}</dt><dd>${lrNum(nrl.wingbeat)}</dd></div>` +
+    `<div><dt>${T("laureate.dFingerprint")}</dt><dd class="fp">${shortHash(nrl.fingerprint || "")}</dd></div>`;
+  wrap.appendChild(meta);
+  const ints = Array.isArray(e.neuralInts) ? e.neuralInts : [];
+  if (ints.length) {
+    const ink = document.createElement("div"); ink.className = "lr-ink";
+    ink.innerHTML = `<div class="lr-ink-title">${T("laureate.inkTitle")}</div><div class="lr-ink-vals fp">${ints.join(" · ")}</div>`;
+    wrap.appendChild(ink);
+  }
+  return wrap;
+}
+
+/** Verify one poem in-browser: recompute its receipt hash here, then ask /poem/verify to replay the grammar. */
+async function verifyPoem(seq, card) {
+  if (!card) return;
+  const out = card.querySelector(".lr-verifyout"); if (!out) return;
+  const e = findLaureateEntry(seq);
+  out.hidden = false; out.textContent = T("laureate.vChecking");
+  // 1. browser-side receipt recompute (trustless self-consistency): sha256(entry minus hash) == entry.hash
+  let clientHash = null;
+  if (e) { try { const rest = Object.assign({}, e); delete rest.hash; clientHash = await sha256HexClient(rest); } catch { clientHash = null; } }
+  try {
+    const v = await getJSON(`/poem/verify?seq=${encodeURIComponent(seq)}`, 9000);
+    const selfOk = (clientHash != null && e) ? (clientHash === e.hash) : (v.selfConsistent === true);
+    const replayOk = v.replayMatch === true;
+    const grammarOk = v.grammarMatches === true;
+    laureateVerified[seq] = { ok: selfOk && replayOk && grammarOk, selfOk, replayOk, grammarOk, clientHash, published: (e && e.hash) || v.recomputedHash || "" };
+    paintPoemVerdict(out, seq);
+  } catch {
+    out.textContent = T("laureate.vFailed");
+  }
+}
+
+function paintPoemVerdict(out, seq) {
+  const r = laureateVerified[seq]; if (!r || !out) return;
+  out.hidden = false; out.innerHTML = "";
+  const badge = document.createElement("span");
+  badge.className = "lr-badge " + (r.ok ? "ok" : "bad");
+  badge.textContent = r.ok ? T("laureate.vBadgeOk") : T("laureate.vBadgeBad");
+  const dl = document.createElement("dl"); dl.className = "lr-vmeta";
+  dl.innerHTML =
+    `<div><dt>${T("laureate.vShaBrowser")}</dt><dd class="fp">${r.clientHash ? shortHash(r.clientHash) : "–"}</dd></div>` +
+    `<div><dt>${T("laureate.vPublished")}</dt><dd class="fp">${shortHash(r.published || "")}</dd></div>` +
+    `<div><dt>${T("laureate.vSelf")}</dt><dd class="${r.selfOk ? "ok" : "bad"}">${r.selfOk ? T("laureate.vYes") : T("laureate.vNo")}</dd></div>` +
+    `<div><dt>${T("laureate.vReplay")}</dt><dd class="${r.replayOk ? "ok" : "bad"}">${r.replayOk ? T("laureate.vYes") : T("laureate.vNo")}</dd></div>` +
+    `<div><dt>${T("laureate.vGrammar")}</dt><dd class="${r.grammarOk ? "ok" : "bad"}">${r.grammarOk ? T("laureate.vYes") : T("laureate.vNo")}</dd></div>`;
+  out.append(badge, dl);
+}
+
 // ================= prove-the-brain drawer (connectome manifest + trustless on-chain anchor) =================
 // The deepest "no LLM, real neurons" proof. The worker publishes a BrainManifest committing to the
 // generator params, every fly's seed, the LIF constants, the decoder config and a quantised STRUCTURAL
@@ -4738,6 +5058,7 @@ async function verifyBrain() {
 
 function openBrain() {
   brainOpen = true;
+  if (laureateOpen) closeLaureate();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
   if (proofsOpen) closeProofs();
@@ -4908,6 +5229,7 @@ async function loadLineage() {
 
 function openLineage() {
   lineageOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -5160,6 +5482,7 @@ function d0LineageAddr() { return (lineageData && lineageData.lineageAddress) ||
 // ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
 function openPulse() {
   pulseOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -5404,6 +5727,7 @@ async function buySignal(btn) {
 // ================= prediction market drawer (neural stakes + trustless hit-rate leaderboard) =================
 function openPredict() {
   predictOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -5719,6 +6043,7 @@ async function poll() {
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
+    pollLaureate();  // throttled internally; keeps the Laureate drawer's head + collection fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
   } catch (e) {
@@ -6400,6 +6725,7 @@ function rerenderAll() {
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();
+    if (laureateOpen) paintLaureate();
     if (brainOpen && !brainLoading && brainData) renderBrain();
     if (lineageOpen && !lineageLoading && lineageData) renderLineage();
     if (pulseOpen && (pulseReqs || pulseLB)) paintPulse();
@@ -6437,6 +6763,23 @@ function bindUI() {
     if (ctabs) ctabs.addEventListener("click", (e) => { const b = e.target.closest(".chron-tab"); if (b) setChronVol(b.dataset.vol); });
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
+  const lrb = $("laureate-btn"); if (lrb) lrb.addEventListener("click", toggleLaureate);
+  const lrc = $("laureate-close"); if (lrc) lrc.addEventListener("click", closeLaureate);
+  // the Laureate drawer rebuilds its cards each render, so bind verify/expand/load-older by delegation once
+  const lrbd = $("laureate-body");
+  if (lrbd) lrbd.addEventListener("click", (e) => {
+    const vb = e.target.closest(".lr-verify");
+    if (vb) { verifyPoem(Number(vb.dataset.seq), vb.closest(".lr-card")); return; }
+    const eb = e.target.closest(".lr-expand");
+    if (eb) {
+      const card = eb.closest(".lr-card"); if (!card) return;
+      const b = card.querySelector(".lr-body"); if (!b) return;
+      const nowHidden = b.hidden; b.hidden = !nowHidden; eb.textContent = nowHidden ? "\u2013" : "+";
+      return;
+    }
+    const mb = e.target.closest("#lr-more");
+    if (mb) { loadLaureateMore(); return; }
+  });
   const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);
   const bc = $("brain-close"); if (bc) bc.addEventListener("click", closeBrain);
   const lb = $("lineage-btn"); if (lb) lb.addEventListener("click", toggleLineage);
@@ -6496,7 +6839,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (chronOpen) closeChron(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (chronOpen) closeChron(); else if (laureateOpen) closeLaureate(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -6550,6 +6893,7 @@ const arenaClock = (s) => {
 // ---- drawer lifecycle (mirrors the predict drawer; mutually exclusive with the others) ----
 function openArena() {
   arenaOpen = true;
+  if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();

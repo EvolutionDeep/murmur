@@ -81,6 +81,7 @@ export default {
             "GET  /manifest/replay (server-side offline replay: rebuild every connectome from the committed seeds → PASS/FAIL)",
             "GET  /poem           (⑮ the Laureate: the swarm's own poet — one living fly's neural activity + the on-chain reality, decoded into a verifiable four-line poem; no LLM)",
             "GET  /poem/verify?seq=N (recompute a poem's receipt hash + replay its text from the published neural integers + open grammar → selfConsistent / replayMatch)",
+            "GET  /poem/archive (⑮ the permanent Laureate collection from D1 — every poem ever composed, paginated; each a full receipt for offline recompute + replay)",
             "GET  /lineage      (the connectome breeding market: every genome + its on-chain ancestry — genesis roots + bred individuals)",
             "GET  /lineage/:hash (one bred brain: genome body + parents/children + re-derived structural spec + on-chain commit)",
             "GET  /lineage/verify?hash=0x… (recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL)",

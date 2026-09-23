@@ -803,6 +803,37 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/poem/archive": {
+      get: {
+        tags: ["laureate"],
+        operationId: "getPoemArchive",
+        summary: "⑮ The permanent poem collection (D1 archive) — every poem ever composed",
+        description:
+          "The complete, permanent Laureate collection from the D1 cold archive (the DO only keeps a bounded hot ring for the live chain head). Each entry is a full PoemEntry, byte-identical to the chain, so any verifier can recompute its receipt hash and replay its text offline. Paginate backwards with `before` (a `seq` cursor); `total` is the lifetime poem count. Graceful when D1 is unbound: falls back to the hot ring with `archived:false`.",
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 1000, default: 200 }, description: "How many poems to return in this page." },
+          { name: "order", in: "query", required: false, schema: { type: "string", enum: ["desc", "asc"], default: "desc" }, description: "Newest-first (desc) or oldest-first (asc)." },
+          { name: "before", in: "query", required: false, schema: { type: "integer" }, description: "Return poems with seq < before (backwards cursor)." },
+        ],
+        ...ok(
+          obj({
+            enabled: { type: "boolean" },
+            version: { type: "integer" },
+            policy: { type: "string" },
+            grammarHash: { type: "string" },
+            archived: { type: "boolean", description: "True when served from the permanent D1 archive; false when falling back to the hot ring." },
+            order: { type: "string" },
+            count: { type: "integer" },
+            total: { type: "integer", description: "Lifetime poem count in the archive." },
+            headSeq: { type: "integer" },
+            chainHead: { type: "string" },
+            laureate: { type: "object", additionalProperties: true, nullable: true },
+            entries: { type: "array", description: "The poems in this page (full PoemEntry objects).", items: { type: "object", additionalProperties: true } },
+          }, ["enabled", "grammarHash", "archived", "count", "total"]),
+          "The permanent poem collection.",
+        ).response,
+      },
+    },
     "/lineage": {
       get: {
         tags: ["lineage"],

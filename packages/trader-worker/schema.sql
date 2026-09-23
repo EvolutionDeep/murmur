@@ -49,6 +49,29 @@ CREATE TABLE IF NOT EXISTS chronicle (
 CREATE INDEX IF NOT EXISTS idx_chronicle_ts ON chronicle (ts);
 
 -- ============================================================================================
+-- The Laureate (⑮): the swarm's own poet. Every poem the laureate composes is archived here so the
+-- collection is PERMANENT — the DO only keeps a hot ring (POEMS_CAP) for the live chain head, while D1
+-- holds every poem ever written. Written best-effort from FlyStateDO.archivePoem() the moment a poem is
+-- composed; a D1 failure never blocks the tick. PURE READ-OUT: archiving a poem changes no brain, wallet
+-- or settlement (manifestHash / chroniclerHash unchanged). `entry` is the full PoemEntry JSON, so anyone
+-- can recompute its receipt hash and replay it against the public grammar (see /poem/archive).
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS poems (
+  seq         INTEGER PRIMARY KEY,        -- monotonic poem ordinal (1-based; matches the DO chain)
+  tick        INTEGER NOT NULL,           -- swarm tickIndex this poem was composed at
+  ts          INTEGER NOT NULL,           -- unix ms when archived (metadata only; NOT part of the receipt)
+  era         INTEGER NOT NULL,           -- era ordinal at composition
+  era_name    TEXT    NOT NULL,           -- evocative era name ("the Golden Age", …)
+  phase       TEXT,                       -- civilization phase (golden|ascendant|declining|dark)
+  laureate_id INTEGER,                    -- the crowned poet's fly id (null if none was live)
+  hash        TEXT    NOT NULL,           -- poemReceiptHash(entry) — binds this poem to the /poem chain
+  prev_hash   TEXT,                       -- the previous poem's hash ("" for the genesis poem)
+  entry       TEXT    NOT NULL            -- the full PoemEntry JSON (recompute + replay source of truth)
+);
+CREATE INDEX IF NOT EXISTS idx_poems_ts ON poems (ts);
+
+-- ============================================================================================
 -- Community governance page (off-chain, token-gated forum + weighted voting). Served at
 -- muros.live/community; the /community* API is handled in the Worker's fetch (see src/community.ts)
 -- and stores here. These tables are created lazily in code (ensureCommunitySchema) AND mirrored here
