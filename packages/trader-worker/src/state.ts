@@ -1707,6 +1707,20 @@ export class FlyStateDO {
     this.cronRunning = true;
     try {
       await this.cronInner();
+    } catch (e) {
+      // The chronicle must NEVER freeze because the simulation body threw. Every non-fatal sub-step
+      // (arc sample, prediction, arena, war, evolution) already guards itself, so a throw escaping
+      // cronInner is one that happened BEFORE step 5's persist() — the swarm sub-tick loop or an
+      // economy settle. Without this, persist() is skipped, lastCron + the tick counter stop advancing,
+      // and the historian goes silent (the exact freeze we caught in production). Force a clock-only
+      // persist so the swarm's tick and lastCron still move and the next cron starts from a live clock.
+      // market/snapshot are passed null so a partial tick never clobbers the last good read-out.
+      console.error("[DO] cron threw; force-persisting the clock so it never freezes:", e);
+      try {
+        await this.persist(null, null);
+      } catch (e2) {
+        console.error("[DO] emergency clock persist also failed (next cron retries):", e2);
+      }
     } finally {
       this.cronRunning = false;
     }

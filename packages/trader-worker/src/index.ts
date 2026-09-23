@@ -4,6 +4,7 @@ import { loadConfig, type Env } from "./config.js";
 import { FlyStateDO } from "./state.js";
 import { OPENAPI_SPEC } from "./openapi.js";
 import { handleCommunity } from "./community.js";
+import { serveHistory } from "./history.js";
 
 // FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
 // swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
@@ -112,6 +113,17 @@ export default {
       return new Response(communityResp.body, { status: communityResp.status, headers: communityHeaders });
     }
 
+    // Long-term history — served in the Worker straight from D1 (see history.ts), never a DO round-trip. Like
+    // /community this is an orthogonal, read-only D1 query; keeping it off the coordinator's single input gate
+    // removes a queued invocation per poll so it can't delay the cron. Byte-identical output to the DO's
+    // getHistory (which stays as the internal fallback); the frontend only reaches it via this public route.
+    if (path === "/history" && request.method === "GET") {
+      const histResp = await serveHistory(env.DB, url);
+      const histHeaders = new Headers(histResp.headers);
+      for (const [k, v] of Object.entries(corsHeaders(origin))) histHeaders.set(k, v);
+      return new Response(histResp.body, { status: histResp.status, headers: histHeaders });
+    }
+
     // Forward every other request to the DO (with the /v1 prefix already stripped)
     const stub = getDO(env);
     const doUrl = new URL(request.url);
@@ -133,6 +145,16 @@ export default {
     const token = (env.ADMIN_TOKEN ?? "").trim();
     const headers: Record<string, string> = token ? { "x-admin-token": token } : {};
     const url = `https://do.internal/tick`;
-    await stub.fetch(new Request(url, { method: "POST", headers }));
+    // Backstop ceiling on the cron's own /tick call. A1 already bounds every coordinator→shard RPC
+    // inside the DO's step(), and the cron persists the clock even when its body throws — so a healthy
+    // /tick finishes well under the 60s cadence. This signal ONLY fires if the whole DO handler wedges on
+    // some OTHER unbounded await; it stops ONE scheduled invocation from sitting at the ~900s wall (the
+    // freeze we caught) so the NEXT minute's cron isn't queued behind a corpse. Generous (55s) so it can
+    // never cancel a legitimate slow tick; the error is swallowed because a failed beat self-heals next minute.
+    try {
+      await stub.fetch(new Request(url, { method: "POST", headers, signal: AbortSignal.timeout(55000) }));
+    } catch (e) {
+      console.error("[worker] scheduled /tick failed or timed out (next cron retries):", (e as Error).message);
+    }
   },
 } satisfies ExportedHandler<Env>;

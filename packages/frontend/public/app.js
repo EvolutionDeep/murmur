@@ -42,7 +42,10 @@ const API =
   "https://api.muros.live";                 // Worker API on the project's own zone (not *.workers.dev)
 if (params.get("api")) localStorage.setItem("murmur-api", API);
 
-const POLL_MS = 6000;   // main loop: /population + /state; the on-chain tick is ~60s, so 6s is ample
+const POLL_MS = 12000;  // main loop: /population + /state. The on-chain tick is ~60s and the canvas animates
+                        // locally between polls (updateSim interpolates off the last snapshot), so 12s is still
+                        // 5× the cron cadence — imperceptible visually while halving the coordinator DO's read
+                        // queue, the real lever behind the cron-starvation freeze (see worker swarm.ts A1 note).
 const FETCH_TIMEOUT_MS = 3500;   // abort a hung request well before the browser would
 const OFFLINE_BACKOFF_MS = 20000; // circuit-breaker window: run local-only, no probing
 const TAU = Math.PI * 2;
@@ -4095,7 +4098,7 @@ window.addEventListener("resize", () => { if (SG.open) { sgMeasure(); sgDraw(); 
 // verdict if a proof has been run.
 async function pollChron() {
   try {
-    const r = await getJSON("/annals?order=desc&limit=200", 6000);
+    const r = await getJSON("/annals?order=desc&limit=120", 6000);
     if (r && r.enabled) {
       chronEnabled = true;
       chronRows = Array.isArray(r.entries) ? r.entries.slice() : [];   // already desc by seq

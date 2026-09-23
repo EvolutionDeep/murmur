@@ -36,6 +36,15 @@ import {
   type ReduceRosterEntry,
 } from "./population.js";
 
+// Bound EVERY coordinator→shard RPC. A FlyShardDO saturated by read fan-out can leave a `stub.fetch`
+// pending forever — it neither resolves nor rejects, so the try/catch + one-retry degrade below never
+// fires and swarm.step() hangs the whole cron BEFORE persist() → lastCron/史官 freeze (the production
+// 900s-wall / ~0-CPU `canceled` we caught). A hard ceiling turns that silent hang into a caught
+// TimeoutError so the retry→degrade actually runs and the clock ALWAYS advances. Both values sit well
+// inside the 60s cadence even across the ceil(shardCount/6) fan-out waves (50 shards ≈ 9 waves).
+const ADVANCE_TIMEOUT_MS = 5000;    // the hot per-sub-tick cron path (a healthy shard advance is <1s)
+const SHARD_IO_TIMEOUT_MS = 6000;   // snapshot/fly reads + retire/hatch/reset one-shots
+
 /** Coordinator-side storage keys owned by the swarm layer. */
 export const KEY_POPULATION = "population:v3";   // LocalSwarm: the whole single-DO Population.serialize()
 export const KEY_COORDINATOR = "coordinator:v1"; // ShardedSwarm: the {tickIndex, vitality} counter (brains live in shards)
@@ -354,6 +363,7 @@ export class ShardedSwarm implements SwarmBackend {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id }),
+          signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
         }));
       } catch (e) {
         console.warn(`[swarm] shard retire #${id} failed (coordinator roster already updated):`, (e as Error).message);
@@ -394,13 +404,19 @@ export class ShardedSwarm implements SwarmBackend {
               method: "POST",
               headers: { "content-type": "application/json" },
               body,
+              // The ceiling that keeps a wedged shard from hanging the cron forever (see ADVANCE_TIMEOUT_MS).
+              signal: AbortSignal.timeout(ADVANCE_TIMEOUT_MS),
             }),
           );
           if (!r.ok) throw new Error(`shard advance failed: HTTP ${r.status}`);
           return (await r.json()) as { readOuts: FlyReadOut[] };
         } catch (e) {
-          if (attempt === 0) continue;
-          console.warn(`[swarm] shard ${k} advance failed twice; skipping its read-outs this sub-tick:`, (e as Error).message);
+          // A timeout means the shard is saturated, not briefly glitching — do NOT burn a second window
+          // retrying it this sub-tick; degrade immediately so 6 sub-ticks stay inside the 60s cadence. Any
+          // other error (e.g. a one-off storage reset) still gets the single retry the old design intended.
+          const timedOut = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
+          if (attempt === 0 && !timedOut) continue;
+          console.warn(`[swarm] shard ${k} advance ${timedOut ? "timed out" : "failed twice"}; skipping its read-outs this sub-tick:`, (e as Error).message);
           return { readOuts: [] };
         }
       }
@@ -424,16 +440,30 @@ export class ShardedSwarm implements SwarmBackend {
 
   async snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null> {
     const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, flyId)];
-    const r = await stub.fetch(new Request(`https://shard.internal/snapshot?flyId=${flyId}`));
-    return r.ok ? ((await r.json()) as FlyNeuralSnapshot) : null;
+    try {
+      const r = await stub.fetch(new Request(`https://shard.internal/snapshot?flyId=${flyId}`, {
+        signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
+      }));
+      return r.ok ? ((await r.json()) as FlyNeuralSnapshot) : null;
+    } catch (e) {
+      console.warn(`[swarm] shard snapshot #${flyId} failed (read degrades to null):`, (e as Error).message);
+      return null;
+    }
   }
 
   async flyDetail(flyId: number): Promise<FlyDetail | null> {
     const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, flyId)];
-    const r = await stub.fetch(new Request(`https://shard.internal/fly?flyId=${flyId}`));
-    if (!r.ok) return null;
-    const d = (await r.json()) as { vitals: FlyVitals; motor: MotorOutput[]; t: number; step: number };
-    return { vitals: d.vitals, motor: d.motor, t: d.t, step: d.step, behavior: this.lastBehavior.get(flyId) ?? null };
+    try {
+      const r = await stub.fetch(new Request(`https://shard.internal/fly?flyId=${flyId}`, {
+        signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
+      }));
+      if (!r.ok) return null;
+      const d = (await r.json()) as { vitals: FlyVitals; motor: MotorOutput[]; t: number; step: number };
+      return { vitals: d.vitals, motor: d.motor, t: d.t, step: d.step, behavior: this.lastBehavior.get(flyId) ?? null };
+    } catch (e) {
+      console.warn(`[swarm] shard flyDetail #${flyId} failed (read degrades to null):`, (e as Error).message);
+      return null;
+    }
   }
 
   async hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean> {
@@ -447,13 +477,20 @@ export class ShardedSwarm implements SwarmBackend {
     // shard builds + persists the brain. Only grow the roster once the shard confirms it hosts the fly.
     const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, id)];
     if (!stub) return false;
-    const r = await stub.fetch(
-      new Request("https://shard.internal/hatch", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, genome }),
-      }),
-    );
+    let r: Response;
+    try {
+      r = await stub.fetch(
+        new Request("https://shard.internal/hatch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, genome }),
+          signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
+        }),
+      );
+    } catch (e) {
+      console.warn(`[swarm] shard hatch #${id} failed (child stays absent, may retry):`, (e as Error).message);
+      return false;
+    }
     if (!r.ok) return false;
     this.bred.push({ id, seed: genome.seed, genome });
     this.roster.push({ id, temperament: flyTemperament(genome.seed), decoder: this.makeDecoder() });
@@ -486,7 +523,12 @@ export class ShardedSwarm implements SwarmBackend {
       decoder: this.makeDecoder(),
     }));
     await Promise.all(
-      this.stubs.map((stub) => stub.fetch(new Request("https://shard.internal/reset", { method: "POST" }))),
+      this.stubs.map((stub) =>
+        stub.fetch(new Request("https://shard.internal/reset", {
+          method: "POST",
+          signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
+        })).catch((e) => console.warn("[swarm] shard reset failed on one shard (continuing):", (e as Error).message)),
+      ),
     );
     await this.persist(storage);
   }
