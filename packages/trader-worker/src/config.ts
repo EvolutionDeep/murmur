@@ -201,6 +201,10 @@ export interface Env {
   CITY_TOWN_MIN?: string;               // …to grow into a town (default 5; clamped 1..128)
   CITY_CITY_MIN?: string;               // …to be counted a city (default 9; clamped 1..256)
   CITY_URBAN_SHARE?: string;            // share of the live swarm living in settlements that makes the swarm "urban" (default 0.35; clamped 0..1) — announced once, and only again after the share falls 0.1 below it
+  APPRENTICE_ENABLED?: string;          // "true"/"false" (default TRUE) — ⑯ APPRENTICESHIP layer: education and cumulative culture — knowledge leaves ⑬'s public ladder and LIVES IN MINDS, passed hand to hand across the feeding cohort (a fly fed beside a cleverer mate is, behind a deterministic draw, taught that mate's art, capped at the swarm's invented top). Culture turns CUMULATIVE (a student outstrips its first teacher = SURPASS) and FRAGILE (the last living keeper of an art dies untaught = CRAFT_LOST, even though the ladder still shows it). PURE READ-OUT (moves no money, touches no neuron, re-prices nothing); false restores today's readings byte-for-byte.
+  APPRENTICE_LEARN_PCT?: string;        // 0..1 — per contact pair per cron, the probability a less-skilled feeder is taught its cohort-mate's art (default 0.22; clamped 0..1)
+  APPRENTICE_SELF_PCT?: string;         // 0..1 — per cron, the probability a cohort feeder independently grasps the highest invented art, seeding a first keeper where none exists (default 0.05; clamped 0..1)
+  APPRENTICE_SCHOOL_MIN?: string;       // living same-house keepers of one art that make it a named SCHOOL (default 3; clamped 2..64)
 
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
@@ -482,9 +486,18 @@ export interface RuntimeConfig {
     hamletMin: number;        // living kin that make a zone a named hamlet (default 2)
     townMin: number;          // …a town (default 5)
     cityMin: number;          // …a city (default 9)
-    urbanShare: number;       // share of the swarm in settlements that makes it urban (default 0.35)
+    urbanShare: number;      // share of the swarm in settlements that makes it urban (default 0.35)
   };
-
+  
+  // Apprenticeship (⑯ education + cumulative culture: arts leave the public ladder and live in individual minds,
+  // passed master→apprentice across the feeding cohort). Pure read-out — no lesson moves a coin or touches a neuron.
+  apprentice: {
+    enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+    learnPct: number;         // per contact pair per cron, P a feeder is taught its cohort-mate's art (default 0.22)
+    selfPct: number;          // per cron, P a feeder independently grasps the top invented art (default 0.05)
+    schoolMin: number;        // living same-house keepers of one art that make it a school (default 3)
+  };
+  
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
   // connectome as a bounded ambient on the four visitor stimulus channels. Pure + deterministic; it adds NO
   // channel (manifestHash unchanged), touches NO genome, moves NO money and writes NO chronicle kind
@@ -834,6 +847,16 @@ export function loadConfig(env: Env): RuntimeConfig {
       townMin: clampInt(Number(env.CITY_TOWN_MIN || "5"), 1, 128),
       cityMin: clampInt(Number(env.CITY_CITY_MIN || "9"), 1, 256),
       urbanShare: clamp(Number(env.CITY_URBAN_SHARE || "0.35"), 0, 1),
+    },
+
+    apprentice: {
+      // ON by default (matching ⑤ culture / ⑪ faith / ⑬ tech / ⑭ cities): an apprenticeship moves no money and
+      // touches no neuron — it only tells the story of what the swarm actually REMEMBERS as against what it
+      // invented. APPRENTICE_ENABLED=false restores today's readings byte-for-byte (the permanent rollback).
+      enabled: (env.APPRENTICE_ENABLED ?? "true").toLowerCase() !== "false",
+      learnPct: clamp(Number(env.APPRENTICE_LEARN_PCT || "0.22"), 0, 1),
+      selfPct: clamp(Number(env.APPRENTICE_SELF_PCT || "0.05"), 0, 1),
+      schoolMin: clampInt(Number(env.APPRENTICE_SCHOOL_MIN || "3"), 2, 64),
     },
 
     socialStimulus: {

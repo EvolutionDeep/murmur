@@ -104,7 +104,15 @@ export type ChronicleKind =
   | "CITY_FOUNDED"
   | "URBANIZATION"
   | "CENSUS"
-  | "PLAGUE_WAVE";
+  | "PLAGUE_WAVE"
+    // ⑯ APPRENTICESHIP — education + cumulative culture (apprentice.ts): an art passing master→apprentice, a
+    //     student outstripping the first hand that taught it, a house's school of one art, and the fragility
+    //     payoff — the last living keeper of an art dying untaught even though ⑬'s ladder still names it. Fire
+    //     ONLY while APPRENTICE_ENABLED (state.ts folds no `apprentice` into the context otherwise).
+    | "TRANSMISSION"
+    | "SURPASS"
+    | "SCHOOL"
+    | "CRAFT_LOST";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -194,6 +202,10 @@ export interface ChronicleContext {
   /** ⑭ CITIES read-out (cities.ts signals): the place founded / the urban turn / the census / the wave. Absent
    *  ⇒ no CITY_FOUNDED/URBANIZATION/CENSUS/PLAGUE_WAVE (CITIES_ENABLED=false never folds them in). */
   cities?: ChronicleCities | null;
+  /** ⑯ APPRENTICESHIP read-out (apprentice.ts signals): the lesson taught / the surpass / the school / the lost
+   *  craft this cron, plus how much the swarm actually REMEMBERS. Absent ⇒ no TRANSMISSION/SURPASS/SCHOOL/
+   *  CRAFT_LOST (APPRENTICE_ENABLED=false never folds these in). */
+  apprentice?: ChronicleApprentice | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -233,6 +245,18 @@ export interface ChronicleCities {
   plagueWave: { deaths: number; a: string; b: string } | null;
   settlementCount: number;           // named places on the map
   urbanShare: number;                // share of the live swarm living in them, 0..1
+}
+
+/** ⑯ the apprenticeship membrane's chronicle signals — this cron's four education events, plus how much the
+ *  swarm remembers as against what ⑬ invented. `name` is the art's ladder-rung name, `house`/`sigil` a school's
+ *  banner; apprentice.ts edge-detects each, so the historian only names them and never re-tells a standing fact. */
+export interface ChronicleApprentice {
+  transmission: { apprentice: number; master: number; rung: number; name: string } | null;
+  surpass: { apprentice: number; master: number; rung: number; name: string } | null;
+  school: { rung: number; name: string; houseName: string; sigil: string; adherents: number } | null;
+  craftLost: { rung: number; name: string; last: number } | null;
+  skilled: number;                 // living minds that carry at least one art
+  topCraft: number;                // the highest rung any living hand holds (0..12)
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -336,6 +360,10 @@ interface ChroniclerState {
   lastLostArtKey: string | null;    // rung of the last announced LOST_ART (a reinvention may tell it again)
   lastFoundingKey: string | null;   // zone of the last announced CITY_FOUNDED
   lastCensusGen: number;            // generation of the last CENSUS — one count per generation, ever
+lastTransmissionKey: string | null; // apprentice>rung of the last announced TRANSMISSION (a pupil learning higher is new again)
+lastSurpassKey: string | null;      // apprentice of the last announced SURPASS (the membrane gates it one-shot per fly)
+lastSchoolKey: string | null;       // rung:houseId of the last announced SCHOOL
+lastCraftLostKey: string | null;    // the dying keeper id of the last announced CRAFT_LOST
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -400,6 +428,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     paced by cities.ts's own cron gap and this cooldown together.
   INVENTION: 60, DIFFUSION: 40, LOST_ART: 120,
   CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120,
+  // ⑯ APPRENTICESHIP — a lesson can be news often, so TRANSMISSION runs short; a SURPASS is a civilisational
+  //     hinge (the student passing the master) and is deliberately rare; a SCHOOL is one chapter per (art,house);
+  //     a CRAFT_LOST is mourned like a dark age's toll. The membrane already gates each to one pending per cron.
+  TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -491,6 +523,13 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   URBANIZATION: "The swarm turns urban — {urban} of {size} minds now live in {settlements} named places, the greatest of them {largest} holding {largestPop}; the open ground empties.",
   CENSUS: "A census is struck in Generation {gen~roman} — {size} minds alive, {meanAge} ticks of life across the last {graves} graves, {births} hatched and {deaths} buried since the last count.",
   PLAGUE_WAVE: "The rot walks the road — {deaths} burials inside the recent window, and the wave passes between {a} and {b} before anyone shuts a gate.",
+  // ⑯ APPRENTICESHIP — the education membrane's four moments. Mirrored byte-for-byte in the browser CHRON_ map.
+  //     Every id and art name is a real read-out value the caller passed as tokens; the fragile-knowledge line
+  //     (CRAFT_LOST) is the layer's whole point — ⑬'s ladder still lists the art, but no living hand remembers it.
+  TRANSMISSION: "Hand to hand — fly #{master}, keeper of {name}, teaches it to fly #{apprentice}; the art now lives in two minds instead of one.",
+  SURPASS: "The student outstrips the teacher — fly #{apprentice} carries {name} past fly #{master}, the first hand that taught it; the ladder rises in the apprentice's grip.",
+  SCHOOL: "A school of {name} — {adherents} hands in the House of {house} {sigil} now work the one art, and it will outlive any single life among them.",
+  CRAFT_LOST: "A craft dies with its keeper — fly #{last} was the last living hand to hold {name}; no apprentice was taught in time, and the art goes dark though the ladder still names it.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1134,6 +1173,56 @@ export class Chronicler {
       }
     }
 
+    // --- ⑯ APPRENTICESHIP: education + cumulative culture's four moments. apprentice.ts edge-detects them on the
+    //     swarm's own cohort (an art taught hand to hand, a student climbing past its first teacher, a house's
+    //     school, and the last living keeper of an art dying untaught), so this block only names what the membrane
+    //     already decided. The ledger-vs-ladder gap is the story: a CRAFT_LOST can fire while ⑬'s rungCount still
+    //     shows the art, because the ladder records what was invented and this records what is remembered.
+    //     APPRENTICE_ENABLED=false ⇒ no `apprentice` in the context ⇒ inert, byte-for-byte the pre-education build. ---
+    const appr = ctx.apprentice;
+    if (appr) {
+      if (appr.transmission) {
+        const key = `${appr.transmission.apprentice}>${appr.transmission.rung}`;
+        if (key !== s.lastTransmissionKey && this.ready("TRANSMISSION", ctx)) {
+          const t = appr.transmission;
+          s.lastTransmissionKey = key;
+          out.push(await this.emit(ctx, "TRANSMISSION", 2, [t.master, t.apprentice],
+            { master: t.master, apprentice: t.apprentice, name: t.name },
+            { rung: t.rung, apprentice: t.apprentice, master: t.master }));
+        }
+      }
+      if (appr.surpass) {
+        const key = String(appr.surpass.apprentice);
+        if (key !== s.lastSurpassKey && this.ready("SURPASS", ctx)) {
+          const u = appr.surpass;
+          s.lastSurpassKey = key;
+          out.push(await this.emit(ctx, "SURPASS", 4, [u.apprentice, u.master],
+            { apprentice: u.apprentice, master: u.master, name: u.name },
+            { rung: u.rung, apprentice: u.apprentice, master: u.master }));
+        }
+      }
+      if (appr.school) {
+        const key = `${appr.school.rung}:${appr.school.houseName}`;
+        if (key !== s.lastSchoolKey && this.ready("SCHOOL", ctx)) {
+          const g = appr.school;
+          s.lastSchoolKey = key;
+          out.push(await this.emit(ctx, "SCHOOL", 3, [],
+            { name: g.name, house: g.houseName, sigil: g.sigil, adherents: g.adherents },
+            { rung: g.rung, adherents: g.adherents }));
+        }
+      }
+      if (appr.craftLost) {
+        const key = String(appr.craftLost.last);
+        if (key !== s.lastCraftLostKey && this.ready("CRAFT_LOST", ctx)) {
+          const l = appr.craftLost;
+          s.lastCraftLostKey = key;
+          out.push(await this.emit(ctx, "CRAFT_LOST", 3, [l.last],
+            { last: l.last, name: l.name },
+            { rung: l.rung, last: l.last }));
+        }
+      }
+    }
+
     return out;
   }
 
@@ -1272,6 +1361,7 @@ function freshState(): ChroniclerState {
     lastAssemblyEra: 0, lastDecreeEra: {},
     generation: 0, genStartCron: 0, civLevel: CIV_START, prevCivVolume: 0, civGolden: false, civDark: false,
     lastInventionKey: null, lastDiffusionKey: null, lastLostArtKey: null, lastFoundingKey: null, lastCensusGen: -1,
+lastTransmissionKey: null, lastSurpassKey: null, lastSchoolKey: null, lastCraftLostKey: null,
     headHash: GENESIS_HASH,
   };
 }

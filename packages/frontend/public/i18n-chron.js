@@ -62,6 +62,11 @@ const zh = {
   URBANIZATION: "蜂群转向城市 —— {size} 只心智中已有 {urban} 只住在 {settlements} 处有名之地，其中最大的{largest}住着 {largestPop} 只；旷野渐空。",
   CENSUS: "第 {gen~roman} 代普查落笔 —— 现存 {size} 只心智，最近 {graves} 座坟平均享龄 {meanAge} 刻，自上次普查以来孵化 {births}、埋葬 {deaths}。",
   PLAGUE_WAVE: "腐病上了路 —— 近期窗口内 {deaths} 场下葬，这波疫病在{a}与{b}之间走过，无人来得及关上一道门。",
+  // ⑯ 师徒相授：传习、超越、学派、失传
+  TRANSMISSION: "手把手 —— 第{master}号蝇、{name}的守艺者，将它教给了第{apprentice}号蝇；这门技艺自此活在两个心中，不再只在一个。",
+  SURPASS: "学徒超越了老师 —— 第{apprentice}号蝇把{name}举到了第{master}号蝇——那第一位把它拉起来的手——之上；梯子就在学徒的掌握中上升。",
+  SCHOOL: "{name}的学派 —— {house}家族{sigil}下{adherents}只手如今同修一艺，它将活得比其中任何一命更长。",
+  CRAFT_LOST: "一门技艺随它的守艺者而去 —— 第{last}号蝇是最后活过{name}的手；未有学徒及时受业，技艺就此陷入黑暗，尽管阶梯仍刻其名。",
 };
 
 const fr = {
@@ -116,6 +121,11 @@ const fr = {
   URBANIZATION: "L'essaim devient urbain — {urban} des {size} esprits vivent désormais dans {settlements} lieux nommés, le plus grand {largest} en tenant {largestPop}; la terre ouverte se vide.",
   CENSUS: "Un recensement est frappé à la génération {gen~roman} — {size} esprits vivants, {meanAge} ticks de vie sur les {graves} dernières tombes, {births} éclos et {deaths} enterrés depuis le dernier compte.",
   PLAGUE_WAVE: "La pourriture marche sur la route — {deaths} inhumations dans la fenêtre récente, et la vague passe entre {a} et {b} avant que quiconque ne ferme une porte.",
+  // ⑯ apprentissage : transmission, dépassement, école, art perdu
+  TRANSMISSION: "De main à main — la mouche #{master}, gardienne de {name}, l'enseigne à la mouche #{apprentice} ; l'art vit désormais dans deux esprits au lieu d'un.",
+  SURPASS: "L'élève dépasse le maître — la mouche #{apprentice} porte {name} au-delà de la mouche #{master}, la première main qui l'instruisit ; l'échelle monte dans la prise de l'apprenti.",
+  SCHOOL: "Une école de {name} — {adherents} mains de la Maison {house} {sigil} travaillent désormais le même art, et il survivra à toute vie isolée parmi elles.",
+  CRAFT_LOST: "Un art meurt avec sa gardienne — la mouche #{last} fut la dernière main vivante à tenir {name} ; nul apprenti ne fut instruit à temps, et l'art s'éteint quoique l'échelle le nomme encore.",
 };
 
 const es = {
@@ -170,6 +180,11 @@ const es = {
   URBANIZATION: "El enjambre se vuelve urbano — {urban} de {size} mentes viven ya en {settlements} lugares nombrados, el mayor de ellos {largest} con {largestPop}; el campo abierto se vacía.",
   CENSUS: "Se levanta un censo en la generación {gen~roman} — {size} mentes vivas, {meanAge} ticks de vida en las últimas {graves} tumbas, {births} eclosionadas y {deaths} enterradas desde el último recuento.",
   PLAGUE_WAVE: "La podredumbre anda el camino — {deaths} entierros dentro de la ventana reciente, y la ola pasa entre {a} y {b} antes de que nadie cierre una puerta.",
+  // ⑯ aprendizaje: transmisión, superación, escuela y oficio perdido
+  TRANSMISSION: "Mano a mano — la mosca #{master}, guardiana de {name}, se lo enseña a la mosca #{apprentice} ; el arte vive ahora en dos mentes en lugar de una.",
+  SURPASS: "El discípulo supera al maestro — la mosca #{apprentice} lleva {name} más allá de la mosca #{master}, la primera mano que la instruyó ; la escalera sube en el puño del aprendiz.",
+  SCHOOL: "Una escuela de {name} — {adherents} manos de la Casa {house} {sigil} trabajan ya un mismo arte, y sobrevivirá a cualquier vida individual entre ellas.",
+  CRAFT_LOST: "Un oficio muere con su guardián — la mosca #{last} fue la última mano viva en sostener {name} ; ningún aprendiz fue instruido a tiempo, y el arte se apaga aunque la escalera aún lo nombre.",
 };
 
 const ja = {
@@ -224,6 +239,11 @@ const ja = {
   URBANIZATION: "群れ、都市へ転ず —— {size}の心智のうち {urban} が名づけられた地 {settlements} 箇所に住み、その最大なる{largest}は {largestPop} を抱く；開けた地は空く。",
   CENSUS: "第 {gen~roman} 世代、国勢調査を打つ —— 生存 {size} の心智、直近 {graves} 基の墳墓にわたり {meanAge} ティックの生、前回の調査より {births} 孵化し {deaths} 葬らる。",
   PLAGUE_WAVE: "腐病、道を歩く —— 直近の窓に {deaths} の埋葬、波は{a}と{b}のあいだを過ぎる、誰も門を閉ざす前に。",
+  // ⑯ 師弟相伝：伝習・超過・学派・失伝
+  TRANSMISSION: "手から手へ —— 蠅#{master}、{name}の守芸者が、蠅#{apprentice}にそれを教える；芸はいま二つの心智に生きる、一つではなく。",
+  SURPASS: "弟子、師を越える —— 蠅#{apprentice}は{name}を、それを最初に教えた手たる蠅#{master}のうえへ挙げよ；階梯は学徒の掌中に上がる。",
+  SCHOOL: "{name}の学派 —— {house}家{sigil}の許に{adherents}手が同一の芸を習い、それはその内のただ一つの生をも越えて生き残らん。",
+  CRAFT_LOST: "芸、守芸者と共に死す —— 蠅#{last}が{name}を活かす最期の手なりし；学徒に伝う間なく、芸は暗みに沈む、階梯にその名は残れり。",
 };
 
 const ko = {
@@ -278,6 +298,11 @@ const ko = {
   URBANIZATION: "군집이 도시로 돌아선다 — {size}개 마음 가운데 {urban}개가 이제 이름 붙은 땅 {settlements}곳에 살며, 그중 가장 큰 {largest}이(가) {largestPop}개를 품는다; 열린 땅은 비어간다.",
   CENSUS: "{gen~roman}세대에 인구조사 실시 — 생존 마음 {size}개, 최근 {graves}기 무덤에 걸쳐 {meanAge}틱의 수명, 지난 조사 이후 {births} 부화하고 {deaths} 매장되다.",
   PLAGUE_WAVE: "부패가 길을 걷는다 — 최근 구간에서 매장 {deaths}건, 물결은 {a}와 {b} 사이를 지난다, 누구도 문을 닫기 전에.",
+  // ⑯ 사제상수: 전습·초월·학파·실전
+  TRANSMISSION: "손에서 손으로 — 파리 #{master}이(가) {name}의 수장자로서 파리 #{apprentice}에게 이를 가르친다; 기예는 이제 하나가 아닌 둘의 마음에 산다.",
+  SURPASS: "제자가 스승을 넘다 — 파리 #{apprentice}이(가) {name}을(를) 처음 자신을 이끈 손이었던 파리 #{master} 위로 들어 올린다; 사다리는 제자의 손아귀에서 올라간다.",
+  SCHOOL: "{name}의 학파 — {house}가(家) {sigil} 아래 손 {adherents}이 하나의 기예를 함께 익히니, 그 기예는 무리 중 그 어떤 한 생명보다 오래 이어질 것이다.",
+  CRAFT_LOST: "기예가 그 수장자와 함께 죽다 — 파리 #{last}이 {name}을 쥔 마지막 살아 있는 손이었으니, 마땅히 전수할 제자가 없었고, 사다리가 그 이름을 새기고 있음에도 기예는 어둠에 잠기었다.",
 };
 
 const ar = {
@@ -332,6 +357,11 @@ const ar = {
   URBANIZATION: "السرب يصير حضرياً — {urban} من {size} عقلاً تعيش الآن في {settlements} أماكن مُسمّاة، أعظمها {largest} تضمّ {largestPop}; والأرض المكشوفة تخلو.",
   CENSUS: "يُضرب تعدادٌ في الجيل {gen~roman} — {size} عقلاً حيّة، و{meanAge} نبضة من الحياة عبر آخر {graves} قبوراً، و{births} فقست و{deaths} وُوريت منذ الإحصاء الأخير.",
   PLAGUE_WAVE: "العفن يمشي الطريق — {deaths} دفناً داخل النافذة الأخيرة، والموجة تعبر بين {a} و{b} قبل أن يُغلق أحدٌ باباً.",
+  // ⑯ التلمذة: نقلٌ وتجاوزٌ ومدرسةٌ وحرفةٌ فاقدة
+  TRANSMISSION: "يدٌ بيد — الذبابة #{master}، حرّاسة {name}، تعلّمها للذبابة #{apprentice}؛ فصارت الحرفة تعيش في عقلين لا في واحد.",
+  SURPASS: "التلميذ يسبق المعلّم — الذبابة #{apprentice} تحمل {name} فوق الذبابة #{master}، أول يد علّمتها؛ فالسلّم يصير في قبضة المتعلّم.",
+  SCHOOL: "مدرسة {name} — {adherents} يداً من دار {house} {sigil} تعمل بالحرفة ذاتها، وستبقى بعد أعمار أفرادها.",
+  CRAFT_LOST: "تموت حرفة مع حرّاسها — كانت الذبابة #{last} آخر يد حيّة تمسك {name}؛ فلم يُعلَّم تلميذٌ في الوقت، وأظلمت الحرفة والسلّم ما يزال يذكر اسمها.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

@@ -63,6 +63,7 @@ import { CultureMembrane } from "./culture.js";
 import { FaithMembrane, type FaithSignals } from "./religion.js";
 import { TechMembrane, type TechSignals } from "./invention.js";
 import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
+import { ApprenticeMembrane, type ApprenticeSignals } from "./apprentice.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -101,6 +102,10 @@ const KEY_TECH = "tech:v1";
 /** ⑭ The settlement map (which zones have been named, the census accumulators) — its OWN key, same law: a
  *  corrupt/absent blob only forgets the places, never ledger state. Bounded (≤ the sixteen zones), DO-safe. */
 const KEY_CITIES = "cities:v1";
+/** ⑯ The apprenticeship ledger (which mind carries which art, who taught whom, which schools stand) — its OWN
+ *  key, same law: a corrupt/absent blob only forgets the arts people knew, never ledger state. Bounded (≤ the
+ *  live population), DO-safe. */
+const KEY_APPRENTICE = "apprentice:v1";
 const KEY_COMMONS = "commons:v1";
 /** ⑮ The Laureate's poem hash chain — its OWN key: a poem is a pure read-out, so a corrupt/absent blob only
  *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
@@ -199,6 +204,8 @@ export class FlyStateDO {
   private tech: TechMembrane | null = null;
   /** ⑭ The city membrane (settlements + the census) — null while CITIES_ENABLED=false (byte-for-byte inert). */
   private cities: CityMembrane | null = null;
+    /** ⑯ The apprenticeship membrane (education + cumulative culture) — null while APPRENTICE_ENABLED=false (byte-for-byte inert). */
+  private apprentice: ApprenticeMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** ⑮ The Laureate (the swarm's poet) — null while POET_ENABLED=false (byte-for-byte inert). */
@@ -427,6 +434,21 @@ export class FlyStateDO {
     this.cities = new CityMembrane({ enabled: true, hamletMin: c.hamletMin, townMin: c.townMin, cityMin: c.cityMin, urbanShare: c.urbanShare });
     if (stored) this.cities.restore(stored);
     return this.cities;
+  }
+
+  /**
+   * ⑯ Lazily load the apprenticeship membrane (null while the switch is off — every hook below then no-ops).
+   * A corrupt stored blob restores an EMPTY ledger (the personal arts are unwitnessed again, the ledger is
+   * untouched), so education can never poison any other layer's state.
+   */
+  private async ensureApprentice(): Promise<ApprenticeMembrane | null> {
+    if (!this.cfg.apprentice.enabled) return null;
+    if (this.apprentice) return this.apprentice;
+    const stored = await this.state.storage.get<string>(KEY_APPRENTICE);
+    const a = this.cfg.apprentice;
+    this.apprentice = new ApprenticeMembrane({ enabled: true, learnPct: a.learnPct, selfPct: a.selfPct, schoolMin: a.schoolMin });
+    if (stored) this.apprentice.restore(stored);
+    return this.apprentice;
   }
 
   /**
@@ -1057,6 +1079,7 @@ export class FlyStateDO {
     if (this.religion) await this.state.storage.put(KEY_RELIGION, this.religion.serialize());
     if (this.tech) await this.state.storage.put(KEY_TECH, this.tech.serialize());
     if (this.cities) await this.state.storage.put(KEY_CITIES, this.cities.serialize());
+        if (this.apprentice) await this.state.storage.put(KEY_APPRENTICE, this.apprentice.serialize());
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.poet) await this.state.storage.put(KEY_POET, this.poet.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
@@ -1421,6 +1444,23 @@ export class FlyStateDO {
             urbanShare: citySig.urbanShare,
           }
         : null;
+      // ⑯ APPRENTICESHIP: fold the membrane's own edge-detected education events. Off ⇒ this.apprentice is null
+      // ⇒ no `apprentice` in the context ⇒ the historian's education detectors never speak ⇒ byte-for-byte the
+      // pre-education chronicle. transmission/surpass/craftLost already match the facet shape; school is mapped
+      // to drop the houseId the historian's template never reads.
+      const apprSig = this.cfg.apprentice.enabled ? this.apprentice?.signals() ?? null : null;
+      const apprentice = apprSig
+        ? {
+            transmission: apprSig.transmission,
+            surpass: apprSig.surpass,
+            school: apprSig.school
+              ? { rung: apprSig.school.rung, name: apprSig.school.name, houseName: apprSig.school.houseName, sigil: apprSig.school.sigil, adherents: apprSig.school.adherents }
+              : null,
+            craftLost: apprSig.craftLost,
+            skilled: apprSig.skilled,
+            topCraft: apprSig.topCraft,
+          }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1512,6 +1552,7 @@ export class FlyStateDO {
         religion,
         tech,
         cities,
+        apprentice,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1574,6 +1615,29 @@ export class FlyStateDO {
       }
     } catch (e) {
       console.warn("[DO] tech/cities drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑯ Drive the apprenticeship membrane over ONE cron, AFTER the ladder has diffused/turned (driveTechAndCities),
+   * so the ceiling on what any hand may learn is the swarm's CURRENT invented top. PURE READ-OUT: the inputs are
+   * the population snapshot's own readings (the same feeding cohort culture and faith read), the ladder's highest
+   * rung, and the economy's houseOf — nothing here re-prices a deal, moves a fly or touches a connectome. If ⑬ is
+   * off the ladder is empty (inventedTop 0) and this membrane simply never speaks. Best-effort — a throw can
+   * never block the live tick.
+   */
+  private async driveApprentice(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const appr = await this.ensureApprentice();
+    if (!appr || !snapshot) return;
+    try {
+      // the ceiling on a personal craft = the highest rung ⑬ has actually invented this cron (1-based; 0 ⇒ silent).
+      const techSig = this.cfg.tech.enabled ? this.tech?.signals() ?? null : null;
+      let inventedTop = 0;
+      if (techSig) for (const r of techSig.rungs) if (r.rung > inventedTop) inventedTop = r.rung;
+      const econ = this.economy;
+      appr.round(tick, snapshot.flies, inventedTop, (id) => econ?.houseOf(id) ?? null);
+    } catch (e) {
+      console.warn("[DO] apprentice drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2001,6 +2065,8 @@ export class FlyStateDO {
     //     events into the historian's context. Runs after the archive (its inputs are already final) and before
     //     the historian; pure read-out, best-effort.
     await this.driveTechAndCities(swarm.getTickIndex(), snapshot);
+    // ⑥ APPRENTICESHIP rides immediately after the ladder so a lesson's ceiling is the rung count THIS cron.
+    await this.driveApprentice(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2256,6 +2322,8 @@ export class FlyStateDO {
       if (tech) (economy as { tech?: unknown }).tech = tech;
       const cities = await this.citiesReadout();
       if (cities) (economy as { cities?: unknown }).cities = cities;
+      const apprentice = await this.apprenticeReadout();
+      if (apprentice) (economy as { apprentice?: unknown }).apprentice = apprentice;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2307,11 +2375,13 @@ export class FlyStateDO {
     // membranes. Switch-off ⇒ null ⇒ key absent ⇒ byte-for-byte the pre-layer /economy.
     const tech = await this.techReadout();
     const cities = await this.citiesReadout();
-    if (!culture && !religion && !commons && !tech && !cities) return json(snap);
+    // ⑯ APPRENTICESHIP folded the same way — pure read of the membrane. Switch-off ⇒ null ⇒ key absent.
+    const apprentice = await this.apprenticeReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
-      ...(tech ? { tech } : null), ...(cities ? { cities } : null),
+      ...(tech ? { tech } : null), ...(cities ? { cities } : null), ...(apprentice ? { apprentice } : null),
     });
   }
 
@@ -2385,6 +2455,18 @@ export class FlyStateDO {
     const cities = await this.ensureCities();
     if (!cities) return null;
     return cities.signals();
+  }
+
+  /**
+   * ⑯ The live apprenticeship read-out — the roster of minds that carry an art, the swarm's remembered peak, the
+   * standing schools, the cumulative lesson tally, and this cron's four education events. Null while
+   * APPRENTICE_ENABLED is off, so callers ship NO apprentice key and every consumer stays byte-identical to the
+   * pre-education build.
+   */
+  private async apprenticeReadout(): Promise<ApprenticeSignals | null> {
+    const appr = await this.ensureApprentice();
+    if (!appr) return null;
+    return appr.signals();
   }
 
   /**
@@ -3383,6 +3465,7 @@ export class FlyStateDO {
     this.religion = null;  // ⑪ and the faiths: religion restarts from an empty membrane
     this.tech = null;      // ⑬ and the arts: the ladder is forgotten with everything else
     this.cities = null;    // ⑭ and the places: the map goes back to open ground
+        this.apprentice = null;  // ⑯ and the educations: every personal art is unwitnessed with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -3396,6 +3479,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_RELIGION);
     await this.state.storage.delete(KEY_TECH);
     await this.state.storage.delete(KEY_CITIES);
+    await this.state.storage.delete(KEY_APPRENTICE);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }
