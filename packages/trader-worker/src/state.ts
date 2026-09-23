@@ -1091,26 +1091,32 @@ export class FlyStateDO {
     // Swarm-owned state: LocalSwarm writes the whole population:v3 blob; ShardedSwarm writes just the
     // coordinator counter (its shards persisted their own brains on the cron's commit sub-tick).
     if (this.swarm) await this.swarm.persist(this.state.storage);
-    if (this.meter) await this.state.storage.put(KEY_METER, this.meter.toJSON());
-    if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
-    if (this.culture) await this.state.storage.put(KEY_CULTURE, this.culture.serialize());
-    if (this.religion) await this.state.storage.put(KEY_RELIGION, this.religion.serialize());
-    if (this.tech) await this.state.storage.put(KEY_TECH, this.tech.serialize());
-    if (this.cities) await this.state.storage.put(KEY_CITIES, this.cities.serialize());
-        if (this.apprentice) await this.state.storage.put(KEY_APPRENTICE, this.apprentice.serialize());
-    if (this.archive) await this.state.storage.put(KEY_ARCHIVE, this.archive.serialize());
-    if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
-    if (this.poet) await this.state.storage.put(KEY_POET, this.poet.serialize());
-    if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
-    if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
-    if (this.warRuntime) await this.state.storage.put(KEY_WAR, this.warRuntime);
-    await this.state.storage.put(KEY_PREV_TEMP, this.prevTemperature ?? 0.5);
-    if (market) await this.state.storage.put(KEY_MARKET, market);
+    // Batch all membrane + coordinator writes into ONE atomic storage.put for minimal DO I/O latency.
+    // (Cloudflare DO supports a single put({key:val, …}) for up to 10MB transactional payload; our total
+    // is well under 4MB even at 100 flies.) The swarm.persist above stays separate because it has its own
+    // internal batch logic across multiple shard DOs via RPC.
+    const batch: Record<string, unknown> = {};
+    if (this.meter) batch[KEY_METER] = this.meter.toJSON();
+    if (this.economy) batch[KEY_ECONOMY] = this.economy.serialize();
+    if (this.culture) batch[KEY_CULTURE] = this.culture.serialize();
+    if (this.religion) batch[KEY_RELIGION] = this.religion.serialize();
+    if (this.tech) batch[KEY_TECH] = this.tech.serialize();
+    if (this.cities) batch[KEY_CITIES] = this.cities.serialize();
+    if (this.apprentice) batch[KEY_APPRENTICE] = this.apprentice.serialize();
+    if (this.archive) batch[KEY_ARCHIVE] = this.archive.serialize();
+    if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
+    if (this.poet) batch[KEY_POET] = this.poet.serialize();
+    if (this.prediction) batch[KEY_PREDICT] = this.prediction.serialize();
+    if (this.arenaState) batch[KEY_ARENA] = this.arenaState;
+    if (this.warRuntime) batch[KEY_WAR] = this.warRuntime;
+    batch[KEY_PREV_TEMP] = this.prevTemperature ?? 0.5;
+    if (market) batch[KEY_MARKET] = market;
     if (snapshot) {
       this.lastSnapshot = snapshot;
-      await this.state.storage.put(KEY_LAST_SNAPSHOT, snapshot);
+      batch[KEY_LAST_SNAPSHOT] = snapshot;
     }
-    await this.state.storage.put(KEY_LAST_CRON, Date.now());
+    batch[KEY_LAST_CRON] = Date.now();
+    await this.state.storage.put(batch);
   }
 
   // ---------- D1 long-term archival (one row per cron; best-effort, never blocks the tick) ----------
@@ -1778,7 +1784,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/state") return await this.getState();
       if (req.method === "GET" && path === "/population") return await this.getPopulation();
       if (req.method === "GET" && path === "/market") return await this.getMarket();
-      if (req.method === "GET" && path === "/economy") return await this.getEconomy();
+      if (req.method === "GET" && path === "/economy") return await this.getEconomy(url);
       if (req.method === "GET" && path === "/proofs") return await this.getProofs();
       if (req.method === "GET" && path === "/proofs/verify") return await this.getProofVerify(url);
       if (req.method === "GET" && path === "/manifest") return await this.getManifest();
@@ -2419,9 +2425,20 @@ export class FlyStateDO {
   }
 
   /** Full agent-economy snapshot: every wallet, the recent settlement ledger and aggregate totals. */
-  private async getEconomy() {
+  private async getEconomy(url: URL) {
     const economy = await this.ensureEconomy();
     const snap = economy.snapshot();
+    // LIGHT MODE: `?fields=light` returns only totals + top-10 agents by balance — a compact poll
+    // payload (~3KB vs ~58KB) for the frontend canvas heartbeat. Full response when param absent.
+    if (url.searchParams.get("fields") === "light") {
+      const agents = snap.agents.slice().sort((a, b) =>
+        BigInt(b.balance) > BigInt(a.balance) ? 1 : BigInt(b.balance) < BigInt(a.balance) ? -1 : 0,
+      ).slice(0, 10).map((a) => ({ id: a.id, balance: a.balance, balanceUsdc: a.balanceUsdc, deals: a.deals, sales: a.sales }));
+      const light: Record<string, unknown> = { mode: snap.mode, network: snap.network, totals: snap.totals, agents };
+      const raw = snap as unknown as Record<string, unknown>;
+      if ("market" in raw) light.market = raw.market;
+      return json(light);
+    }
     // ⑤ CULTURE folded into the same read-out the wallets drawer already draws — a pure read of the
     // membrane. Switch-off ⇒ cultureReadout() null ⇒ key absent ⇒ byte-for-byte the pre-culture /economy.
     const culture = await this.cultureReadout();

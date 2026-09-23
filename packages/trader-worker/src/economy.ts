@@ -567,6 +567,9 @@ export class AgentEconomy {
   // so a success rate can be published WITHOUT a KEY_VERSION bump.
   private settleOk = 0;
   private settleFail = 0;
+  /** Per-pair consecutive-failure streak for exponential backoff (in-memory only, resets on DO eviction).
+   *  Key = pendingNets pair key ("lo>hi"), value = { streak, lastFailTick }. */
+  private pairBackoff = new Map<string, { streak: number; lastFailTick: number }>();
   private treasuryOutAtomic = "0";
   /**
    * WAR mirror (additive): cumulative EXTRA on-chain USDC levied as tax into the coffer's commons purse,
@@ -918,6 +921,16 @@ export class AgentEconomy {
       const aged = this.cfg.netFlushTicks > 0 && tickIndex - pn.firstTick >= this.cfg.netFlushTicks;
       if (abs < minBroadcast && !aged) continue;   // dust carries forward to a later flush
 
+      // EXPONENTIAL BACKOFF: a pair that failed settlement recently gets a retry window that doubles per
+      // consecutive failure (capped at 30 ticks ≈ 5 crons). This prevents hot-looping a pair whose failure
+      // is persistent (insufficient balance, nonce race) from consuming every cron's flush budget. In-memory
+      // only (pairBackoff): a DO eviction naturally resets it, which is correct after the transient cause heals.
+      const bo = this.pairBackoff.get(key);
+      if (bo) {
+        const wait = Math.min(1 << bo.streak, 30);
+        if (tickIndex - bo.lastFailTick < wait) continue;
+      }
+
       const debtorId = pn.net > 0n ? pn.lo : pn.hi;
       const creditorId = pn.net > 0n ? pn.hi : pn.lo;
       const debtor = this.agents[this.indexOfId.get(debtorId)!];
@@ -965,6 +978,8 @@ export class AgentEconomy {
           // for non-moral reasons, so this is a smudge, not a grudge — the book stays for true stiffs).
           this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          const prev = this.pairBackoff.get(key);
+          this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
           out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
         }
         const receipt = await this.facilitator.settle(payload, reqs);
@@ -972,6 +987,8 @@ export class AgentEconomy {
         if (!receipt.success) {
           this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          const prev = this.pairBackoff.get(key);
+          this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
           out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break;
         }
         // Mined: commit this chunk on the internal ledger, meter the daily caps, count real volume.
@@ -987,6 +1004,7 @@ export class AgentEconomy {
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
         this.settleOk++;
+        this.pairBackoff.delete(key);  // success clears the backoff streak
         // The mined net IS the settled history reputation is made of: both sides keep the promise.
         this.rememberTrade(debtor.id, creditor.id, tickIndex);
         // Dynasty tithe: 2% of what the creditor just earned flows to its house treasury (no-op for a

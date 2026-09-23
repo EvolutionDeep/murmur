@@ -584,7 +584,10 @@ export const OPENAPI_SPEC = {
         tags: ["economy"],
         operationId: "getEconomy",
         summary: "The x402 agent economy: wallets, deal feed, totals",
-        description: "Every agent wallet (address/balance/paid/earned/deals/sales), the recent + last-tick deal feeds, the settlement scheme/network/asset, and cumulative totals. This is the authoritative economy view.",
+        description: "Every agent wallet (address/balance/paid/earned/deals/sales), the recent + last-tick deal feeds, the settlement scheme/network/asset, and cumulative totals. This is the authoritative economy view. Pass `?fields=light` for a compact response (~3KB vs ~58KB) containing only totals + top-10 agents by balance.",
+        parameters: [
+          { name: "fields", in: "query", required: false, schema: { type: "string", enum: ["light"] }, description: "When set to 'light', returns only mode, network, totals, market (if active), and the 10 richest agents (id/balance/balanceUsdc/deals/sales). Ideal for dashboards and status widgets." },
+        ],
         ...ok(
           obj({
             tickIndex: { type: "integer" },
