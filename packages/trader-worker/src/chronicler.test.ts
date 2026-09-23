@@ -11,6 +11,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   Chronicler,
@@ -21,6 +23,8 @@ import {
   entryHashInput,
   GENESIS_HASH,
   CHRONICLE_VERSION,
+  TEMPLATES,
+  COOLDOWN,
   type ChronicleContext,
   type ChronicleEntry,
 } from "./chronicler.js";
@@ -817,5 +821,165 @@ test("⑫ replaying the same cron sequence is byte-identical (the fast clock is 
     assert.equal(a[i].hash, b[i].hash);
   }
   assert.ok(a.some((e) => e.kind === "GENERATION"), "the deterministic replay still turns generations");
+});
+
+// ============================================================================================
+// ⑬ TECH + ⑭ CITIES — the ladder of arts and the settlement map. Both membranes edge-detect their OWN
+// events (see invention.test.ts / cities.test.ts), so the historian's job here is only to NAME them from
+// the public templates, once per landscape change, and to stay utterly silent when state.ts folds no
+// `tech` / `cities` into the context (the switch-off byte-for-byte guarantee).
+// ============================================================================================
+
+const TECH_KINDS = ["INVENTION", "DIFFUSION", "LOST_ART"];
+const CITY_KINDS = ["CITY_FOUNDED", "URBANIZATION", "CENSUS", "PLAGUE_WAVE"];
+
+function techFacet(over: Record<string, unknown> = {}): NonNullable<ChronicleContext["tech"]> {
+  return { discovery: null, diffusion: null, lostArt: null, rungCount: 0, lostCount: 0, ...over } as NonNullable<ChronicleContext["tech"]>;
+}
+
+function cityFacet(over: Record<string, unknown> = {}): NonNullable<ChronicleContext["cities"]> {
+  return { founding: null, urbanization: null, census: null, plagueWave: null, settlementCount: 0, urbanShare: 0, ...over } as NonNullable<ChronicleContext["cities"]>;
+}
+
+test("⑬ the ladder writes itself into the chronicle — INVENTION, DIFFUSION and LOST_ART, each from its template", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 900, tech: techFacet({ discovery: { rung: 1, name: "the Knotted Cord", gen: 1, civ: 44, credit: "the House of Ochre" }, rungCount: 1 }) }),
+    ctx({ tick: 1800, tech: techFacet({ diffusion: { rung: 1, name: "the Knotted Cord", adopted: 21, size: 40 }, rungCount: 1 }) }),
+    ctx({ tick: 2700, tech: techFacet({ lostArt: { rung: 1, name: "the Knotted Cord", gen: 4 }, rungCount: 0, lostCount: 1 }) }),
+  ]);
+  const one = (k: string) => all.filter((e) => e.kind === k);
+  assert.equal(one("INVENTION").length, 1);
+  assert.equal(one("DIFFUSION").length, 1);
+  assert.equal(one("LOST_ART").length, 1);
+  for (const e of all.filter((x) => TECH_KINDS.includes(x.kind))) {
+    assert.equal(e.text, renderTemplate(e.kind, e.tokens), `${e.kind} must re-derive from its public template`);
+  }
+  const inv = one("INVENTION")[0];
+  assert.match(inv.text, /Generation I\b/, "the rung is dated by the generation that found it");
+  assert.match(inv.text, /the Knotted Cord/);
+  assert.match(inv.text, /rung 1 of the ladder/);
+  assert.match(inv.text, /credited to the House of Ochre/);
+  assert.equal(inv.severity, 3, "an invention is a chapter-defining line");
+  assert.match(one("DIFFUSION")[0].text, /21 of 40 minds now work by it/);
+  assert.match(one("LOST_ART")[0].text, /unlearned in Generation IV/);
+});
+
+test("⑬ a standing art is never re-invented in print (the anti-stutter key)", async () => {
+  const c = new Chronicler();
+  const discovery = { rung: 2, name: "the Clay Tally", gen: 2, civ: 50, credit: "no house in particular" };
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ...Array.from({ length: 5 }, (_, i) => ctx({ tick: 900 * (i + 2), tech: techFacet({ discovery }) })),
+  ]);
+  assert.equal(all.filter((e) => e.kind === "INVENTION").length, 1, "the same rung is told once, however many crons it stands");
+});
+
+test("⑭ the map writes itself into the chronicle — CITY_FOUNDED, URBANIZATION, CENSUS and PLAGUE_WAVE", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 900, cities: cityFacet({ founding: { zone: 3, name: "Dunmarrow", rank: "TOWN", pop: 6, house: "the House of Ochre" }, settlementCount: 1 }) }),
+    ctx({ tick: 1800, cities: cityFacet({ urbanization: { urban: 18, size: 24, settlements: 3, largest: "Dunmarrow", largestPop: 6 }, settlementCount: 3, urbanShare: 0.75 }) }),
+    ctx({ tick: 2700, cities: cityFacet({ census: { size: 24, meanAge: 550, graves: 6, births: 4, deaths: 2, gen: 3 } }) }),
+    ctx({ tick: 3600, cities: cityFacet({ plagueWave: { deaths: 4, a: "Dunmarrow", b: "Emberholt" } }) }),
+  ]);
+  const one = (k: string) => all.filter((e) => e.kind === k);
+  for (const k of CITY_KINDS) assert.equal(one(k).length, 1, `${k} must be told exactly once`);
+  for (const e of all.filter((x) => CITY_KINDS.includes(x.kind))) {
+    assert.equal(e.text, renderTemplate(e.kind, e.tokens), `${e.kind} must re-derive from its public template`);
+  }
+  assert.match(one("CITY_FOUNDED")[0].text, /6 kin hold the ground at Dunmarrow/);
+  assert.match(one("CITY_FOUNDED")[0].text, /becomes a town under the banner of the House of Ochre/);
+  assert.match(one("URBANIZATION")[0].text, /18 of 24 minds now live in 3 named places/);
+  assert.match(one("CENSUS")[0].text, /Generation III/);
+  assert.match(one("CENSUS")[0].text, /550 ticks of life across the last 6 graves, 4 hatched and 2 buried/);
+  assert.match(one("PLAGUE_WAVE")[0].text, /between Dunmarrow and Emberholt/);
+});
+
+test("⑭ one census per generation — the same count is never struck twice", async () => {
+  const c = new Chronicler();
+  const census = { size: 24, meanAge: 500, graves: 4, births: 2, deaths: 1, gen: 5 };
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ...Array.from({ length: 4 }, (_, i) => ctx({ tick: 900 * (i + 2), cities: cityFacet({ census }) })),
+  ]);
+  assert.equal(all.filter((e) => e.kind === "CENSUS").length, 1);
+  // …but the NEXT generation's count is a new chapter
+  const more = await run(c, [ctx({ tick: 9000, cities: cityFacet({ census: { ...census, gen: 6, size: 26 } }) })]);
+  assert.equal(more.filter((e) => e.kind === "CENSUS").length, 1);
+});
+
+test("⑭ a long dying on the SAME road is several chapters, not one", async () => {
+  const c = new Chronicler();
+  const plagueWave = { deaths: 4, a: "Dunmarrow", b: "Emberholt" };
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ...Array.from({ length: 3 }, (_, i) => ctx({ tick: 900 * (i + 2), cities: cityFacet({ plagueWave }) })),
+  ]);
+  assert.equal(all.filter((e) => e.kind === "PLAGUE_WAVE").length, 3, "cities.ts paces the wave; the historian writes each one");
+});
+
+test("⑬⑭ with no tech/cities read-out in the context, none of the seven new lines is ever written", async () => {
+  const c = new Chronicler();
+  const all = await run(c, ageCrons(40, (i) => ({ regime: "CALM", temperature: 0.5, volumeUsdc: i, gini: 0.3, size: 25, settlements: i })));
+  const strays = all.filter((e) => [...TECH_KINDS, ...CITY_KINDS].includes(e.kind));
+  assert.equal(strays.length, 0, `switch-off must be silent, saw ${strays.map((e) => e.kind).join(",")}`);
+  assert.ok(all.some((e) => e.kind === "GENERATION"), "…while the ages' own clock still runs");
+});
+
+test("⑬⑭ a tech-and-cities history passes in-browser-style verifyChain end to end", async () => {
+  const c = new Chronicler();
+  const all = await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 900, tech: techFacet({ discovery: { rung: 1, name: "the Knotted Cord", gen: 1, civ: 42, credit: "no house in particular" } }) }),
+    ctx({ tick: 1800, cities: cityFacet({ founding: { zone: 0, name: "Ashgate", rank: "HAMLET", pop: 2, house: "no house" } }) }),
+    ctx({ tick: 2700, cities: cityFacet({ census: { size: 24, meanAge: 400, graves: 3, births: 1, deaths: 1, gen: 2 } }) }),
+  ]);
+  assert.ok(all.some((e) => e.kind === "INVENTION"));
+  assert.ok(all.some((e) => e.kind === "CITY_FOUNDED"));
+  assert.ok(all.some((e) => e.kind === "CENSUS"));
+  const v = await verifyChain(all);
+  assert.ok(v.ok, `chain over the new kinds intact: ${v.reason} @${v.brokenAt}`);
+});
+
+test("⑬⑭ an older stored blob lacking the new trackers restores with defaults and preserves the chain head", async () => {
+  const c = new Chronicler();
+  await run(c, [
+    ctx({ tick: 1 }),
+    ctx({ tick: 900, tech: techFacet({ discovery: { rung: 1, name: "the Knotted Cord", gen: 1, civ: 42, credit: "no house in particular" } }) }),
+    ctx({ tick: 1800, cities: cityFacet({ census: { size: 24, meanAge: 400, graves: 3, births: 1, deaths: 1, gen: 1 } }) }),
+  ]);
+  const headBefore = c.eraInfo().headHash;
+  const legacy = c.snapshot() as unknown as Record<string, unknown>;
+  for (const k of ["lastInventionKey", "lastDiffusionKey", "lastLostArtKey", "lastFoundingKey", "lastCensusGen"]) delete legacy[k];
+  const c2 = new Chronicler();
+  c2.restore(legacy as any);
+  assert.equal(c2.eraInfo().headHash, headBefore, "the hash chain head must survive an additive-field restore");
+  const st = c2.snapshot() as unknown as Record<string, unknown>;
+  assert.equal(st.lastInventionKey, null, "a missing tracker re-seeds to its fresh default");
+  assert.equal(st.lastCensusGen, -1);
+});
+
+test("⑬⑭ the shipped browser CHRON_ mirror holds every server template and cooldown verbatim", () => {
+  // The genome is hashed from TEMPLATES + COOLDOWN, and the browser re-derives every sentence from its OWN
+  // copy of both. A single drifted character silently turns every visitor's "prove no LLM" banner red, so the
+  // mirror is checked HERE, in CI, rather than by eye on deploy day.
+  const candidates = [
+    resolve(process.cwd(), "../frontend/public/app.js"),      // npm test --workspaces (cwd = the worker package)
+    resolve(process.cwd(), "packages/frontend/public/app.js"), // invoked from the repo root
+  ];
+  let src: string | null = null;
+  for (const p of candidates) {
+    try { src = readFileSync(p, "utf8"); break; } catch { /* try the next candidate */ }
+  }
+  assert.ok(src, "the frontend app.js must be readable from the test run");
+  for (const [kind, tpl] of Object.entries(TEMPLATES)) {
+    assert.ok((src as string).includes(`${kind}: ${JSON.stringify(tpl)}`), `CHRON_ drifted or is missing ${kind}`);
+  }
+  for (const [kind, gap] of Object.entries(COOLDOWN)) {
+    assert.ok((src as string).includes(`${kind}: ${gap}`), `CHRON_ cooldown drifted or is missing ${kind}`);
+  }
 });
 

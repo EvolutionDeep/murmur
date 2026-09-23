@@ -90,7 +90,21 @@ export type ChronicleKind =
   | "GOLDEN_AGE"
   | "DARK_AGE"
   | "RENAISSANCE"
-  | "MIGRATION";
+  | "MIGRATION"
+  // ⑬ TECH — the ladder of arts (invention.ts): a rung discovered on a generation turn, an art diffusing past
+  //     half the swarm, the top rung unlearned when fortune breaks. Folded in only while TECH_ENABLED, so the
+  //     chronicle stays byte-for-byte the pre-ladder build when the layer is off.
+  | "INVENTION"
+  | "DIFFUSION"
+  | "LOST_ART"
+  // ⑭ CITIES — settlements and the census (cities.ts): a zone becoming a named place, the swarm turning urban,
+  //     a census struck once a generation off the grave ring, and the rot walking the road between the two
+  //     greatest places. NARRATED over burials the ledger already recorded — never a contagion model. Folded in
+  //     only while CITIES_ENABLED.
+  | "CITY_FOUNDED"
+  | "URBANIZATION"
+  | "CENSUS"
+  | "PLAGUE_WAVE";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -174,6 +188,12 @@ export interface ChronicleContext {
    *  cron's four faith events. Absent ⇒ no PROPHECY/SCHISM/REVIVAL/PILGRIMAGE (RELIGION_ENABLED=false never
    *  folds these into the context). Pure read-out, never feeds back. */
   religion?: ChronicleReligion | null;
+  /** ⑬ TECH read-out (invention.ts signals): the rung discovered / diffused / unlearned this cron. Absent ⇒
+   *  no INVENTION/DIFFUSION/LOST_ART (TECH_ENABLED=false never folds these into the context). */
+  tech?: ChronicleTech | null;
+  /** ⑭ CITIES read-out (cities.ts signals): the place founded / the urban turn / the census / the wave. Absent
+   *  ⇒ no CITY_FOUNDED/URBANIZATION/CENSUS/PLAGUE_WAVE (CITIES_ENABLED=false never folds them in). */
+  cities?: ChronicleCities | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -191,6 +211,28 @@ export interface ChronicleReligion {
   schism: { houseId: number; name: string; sigil: string; sect: string } | null;
   revival: { sect: string; adherents: number } | null;
   pilgrimage: { houseId: number; name: string; sigil: string; adherents: number } | null;
+}
+
+/** ⑬ the tech membrane's chronicle signals — this cron's three arts events, plus how far the ladder has
+ *  climbed (a metric, never a sentence of its own). invention.ts edge-detects them; the historian only names
+ *  them, so a standing art is never re-invented in print. */
+export interface ChronicleTech {
+  discovery: { rung: number; name: string; gen: number; civ: number; credit: string } | null;
+  diffusion: { rung: number; name: string; adopted: number; size: number } | null;
+  lostArt: { rung: number; name: string; gen: number } | null;
+  rungCount: number;                 // rungs in force (0..12)
+  lostCount: number;                 // rungs currently unlearned
+}
+
+/** ⑭ the city membrane's chronicle signals — this cron's four map events, plus the map's own extent. The
+ *  `house` field is already the credit phrase ("the House of X" / "no house"), so the template needs no join. */
+export interface ChronicleCities {
+  founding: { zone: number; name: string; rank: string; pop: number; house: string } | null;
+  urbanization: { urban: number; size: number; settlements: number; largest: string; largestPop: number } | null;
+  census: { size: number; meanAge: number; graves: number; births: number; deaths: number; gen: number } | null;
+  plagueWave: { deaths: number; a: string; b: string } | null;
+  settlementCount: number;           // named places on the map
+  urbanShare: number;                // share of the live swarm living in them, 0..1
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -286,6 +328,14 @@ interface ChroniclerState {
   prevCivVolume: number;            // lifetime volume at the last generation (a generation's rise/fall)
   civGolden: boolean;               // a GOLDEN_AGE is currently lit (edge-tracked, never re-spammed)
   civDark: boolean;                 // a DARK_AGE is lit (a climb back past the band is a RENAISSANCE)
+  // --- ⑬⑭ tech/cities trackers: the membranes edge-detect their OWN events, so these only stop the same
+  //     rung / place / generation being told twice. All additive: an older stored blob lacks them ⇒ restore's
+  //     {...freshState(),...st} seeds the defaults, leaving headHash and the era counters untouched. ---
+  lastInventionKey: string | null;  // rung of the last announced INVENTION
+  lastDiffusionKey: string | null;  // rung of the last announced DIFFUSION
+  lastLostArtKey: string | null;    // rung of the last announced LOST_ART (a reinvention may tell it again)
+  lastFoundingKey: string | null;   // zone of the last announced CITY_FOUNDED
+  lastCensusGen: number;            // generation of the last CENSUS — one count per generation, ever
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -328,7 +378,9 @@ const CREDIT_MIN_USDC = 0.01;    // only a note of real consequence is announced
 const CLASS_SHARE = 0.15;        // creditors gripping >15% of net capital is a CLASS in history
 
 // Minimum crons before the same kind may repeat, so the chronicle stays a chronicle, not a stutter.
-const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
+// Exported (like TEMPLATES) so the browser-mirror guard test can prove the shipped CHRON_ cooldown map is the
+// hashed one — a drifted number there rotates the genome just as a drifted sentence does.
+export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3,
   FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12,
   HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1,
@@ -341,6 +393,13 @@ const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ⑫ AGES: GENERATION is the clock itself (one line per generation, ~84 ticks); the age-phase lines are rare
   //     chapters (a golden/dark/renaissance age should not stutter), a migration rarer still.
   GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300,
+  // ⑬⑭ TECH + CITIES: an invention and its diffusion are chapters (the ladder is twelve rungs long, so the
+  //     chronicle can afford one line each); a lost art rarer still. A founding is a small event but happens at
+  //     most sixteen times ever; URBANIZATION is a once-in-a-civilisation turn; a census is one line per
+  //     generation (the membrane gates it, the cooldown only stops a same-tick duplicate); a plague wave is
+  //     paced by cities.ts's own cron gap and this cooldown together.
+  INVENTION: 60, DIFFUSION: 40, LOST_ART: 120,
+  CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -419,6 +478,19 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   DARK_AGE: "A Dark Age falls — the swarm's fortune breaks below {dark} of 100 in Generation {gen~roman}; the chronicle dims, and names are forgotten.",
   RENAISSANCE: "A Renaissance — out of the dark the swarm's fortune climbs back over {dark} of 100 in Generation {gen~roman}; the old names are read again.",
   MIGRATION: "A Great Migration — in Generation {gen~roman} the swarm spills past its old bounds at {size} minds, and a house carries its name to new ground.",
+  // ⑬ TECH — the ladder of arts' three moments. Mirrored byte-for-byte in the browser CHRON_ map. Every number
+  //     they cite (rung, gen, adopted, size) is a real read-out value the caller passed as tokens; the credit
+  //     phrase is built by invention.ts from the dominant house, never composed here.
+  INVENTION: "An art is invented — in Generation {gen~roman} the swarm discovers {name}, rung {rung} of the ladder, credited to {credit}.",
+  DIFFUSION: "{name} becomes a custom — {adopted} of {size} minds now work by it, and the art belongs to the swarm rather than to whoever found it.",
+  LOST_ART: "A dark age takes its toll — {name} is unlearned in Generation {gen~roman}; the ladder falls back a rung, and the art must be found again.",
+  // ⑭ CITIES — the settlement map's four moments. Mirrored byte-for-byte in the browser CHRON_ map. The census
+  //     cites the grave ring it was read off ("the last {graves} graves") rather than claiming a life expectancy
+  //     for flies it never saw; a plague wave is NARRATED over burials the ledger already recorded.
+  CITY_FOUNDED: "A place is named — {pop} kin hold the ground at {name}, and what was a camp becomes a {rank~lower} under the banner of {house}.",
+  URBANIZATION: "The swarm turns urban — {urban} of {size} minds now live in {settlements} named places, the greatest of them {largest} holding {largestPop}; the open ground empties.",
+  CENSUS: "A census is struck in Generation {gen~roman} — {size} minds alive, {meanAge} ticks of life across the last {graves} graves, {births} hatched and {deaths} buried since the last count.",
+  PLAGUE_WAVE: "The rot walks the road — {deaths} burials inside the recent window, and the wave passes between {a} and {b} before anyone shuts a gate.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -985,6 +1057,83 @@ export class Chronicler {
       }
     }
 
+    // --- ⑬ TECH: the ladder of arts. invention.ts edge-detects its own three moments on the historian's own
+    //     clocks (a rung discovered when a generation turns and both its gates are open, an art diffusing past
+    //     half the swarm, the top rung unlearned when fortune breaks into a dark age), so this block only NAMES
+    //     them and keeps the anti-stutter keys. TECH_ENABLED=false ⇒ state.ts folds no `tech` into the context
+    //     ⇒ this whole block is inert and the chronicle stays byte-for-byte the pre-ladder build. ---
+    const tech = ctx.tech;
+    if (tech) {
+      if (tech.discovery) {
+        const key = String(tech.discovery.rung);
+        if (key !== s.lastInventionKey && this.ready("INVENTION", ctx)) {
+          const d = tech.discovery;
+          s.lastInventionKey = key;
+          out.push(await this.emit(ctx, "INVENTION", 3, [],
+            { name: d.name, rung: d.rung, gen: d.gen, credit: d.credit },
+            { rung: d.rung, gen: d.gen, civ: d.civ }));
+        }
+      }
+      if (tech.diffusion) {
+        const key = String(tech.diffusion.rung);
+        if (key !== s.lastDiffusionKey && this.ready("DIFFUSION", ctx)) {
+          const d = tech.diffusion;
+          s.lastDiffusionKey = key;
+          out.push(await this.emit(ctx, "DIFFUSION", 2, [],
+            { name: d.name, adopted: d.adopted, size: d.size },
+            { rung: d.rung, adopted: d.adopted, size: d.size }));
+        }
+      }
+      if (tech.lostArt) {
+        const key = String(tech.lostArt.rung);
+        if (key !== s.lastLostArtKey && this.ready("LOST_ART", ctx)) {
+          const d = tech.lostArt;
+          s.lastLostArtKey = key;
+          out.push(await this.emit(ctx, "LOST_ART", 3, [],
+            { name: d.name, gen: d.gen }, { rung: d.rung, gen: d.gen }));
+        }
+      }
+    }
+
+    // --- ⑭ CITIES: the settlement map's four moments. cities.ts reads the economy's OWN zone ledger and grave
+    //     ring and edge-detects them (a place named once per zone for good, the urban turn behind a hysteresis,
+    //     one census per generation, a plague wave paced by its own cron gap), so once again this block only
+    //     names what the map already decided. PLAGUE_WAVE deliberately leans on the membrane's cron gap plus
+    //     this cooldown rather than a key, because a long dying on the SAME road is several chapters, not one.
+    //     NARRATION ONLY — no death was caused here; the burials were already in the ledger. CITIES_ENABLED=false
+    //     ⇒ no `cities` in the context ⇒ inert, byte-for-byte the pre-map build. ---
+    const city = ctx.cities;
+    if (city) {
+      if (city.founding) {
+        const key = String(city.founding.zone);
+        if (key !== s.lastFoundingKey && this.ready("CITY_FOUNDED", ctx)) {
+          const f = city.founding;
+          s.lastFoundingKey = key;
+          out.push(await this.emit(ctx, "CITY_FOUNDED", 2, [],
+            { name: f.name, pop: f.pop, rank: f.rank, house: f.house },
+            { zone: f.zone, pop: f.pop }));
+        }
+      }
+      if (city.urbanization && this.ready("URBANIZATION", ctx)) {
+        const u = city.urbanization;
+        out.push(await this.emit(ctx, "URBANIZATION", 3, [],
+          { urban: u.urban, size: u.size, settlements: u.settlements, largest: u.largest, largestPop: u.largestPop },
+          { urban: u.urban, size: u.size, settlements: u.settlements }));
+      }
+      if (city.census && city.census.gen !== s.lastCensusGen && this.ready("CENSUS", ctx)) {
+        const c = city.census;
+        s.lastCensusGen = c.gen;
+        out.push(await this.emit(ctx, "CENSUS", 2, [],
+          { gen: c.gen, size: c.size, meanAge: c.meanAge, graves: c.graves, births: c.births, deaths: c.deaths },
+          { size: c.size, meanAge: c.meanAge, graves: c.graves, births: c.births, deaths: c.deaths, gen: c.gen }));
+      }
+      if (city.plagueWave && this.ready("PLAGUE_WAVE", ctx)) {
+        const p = city.plagueWave;
+        out.push(await this.emit(ctx, "PLAGUE_WAVE", 3, [],
+          { deaths: p.deaths, a: p.a, b: p.b }, { deaths: p.deaths }));
+      }
+    }
+
     return out;
   }
 
@@ -1122,6 +1271,7 @@ function freshState(): ChroniclerState {
     lastProphetKey: null, lastSchismKey: null, lastRevivalKey: null, lastPilgrimKey: null,
     lastAssemblyEra: 0, lastDecreeEra: {},
     generation: 0, genStartCron: 0, civLevel: CIV_START, prevCivVolume: 0, civGolden: false, civDark: false,
+    lastInventionKey: null, lastDiffusionKey: null, lastLostArtKey: null, lastFoundingKey: null, lastCensusGen: -1,
     headHash: GENESIS_HASH,
   };
 }

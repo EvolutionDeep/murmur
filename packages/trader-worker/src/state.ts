@@ -61,6 +61,8 @@ import { LocalSwarm, ShardedSwarm, type SwarmBackend } from "./swarm.js";
 import { AgentEconomy, type EconomySnapshot, type EconomyConfig, type EconomyDeps, type EconomyTotals, type Settlement, type LeaderRow } from "./economy.js";
 import { CultureMembrane } from "./culture.js";
 import { FaithMembrane, type FaithSignals } from "./religion.js";
+import { TechMembrane, type TechSignals } from "./invention.js";
+import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
@@ -88,6 +90,12 @@ const KEY_CULTURE = "culture:v1";
 /** ⑪ Faith membrane (god/sect/devotion per fly) — its OWN key: religion is a read-out overlay too, so a
  *  corrupt/absent blob only loses faiths, never ledger state. Bounded (≤64 records), DO-safe. */
 const KEY_RELIGION = "religion:v1";
+/** ⑬ The ladder of arts (which rungs are in force, who is credited, how far each has diffused) — its OWN key:
+ *  a corrupt/absent blob only forgets the arts, never ledger state. Bounded (≤ the twelve rungs), DO-safe. */
+const KEY_TECH = "tech:v1";
+/** ⑭ The settlement map (which zones have been named, the census accumulators) — its OWN key, same law: a
+ *  corrupt/absent blob only forgets the places, never ledger state. Bounded (≤ the sixteen zones), DO-safe. */
+const KEY_CITIES = "cities:v1";
 const KEY_COMMONS = "commons:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
@@ -179,6 +187,10 @@ export class FlyStateDO {
   private culture: CultureMembrane | null = null;
   /** ⑪ The faith membrane — null while RELIGION_ENABLED=false (byte-for-byte inert). */
   private religion: FaithMembrane | null = null;
+  /** ⑬ The tech membrane (the ladder of arts) — null while TECH_ENABLED=false (byte-for-byte inert). */
+  private tech: TechMembrane | null = null;
+  /** ⑭ The city membrane (settlements + the census) — null while CITIES_ENABLED=false (byte-for-byte inert). */
+  private cities: CityMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
@@ -368,6 +380,36 @@ export class FlyStateDO {
     this.religion = new FaithMembrane({ enabled: true, holyEvery: r.holyEvery, devotionMin: r.devotionMin, sectCap: r.sectCap });
     if (stored) this.religion.restore(stored);
     return this.religion;
+  }
+
+  /**
+   * ⑬ Lazily load the tech membrane (null while the switch is off — every hook below then no-ops).
+   * A corrupt stored blob restores an EMPTY ladder (the arts are forgotten, the ledger is untouched),
+   * so tech can never poison any other layer's state.
+   */
+  private async ensureTech(): Promise<TechMembrane | null> {
+    if (!this.cfg.tech.enabled) return null;
+    if (this.tech) return this.tech;
+    const stored = await this.state.storage.get<string>(KEY_TECH);
+    const t = this.cfg.tech;
+    this.tech = new TechMembrane({ enabled: true, discoverP: t.discoverP, adoptPct: t.adoptPct });
+    if (stored) this.tech.restore(stored);
+    return this.tech;
+  }
+
+  /**
+   * ⑭ Lazily load the city membrane (null while the switch is off — every hook below then no-ops).
+   * A corrupt stored blob restores an EMPTY map (the places are forgotten, the ledger is untouched),
+   * so cities can never poison any other layer's state.
+   */
+  private async ensureCities(): Promise<CityMembrane | null> {
+    if (!this.cfg.cities.enabled) return null;
+    if (this.cities) return this.cities;
+    const stored = await this.state.storage.get<string>(KEY_CITIES);
+    const c = this.cfg.cities;
+    this.cities = new CityMembrane({ enabled: true, hamletMin: c.hamletMin, townMin: c.townMin, cityMin: c.cityMin, urbanShare: c.urbanShare });
+    if (stored) this.cities.restore(stored);
+    return this.cities;
   }
 
   /**
@@ -975,6 +1017,8 @@ export class FlyStateDO {
     if (this.economy) await this.state.storage.put(KEY_ECONOMY, this.economy.serialize());
     if (this.culture) await this.state.storage.put(KEY_CULTURE, this.culture.serialize());
     if (this.religion) await this.state.storage.put(KEY_RELIGION, this.religion.serialize());
+    if (this.tech) await this.state.storage.put(KEY_TECH, this.tech.serialize());
+    if (this.cities) await this.state.storage.put(KEY_CITIES, this.cities.serialize());
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
@@ -1233,6 +1277,41 @@ export class FlyStateDO {
             pilgrimage: relSig.pilgrimage,
           }
         : null;
+      // ⑬⑭ TECH + CITIES chronicle read-outs, folded in ONLY while the matching switch is ON and step 6b drove
+      // the membrane this cron. Off ⇒ the field stays null ⇒ the historian's ladder/map detectors never speak ⇒
+      // byte-for-byte the pre-layer chronicle. Both are pure reads of the membranes' OWN edge-detected events,
+      // so a standing art or a standing town is never re-announced (the anti-stutter rule).
+      const techSig = this.cfg.tech.enabled ? this.tech?.signals() ?? null : null;
+      const tech = techSig
+        ? {
+            discovery: techSig.discovery
+              ? { rung: techSig.discovery.rung, name: techSig.discovery.name, gen: techSig.discovery.gen, civ: techSig.discovery.civ, credit: techSig.discovery.credit }
+              : null,
+            diffusion: techSig.diffusion,
+            lostArt: techSig.lostArt,
+            rungCount: techSig.rungs.length,
+            lostCount: techSig.lost.length,
+          }
+        : null;
+      const citySig = this.cfg.cities.enabled ? this.cities?.signals() ?? null : null;
+      const cities = citySig
+        ? {
+            founding: citySig.founding
+              ? { zone: citySig.founding.zone, name: citySig.founding.name, rank: citySig.founding.rank, pop: citySig.founding.pop, house: houseCreditOf(citySig.founding.houseName) }
+              : null,
+            urbanization: citySig.urbanization
+              ? {
+                  urban: citySig.urbanization.urban, size: citySig.urbanization.size,
+                  settlements: citySig.urbanization.settlements, largest: citySig.urbanization.largest,
+                  largestPop: citySig.urbanization.largestPop,
+                }
+              : null,
+            census: citySig.census,
+            plagueWave: citySig.plagueWave,
+            settlementCount: citySig.settlements.length,
+            urbanShare: citySig.urbanShare,
+          }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1322,6 +1401,8 @@ export class FlyStateDO {
         commons,
         war,
         religion,
+        tech,
+        cities,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1333,6 +1414,57 @@ export class FlyStateDO {
       if (entries.length) await this.state.storage.put(KEY_ANNALS, this.annals);
     } catch (e) {
       console.warn("[DO] chronicle observe failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑬⑭ Drive the ladder of arts and the settlement map over ONE cron, so step 7 can fold their edge-detected
+   * events into the historian's context. Both membranes live on the HISTORIAN'S fast clock: the generation edge
+   * is read off eraInfo(), and each membrane turns only when that generation is newer than the one it last saw
+   * — so a DO evicted mid-generation costs one line at most and never double-counts a rung or a census.
+   * PURE READ-OUT: the only inputs are the economy's own snapshot (per-fly zone, grave ring, dynasty rows), the
+   * snapshot's size and the historian's reckoning; nothing here re-prices a deal, moves a fly, or touches a
+   * connectome / genome / manifestHash. Best-effort — a throw can never block the live tick.
+   */
+  private async driveTechAndCities(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const tech = await this.ensureTech();
+    const cities = await this.ensureCities();
+    if (!tech && !cities) return;
+    try {
+      const size = snapshot?.collective.size ?? 0;
+      const era = this.chronicler ? this.chronicler.eraInfo() : null;
+      const gen = era ? era.generation : 0;
+      const econ = this.lastEconomy;
+      if (cities && econ) {
+        // The zone ledger is the territory layer's own per-fly read-out (a fly sits in its house's home zone);
+        // rebuilt here from the snapshot rather than re-deriving anything, and null while territory is off ⇒
+        // the map stays empty and only the census speaks.
+        const zones: Record<number, number> = {};
+        for (const a of econ.agents) if (a.zone != null && !a.dead) zones[a.id] = a.zone;
+        const dyn = econ.dynasty ?? null;
+        cities.survey({
+          tick,
+          size,
+          zones: Object.keys(zones).length ? zones : null,
+          zoneOwners: dyn?.zoneOwners ?? null,
+          graves: (dyn?.graves ?? []).map((g) => ({ tick: g.tick, age: g.age, cause: g.cause })),
+          living: dyn?.living ?? 0,
+          dead: dyn?.dead ?? 0,
+          deathsRecent: this.economy ? this.economy.recentDeaths(tick, 30) : 0,
+        });
+        if (gen > cities.generation()) cities.turnGeneration(tick, gen);
+      }
+      if (tech) {
+        tech.diffuse(tick, size);
+        if (gen > tech.generation()) {
+          // the ladder's credit goes to the house holding the swarm's capital, if one does — a pure read of the
+          // dynasty signals the historian already narrates, never a new claim about who invented what.
+          const dom = this.economy?.dynastySignals()?.dominance ?? null;
+          tech.turnGeneration(tick, gen, era ? era.civLevel : 0, size, dom ? { id: dom.id, name: dom.name } : null);
+        }
+      }
+    } catch (e) {
+      console.warn("[DO] tech/cities drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -1671,6 +1803,11 @@ export class FlyStateDO {
       this.lastEconomy?.totals ?? null,
     );
 
+    // 6b) ⑬ TECH + ⑭ CITIES — drive the two read-out membranes over THIS cron's state so step 7 can fold their
+    //     events into the historian's context. Runs after the archive (its inputs are already final) and before
+    //     the historian; pure read-out, best-effort.
+    await this.driveTechAndCities(swarm.getTickIndex(), snapshot);
+
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
@@ -1912,6 +2049,12 @@ export class FlyStateDO {
       if (culture) (economy as { culture?: unknown }).culture = culture;
       const religion = await this.religionReadout(snap);
       if (religion) (economy as { religion?: unknown }).religion = religion;
+      // ⑬⑭ the ladder + the map ride the same hot feed, so both chronicle volumes track every cron whether or
+      // not the drawer is open. Switch-off ⇒ null ⇒ key absent ⇒ byte-for-byte the pre-layer /population.
+      const tech = await this.techReadout();
+      if (tech) (economy as { tech?: unknown }).tech = tech;
+      const cities = await this.citiesReadout();
+      if (cities) (economy as { cities?: unknown }).cities = cities;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -1959,8 +2102,16 @@ export class FlyStateDO {
     // ⑧ THE COMMONS — the seated assembly + its live law, a pure read of commons.ts. LAW off ⇒ null ⇒ no
     // key ⇒ byte-for-byte the pre-law /economy.
     const commons = await this.commonsReadout();
-    if (!culture && !religion && !commons) return json(snap);
-    return json({ ...snap, ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null) });
+    // ⑬⑭ TECH + CITIES folded into the same read-out the wallets drawer already draws — pure reads of the two
+    // membranes. Switch-off ⇒ null ⇒ key absent ⇒ byte-for-byte the pre-layer /economy.
+    const tech = await this.techReadout();
+    const cities = await this.citiesReadout();
+    if (!culture && !religion && !commons && !tech && !cities) return json(snap);
+    return json({
+      ...snap,
+      ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
+      ...(tech ? { tech } : null), ...(cities ? { cities } : null),
+    });
   }
 
   /**
@@ -2010,6 +2161,29 @@ export class FlyStateDO {
     if (!snap) return null;
     const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
     return rel.signals(snap.flies, market?.regime ?? "CALM");
+  }
+
+  /**
+   * ⑬ The live tech read-out — the rungs in force (with who is credited and how far each has diffused), the arts
+   * a dark age has taken, the next rung's horizon, and this cron's three events. Null while TECH_ENABLED is off,
+   * so callers ship NO tech key and every consumer stays byte-identical to the pre-ladder build.
+   */
+  private async techReadout(): Promise<TechSignals | null> {
+    const tech = await this.ensureTech();
+    if (!tech) return null;
+    return tech.signals();
+  }
+
+  /**
+   * ⑭ The live city read-out — the settlement map (place, rank, headcount, banner), the urban share, the road
+   * between the two greatest places, the demography read off the grave ring, and this cron's four events. Null
+   * while CITIES_ENABLED is off, so callers ship NO cities key and every consumer stays byte-identical to the
+   * pre-map build.
+   */
+  private async citiesReadout(): Promise<CitySignals | null> {
+    const cities = await this.ensureCities();
+    if (!cities) return null;
+    return cities.signals();
   }
 
   /**
@@ -2889,6 +3063,8 @@ export class FlyStateDO {
     this.economy = this.makeEconomy();
     this.culture = null;   // a reset swallows the fashions too: culture starts from innate readings
     this.religion = null;  // ⑪ and the faiths: religion restarts from an empty membrane
+    this.tech = null;      // ⑬ and the arts: the ladder is forgotten with everything else
+    this.cities = null;    // ⑭ and the places: the map goes back to open ground
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -2899,6 +3075,8 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_MARKET);
     await this.state.storage.delete(KEY_CULTURE);
     await this.state.storage.delete(KEY_RELIGION);
+    await this.state.storage.delete(KEY_TECH);
+    await this.state.storage.delete(KEY_CITIES);
     return json({ ok: true });
   }
 }

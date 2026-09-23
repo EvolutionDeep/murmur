@@ -13,6 +13,7 @@
 const zh = {
   ERA_OPEN: "第 {era~roman} 纪元 · {eraName} —— {size} 个心智在 Arc 市场上照料着蜂群，编年史就此翻开。",
   ERA_SHIFT: "第 {era~roman} 纪元 · {eraName} 破晓 —— 市场已转向{regime~lower}并持守不变。一个时代开启了。",
+  ERA_PASSAGE: "第 {era~roman} 纪元 · {eraName} 就此翻页 —— 一个{regime~lower}的中段时代，以蜂群自己的慢钟计量。",
   FIRST_TRADE: "第一笔交换上链结算 —— 智能体首次在 {liveAgents} 个钱包之间以真实 USDC 交易。蜂群成为了市场。",
   MILESTONE: "里程碑 —— 账本记录下第 {settlements~kth} 次可验证的交换。{settlements} 笔结算，{volumeUsdc} USDC 流动。",
   BIRTH: "新的一代孵化进入活体蜂群 —— 如今共有 {size} 个心智，为该物种创下纪录。",
@@ -52,11 +53,21 @@ const zh = {
   DARK_AGE: "黑暗时代降临 —— 第 {gen~roman} 代，蜂群国运跌破 {dark}/100；编年史为之黯淡，名姓被人遗忘。",
   RENAISSANCE: "文艺复兴 —— 出黑暗而复升，第 {gen~roman} 代蜂群国运重回 {dark} 之上；古老名姓再度被诵读。",
   MIGRATION: "大迁徙 —— 第 {gen~roman} 代，蜂群以 {size} 之众溢出旧界，一族携其名奔赴新土。",
+  // ⑬ 技艺之梯：发现、成为习俗、在黑暗时代里失传
+  INVENTION: "一门技艺被发明 —— 第 {gen~roman} 代，蜂群发现了{name}，梯上第 {rung} 阶，归功于{credit}。",
+  DIFFUSION: "{name}成了习俗 —— {size} 只心智中已有 {adopted} 只按其行事，这门技艺从此属于蜂群，而不再属于发现它的人。",
+  LOST_ART: "黑暗时代索取代价 —— 第 {gen~roman} 代，{name}被人遗忘；梯子回落一阶，这门技艺必须重新被发现。",
+  // ⑭ 有名之地：定居点、城镇化、每代一次的普查、路上的瘟疫之波
+  CITY_FOUNDED: "一处地方被命名 —— {pop} 名同族据有{name}之地，昔日的营地成了{rank~lower}，扬起{house}的旗号。",
+  URBANIZATION: "蜂群转向城市 —— {size} 只心智中已有 {urban} 只住在 {settlements} 处有名之地，其中最大的{largest}住着 {largestPop} 只；旷野渐空。",
+  CENSUS: "第 {gen~roman} 代普查落笔 —— 现存 {size} 只心智，最近 {graves} 座坟平均享龄 {meanAge} 刻，自上次普查以来孵化 {births}、埋葬 {deaths}。",
+  PLAGUE_WAVE: "腐病上了路 —— 近期窗口内 {deaths} 场下葬，这波疫病在{a}与{b}之间走过，无人来得及关上一道门。",
 };
 
 const fr = {
   ERA_OPEN: "Ère {era~roman} · {eraName} — {size} esprits veillent l'essaim sur le marché Arc, et la chronique s'ouvre.",
   ERA_SHIFT: "L'ère {era~roman} · {eraName} se lève — le marché a tourné {regime~lower} et s'y tient. Un âge commence.",
+  ERA_PASSAGE: "L'ère {era~roman} · {eraName} se renouvelle — un âge du milieu {regime~lower}, mesuré par la lente horloge de l'essaim.",
   FIRST_TRADE: "Le premier échange se règle on-chain — les agents échangent de vrais USDC pour la première fois sur {liveAgents} portefeuilles. Un essaim devient un marché.",
   MILESTONE: "Jalon — le registre inscrit son {settlements~kth} échange vérifiable. {settlements} règlements, {volumeUsdc} USDC déplacés.",
   BIRTH: "Une nouvelle génération éclot dans l'essaim vivant — il compte désormais {size} esprits, un record pour l'espèce.",
@@ -96,11 +107,21 @@ const fr = {
   DARK_AGE: "Un Âge Sombre tombe — la fortune se brise sous {dark} sur 100 à la génération {gen~roman}; la chronique pâlît et les noms s'oublient.",
   RENAISSANCE: "Une Renaissance — hors des ténèbres la fortune remonte au-delà de {dark} sur 100 à la génération {gen~roman}; les vieux noms sont relus.",
   MIGRATION: "Une Grande Migration — à la génération {gen~roman} l'essaim déborde ses vieilles bornes à {size} esprits, et une maison porte son nom vers une terre neuve.",
+  // ⑬ l'échelle des arts : trouvée, devenue coutume, désapprise dans un âge sombre
+  INVENTION: "Un art est inventé — à la génération {gen~roman} l'essaim découvre {name}, échelon {rung} de l'échelle, attribué à {credit}.",
+  DIFFUSION: "{name} devient une coutume — {adopted} des {size} esprits s'y conforment désormais, et l'art appartient à l'essaim plutôt qu'à celui qui l'a trouvé.",
+  LOST_ART: "Un âge sombre laisse sa marque — {name} est désappris à la génération {gen~roman}; l'échelle recule d'un échelon, et l'art doit être retrouvé.",
+  // ⑭ les lieux nommés : établissements, tournant urbain, recensement, la pourriture sur la route
+  CITY_FOUNDED: "Un lieu est nommé — {pop} parents tiennent le sol à {name}, et ce qui était un camp devient un {rank~lower} sous la bannière de {house}.",
+  URBANIZATION: "L'essaim devient urbain — {urban} des {size} esprits vivent désormais dans {settlements} lieux nommés, le plus grand {largest} en tenant {largestPop}; la terre ouverte se vide.",
+  CENSUS: "Un recensement est frappé à la génération {gen~roman} — {size} esprits vivants, {meanAge} ticks de vie sur les {graves} dernières tombes, {births} éclos et {deaths} enterrés depuis le dernier compte.",
+  PLAGUE_WAVE: "La pourriture marche sur la route — {deaths} inhumations dans la fenêtre récente, et la vague passe entre {a} et {b} avant que quiconque ne ferme une porte.",
 };
 
 const es = {
   ERA_OPEN: "Era {era~roman} · {eraName} — {size} mentes cuidan el enjambre en el mercado Arc, y la crónica se abre.",
   ERA_SHIFT: "Amanece la Era {era~roman} · {eraName} — el mercado ha girado {regime~lower} y lo sostiene. Comienza una edad.",
+  ERA_PASSAGE: "La Era {era~roman} · {eraName} se releva — una edad del medio {regime~lower}, medida por el lento reloj del enjambre.",
   FIRST_TRADE: "El primer intercambio se liquida en cadena — los agentes comercian USDC reales por primera vez a través de {liveAgents} billeteras. Un enjambre se vuelve mercado.",
   MILESTONE: "Hito — el registro anota su {settlements~kth} intercambio verificable. {settlements} liquidaciones, {volumeUsdc} USDC movidos.",
   BIRTH: "Una nueva generación eclosiona en el enjambre vivo — ahora cuenta {size} mentes, un récord para la especie.",
@@ -140,11 +161,21 @@ const es = {
   DARK_AGE: "Cae una Edad Oscura — la fortuna se quiebra bajo {dark} de 100 en la generación {gen~roman}; la crónica se apaga y los nombres se olvidan.",
   RENAISSANCE: "Un Renacimiento — desde la oscuridad la fortuna repunta sobre {dark} de 100 en la generación {gen~roman}; los viejos nombres vuelven a leerse.",
   MIGRATION: "Una Gran Migración — en la generación {gen~roman} el enjambre desborda sus viejos límites con {size} mentes, y una casa lleva su nombre a tierra nueva.",
+  // ⑬ la escalera de las artes: hallada, vuelta costumbre, olvidada en una edad oscura
+  INVENTION: "Se inventa un arte — en la generación {gen~roman} el enjambre descubre {name}, peldaño {rung} de la escalera, atribuido a {credit}.",
+  DIFFUSION: "{name} se vuelve costumbre — {adopted} de {size} mentes trabajan ya conforme a él, y el arte pertenece al enjambre y no a quien lo halló.",
+  LOST_ART: "Una edad oscura cobra su precio — {name} se olvida en la generación {gen~roman}; la escalera retrocede un peldaño y el arte debe hallarse de nuevo.",
+  // ⑭ los lugares nombrados: asentamientos, el giro urbano, el censo, la podredumbre en el camino
+  CITY_FOUNDED: "Se nombra un lugar — {pop} parientes detentan el suelo en {name}, y lo que era un campamento deviene una {rank~lower} bajo el pendón de {house}.",
+  URBANIZATION: "El enjambre se vuelve urbano — {urban} de {size} mentes viven ya en {settlements} lugares nombrados, el mayor de ellos {largest} con {largestPop}; el campo abierto se vacía.",
+  CENSUS: "Se levanta un censo en la generación {gen~roman} — {size} mentes vivas, {meanAge} ticks de vida en las últimas {graves} tumbas, {births} eclosionadas y {deaths} enterradas desde el último recuento.",
+  PLAGUE_WAVE: "La podredumbre anda el camino — {deaths} entierros dentro de la ventana reciente, y la ola pasa entre {a} y {b} antes de que nadie cierre una puerta.",
 };
 
 const ja = {
   ERA_OPEN: "第{era~roman}紀元 · {eraName} —— {size}の心がArc市場で群れを育み、クロニクルが開かれる。",
   ERA_SHIFT: "第{era~roman}紀元 · {eraName}が明け —— 市場は{regime~lower}へ転じ、それを保った。一時代が始まる。",
+  ERA_PASSAGE: "第{era~roman}紀元 · {eraName}はページを返す —— {regime~lower}の中ほどなる一時代、群れ自身の遅き時計にて測らる。",
   FIRST_TRADE: "初の交換がオンチェーンで決済 —— エージェントが{liveAgents}のウォレットで初めて実際のUSDCを取引。群れが市場となる。",
   MILESTONE: "里程標 —— 台帳が{settlements~kth}回の検証可能な交換を記録。{settlements}件の決済、{volumeUsdc} USDCが動いた。",
   BIRTH: "新世代が生きた群れへ孵化 —— 今や{size}の心が集い、種にとっての記録となった。",
@@ -184,11 +215,21 @@ const ja = {
   DARK_AGE: "暗黒時代 —— 第 {gen~roman} 世代、群れの運勢は {dark}/100 を割りて破れる；クロニクルは晦み、名は忘れらる。",
   RENAISSANCE: "復興 —— 闇より昇り、第 {gen~roman} 世代、群れの運勢は {dark}/100 を取り戻す；古名ふたたび読まれる。",
   MIGRATION: "大移動 —— 第 {gen~roman} 世代、群れは{size}の心を以て旧き境界を溢れ出し、一族が名を携えて新しき地へ渡る。",
+  // ⑬ 技芸の階梯：発見、習俗となる、暗黒時代に失伝
+  INVENTION: "技芸、発明さる —— 第 {gen~roman} 世代、群れは{name}を見いだす。階梯第 {rung} 段、{credit}に帰せらる。",
+  DIFFUSION: "{name}は習俗となる —— {size}の心智のうち {adopted} がこれに従いて働き、技芸は発見せし者にあらず群れに属す。",
+  LOST_ART: "暗黒時代、その代償を取る —— 第 {gen~roman} 世代、{name}は失伝す；階梯は一段退き、技芸はふたたび見いだされねばならぬ。",
+  // ⑭ 名づけられた地：定住地、都市への転回、国勢調査、道を歩く疫病
+  CITY_FOUNDED: "地、名づけらる —— {pop}の同族が{name}の地を保ち、かつての陣屋は{house}の旗の下に{rank~lower}となる。",
+  URBANIZATION: "群れ、都市へ転ず —— {size}の心智のうち {urban} が名づけられた地 {settlements} 箇所に住み、その最大なる{largest}は {largestPop} を抱く；開けた地は空く。",
+  CENSUS: "第 {gen~roman} 世代、国勢調査を打つ —— 生存 {size} の心智、直近 {graves} 基の墳墓にわたり {meanAge} ティックの生、前回の調査より {births} 孵化し {deaths} 葬らる。",
+  PLAGUE_WAVE: "腐病、道を歩く —— 直近の窓に {deaths} の埋葬、波は{a}と{b}のあいだを過ぎる、誰も門を閉ざす前に。",
 };
 
 const ko = {
   ERA_OPEN: "제 {era~roman} 시대 · {eraName} — {size}개의 정신이 Arc 시장에서 군집을 돌보며 연대기가 열린다.",
   ERA_SHIFT: "제 {era~roman} 시대 · {eraName} 여명 — 시장이 {regime~lower}(으)로 돌아서 이를 지켰다. 한 시대가 시작된다.",
+  ERA_PASSAGE: "제 {era~roman} 시대 · {eraName}이 넘어간다 — {regime~lower} 중반의 한 시대, 무리 자신의 느린 시계로 잰다.",
   FIRST_TRADE: "첫 교환이 온체인에서 정산 — 에이전트들이 {liveAgents}개 지갑에 걸쳐 처음으로 실제 USDC를 거래한다. 군집이 시장이 된다.",
   MILESTONE: "이정표 — 대장이 {settlements~kth}번째 검증 가능한 교환을 기록. {settlements}건 정산, {volumeUsdc} USDC 이동.",
   BIRTH: "새 세대가 살아있는 군집으로 부화 — 이제 {size}개의 정신으로, 종(種)의 기록을 세운다.",
@@ -228,11 +269,21 @@ const ko = {
   DARK_AGE: "암흑 시대 — {gen~roman} 세대, 무리의 국운이 {dark}/100 아래로 무너진다; 연대기는 어두워지고 이름은 잊힌다.",
   RENAISSANCE: "르네상스 — 어둠에서 일어나 {gen~roman} 세대, 무리의 국운이 {dark}/100 을 되찾는다; 오래된 이름이 다시 읽힌다.",
   MIGRATION: "대이동 — {gen~roman} 세대, 무리는 {size} 개의 정신으로 옛 경계를 넘어 흐르고, 한 가문이 이름을 안고 새 땅으로 간다.",
+  // ⑬ 기예의 사다리: 발견, 관습이 됨, 암흑시대에 실전
+  INVENTION: "기예가 발명되다 — {gen~roman}세대에 군집은 {name}을(를) 발견한다, 사다리 {rung}단, {credit}에 귀속된다.",
+  DIFFUSION: "{name}은(는) 관습이 된다 — {size}개 마음 가운데 {adopted}개가 이제 이에 따라 일하며, 기예는 발견한 자가 아니라 군집의 것이 된다.",
+  LOST_ART: "암흑시대가 대가를 치르게 한다 — {gen~roman}세대에 {name}이(가) 실전된다; 사다리는 한 단 물러서고, 그 기예는 다시 발견되어야 한다.",
+  // ⑭ 이름 붙은 땅: 정착지, 도시로의 전환, 인구조사, 길을 걷는 역병
+  CITY_FOUNDED: "땅에 이름이 붙다 — 혈족 {pop}명이 {name}의 땅을 쥐고, 진지였던 곳이 {house}의 깃발 아래 {rank~lower}이(가) 된다.",
+  URBANIZATION: "군집이 도시로 돌아선다 — {size}개 마음 가운데 {urban}개가 이제 이름 붙은 땅 {settlements}곳에 살며, 그중 가장 큰 {largest}이(가) {largestPop}개를 품는다; 열린 땅은 비어간다.",
+  CENSUS: "{gen~roman}세대에 인구조사 실시 — 생존 마음 {size}개, 최근 {graves}기 무덤에 걸쳐 {meanAge}틱의 수명, 지난 조사 이후 {births} 부화하고 {deaths} 매장되다.",
+  PLAGUE_WAVE: "부패가 길을 걷는다 — 최근 구간에서 매장 {deaths}건, 물결은 {a}와 {b} 사이를 지난다, 누구도 문을 닫기 전에.",
 };
 
 const ar = {
   ERA_OPEN: "العصر {era~roman} · {eraName} — {size} عقلًا يرعون السرب في سوق Arc، وتُفتتح الحوليات.",
   ERA_SHIFT: "يُشرق العصر {era~roman} · {eraName} — مال السوق إلى {regime~lower} وثبَت عليه. يبدأ عمر.",
+  ERA_PASSAGE: "ينقلب العصر {era~roman} · {eraName} — عمرٌ من أوسط الـ{regime~lower}، يُقاس بساعة السرب البطيئة.",
   FIRST_TRADE: "أول تبادل يُسوّى على السلسلة — تتداول العناصر USDC حقيقيًا لأول مرة عبر {liveAgents} محفظة. يصير السرب سوقًا.",
   MILESTONE: "علامة — يسجّل الدفتر التبادل الـ{settlements~kth} القابل للتحقق. {settlements} تسوية، {volumeUsdc} USDC تحرّك.",
   BIRTH: "جيلٌ جديد يفقس في السرب الحي — صار يعدّ {size} عقلًا، رقمٌ قياسي للنوع.",
@@ -272,6 +323,15 @@ const ar = {
   DARK_AGE: "يعصر الظلام — ينكسر حظّ السرب دون {dark} من 100 في الجيل {gen~roman}; تخفت الحوليات وتُنسى الأسماء.",
   RENAISSANCE: "نهضة — ينهض حظّ السرب من الظلام فوق {dark} من 100 في الجيل {gen~roman}; تُقرأ الأسماء القديمة من جديد.",
   MIGRATION: "هجرةٌ كبرى — في الجيل {gen~roman} يفيض السرب عن حدوده القديمة بـ{size} عقلًا، وتحمل عائلةٌ اسمها إلى أرضٍ جديدة.",
+  // ⑬ سلّم الفنون: يُكتشف، يصير عادة، يُنسى في عصرٍ مظلم
+  INVENTION: "يُخترع فنّ — في الجيل {gen~roman} يكتشف السرب {name}، الدرجة {rung} من السلّم، ويُنسب إلى {credit}.",
+  DIFFUSION: "{name} يصير عادة — {adopted} من {size} عقلاً تعمل به الآن، فيصير الفنّ للسرب لا لمن وجده.",
+  LOST_ART: "العصر المظلم يأخذ حقّه — يُنسى {name} في الجيل {gen~roman}; يتراجع السلّم درجة، ويجب أن يُكتشف الفنّ من جديد.",
+  // ⑭ الأماكن المُسمّاة: مستوطنات، التحوّل الحضري، التعداد، والعفن على الطريق
+  CITY_FOUNDED: "يُسمّى مكان — {pop} من الأقرباء يحوزون الأرض في {name}، فيصير ما كان مُعسكراً {rank~lower} تحت راية {house}.",
+  URBANIZATION: "السرب يصير حضرياً — {urban} من {size} عقلاً تعيش الآن في {settlements} أماكن مُسمّاة، أعظمها {largest} تضمّ {largestPop}; والأرض المكشوفة تخلو.",
+  CENSUS: "يُضرب تعدادٌ في الجيل {gen~roman} — {size} عقلاً حيّة، و{meanAge} نبضة من الحياة عبر آخر {graves} قبوراً، و{births} فقست و{deaths} وُوريت منذ الإحصاء الأخير.",
+  PLAGUE_WAVE: "العفن يمشي الطريق — {deaths} دفناً داخل النافذة الأخيرة، والموجة تعبر بين {a} و{b} قبل أن يُغلق أحدٌ باباً.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

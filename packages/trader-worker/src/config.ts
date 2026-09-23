@@ -193,6 +193,14 @@ export interface Env {
   RELIGION_HOLY_EVERY?: string;         // crons between holy days (default 48; clamped 2..400)
   RELIGION_DEVOTION_MIN?: string;       // devotion a fly needs to keep the holy rest / count on a pilgrimage (default 0.5; clamped 0..1)
   RELIGION_SECT_CAP?: string;           // hard bound on simultaneous sects in the read-out (default 8; clamped 1..16)
+  TECH_ENABLED?: string;                // "true"/"false" (default TRUE) — ⑬ TECH layer: the ladder of arts — twelve public rungs (the Knotted Cord → the Difference Engine), each gated on a swarm generation and a civilisation level, discovered on a generation turn behind a deterministic draw, diffusing through the swarm over the crons that follow, and the top rung UNLEARNED when fortune breaks into a dark age. PURE READ-OUT (it re-prices nothing, moves no money, touches no neuron); false restores today's readings byte-for-byte.
+  TECH_DISCOVER_P?: string;             // 0..1 — the draw a gated rung must pass on a generation turn to be invented (default 0.75; 0 ⇒ the ladder never climbs, 1 ⇒ every gated rung lands the generation its gates open)
+  TECH_ADOPT_PCT?: string;              // fraction of the live swarm that takes up a discovered art each cron (default 0.1; clamped 0.01..1) — an art becomes a custom once half the swarm works by it
+  CITIES_ENABLED?: string;              // "true"/"false" (default TRUE) — ⑭ CITIES layer: settlements and the census — the economy's own zone ledger read as GEOGRAPHY, so a zone where enough kin live becomes a named hamlet/town/city (sixteen fixed names, one per zone), the two greatest are joined by a road a plague wave walks, and a census is struck once a generation off the grave ring. PURE READ-OUT (it narrates burials the ledger already recorded and never causes one); false restores today's readings byte-for-byte.
+  CITY_HAMLET_MIN?: string;             // living kin a zone needs to become a named hamlet (default 2; clamped 1..64)
+  CITY_TOWN_MIN?: string;               // …to grow into a town (default 5; clamped 1..128)
+  CITY_CITY_MIN?: string;               // …to be counted a city (default 9; clamped 1..256)
+  CITY_URBAN_SHARE?: string;            // share of the live swarm living in settlements that makes the swarm "urban" (default 0.35; clamped 0..1) — announced once, and only again after the share falls 0.1 below it
   INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
     EPOCHS_ENABLED?: string;              // "true"/"false" (default TRUE) — epochs layer ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/DYNASTIC, or on a governance-injected miracle/cataclysm. PURE READ-OUT of existing state (never feeds back); false leaves only the slow regime-driven era logic of today.
   CREDIT_CAP_BASE_USDC?: string;        // base IOU credit line per fly, USDC (default 0.05; traders double it, reputation scales up to 3×). SIMULATED LEDGER ONLY — onchain balances have no offline credit. Bounded 0..1000 (0 ⇒ credit off, books stay).
@@ -433,6 +441,24 @@ export interface RuntimeConfig {
     holyEvery: number;        // crons between holy days (default 48)
     devotionMin: number;      // devotion for the holy rest / pilgrimage count (default 0.5)
     sectCap: number;          // max simultaneous sects in the read-out (default 8)
+  };
+
+  // Tech (⑬ the ladder of arts: twelve gated rungs, discovered / diffused / unlearned on the historian's own
+  // clocks). Pure read-out — an invention re-prices NOTHING, moves no money, never the brain, never the ledger.
+  tech: {
+    enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+    discoverP: number;        // the draw a gated rung must pass on a generation turn (default 0.75)
+    adoptPct: number;         // per-cron fraction of the swarm taking up a discovered art (default 0.1)
+  };
+
+  // Cities (⑭ settlements + the census: the zone ledger read as geography, demography read off the grave ring).
+  // Pure read-out — it narrates the burials the economy already recorded and never causes one.
+  cities: {
+    enabled: boolean;         // master switch (default ON): false ⇒ every hook is a no-op, byte-for-byte today
+    hamletMin: number;        // living kin that make a zone a named hamlet (default 2)
+    townMin: number;          // …a town (default 5)
+    cityMin: number;          // …a city (default 9)
+    urbanShare: number;       // share of the swarm in settlements that makes it urban (default 0.35)
   };
 
   // Institutions (layer ⑥: limit-book price discovery, professions, IOU credit, classes) — one
@@ -740,6 +766,31 @@ export function loadConfig(env: Env): RuntimeConfig {
       holyEvery: clampInt(Number(env.RELIGION_HOLY_EVERY || "48"), 2, 400),
       devotionMin: clamp(Number(env.RELIGION_DEVOTION_MIN || "0.5"), 0, 1),
       sectCap: clampInt(Number(env.RELIGION_SECT_CAP || "8"), 1, 16),
+    },
+
+    tech: {
+      // ON by default: an invention moves no money and touches no neuron — it only gives the civilisation
+      // level the historian already reckons some CONTENT, and writes chapters into the chronicle. Set
+      // TECH_ENABLED=false to restore today's readings byte-for-byte (the permanent fallback / rollback).
+      enabled: (env.TECH_ENABLED ?? "true").toLowerCase() !== "false",
+      // 0.75 rather than 0.5 so a gated rung lands within a generation or so of its gates opening: the ladder
+      // is meant to be seen climbing by anyone who watches for an afternoon.
+      discoverP: clamp(Number(env.TECH_DISCOVER_P || "0.75"), 0, 1),
+      adoptPct: clamp(Number(env.TECH_ADOPT_PCT || "0.1"), 0.01, 1),
+    },
+
+    cities: {
+      // ON by default: a settlement moves no money and touches no neuron — it reads the zone ledger the
+      // territory layer already keeps and gives the places names. Set CITIES_ENABLED=false to restore today's
+      // readings byte-for-byte (the permanent fallback / rollback). Note the map is EMPTY while the territory
+      // layer is off (no per-fly zone ⇒ nothing to settle), exactly as the read-out documents.
+      enabled: (env.CITIES_ENABLED ?? "true").toLowerCase() !== "false",
+      // thresholds sit low on purpose: a fly's zone is its house's home zone, so kin cluster — a house of nine
+      // is already a city, and the swarm's first town arrives within the first hour rather than the first day.
+      hamletMin: clampInt(Number(env.CITY_HAMLET_MIN || "2"), 1, 64),
+      townMin: clampInt(Number(env.CITY_TOWN_MIN || "5"), 1, 128),
+      cityMin: clampInt(Number(env.CITY_CITY_MIN || "9"), 1, 256),
+      urbanShare: clamp(Number(env.CITY_URBAN_SHARE || "0.35"), 0, 1),
     },
 
     institutions: {

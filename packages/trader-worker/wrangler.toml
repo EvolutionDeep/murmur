@@ -269,6 +269,22 @@ TERR_EXILE_SEVERITY = "0.5"                   # extra toll multiplier on a landl
 TERR_POWER_PER_ZONE = "10"                    # war power per controlled zone — ARMED at a modest 10/zone (base power ~332 ⇒ ~+3% per held zone); held land now feeds war strength
 TERR_SEIZE_ON_WIN = "true"                    # ON-WIN CONQUEST, ARMED: a war winner seizes the loser's controlled zones on resolve (ledger-only land transfer — moves NO money; needs TERRITORY_ENABLED="true" + the war layer armed). Winners now take land, not just the pot.
 
+# ===== TECH ⑬ (the ladder of arts) + CITIES ⑭ (settlements & the census) — both PURE READ-OUTS =====
+# Neither layer moves money, re-prices a deal or touches a neuron/genome/manifestHash: TECH gives the
+# civilisation level the historian already reckons some CONTENT (twelve gated arts, discovered / diffused /
+# unlearned on the fast clock), and CITIES reads the SAME zone grid above as geography (a zone where enough kin
+# live becomes a named hamlet/town/city) plus a census struck once a generation off the economy's grave ring.
+# Each writes its own bounded DO key (tech:v1 / cities:v1) and its chapters into the chronicle's hash chain.
+# ROLLBACK: set either switch to "false" — every hook becomes a no-op and the read-outs are byte-for-byte today's.
+TECH_ENABLED = "true"                         # ⑬ master switch — ARMED: the ladder climbs from the first generation
+TECH_DISCOVER_P = "0.75"                      # the draw a gated rung must pass on a generation turn (0 ⇒ never climbs, 1 ⇒ always lands)
+TECH_ADOPT_PCT = "0.1"                        # fraction of the live swarm taking up a new art each cron (a custom at half)
+CITIES_ENABLED = "true"                       # ⑭ master switch — ARMED (needs TERRITORY_ENABLED="true" for the per-fly zone; without it the map is simply empty)
+CITY_HAMLET_MIN = "2"                         # living kin that make a zone a named hamlet
+CITY_TOWN_MIN = "5"                           # …a town
+CITY_CITY_MIN = "9"                           # …a city
+CITY_URBAN_SHARE = "0.35"                     # share of the swarm in settlements that makes it "urban" (one line, then only after a 0.1 fall)
+
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
 # fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /

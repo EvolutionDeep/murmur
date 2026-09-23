@@ -602,6 +602,34 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .war-empty { font-family: var(--mono); font-size: 10px; color: var(--muted); font-style: italic; }
 .war-subhead { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 9px; }
 
+/* ⑬ the ladder of arts — the inventions the swarm has found, greatest rung first (pure read-out of invention.ts) */
+.chron-tech { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.tech-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.tech-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.tech-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.tech-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.tech-row.tech-head { color: var(--ink); }
+.tech-row.tech-rung { color: #4a3f6a; }
+/* an unlearned art is kept as memory but visibly struck out — the ladder really did fall back a rung */
+.tech-row.tech-lost { color: var(--muted); opacity: 0.55; text-decoration: line-through; text-decoration-color: rgba(120,110,95,0.4); }
+.tech-row.tech-next { color: var(--muted); font-style: italic; }
+
+/* ⑭ the named places — the zone grid read as geography, plus the generational census (pure read-out of cities.ts) */
+.chron-cities { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.city-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.city-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.city-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.city-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.city-row.city-head { color: var(--ink); }
+/* the three ranks are told apart by weight alone: a city is a fact the swarm can see at a glance */
+.city-row.city-place { color: #5a4a33; }
+.city-row.city-hamlet { opacity: 0.72; }
+.city-row.city-town { color: #4a3f6a; }
+.city-row.city-city { color: var(--ink); font-weight: 700; }
+.city-row.city-road { color: var(--muted); font-style: italic; }
+.city-row.city-census { color: #3f5a3a; margin-top: 9px; }
+.city-row.city-mort { color: var(--muted); }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
