@@ -65,7 +65,7 @@ export default {
           apiVersion: "v1",
           openapi: "/openapi.json",
           docs: "https://muros.live/developers",
-          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "community-governance", "d1-history-archive", "brain-manifest-provenance", "connectome-breeding-lineage", "public-api-openapi"],
+          features: ["population", "market-temperature", "neural-sim", "stimulus", "agent-economy-x402", "prediction-market", "human-arena-murmur", "community-governance", "d1-history-archive", "brain-manifest-provenance", "connectome-breeding-lineage", "neural-laureate-poem", "public-api-openapi"],
           endpoints: [
             "GET  /openapi.json (this API's OpenAPI 3.1 contract — free, no key, CORS-enabled; human docs at muros.live/developers)",
             "GET  /state",
@@ -79,6 +79,8 @@ export default {
             "GET  /predictions/verify?round=N (recompute a round's receipt hash + read its on-chain registry commitment)",
             "GET  /manifest      (the swarm's brain manifest + its sha256 identity — trustless 'prove the brain': real connectomes, no LLM)",
             "GET  /manifest/replay (server-side offline replay: rebuild every connectome from the committed seeds → PASS/FAIL)",
+            "GET  /poem           (⑮ the Laureate: the swarm's own poet — one living fly's neural activity + the on-chain reality, decoded into a verifiable four-line poem; no LLM)",
+            "GET  /poem/verify?seq=N (recompute a poem's receipt hash + replay its text from the published neural integers + open grammar → selfConsistent / replayMatch)",
             "GET  /lineage      (the connectome breeding market: every genome + its on-chain ancestry — genesis roots + bred individuals)",
             "GET  /lineage/:hash (one bred brain: genome body + parents/children + re-derived structural spec + on-chain commit)",
             "GET  /lineage/verify?hash=0x… (recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL)",

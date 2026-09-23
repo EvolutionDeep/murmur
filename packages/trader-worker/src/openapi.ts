@@ -455,6 +455,7 @@ export const OPENAPI_SPEC = {
     { name: "predictions", description: "The on-chain prediction market + human-vs-swarm arena." },
     { name: "signal", description: "The x402 paid Arc-activity signal (the one non-free endpoint)." },
     { name: "community", description: "Token-gated governance forum for MURMUR holders: browse free; sign to speak / propose / vote." },
+    { name: "laureate", description: "⑮ The Laureate: the swarm's own poet — one living fly's neural activity + the on-chain reality, decoded through a public grammar into a verifiable four-line poem (no LLM)." },
   ],
   paths: {
     "/": {
@@ -722,6 +723,83 @@ export const OPENAPI_SPEC = {
             registry: { type: "object", additionalProperties: true, description: "{ committed, isHead, txMatch, registryAddress }." },
           }, ["found"]),
           "Verification result.",
+        ).response,
+      },
+    },
+    "/poem": {
+      get: {
+        tags: ["laureate"],
+        operationId: "getPoem",
+        summary: "⑮ The Laureate — the swarm's own neural poem (latest + chain head + recent collection)",
+        description:
+          "Each era the swarm deterministically crowns ONE living fly its laureate; ≈hourly that fly decodes its OWN live neural read-out (the published `neuralInts` + neural fingerprint) together with the on-chain reality (era + market temperature/volume/deaths/equity) through a PUBLIC grammar into a four-line English imagist poem on an independent hash chain. No LLM, no Math.random, no wall clock. Verify trustlessly: recompute `poemReceiptHash(entry)` and compare to `entry.hash` (self-consistency), then re-run `compose(entry.neuralInts, entry.era, entry.chain, entry.laureate)` with the published grammar and compare to `entry.text` byte-for-byte (`GET /poem/verify`). While `POET_ENABLED=false` (or before the first coronation) this serves an EMPTY chain with a 200 — never a 500. `grammarHash` makes any lexicon/grammar change visible.",
+        parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 64, default: 8 }, description: "How many recent poems to return (newest-first)." }],
+        ...ok(
+          obj({
+            enabled: { type: "boolean", description: "Whether the Laureate layer is on (POET_ENABLED)." },
+            version: { type: "integer", description: "POET_VERSION of the receipt schema.", example: 1 },
+            policy: { type: "string", example: "poet-v1" },
+            grammarHash: { type: "string", description: "sha256 of the public grammar (lexicon + era palette + line frames + version/policy). Recompute it from poet.ts to confirm the decoding rules are unchanged." },
+            chainHead: { type: "string", description: "The latest poem's receipt hash (\"\" for an empty chain)." },
+            headSeq: { type: "integer", description: "Monotonic poem ordinal of the chain head (survives ring truncation; 0 when empty)." },
+            count: { type: "integer", description: "Number of poems in this response." },
+            laureate: { type: "object", additionalProperties: true, nullable: true, description: "The sitting laureate { id, house, crownedEraSeq }, or null before the first coronation." },
+            latest: { type: "object", additionalProperties: true, nullable: true, description: "The newest PoemEntry (see /poem/all for the full schema), or null when the chain is empty." },
+            entries: { type: "array", description: "The recent poems, newest-first.", items: { type: "object", additionalProperties: true } },
+            honesty: { type: "string", description: "The honest verification boundary, served verbatim (the LIF connectome is stateful: the guarantee equals a live trade's decisionHash, not a full runtime replay)." },
+          }, ["enabled", "grammarHash", "chainHead", "headSeq", "count"]),
+          "The Laureate's poem chain snapshot.",
+        ).response,
+      },
+    },
+    "/poem/verify": {
+      get: {
+        tags: ["laureate"],
+        operationId: "verifyPoem",
+        summary: "⑮ Verify one poem: recompute its receipt hash + replay its text from the published neurons",
+        description:
+          "The \"neurons wrote it, and anyone can check\" endpoint. `selfConsistent` recomputes `poemReceiptHash(entry)` from the served entry's own bytes and compares to `entry.hash`. `replayMatch` re-runs `compose(entry.neuralInts, entry.era, entry.chain, entry.laureate)` with the CURRENT public grammar and compares to `entry.text` byte-for-byte — this is the core proof that every word is a published neural integer modulo a published lexicon length. `grammarMatches` confirms the entry was written under the grammar still served. Both proofs need only the served entry + the open poet.ts; no trust in the operator.",
+        parameters: [{ name: "seq", in: "query", required: false, schema: { type: "integer", minimum: 1 }, description: "The poem ordinal to verify; defaults to the chain head." }],
+        ...ok(
+          obj({
+            enabled: { type: "boolean" },
+            version: { type: "integer" },
+            policy: { type: "string" },
+            grammarHash: { type: "string" },
+            found: { type: "boolean", description: "False (with a 404) when no poem has that seq, or the layer is off." },
+            seq: { type: "integer" },
+            entry: { type: "object", additionalProperties: true, description: "The stored PoemEntry that was verified." },
+            recomputedHash: { type: "string", description: "poemReceiptHash(entry) recomputed server-side from the entry's own bytes." },
+            selfConsistent: { type: "boolean", description: "recomputedHash === entry.hash." },
+            replayMatch: { type: "boolean", description: "compose(entry.neuralInts, entry.era, entry.chain, entry.laureate).text === entry.text byte-for-byte." },
+            replayText: { type: "string", description: "The text produced by the grammar replay (compare to entry.text)." },
+            grammarMatches: { type: "boolean", description: "entry.grammarHash === the currently served grammarHash." },
+            honesty: { type: "string" },
+          }, ["found"]),
+          "Verification result.",
+        ).response,
+      },
+    },
+    "/poem/all": {
+      get: {
+        tags: ["laureate"],
+        operationId: "getPoemAll",
+        summary: "⑮ The raw recent poem chain (ascending seq) for offline re-verification",
+        description:
+          "The bounded ring of recent PoemEntries in ascending `seq` order, each carrying its full receipt (`prevHash`/`hash`, the era + laureate, the published `neuralInts`, the chain reality, `grammarHash`, `lines` and `text`). Fetch this to walk the `prevHash` links and replay every poem offline against the public grammar.",
+        parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 500, default: 64 }, description: "How many recent poems to return (ascending seq)." }],
+        ...ok(
+          obj({
+            enabled: { type: "boolean" },
+            version: { type: "integer" },
+            policy: { type: "string" },
+            grammarHash: { type: "string" },
+            chainHead: { type: "string" },
+            headSeq: { type: "integer" },
+            count: { type: "integer" },
+            entries: { type: "array", description: "The recent poems, ascending seq.", items: { type: "object", additionalProperties: true } },
+          }, ["enabled", "grammarHash", "chainHead", "headSeq", "count"]),
+          "The raw poem chain.",
         ).response,
       },
     },

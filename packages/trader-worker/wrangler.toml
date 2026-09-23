@@ -305,6 +305,23 @@ CITY_URBAN_SHARE = "0.35"                     # share of the swarm in settlement
 SOCIAL_STIMULUS_ENABLED = "true"              # ① master switch — ARMED: each cron the swarm feels its civilizational climate (set "false" for a one-deploy byte-for-byte rollback)
 SOCIAL_STIMULUS_MAX = "0.5"                   # master ceiling/scale on any one felt channel's intensity, 0..1 (0 ⇒ emits nothing)
 
+# ===== ⑮ THE LAUREATE (a poet born in the swarm — writes with neurons, not an LLM; src/poet.ts) =====
+# Each era the swarm deterministically crowns ONE living fly its laureate; each hour that fly decodes its OWN
+# live neural read-out (the drives + neural fingerprint the motor decoder already froze) plus the on-chain
+# reality (temperature, volume, burials, equity, the age's climate) through a PUBLIC grammar into a four-line
+# imagist poem, on an INDEPENDENT /poem hash chain. Every poem is a neural receipt: recompute its sha256 and
+# replay every word byte-for-byte from the published integers + the open grammar (GET /poem/verify) — no LLM,
+# no Math.random, no wall clock.
+# SAFETY: PURE READ-OUT — it adds NO neuron/channel (manifestHash 403551bb.. NEVER rotates), writes NO chronicle
+# kind (chroniclerHash f6d920f5.. NEVER rotates ⇒ no frontend mirror, worker-only deploy), touches NO genome and
+# moves NO USDC, and unlike ① it never writes back into the connectome. Bounded ring (POEMS_CAP), best-effort.
+# ROLLOUT (DARK DEPLOY): ships POET_ENABLED="false" first — an OFF cron composes nothing and /poem serves an
+# empty chain (200, never a 500). Flip to "true" + redeploy to crown the laureate (zero gas, read-out only).
+# Rollback = set "false" and redeploy (no code change) ⇒ byte-for-byte today.
+POET_ENABLED = "true"                         # ⑮ master switch — ARMED: each era crowns a laureate who writes the hourly neural poem (set "false" for a one-deploy byte-for-byte rollback)
+POEMS_CAP = "64"                              # poems the ring keeps (like PROOFS_CAP)
+POET_MIN_CRONS = "60"                         # fallback cadence guaranteeing ≈one poem per hour (60 crons)
+
 # ===== COMMUNITY governance page (OFF-CHAIN — token-gated forum + weighted voting; D1-backed) =====
 # A standalone page at muros.live/community (served by Pages; the /community* API is handled in the Worker's
 # fetch before it ever reaches a Durable Object). Anyone may BROWSE without a wallet, but posting / proposing /

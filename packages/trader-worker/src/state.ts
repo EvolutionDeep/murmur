@@ -64,6 +64,10 @@ import { FaithMembrane, type FaithSignals } from "./religion.js";
 import { TechMembrane, type TechSignals } from "./invention.js";
 import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { socialStimuli } from "./socialStimulus.js";
+import {
+  Poet, poetGrammarHash, recomputePoemHash, replayCompose,
+  POET_VERSION, POET_POLICY, POET_HONESTY,
+} from "./poet.js";
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
@@ -98,6 +102,9 @@ const KEY_TECH = "tech:v1";
  *  corrupt/absent blob only forgets the places, never ledger state. Bounded (≤ the sixteen zones), DO-safe. */
 const KEY_CITIES = "cities:v1";
 const KEY_COMMONS = "commons:v1";
+/** ⑮ The Laureate's poem hash chain — its OWN key: a poem is a pure read-out, so a corrupt/absent blob only
+ *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
+const KEY_POET = "poet:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
@@ -194,6 +201,10 @@ export class FlyStateDO {
   private cities: CityMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
+  /** ⑮ The Laureate (the swarm's poet) — null while POET_ENABLED=false (byte-for-byte inert). */
+  private poet: Poet | null = null;
+  /** Cached poetGrammarHash() — a pure function of the source, computed once per DO lifetime. */
+  private poetGrammarHashCache: string | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
   private prediction: PredictionMarket | null = null;
@@ -431,6 +442,27 @@ export class FlyStateDO {
     });
     if (stored) this.commons.restore(stored);
     return this.commons;
+  }
+
+  /**
+   * ⑮ Lazily load the Laureate (null while POET_ENABLED is off — every hook below then no-ops). A corrupt
+   * stored blob restores an EMPTY chain (the poems are forgotten, the ledger is untouched), so the poet can
+   * never poison any other layer's state.
+   */
+  private async ensurePoet(): Promise<Poet | null> {
+    if (!this.cfg.poet.enabled) return null;
+    if (this.poet) return this.poet;
+    const stored = await this.state.storage.get<string>(KEY_POET);
+    const p = this.cfg.poet;
+    this.poet = new Poet({ cap: p.cap, minCrons: p.minCrons });
+    if (stored) this.poet.restore(stored);
+    return this.poet;
+  }
+
+  /** The poet's grammar digest — computed once per DO lifetime (a pure function of the source). */
+  private async getPoetGrammarHash(): Promise<string> {
+    if (this.poetGrammarHashCache == null) this.poetGrammarHashCache = await poetGrammarHash();
+    return this.poetGrammarHashCache;
   }
 
   /** Runtime prediction-market config derived from the loaded RuntimeConfig + chain network tag. */
@@ -1021,6 +1053,7 @@ export class FlyStateDO {
     if (this.tech) await this.state.storage.put(KEY_TECH, this.tech.serialize());
     if (this.cities) await this.state.storage.put(KEY_CITIES, this.cities.serialize());
     if (this.commons) await this.state.storage.put(KEY_COMMONS, this.commons.serialize());
+    if (this.poet) await this.state.storage.put(KEY_POET, this.poet.serialize());
     if (this.prediction) await this.state.storage.put(KEY_PREDICT, this.prediction.serialize());
     if (this.arenaState) await this.state.storage.put(KEY_ARENA, this.arenaState);
     if (this.warRuntime) await this.state.storage.put(KEY_WAR, this.warRuntime);
@@ -1498,6 +1531,47 @@ export class FlyStateDO {
     }
   }
 
+  /**
+   * ⑮ THE LAUREATE — drive the swarm's poet over THIS cron. Crowns a new laureate when the historian has just
+   * raised a new era (or the sitting poet died), and writes a poem on that coronation or ≈hourly (minCrons).
+   * PURE READ-OUT: the only inputs are the era the historian already reckoned, the decoded FlyReading of the
+   * crowned fly, and the economy's own totals/graves — nothing here re-prices a deal, moves a fly, or touches a
+   * connectome / genome / manifestHash, and unlike ① it never writes back into the neural input. Best-effort.
+   */
+  private async drivePoet(tick: number, snapshot: PopulationSnapshot | null, temperature: number, regime: Regime): Promise<void> {
+    const poet = await this.ensurePoet();
+    if (!poet || !this.chronicler || !snapshot) return;
+    try {
+      const liveIds = snapshot.flies.map((f) => f.id);
+      if (!liveIds.length) return;
+      const era = this.chronicler.eraInfo();
+      const econ = this.lastEconomy;
+      const cron = Math.floor(tick / Math.max(1, this.cfg.ticksPerCron));
+      // deaths over ≈ the poem cadence window (best-effort: bounded by the economy's own grave ring)
+      const deathsWindow = Math.max(1, this.cfg.poet.minCrons * this.cfg.ticksPerCron);
+      const deathsDelta = this.economy ? this.economy.recentDeaths(tick, deathsWindow) : 0;
+      const entry = await poet.maybeCompose({
+        tick,
+        cron,
+        era,
+        liveIds,
+        readingOf: (id) => snapshot.flies.find((f) => f.id === id) ?? null,
+        houseOf: (id) => this.economy?.houseOf(id)?.name ?? null,
+        temperature,
+        regime,
+        totals: econ
+          ? { volumeUsdc: econ.totals.volumeUsdc, count: econ.totals.count, liveAgents: econ.totals.liveAgents, gini: econ.totals.gini }
+          : null,
+        deathsDelta,
+      });
+      if (entry) {
+        console.log(`[DO] poet: seq#${entry.seq} crowned #${entry.laureate.id} (era ${entry.era.era}) — "${entry.lines[0]} …"`);
+      }
+    } catch (e) {
+      console.warn("[DO] poet drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   // ---------- HTTP routing ----------
 
   async fetch(req: Request): Promise<Response> {
@@ -1525,6 +1599,9 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/annals") return await this.getAnnals(url);
       if (req.method === "GET" && path === "/annals/verify") return await this.getAnnalsVerify(url);
+      if (req.method === "GET" && path === "/poem") return await this.getPoem(url);
+      if (req.method === "GET" && path === "/poem/verify") return await this.getPoemVerify(url);
+      if (req.method === "GET" && path === "/poem/all") return await this.getPoemAll(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -1843,6 +1920,13 @@ export class FlyStateDO {
     //    at the top of the next cron). PURE READ-OUT + a sub-switch of INSTITUTIONS: never touches a neuron,
     //    moves no money, inert while LAW_ENABLED=false. Best-effort — a failure only skips a council.
     await this.driveCommons();
+
+    // 8b) ⑮ THE LAUREATE — after the historian has named this cron's era, let the swarm's poet read its OWN
+    //     live neural read-out + the on-chain reality and (on a new era, or ≈hourly) decode them through the
+    //     public grammar into a verifiable four-line poem on the independent /poem chain. PURE READ-OUT: it
+    //     moves no money, writes no chronicle kind and never feeds back into the connectome. Inert while
+    //     POET_ENABLED=false; best-effort — a throw can never block the live tick.
+    await this.drivePoet(swarm.getTickIndex(), snapshot, temperature, regime);
 
     console.log(
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
@@ -2952,6 +3036,80 @@ export class FlyStateDO {
     return this.chroniclerRulesHash;
   }
 
+  /**
+   * GET /poem — ⑮ the Laureate's latest poem + the head of its independent hash chain + the recent collection.
+   * Serves the grammar hash (so anyone can confirm the decoding rules) and the honest verification boundary.
+   * While POET_ENABLED=false (or before the first coronation) it returns an EMPTY chain with a 200 — never a 500.
+   */
+  private async getPoem(url: URL): Promise<Response> {
+    const poet = await this.ensurePoet();
+    const grammarHash = await this.getPoetGrammarHash();
+    const enabled = this.cfg.poet.enabled;
+    if (!poet) {
+      return json({ enabled, version: POET_VERSION, policy: POET_POLICY, grammarHash, chainHead: "", headSeq: 0, count: 0, laureate: null, latest: null, entries: [], honesty: POET_HONESTY });
+    }
+    const rawLimit = Number(url.searchParams.get("limit") ?? "8");
+    const limit = Math.min(64, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 8));
+    const entries = poet.recent(limit).slice().reverse(); // newest-first for the feed
+    return json({
+      enabled,
+      version: POET_VERSION,
+      policy: POET_POLICY,
+      grammarHash,
+      chainHead: poet.chainHead,
+      headSeq: poet.headSeq,
+      count: entries.length,
+      laureate: poet.currentLaureate(),
+      latest: poet.latest(),
+      entries,
+      honesty: POET_HONESTY,
+    });
+  }
+
+  /**
+   * GET /poem/verify?seq=N — recompute a poem's receipt hash from its own bytes (selfConsistent) AND replay its
+   * text from its published neuralInts + the current grammar (replayMatch). This is the "neurons wrote it, and
+   * anyone can check" endpoint: both proofs need only the served entry + the open poet.ts, no trust in us.
+   * Defaults to the chain head when seq is omitted.
+   */
+  private async getPoemVerify(url: URL): Promise<Response> {
+    const poet = await this.ensurePoet();
+    const grammarHash = await this.getPoetGrammarHash();
+    if (!poet) return json({ enabled: this.cfg.poet.enabled, version: POET_VERSION, policy: POET_POLICY, grammarHash, found: false, honesty: POET_HONESTY });
+    const seqRaw = url.searchParams.get("seq");
+    const seq = seqRaw != null && Number.isFinite(Number(seqRaw)) ? Number(seqRaw) : poet.headSeq;
+    const entry = poet.get(seq);
+    if (!entry) return json({ enabled: true, version: POET_VERSION, grammarHash, found: false, seq, honesty: POET_HONESTY }, 404);
+    const recomputedHash = await recomputePoemHash(entry);
+    const replay = replayCompose(entry);
+    return json({
+      enabled: true,
+      version: POET_VERSION,
+      policy: POET_POLICY,
+      grammarHash,
+      found: true,
+      seq,
+      entry,
+      recomputedHash,
+      selfConsistent: recomputedHash === entry.hash,
+      replayMatch: replay.match,
+      replayText: replay.text,
+      grammarMatches: entry.grammarHash === grammarHash,
+      honesty: POET_HONESTY,
+    });
+  }
+
+  /** GET /poem/all?limit=N — the raw recent poem chain (ascending seq) for an offline chain + replay re-verification. */
+  private async getPoemAll(url: URL): Promise<Response> {
+    const poet = await this.ensurePoet();
+    const grammarHash = await this.getPoetGrammarHash();
+    if (!poet) return json({ enabled: this.cfg.poet.enabled, version: POET_VERSION, policy: POET_POLICY, grammarHash, chainHead: "", headSeq: 0, count: 0, entries: [] });
+    const rawLimit = Number(url.searchParams.get("limit") ?? "64");
+    const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 64));
+    const entries = poet.recent(limit);
+    return json({ enabled: true, version: POET_VERSION, policy: POET_POLICY, grammarHash, chainHead: poet.chainHead, headSeq: poet.headSeq, count: entries.length, entries });
+  }
+
   private async getMarket() {
     const meter = await this.ensureMeter();
     const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
@@ -3090,6 +3248,7 @@ export class FlyStateDO {
     this.religion = null;  // ⑪ and the faiths: religion restarts from an empty membrane
     this.tech = null;      // ⑬ and the arts: the ladder is forgotten with everything else
     this.cities = null;    // ⑭ and the places: the map goes back to open ground
+    this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -3102,6 +3261,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_RELIGION);
     await this.state.storage.delete(KEY_TECH);
     await this.state.storage.delete(KEY_CITIES);
+    await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }
 }

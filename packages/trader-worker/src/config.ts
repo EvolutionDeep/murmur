@@ -212,6 +212,19 @@ export interface Env {
   //     OFF by default (dark deploy) ⇒ an OFF cron appends nothing, byte-for-byte today's neural input.
   SOCIAL_STIMULUS_ENABLED?: string;     // "true"/"false" (default false) — feed the civilizational climate back into the connectome
   SOCIAL_STIMULUS_MAX?: string;         // master ceiling on any one felt channel's intensity, 0..1 (default 0.5; 0 ⇒ the bus emits nothing)
+
+  // --- ⑮ THE LAUREATE: a poet born in the swarm, writing with neurons instead of an LLM (see src/poet.ts) ---
+  //     Each era the swarm deterministically crowns ONE living fly its laureate; each hour that fly decodes its
+  //     OWN live neural read-out + the on-chain reality through a PUBLIC grammar into a four-line imagist poem on
+  //     an independent /poem hash chain. PURE READ-OUT: it adds NO neuron/channel (manifestHash never rotates),
+  //     writes NO chronicle kind (chroniclerRulesHash never rotates ⇒ no frontend mirror, worker-only), touches
+  //     NO genome and moves NO money — and unlike ① it never writes back into the connectome. Every poem is
+  //     sha256-recomputable and byte-for-byte replayable from its published integers + the open grammar.
+  //     OFF by default (dark deploy) ⇒ an OFF cron composes nothing, byte-for-byte today.
+  POET_ENABLED?: string;                // "true"/"false" (default false) — crown a laureate + write the hourly neural poem
+  POEMS_CAP?: string;                   // how many poems the ring keeps (default 64; like PROOFS_CAP)
+  POET_MIN_CRONS?: string;              // fallback cadence guaranteeing ≈one poem per hour (default 60 crons)
+
   INSTITUTIONS_ENABLED?: string;        // "true"/"false" (default TRUE) — institutions layer ⑥: deterministic aggregate limit books (per-tick 4×2 ladder, deals CROSS the book, marks persist), sticky professions, IOU credit + runs, class read-out. Economic-side ONLY (behaviour→economy stays one-way); false restores the fixed-formula economy byte-for-byte.
     EPOCHS_ENABLED?: string;              // "true"/"false" (default TRUE) — epochs layer ⑦: the historian's shock detector force-opens a new era on a FAMINE/PLAGERA/BOOM/GREAT_HUDDLE/DYNASTIC, or on a governance-injected miracle/cataclysm. PURE READ-OUT of existing state (never feeds back); false leaves only the slow regime-driven era logic of today.
   CREDIT_CAP_BASE_USDC?: string;        // base IOU credit line per fly, USDC (default 0.05; traders double it, reputation scales up to 3×). SIMULATED LEDGER ONLY — onchain balances have no offline credit. Bounded 0..1000 (0 ⇒ credit off, books stay).
@@ -479,6 +492,16 @@ export interface RuntimeConfig {
   socialStimulus: {
     enabled: boolean;         // master switch (default OFF — dark deploy): false ⇒ the cron injects only today's visitor stimuli
     maxIntensity: number;     // ceiling (and master scale) on any one emitted channel's intensity, 0..1 (default 0.5)
+  };
+
+  // ⑮ THE LAUREATE: the swarm's poet — a pure read-out membrane on its OWN /poem hash chain. Each era crowns one
+  // living fly; each hour it decodes its own neural read-out + the on-chain reality through a public grammar into
+  // a verifiable four-line poem. Adds NO neuron/channel (manifestHash unchanged), writes NO chronicle kind
+  // (chroniclerRulesHash unchanged), moves NO money, and never writes back into the connectome. OFF ⇒ no poem.
+  poet: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): false ⇒ the cron composes nothing
+    cap: number;              // poems the ring keeps (default 64; like PROOFS_CAP)
+    minCrons: number;         // fallback cadence guaranteeing ≈one poem per hour (default 60 crons)
   };
 
   // Institutions (layer ⑥: limit-book price discovery, professions, IOU credit, classes) — one
@@ -824,6 +847,23 @@ export function loadConfig(env: Env): RuntimeConfig {
       maxIntensity: (() => {
         const mi = Number(env.SOCIAL_STIMULUS_MAX ?? "0.5");
         return clamp(Number.isFinite(mi) ? mi : 0.5, 0, 1);
+      })(),
+    },
+
+    poet: {
+      // OFF by default (dark deploy): the poet is a pure read-out (it moves no money and never writes back into
+      // the connectome), but it ships gated so an OFF deploy first proves /poem serves an empty chain (200, never
+      // a 500) before the laureate is crowned. Set POET_ENABLED=true to let the swarm write its hourly poem.
+      enabled: (env.POET_ENABLED ?? "false").toLowerCase() === "true",
+      // NaN-safe on purpose (the ① lesson): a malformed knob must fall back to its default, never leak NaN into
+      // the ring bound / cadence. clampInt is already NaN-safe, but the Number() parse is guarded explicitly too.
+      cap: (() => {
+        const n = Number(env.POEMS_CAP ?? "64");
+        return clampInt(Number.isFinite(n) ? n : 64, 1, 512);
+      })(),
+      minCrons: (() => {
+        const n = Number(env.POET_MIN_CRONS ?? "60");
+        return clampInt(Number.isFinite(n) ? n : 60, 1, 100000);
       })(),
     },
 
