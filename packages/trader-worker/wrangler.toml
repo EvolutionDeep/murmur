@@ -311,7 +311,7 @@ WORKSHOP_REINVENT_PCT = "0.03"                 # per explorer per cron, P they r
 # DARK DEPLOY: both default "false" ⇒ byte-for-byte today's behaviour. Rollback = flip to "false" and
 # redeploy (no code change). NOTE: enabling BOURSE_ENABLED rotates chroniclerRulesHash (four new kinds),
 # so the frontend mirror MUST be deployed first.
-BOURSE_ENABLED = "false"                       # ⑲ narration switch — dark deploy; flip after the frontend mirror is live
+BOURSE_ENABLED = "true"                        # ⑲ narration switch — ARMED: samples the MURMUR tape each cron, serves GET /bourse, lets the historian speak COIN_FEVER/WHALE_MOVE/TITHE/COIN_SILENCE (frontend mirror already live; set "false" for a one-deploy byte-for-byte rollback)
 BOURSE_TOKEN = "0x8faae5592b9acc27a79fca745c6b872adf514a5d"   # the MURMUR CA on Arc mainnet
 BOURSE_TAX_WALLET = "0xc38e7c9e5cb1b59a53e892b938a7d79f0b741cb3" # the argus tax wallet (tithe flow sink)
 BOURSE_WHALE_MURMUR = "1000000"                # a single main leg ≥ this many whole MURMUR is a whale stir (~p99 of the live tape)
