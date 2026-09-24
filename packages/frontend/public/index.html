@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=92" />
+  <link rel="stylesheet" href="./styles.css?v=93" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -155,6 +155,7 @@
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="rumor" hidden><span class="ct-ico">🪶</span><span class="ct-name" data-i18n="tab.rumor.name">The Rumor Mill</span><span class="ct-sub" data-i18n="tab.rumor.sub">tales afoot, bent &amp; quiet</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="treaty" hidden><span class="ct-ico">📜</span><span class="ct-name" data-i18n="tab.treaty.name">The Treaty</span><span class="ct-sub" data-i18n="tab.treaty.sub">seals set, ratified &amp; broken</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="works" hidden><span class="ct-ico">🏛</span><span class="ct-name" data-i18n="tab.works.name">The Public Works</span><span class="ct-sub" data-i18n="tab.works.sub">raised, mended &amp; fallen</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="guardians" hidden><span class="ct-ico">🛡</span><span class="ct-name" data-i18n="tab.guardians.name">The Guardians</span><span class="ct-sub" data-i18n="tab.guardians.sub">wards taken, fledged &amp; honored</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="tech"><span class="ct-ico">✵</span><span class="ct-name" data-i18n="tab.tech.name">The Ladder of Arts</span><span class="ct-sub" data-i18n="tab.tech.sub">inventions, customs &amp; forgotten arts</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="cities"><span class="ct-ico">♜</span><span class="ct-name" data-i18n="tab.cities.name">The Named Places</span><span class="ct-sub" data-i18n="tab.cities.sub">hamlets, towns &amp; the census</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="war" hidden><span class="ct-ico">⚑</span><span class="ct-name" data-i18n="tab.war.name">The War Coffer</span><span class="ct-sub" data-i18n="tab.war.sub">on-chain vaults, bouts &amp; the tax purse</span></button>
@@ -274,6 +275,16 @@
       <div class="chron-works" id="chron-works" hidden>
         <div class="wk-title"><span data-i18n="vol.wkTitle">the public works</span> <em data-i18n="vol.wkSub">· raised, mended &amp; fallen</em></div>
         <div class="wk-body" id="wk-body"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="guardians">
+      <!-- ㉗ the guardians: wardship and inheritance — a burial leaving an estate and children still flying
+           takes the youngest as a ward; a carried ward fledges; a fledged ward falling old with its own heirs
+           paid closes the circle (a pure read-out of guardians.ts over the dynasty's own grave ring + living
+           roster). NO causal leg: the roll re-writes no inheritance — entomb() has already split the estate. -->
+      <div class="chron-works" id="chron-guardians" hidden>
+        <div class="wd-title"><span data-i18n="vol.wdTitle">the guardians' roll</span> <em data-i18n="vol.wdSub">· wards taken, fledged &amp; honored</em></div>
+        <div class="wd-body" id="wd-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="tech">
@@ -579,6 +590,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=106" type="module"></script>
+  <script src="./app.js?v=107" type="module"></script>
 </body>
 </html>

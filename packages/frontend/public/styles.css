@@ -761,6 +761,16 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wk-row.wk-old { color: #6a5050; font-style: italic; }
 .wk-row.wk-none { color: var(--muted); font-style: italic; }
 
+/* ㉗ the guardians' roll (drawer volume): wardship and inheritance — taken, fledged, honored, lost */
+.wd-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.wd-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.wd-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.wd-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.wd-row.wd-head { color: var(--ink); }
+.wd-row.wd-live { color: #4a4a5a; }
+.wd-row.wd-old { color: #5a4a33; font-style: italic; }
+.wd-row.wd-none { color: var(--muted); font-style: italic; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1869,6 +1879,8 @@ html[dir="rtl"] .gm-title,
 html[dir="rtl"] .gm-row,
 html[dir="rtl"] .gd-title,
 html[dir="rtl"] .gd-row,
+html[dir="rtl"] .wd-title,
+html[dir="rtl"] .wd-row,
 html[dir="rtl"] .lx-title,
 html[dir="rtl"] .lx-row,
 html[dir="rtl"] .rm-title,

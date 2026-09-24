@@ -74,6 +74,7 @@ import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexic
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
+import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -142,6 +143,10 @@ const KEY_TREATY = "treaty:v1";
  *  OWN key: a corrupt/absent blob restarts an empty yard, never ledger state. Bounded (≤ 3 standing + 10
  *  archived + a pruned cool map), DO-safe. */
 const KEY_WORKS = "works:v1";
+/** ㉗ The Guardians roll (live wardships, the fledged roll awaiting the circle, the ended archive, the
+ *  seen-grave ring, counts) — its OWN key: a corrupt/absent blob restarts an empty roll, never ledger
+ *  state. Bounded (≤ 8 wards + 64 fledged-pending + 10 archived + a 240-key seen ring), DO-safe. */
+const KEY_GUARDIANS = "guardians:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -263,6 +268,8 @@ export class FlyStateDO {
   private treaty: TreatyMembrane | null = null;
   /** ㉖ The Public Works yard (granaries raised, monuments mended, aqueducts fallen) — null while WORKS_ENABLED=false (byte-for-byte inert). */
   private works: WorksMembrane | null = null;
+  /** ㉗ The Guardians roll (wards taken, fledged, the full-circle honors) — null while GUARDIANS_ENABLED=false (byte-for-byte inert). */
+  private guardians: GuardiansMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -638,6 +645,21 @@ export class FlyStateDO {
     this.works = new WorksMembrane({ enabled: true });
     if (stored) this.works.restore(stored);
     return this.works;
+  }
+
+  /**
+   * ㉗ Lazily load the Guardians roll (null while GUARDIANS_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts an empty roll: no wardship is back-dated, and the seen-grave ring starts
+   * cold — at worst one grave is re-walked after an eviction, which can take a fresh ward only if the old
+   * entry has already closed. It can never poison the ledger.
+   */
+  private async ensureGuardians(): Promise<GuardiansMembrane | null> {
+    if (!this.cfg.guardians.enabled) return null;
+    if (this.guardians) return this.guardians;
+    const stored = await this.state.storage.get<string>(KEY_GUARDIANS);
+    this.guardians = new GuardiansMembrane({ enabled: true });
+    if (stored) this.guardians.restore(stored);
+    return this.guardians;
   }
 
   /**
@@ -1309,6 +1331,7 @@ export class FlyStateDO {
     if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
+    if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1739,6 +1762,9 @@ export class FlyStateDO {
       // ㉖ WORKS: fold the yard's construction edges ONLY while WORKS is on. Off ⇒ no `works` key ⇒ the
       // historian's three works detectors never speak (byte-for-byte the pre-Works build).
       const works = this.cfg.works.enabled ? this.works?.signals() ?? null : null;
+      // ㉗ GUARDIANS: fold the roll's wardship edges ONLY while GUARDIANS is on. Off ⇒ no `guardians` key ⇒ the
+      // historian's three guardians detectors never speak (byte-for-byte the pre-Guardians build).
+      const guardians = this.cfg.guardians.enabled ? this.guardians?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1841,6 +1867,7 @@ export class FlyStateDO {
         rumor,
         treaty,
         works,
+        guardians,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2162,6 +2189,33 @@ export class FlyStateDO {
       wk.round(tick, facts);
     } catch (e) {
       console.warn("[DO] works drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉗ THE GUARDIANS — read the dynasty's own grave ring and the roster's living ids and let the roll take
+   * a ward, fledge one, or close the full circle. PURE read-out end to end, NO causal leg: the guardianship
+   * re-writes no inheritance — entomb() has already split the estate before this roll is written.
+   * Best-effort: a wardship can never break the live tick.
+   */
+  private async driveGuardians(tick: number): Promise<void> {
+    const gd = await this.ensureGuardians();
+    if (!gd) return;
+    try {
+      const info = this.chronicler ? this.chronicler.eraInfo() : null;
+      const snap = this.lastEconomy;
+      const dyn = snap?.dynasty;
+      const facts: GuardianFacts = {
+        era: info ? info.era : 0,
+        graves: (dyn?.graves ?? []).map((g) => ({
+          id: g.id, tick: g.tick, bornTick: g.bornTick, cause: g.cause,
+          estateUsdc: g.estateUsdc, heirIds: g.heirIds, houseName: g.houseName,
+        })),
+        livingIds: snap ? snap.agents.filter((a) => !a.dead).map((a) => a.id) : [],
+      };
+      gd.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] guardians drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2657,6 +2711,9 @@ export class FlyStateDO {
     // ㉖ THE PUBLIC WORKS rides after the chancery: it reads eraInfo's civilizational reckoning and the
     // market's bad paper — pure read-out, no causal leg, and no economy required (a cold swarm simply thirsts less).
     await this.driveWorks(swarm.getTickIndex());
+    // ㉗ THE GUARDIANS rides after the yard: it reads the dynasty's grave ring and the roster's living ids —
+    // pure read-out, no causal leg, and no economy required (a cold swarm simply buries no one at all).
+    await this.driveGuardians(swarm.getTickIndex());
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2974,6 +3031,8 @@ export class FlyStateDO {
       if (treaty) (economy as { treaty?: unknown }).treaty = treaty;
       const works = await this.worksReadout();
       if (works) (economy as { works?: unknown }).works = works;
+      const guardians = await this.guardiansReadout();
+      if (guardians) (economy as { guardians?: unknown }).guardians = guardians;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3048,7 +3107,8 @@ export class FlyStateDO {
     const rumor = await this.rumorReadout();
     const treaty = await this.treatyReadout();
     const works = await this.worksReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works) return json(snap);
+    const guardians = await this.guardiansReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -3062,6 +3122,7 @@ export class FlyStateDO {
       ...(rumor ? { rumor } : null),
       ...(treaty ? { treaty } : null),
       ...(works ? { works } : null),
+      ...(guardians ? { guardians } : null),
     });
   }
 
@@ -3212,6 +3273,13 @@ export class FlyStateDO {
     const wk = await this.ensureWorks();
     if (!wk) return null;
     return wk.signals();
+  }
+
+  /** ㉗ The guardians roll read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Guardians build). */
+  private async guardiansReadout(): Promise<GuardianSignals | null> {
+    const gd = await this.ensureGuardians();
+    if (!gd) return null;
+    return gd.signals();
   }
 
   /**
@@ -4219,6 +4287,7 @@ export class FlyStateDO {
     this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
     this.treaty = null;    // ㉕ and the chancery: every seal set, ratified or broken is void with everything else
     this.works = null;     // ㉖ and the yard: every work raised, mended or lost to ruin is un-built with everything else
+    this.guardians = null; // ㉗ and the guardians: every ward taken, fledged or honored is struck from the roll with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -4242,6 +4311,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_RUMOR);
     await this.state.storage.delete(KEY_TREATY);
     await this.state.storage.delete(KEY_WORKS);
+    await this.state.storage.delete(KEY_GUARDIANS);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

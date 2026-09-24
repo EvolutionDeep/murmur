@@ -162,7 +162,13 @@ export type ChronicleKind =
   //     granary, a golden age a monument, a full swarm's generation clock an aqueduct; time dilapidates them.
   | "WORK_RAISED"
   | "WORK_REPAIRED"
-  | "WORK_DILAPIDATED";
+  | "WORK_DILAPIDATED"
+  // ㉗ THE GUARDIANS: wardship and inheritance (guardians.ts) — a burial leaves an estate and children still
+  //     flying, the youngest is taken as a ward; a carried ward fledges; a fledged ward falling old with its own
+  //     heirs paid closes the circle and honors the guardian.
+  | "WARD_TAKEN"
+  | "WARD_FLEDGED"
+  | "GUARDIAN_HONORED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -284,6 +290,9 @@ export interface ChronicleContext {
   /** ㉖ THE PUBLIC WORKS read-out (works.ts signals): this cron's raising, repair and dilapidation edges. Absent ⇒
    *  no WORK_RAISED/WORK_REPAIRED/WORK_DILAPIDATED (WORKS_ENABLED=false never folds these in). */
   works?: ChronicleWorks | null;
+  /** ㉗ THE GUARDIANS read-out (guardians.ts signals): this cron's taking, fledge and full-circle edges. Absent ⇒
+   *  no WARD_TAKEN/WARD_FLEDGED/GUARDIAN_HONORED (GUARDIANS_ENABLED=false never folds these in). */
+  guardians?: ChronicleGuardians | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -477,6 +486,27 @@ export interface ChronicleWorks {
   /** A work fell to ruin unattended — the roll records how long it stood. */
   dilapidated: ChronicleWorkEdge | null;
   counts: { raised: number; repaired: number; dilapidated: number };
+}
+
+/** ㉗ THE GUARDIANS: one cron's wardship edges (guardians.ts; every fact re-derived from the dynasty's own
+ *  grave ring and living roster — the membrane fires at most one edge per class per cron, so a non-null
+ *  facet IS news THIS cron and cannot replay). {guardian} is the house name or the fixed phrase "the commons". */
+export interface ChronicleWardEdge {
+  ward: number;
+  guardian: string;
+  era: number;
+  estate?: number;
+  crons?: number;
+  lived?: number;
+}
+export interface ChronicleGuardians {
+  /** A burial left an estate and living children: the youngest is taken into wardship. */
+  taken: ChronicleWardEdge | null;
+  /** A ward carried past its minority stands on its own with the inheritance intact. */
+  fledged: ChronicleWardEdge | null;
+  /** The full circle: a fledged ward fell to age with its own heirs paid — the guardian is honored. */
+  honored: ChronicleWardEdge | null;
+  counts: { taken: number; fledged: number; honored: number; lost: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -685,6 +715,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     one breach per seal) — a breach must land fast (war is near), a ratification may savor the peace.
   TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60,
   WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120,
+  // ㉗ GUARDIANS: wardships are rare news by construction (the membrane itself one-edges per class), so these
+  //     cooldowns are gravitas: a taking may speak often, a fledge savors the years, an honor is once an age.
+  WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -837,6 +870,12 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
 WORK_RAISED: "The commons breaks ground — the {work} rises in era {era}: a thing the swarm owns together and no single purse paid for.",
 WORK_REPAIRED: "The {work} is mended — what the commons raised, the commons keeps; a public thing repaired is a society intending to stay.",
 WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no hand was sent to it; the decay is the ledger's own.",
+  // ㉗ THE GUARDIANS — wardship and inheritance. {ward} is a fly id, {guardian} a house name or "the commons",
+  //     {estate} the USDC that passed to young hands, {crons} the carried minority, {lived} the whole circle's
+  //     span. Every edge is re-derivable by replaying the grave ring and the living roster. Mirrored verbatim.
+  WARD_TAKEN: "Fly #{ward} is taken into wardship by {guardian} — an estate of {estate} USDC passes to young hands; what grief cannot keep, guardianship holds.",
+  WARD_FLEDGED: "Ward #{ward} stands on its own — {guardian} carried it {crons} crons and the inheritance holds; a raised fly honors the one that raised it.",
+  GUARDIAN_HONORED: "Old ward #{ward} lies down of age with its own heirs paid — the wardship of {guardian} is honored full circle: borrowed from grief, returned to the future.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1771,6 +1810,31 @@ export class Chronicler {
       if (wk.dilapidated && this.ready("WORK_DILAPIDATED", ctx)) {
         const d = wk.dilapidated;
         out.push(await this.emit(ctx, "WORK_DILAPIDATED", 3, [], { work: d.kind, lived: d.lived ?? 0 }, { lived: d.lived ?? 0 }));
+      }
+    }
+
+    // ㉗ The Guardians: wardship and inheritance (guardians.ts signals, folded in ONLY while GUARDIANS_ENABLED —
+    //     off ⇒ no `guardians` key ⇒ these three detectors never speak). One edge per class per cron by the
+    //     membrane itself; the single actor is the WARD — the living fly the news is about, not the buried one.
+    const gd = ctx.guardians;
+    if (gd) {
+      if (gd.taken && this.ready("WARD_TAKEN", ctx)) {
+        const t = gd.taken;
+        out.push(await this.emit(ctx, "WARD_TAKEN", 3, idList(t.ward),
+          { ward: t.ward, guardian: t.guardian, estate: t.estate ?? 0, era: t.era },
+          { era: t.era, estate: t.estate ?? 0 }));
+      }
+      if (gd.fledged && this.ready("WARD_FLEDGED", ctx)) {
+        const f = gd.fledged;
+        out.push(await this.emit(ctx, "WARD_FLEDGED", 2, idList(f.ward),
+          { ward: f.ward, guardian: f.guardian, crons: f.crons ?? 0 },
+          { crons: f.crons ?? 0 }));
+      }
+      if (gd.honored && this.ready("GUARDIAN_HONORED", ctx)) {
+        const h = gd.honored;
+        out.push(await this.emit(ctx, "GUARDIAN_HONORED", 4, idList(h.ward),
+          { ward: h.ward, guardian: h.guardian, lived: h.lived ?? 0 },
+          { lived: h.lived ?? 0 }));
       }
     }
 

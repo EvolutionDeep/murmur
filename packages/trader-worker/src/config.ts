@@ -271,6 +271,13 @@ export interface Env {
   //     state.ts never constructs the membrane ⇒ the three WORK_* kinds can never speak (byte-for-byte rollback).
   WORKS_ENABLED?: string;               // "true"/"false" (default TRUE)
 
+  // --- ㉗ THE GUARDIANS: wardship and inheritance — the roll of wards taken, fledged, and the full-circle honors (see src/guardians.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the roll's lines are constants (GD_FLEDGE etc.), no knobs by design. The
+  //     master switch reads an env key. PURE read-out: no guardianship re-writes an inheritance — entomb() has
+  //     already split the estate before this roll is written. GUARDIANS_ENABLED=false ⇒ state.ts never
+  //     constructs the membrane ⇒ the three WARD_*/GUARDIAN_* kinds can never speak (byte-for-byte rollback).
+  GUARDIANS_ENABLED?: string;           // "true"/"false" (default TRUE)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -613,6 +620,9 @@ export interface RuntimeConfig {
   };
   works: {
     enabled: boolean;         // the yard's lines are constants (WK_AGE etc.) — no knobs by design
+  };
+  guardians: {
+    enabled: boolean;         // the roll's lines are constants (GD_FLEDGE etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1037,6 +1047,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     works: {
       enabled: (env.WORKS_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    guardians: {
+      enabled: (env.GUARDIANS_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

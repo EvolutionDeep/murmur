@@ -6950,4 +6950,97 @@ Object.assign(ja, jaWk);
 Object.assign(ko, koWk);
 Object.assign(ar, arWk);
 
+// ㉗ the guardians' roll — wardship vocabulary in seven tongues (a wardship re-writes no inheritance: entomb() has already split the estate)
+const enWd = {
+  "vol.wdTitle": "the guardians' roll",
+  "vol.wdSub": "· wards taken, fledged & honored",
+  "tab.guardians.name": "The Guardians",
+  "tab.guardians.sub": "wards taken, fledged & honored",
+  "banner.guardians": "🛡 the guardians' roll speaks",
+  "wd.head": "{taken} wards taken · {fledged} fledged · {honored} honored full circle · {lost} lost in silence",
+  "wd.headTitle": "the roll's own book — every wardship is an edge over the graves the dynasty already buried and the children still flying; no guardianship re-writes an inheritance or moves a coin",
+  "wd.row": "fly #{ward} · ward of {guardian} · since era {era}",
+  "wd.old": "ended — {wards}",
+  "wd.none": "no ward stands on the roll — no grave has yet left an estate and children still flying",
+};
+const zhWd = {
+  "vol.wdTitle": "监护名册",
+  "vol.wdSub": "· 抚孤、成人与圆满",
+  "tab.guardians.name": "监护名册",
+  "tab.guardians.sub": "抚孤、成人与圆满",
+  "banner.guardians": "🛡 监护名册开口了",
+  "wd.head": "收孤 {taken} 名 · 成人 {fledged} 名 · 圆满 {honored} 名 · 静默永诀 {lost} 名",
+  "wd.headTitle": "名册自家的簿子——每一桩监护都是对王朝早已下葬的坟与仍在飞舞的幼雏所取的边沿；监护不重写任何继承、不动一枚硬币",
+  "wd.row": "第 {ward} 号果蝇 · {guardian} 的遗孤 · 自第 {era} 纪元",
+  "wd.old": "已结册 —— {wards}",
+  "wd.none": "名册上无一遗孤 —— 尚无坟茔留下家业与仍在飞舞的幼雏",
+};
+const frWd = {
+  "vol.wdTitle": "le rôle des tuteurs",
+  "vol.wdSub": "· pupilles pris, élevés & honorés",
+  "tab.guardians.name": "Les Tuteurs",
+  "tab.guardians.sub": "pupilles pris, élevés & honorés",
+  "banner.guardians": "🛡 le rôle des tuteurs parle",
+  "wd.head": "{taken} pupilles pris · {fledged} élevés · {honored} honorés du cercle complet · {lost} perdus en silence",
+  "wd.headTitle": "le registre du rôle lui-même — chaque tutelle est une arête sur les tombes que la dynastie a déjà enterrées et les enfants qui volent encore ; aucune tutelle ne réécrit un héritage ni ne bouge une pièce",
+  "wd.row": "mouche #{ward} · pupille de {guardian} · depuis l'ère {era}",
+  "wd.old": "clos — {wards}",
+  "wd.none": "nul pupille au rôle — aucune tombe n'a encore laissé un domaine et des enfants volant encore",
+};
+const esWd = {
+  "vol.wdTitle": "el rol de los tutores",
+  "vol.wdSub": "· pupilos tomados, criados & honrados",
+  "tab.guardians.name": "Los Tutores",
+  "tab.guardians.sub": "pupilos tomados, criados & honrados",
+  "banner.guardians": "🛡 el rol de los tutores habla",
+  "wd.head": "{taken} pupilos tomados · {fledged} criados · {honored} honrados en círculo completo · {lost} perdidos en silencio",
+  "wd.headTitle": "el libro propio del rol — cada tutela es un borde sobre las tumbas que la dinastía ya enterró y los hijos que aún vuelan; ninguna tutela reescribe una herencia ni mueve una moneda",
+  "wd.row": "mosca #{ward} · pupilo de {guardian} · desde la era {era}",
+  "wd.old": "concluidos — {wards}",
+  "wd.none": "ningún pupilo en el rol — ninguna tumba ha dejado aún herencia e hijos que aún vuelan",
+};
+const jaWd = {
+  "vol.wdTitle": "後見の帳",
+  "vol.wdSub": "· 遺子入り、立ち、称えらる",
+  "tab.guardians.name": "後見の帳",
+  "tab.guardians.sub": "遺子入り、立ち、称えらる",
+  "banner.guardians": "🛡 後見の帳が語りぬ",
+  "wd.head": "遺子 {taken} 名預かり · {fledged} 名自立し · {honored} 名円満に称えられ · {lost} 名静かに消ゆ",
+  "wd.headTitle": "帳自身の帳——すべての後見は王朝が既に葬りし墓と未だ飛ぶ子らへの辺沿なり；後見は相続を書き換えず、一銭も動かさず",
+  "wd.row": "蠅 #{ward} · {guardian} の遺子 · 第 {era} 紀より",
+  "wd.old": "閉じられし —— {wards}",
+  "wd.none": "帳に遺子なし —— まだ墓は遺産と飛ぶ子らを残さず",
+};
+const koWd = {
+  "vol.wdTitle": "후견의 두루마리",
+  "vol.wdSub": "· 유자 받고, 크고, 칭예되고",
+  "tab.guardians.name": "후견의 두루마리",
+  "tab.guardians.sub": "유자 받고, 크고, 칭예되고",
+  "banner.guardians": "🛡 후견의 두루마리가 말하다",
+  "wd.head": "유자 {taken}명 받고 · {fledged}명 자립 · {honored}명 원만히 칭예 · {lost}명 잠잠히 잃음",
+  "wd.headTitle": "두루마리 자신의 장부 — 모든 후견은 왕조가 이미 묻은 무덤과 아직 나는 새끼들에 대한 가장자리다; 후견은 어떤 상속도 다시 쓰지 않고 어떤 동전도 움직이지 않는다",
+  "wd.row": "파리 #{ward} · {guardian}의 유자 · 제 {era} 시대부터",
+  "wd.old": "맺힘 — {wards}",
+  "wd.none": "두루마리에 유자 없음 — 아직 어떤 무덤도 유산과 나는 새끼들을 남기지 않았다",
+};
+const arWd = {
+  "vol.wdTitle": "سِجلّ الأوصياء",
+  "vol.wdSub": "· أيتام ضُمّوا ونُشِئوا وكُرِّموا",
+  "tab.guardians.name": "الأوصياء",
+  "tab.guardians.sub": "أيتام ضُمّوا ونُشِئوا وكُرِّموا",
+  "banner.guardians": "🛡 سِجلّ الأوصياء ينطق",
+  "wd.head": "{taken} يتيمًا ضُمّ · {fledged} نشؤوا · {honored} كُرِّموا بدائرة كاملة · {lost} فُقدوا في صمت",
+  "wd.headTitle": "دفتر السجلّ نفسه — كل وصاية حافةٌ على قبورٍ دفنتها السلالة وأبناءً ما زالوا يطرن؛ لا وصاية تعيد كتابة ميراث ولا تحرك عملة",
+  "wd.row": "الذبابة رقم {ward} · يتيم {guardian} · منذ الحقبة {era}",
+  "wd.old": "انقضى — {wards}",
+  "wd.none": "لا يتيم في السجلّ — لم تترك قبرٌ بعدُ تركةً وأبناءً يطيرون",
+};
+Object.assign(en, enWd);
+Object.assign(zh, zhWd);
+Object.assign(fr, frWd);
+Object.assign(es, esWd);
+Object.assign(ja, jaWd);
+Object.assign(ko, koWd);
+Object.assign(ar, arWd);
+
 export { en, zh, fr, es, ja, ko, ar };

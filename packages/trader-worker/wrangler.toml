@@ -358,6 +358,16 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # the 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a
 # lower-priority var first, then re-add: WORKS_ENABLED = "false" (rollback: inert; src/config.ts).
 
+# ===== ㉗ THE GUARDIANS (wardship and inheritance — src/guardians.ts) =====
+# A burial leaving an estate and children still flying TAKES the youngest as a ward of the house (or the
+# commons) — WARD_TAKEN; a ward carried 96 crons and still flying STANDS on its own — WARD_FLEDGED; and the
+# rarest news, a fledged ward falling to age with its own heirs paid, closes the circle and speaks
+# GUARDIAN_HONORED. PURE read-out: the guardianship re-writes no inheritance — entomb() has already split
+# the estate before this roll is written; a ward dying unraised is closed in silence (no kind).
+# NOTE: armed on CODE DEFAULTS (GUARDIANS_ENABLED=true; the roll's lines are exported constants by design) —
+# the 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a
+# lower-priority var first, then re-add: GUARDIANS_ENABLED = "false" (rollback: inert; src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

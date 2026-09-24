@@ -98,6 +98,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   WORK_RAISED: "公众动工 —— 公共的 {work} 在第 {era} 纪元竖起：全群共有之物，却无一只钱袋为它付过账。",
   WORK_REPAIRED: "{work} 被修补 —— 公众所建，公众守之；一件公物被修补，是一个社会决意长住的证明。",
   WORK_DILAPIDATED: "{work} 沦为残垣 —— 它立了 {lived} 遍钟点而无人伸手；这衰朽是账册自己的。",
+  WARD_TAKEN: "第 {ward} 号果蝇被 {guardian} 收为遗孤 —— {estate} USDC 的家业交入幼手；悲伤留不住的，监护替它留着。",
+  WARD_FLEDGED: "遗孤第 {ward} 号自立了 —— {guardian} 携它行过 {crons} 遍钟点，继承完好如初；被抚养的果蝇敬那抚养它的。",
+  GUARDIAN_HONORED: "年老的遗孤第 {ward} 号因高寿而眠，它的继承人亦得了支付 —— {guardian} 的监护之名至此圆满：从悲伤借来，交还给未来。",
 };
 
 const fr = {
@@ -188,6 +191,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   WORK_RAISED: "Le commun perce la terre — le {work} s'élève en l'ère {era} : une chose que l'essaim possède ensemble et qu'aucune bourse seule a payée.",
   WORK_REPAIRED: "Le {work} est réparé — ce que le commun a bâti, le commun l'entretient ; une chose publique remise est une société qui compte rester.",
   WORK_DILAPIDATED: "Le {work} tombe en ruine — {lived} crons il a tenu et nulle main ne fut envoyée ; la décrépitude est au registre lui-même.",
+  WARD_TAKEN: "La mouche #{ward} entre en tutelle sous {guardian} — un domaine de {estate} USDC passe en jeunes mains ; ce que le deuil ne peut garder, la tutelle le tient.",
+  WARD_FLEDGED: "Le pupille #{ward} se tient debout seul — {guardian} l'a porté {crons} crons et l'héritage tient ; la mouche élevée honore celle qui l'a élevée.",
+  GUARDIAN_HONORED: "Le vieux pupille #{ward} s'éteint d'âge, ses propres héritiers payés — la tutelle de {guardian} est honorée du cercle complet : emprunté au deuil, rendu à l'avenir.",
 };
 
 const es = {
@@ -278,6 +284,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   WORK_RAISED: "El común rompe tierra — el {work} se alza en la era {era}: una cosa que el enjambre posee junto y ninguna bolsa sola pagó.",
   WORK_REPAIRED: "El {work} se repara — lo que el común alzó, el común lo cuida; una cosa pública remendada es una sociedad que intenta quedarse.",
   WORK_DILAPIDATED: "El {work} cae en ruina — {lived} crones estuvo en pie y ninguna mano fue enviada a él; la decadencia es del registro mismo.",
+  WARD_TAKEN: "La mosca #{ward} entra en tutela de {guardian} — una herencia de {estate} USDC pasa a manos jóvenes; lo que el duelo no puede guardar, la tutela lo sostiene.",
+  WARD_FLEDGED: "El pupilo #{ward} se sostiene solo — {guardian} lo llevó {crons} crones y la herencia perdura; la mosca criada honra a quien la crió.",
+  GUARDIAN_HONORED: "El viejo pupilo #{ward} se acuesta por edad, con sus propios herederos pagados — la tutela de {guardian} es honrada en círculo completo: tomado del duelo, devuelto al futuro.",
 };
 
 const ja = {
@@ -368,6 +377,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   WORK_RAISED: "公共が礎を置く —— {work}は第 {era} 紀に立てらる：群れ皆で所有しつつ、ただ一つの銭袋も代価を払わざりしもの。",
   WORK_REPAIRED: "{work}は修めらる —— 公共が立てしものを公共が守る；公物修めらるるは、留まらんと誓う社会の証なり。",
   WORK_DILAPIDATED: "{work}は廃と化す —— {lived} クロン立ちたりしも、手を差し伸ぶる者なし；この衰えは帳簿自身のものなり。",
+  WARD_TAKEN: "蠅 #{ward} は {guardian} の後見に入る —— {estate} USDC の遺産、幼き手へ渡される；悲しみが留められぬものを、後見が留む。",
+  WARD_FLEDGED: "遺子 #{ward} 自ら立つ —— {guardian} は {crons} クロンこれを育み、相続は保たれたり；育まれし蠅は育みし者を敬う。",
+  GUARDIAN_HONORED: "老いた遺子 #{ward} は齢をもって眠り、己の子らに遺産は渡れたり —— {guardian} の後見は円満をもって称えられる：悲しみより借り、未来へ返しき。",
 };
 
 const ko = {
@@ -458,6 +470,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   WORK_RAISED: "공동체가 땅을 판다 — {work}이(가) 제 {era} 시대에 솟는다; 무리가 함께 소유하나 아무 주머니도 값을 치르지 않은 것.",
   WORK_REPAIRED: "{work}이(가) 손본다 — 공동체가 세운 것을 공동체가 지킨다; 고쳐지는 공물은 머물고자 하는 사회의 표지다.",
   WORK_DILAPIDATED: "{work}이(가) 폐허로 무너진다 — {lived} 크론을 섰으나 손길 없었으니; 그 쇠퇴는 대장부가 스스로 쓴 것이다.",
+  WARD_TAKEN: "파리 #{ward}는 {guardian}의 후견을 받는다 — {estate} USDC의 유산이 어린 손에 들려지니; 슬픔이 지키지 못한 것을 후견이 지킨다.",
+  WARD_FLEDGED: "유자 #{ward}가 홀로 선다 — {guardian}이 {crons} 크론을 돌보았고 상속은 온전하니; 길러진 파리는 기른 이를 기린다.",
+  GUARDIAN_HONORED: "늙은 유자 #{ward}가 나이 들어 누우고 제 상속자들에게도 지불되었으니 — {guardian}의 후견은 한 바퀴를 돌아 칭예된다: 슬픔에게서 빌려 미래에게 돌려주었도다.",
 };
 
 const ar = {
@@ -548,6 +563,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   WORK_RAISED: "العامّة تشقّ الأرض — {work} يُقام في الحقبة {era}: ملكٌ للسابلة كلِّهم لم تدفع له محفظةٌ واحدة.",
   WORK_REPAIRED: "{work} يُرمَّم — ما رفعته العامّة تحفظه العامّة؛ شيءٌ عامٌّ مرمّم هو مجتمعٌ ينوي البقاء.",
   WORK_DILAPIDATED: "{work} ينهار إلى خراب — {lived} دورةٍ قام ولم تُرسَل إليه يد؛ وهذا الأفول من السجلّ نفسه.",
+  WARD_TAKEN: "الذبابة رقم {ward} تُضم إلى وصاية {guardian} — تركةٌ من {estate} USDC تنتقل إلى أيادٍ صغيرة؛ وما عجز الحزن عن حفظه يحفظه الوصيّ.",
+  WARD_FLEDGED: "اليتيم رقم {ward} يقف على ساقيه — حملته {guardian} {crons} دورةً والميراث باقٍ؛ والذبابة التي رُبيت تكرم من ربّاها.",
+  GUARDIAN_HONORED: "اليتيم العجوز رقم {ward} يرقد هرماً وورثته قد قُضي لهم — تُكرَّم وصاية {guardian} بدائرةٍ كاملة: مُستعارٌ من الحزن، مُعادٌ إلى المستقبل.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
