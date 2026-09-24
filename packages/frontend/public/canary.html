@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#f2eee6" />
+  <title>murmur — Arc x402 Canary · live settlement telemetry</title>
+  <meta name="description" content="Live, read-only telemetry for murmur's real-money x402 settlement rail on Arc mainnet: settlement success rate, netting fold ratio and gas amortisation, on-chain settlement and volume growth, market temperature and wealth Gini — all read client-side from the public api.muros.live endpoints. No synthetic load, no testnet, no LLM." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #f2eee6;
+      --ink: #1a1a18;
+      --ink-rgb: 26, 26, 24;
+      --accent: #9a8c6e;
+      --hair: rgba(26, 26, 24, 0.14);
+      --hair-soft: rgba(26, 26, 24, 0.07);
+      --muted: rgba(26, 26, 24, 0.55);
+      --ok: #4f7d5a;
+      --get: #5b7c8d;
+      --warn: #b4553c;
+      --paid: #c05e3c;
+      --display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--paper); color: var(--ink);
+      font-family: var(--mono); font-size: 14px; line-height: 1.6;
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    }
+    ::selection { background: rgba(154, 140, 110, 0.24); }
+    a { color: inherit; }
+    button { font-family: inherit; cursor: pointer; }
+
+    .grain {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.04;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px clamp(16px, 4vw, 40px);
+      background: rgba(242, 238, 230, 0.9);
+      border-bottom: 1px solid var(--hair);
+      backdrop-filter: saturate(1.1) blur(2px);
+    }
+    .wordmark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
+    .wordmark .mark { fill: var(--accent); transform: translateY(3px); }
+    .wordmark .name { font-family: var(--display); font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+    .wordmark .sub { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .toplinks { display: flex; align-items: center; gap: 16px; font-size: 12px; }
+    .toplinks a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .2s, border-color .2s; }
+    .toplinks a:hover { color: var(--ink); border-color: var(--hair); }
+
+    .wrap { position: relative; z-index: 1; max-width: 940px; margin: 0 auto; padding: clamp(28px, 6vw, 60px) clamp(16px, 4vw, 40px) 96px; }
+
+    .hero h1 { font-family: var(--display); font-size: clamp(30px, 6vw, 46px); font-weight: 400; line-height: 1.08; letter-spacing: -0.01em; }
+    .hero h1 em { font-style: italic; color: var(--accent); }
+    .hero .lede { margin-top: 16px; max-width: 68ch; color: rgba(var(--ink-rgb), 0.8); font-size: 14.5px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .badge {
+      font-size: 11px; letter-spacing: 0.04em; padding: 5px 11px; border: 1px solid var(--hair);
+      border-radius: 999px; color: rgba(var(--ink-rgb), 0.72); background: rgba(255,255,255,0.25);
+    }
+    .badge b { color: var(--ink); font-weight: 500; }
+
+    .liverow {
+      margin-top: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 11px 16px; border: 1px solid var(--hair); border-radius: 10px; background: rgba(255,255,255,0.3);
+      font-size: 12px; color: var(--muted);
+    }
+    .live { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); }
+    .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2.2s ease-in-out infinite; }
+    .live.stale .dot { background: var(--warn); animation: none; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .refresh { margin-left: auto; font-size: 11px; color: var(--muted); border: 1px solid var(--hair); background: transparent; border-radius: 6px; padding: 4px 10px; transition: color .2s, border-color .2s; }
+    .refresh:hover { color: var(--ink); border-color: var(--accent); }
+    .srcline { font-size: 11.5px; color: var(--muted); word-break: break-all; }
+    .srcline code { background: rgba(var(--ink-rgb), 0.06); padding: 1px 5px; border-radius: 4px; }
+
+    section { margin-top: 54px; }
+    h2 { font-family: var(--display); font-size: 23px; font-weight: 400; letter-spacing: -0.005em; margin-bottom: 6px; }
+    h2 .n { color: var(--accent); font-size: 15px; margin-right: 10px; font-family: var(--mono); }
+    .sec-note { color: var(--muted); font-size: 13px; max-width: 74ch; margin-bottom: 20px; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 12px; }
+    .stat { border: 1px solid var(--hair); border-radius: 10px; padding: 15px 16px; background: rgba(255,255,255,0.22); }
+    .stat .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .stat .v { font-family: var(--display); font-size: 30px; font-weight: 400; line-height: 1.1; margin-top: 7px; letter-spacing: -0.01em; }
+    .stat .v.sm { font-size: 24px; }
+    .stat .s { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+    .stat.lead { border-color: rgba(79,125,90,0.4); background: rgba(79,125,90,0.07); grid-column: span 2; }
+    .stat.lead .v { font-size: 46px; color: var(--ok); }
+    @media (max-width: 560px) { .stat.lead { grid-column: span 2; } }
+
+    .sbar-wrap { margin-top: 16px; }
+    .sbar { display: flex; height: 12px; border-radius: 7px; overflow: hidden; border: 1px solid var(--hair); }
+    .sbar i { display: block; height: 100%; }
+    .sbar .ok { background: var(--ok); }
+    .sbar .fail { background: var(--warn); }
+    .sbar-key { display: flex; gap: 18px; margin-top: 8px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+    .sbar-key span { display: inline-flex; align-items: center; gap: 6px; }
+    .sbar-key .sw { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+    .netbars { margin-top: 6px; display: grid; gap: 10px; }
+    .nbrow { display: grid; grid-template-columns: 168px 1fr 78px; align-items: center; gap: 12px; font-size: 12px; }
+    .nbrow .nbl { color: var(--muted); }
+    .nbtrack { background: rgba(var(--ink-rgb), 0.05); border-radius: 6px; height: 20px; overflow: hidden; }
+    .nbtrack i { display: block; height: 100%; border-radius: 6px; }
+    .nb-naive { background: repeating-linear-gradient(45deg, rgba(180,85,60,0.5), rgba(180,85,60,0.5) 6px, rgba(180,85,60,0.32) 6px, rgba(180,85,60,0.32) 12px); }
+    .nb-netted { background: var(--ok); }
+    .nbrow .nbv { text-align: right; font-weight: 500; }
+    @media (max-width: 560px) { .nbrow { grid-template-columns: 1fr; gap: 4px; } .nbrow .nbv { text-align: left; } }
+
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+    .chart-card { border: 1px solid var(--hair); border-radius: 10px; padding: 14px 15px 10px; background: rgba(255,255,255,0.22); }
+    .chart-title { font-size: 12px; font-weight: 500; letter-spacing: 0.01em; }
+    .chart-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .chart-svg { width: 100%; height: auto; display: block; margin-top: 8px; }
+    .chart-svg .grid { stroke: var(--hair-soft); stroke-width: 1; }
+    .chart-svg .axis { fill: var(--muted); font-size: 9px; font-family: var(--mono); }
+    .chart-svg .line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+    .chart-svg .area { stroke: none; opacity: 0.12; }
+    .chart-svg .bar { fill: var(--get); opacity: 0.72; }
+    .chart-empty { color: var(--muted); font-size: 12px; padding: 30px 0; text-align: center; }
+
+    .callout { border: 1px solid var(--hair); border-left: 3px solid var(--accent); border-radius: 8px; padding: 16px 18px; background: rgba(255,255,255,0.28); margin-top: 12px; }
+    .callout.prov { border-left-color: var(--ok); }
+    .callout h3 { font-family: var(--display); font-size: 17px; font-weight: 400; margin-bottom: 6px; }
+    .callout p { font-size: 13px; color: rgba(var(--ink-rgb), 0.8); margin: 6px 0; }
+    .callout .mono-line { font-size: 12px; color: var(--muted); word-break: break-all; }
+    .callout .mono-line b { color: var(--ink); font-weight: 500; }
+
+    .gap { border: 1px dashed var(--hair); border-radius: 8px; padding: 14px 16px; background: rgba(var(--ink-rgb), 0.02); margin-top: 12px; }
+    .gap h3 { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+    .gap h3 .pill { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--warn); border: 1px solid rgba(180,85,60,0.35); border-radius: 999px; padding: 1px 8px; }
+    .gap p { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+
+    .prose { max-width: 76ch; font-size: 13.5px; color: rgba(var(--ink-rgb), 0.82); }
+    .prose p { margin: 9px 0; }
+    .prose strong { font-weight: 500; color: var(--ink); }
+    .prose code { background: rgba(var(--ink-rgb), 0.06); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+    .foot { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 20px; }
+    .foot a { color: var(--muted); }
+    .foot a:hover { color: var(--ink); }
+    .err { color: var(--paid); font-size: 13px; margin-top: 14px; display: none; }
+    .err.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="wordmark" href="/">
+      <svg class="mark" viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
+        <circle cx="12" cy="14" r="3.1" /><circle cx="20.5" cy="11.5" r="2.3" /><circle cx="17.5" cy="21" r="1.9" />
+      </svg>
+      <span class="name">murmur</span>
+      <span class="sub">x402 canary</span>
+    </a>
+    <nav class="toplinks">
+      <a href="/">← the swarm</a>
+      <a href="/developers">developers</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <div class="hero">
+      <h1>The Arc <em>x402 Canary</em></h1>
+      <p class="lede">
+        A live, read-only telemetry window into murmur's real-money x402 settlement rail on Arc mainnet.
+        Every figure below is pulled client-side from the same free, keyless, CORS-open endpoints the swarm
+        itself runs on — no synthetic load, no testnet, no LLM anywhere in the loop. A population of autonomous
+        fruit-fly nervous systems trades around the clock and settles real USDC over x402 / EIP-3009, folded
+        into per-pair nets to amortise gas.
+      </p>
+      <div class="badges" id="badges"></div>
+      <div class="liverow">
+        <span class="live" id="live"><span class="dot"></span><span id="livetext">connecting…</span></span>
+        <span id="ago">—</span>
+        <button class="refresh" id="refresh" type="button">refresh</button>
+      </div>
+      <p class="srcline" style="margin-top:12px">
+        reads <code>api.muros.live/economy</code> · <code>/history</code> · <code>/proofs</code> — view source, it's all client-side.
+      </p>
+      <p class="err" id="err"></p>
+    </div>
+
+    <!-- 01 · settlement reliability -->
+    <section>
+      <h2><span class="n">01</span>Settlement reliability</h2>
+      <p class="sec-note">
+        Terminal outcomes of real on-chain net settlements. <code>successRate = settleOk ÷ settleAttempts</code> over
+        genuine broadcast attempts (shadow dry-runs excluded). These are additive lifetime counters, persisted across
+        deploys — read live from <code>/economy</code>.
+      </p>
+      <div class="stat-grid">
+        <div class="stat lead"><div class="k">settlement success rate</div><div class="v" id="sr">—</div><div class="s" id="sr-sub">settleOk / settleAttempts</div></div>
+        <div class="stat"><div class="k">on-chain mined</div><div class="v sm" id="mined">—</div><div class="s">real Arc txs (netted)</div></div>
+        <div class="stat"><div class="k">failed broadcasts</div><div class="v sm" id="fail">—</div><div class="s">verify/settle never mined</div></div>
+        <div class="stat"><div class="k">gross trades settled</div><div class="v sm" id="gross">—</div><div class="s">lifetime ledger count</div></div>
+        <div class="stat"><div class="k">settled volume</div><div class="v sm" id="vol">—</div><div class="s">lifetime USDC</div></div>
+        <div class="stat"><div class="k">live agents</div><div class="v sm" id="agents">—</div><div class="s">trading now</div></div>
+        <div class="stat"><div class="k">wealth Gini</div><div class="v sm" id="gini">—</div><div class="s">emergent inequality</div></div>
+        <div class="stat"><div class="k">mean balance</div><div class="v sm" id="meanbal">—</div><div class="s">USDC / agent</div></div>
+      </div>
+      <div class="sbar-wrap">
+        <div class="sbar"><i class="ok" id="sbar-ok" style="width:0%"></i><i class="fail" id="sbar-fail" style="width:0%"></i></div>
+        <div class="sbar-key">
+          <span><i class="sw" style="background:var(--ok)"></i>mined <b id="key-ok">—</b></span>
+          <span><i class="sw" style="background:var(--warn)"></i>failed <b id="key-fail">—</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 · netting & gas amortisation -->
+    <section>
+      <h2><span class="n">02</span>Netting &amp; gas amortisation</h2>
+      <p class="sec-note">
+        Micropayments are not broadcast one-per-trade. Per-pair nets accumulate bilaterally and only the difference
+        moves on-chain, so gas is amortised over more value per transaction. Both figures below are derived live from
+        the same <code>/economy</code> totals — <code>count</code> (gross trades) against <code>settleAttempts</code> (broadcasts).
+      </p>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">netting fold ratio</div><div class="v" id="fold">—</div><div class="s" id="fold-sub">gross trades per broadcast</div></div>
+        <div class="stat"><div class="k">on-chain txs avoided</div><div class="v" id="avoid">—</div><div class="s">vs one tx per trade</div></div>
+      </div>
+      <div class="netbars" style="margin-top:18px">
+        <div class="nbrow"><span class="nbl">naive rail · 1 tx / trade</span><span class="nbtrack"><i class="nb-naive" id="nb-naive" style="width:100%"></i></span><span class="nbv" id="nb-naive-v">—</span></div>
+        <div class="nbrow"><span class="nbl">murmur · per-pair nets</span><span class="nbtrack"><i class="nb-netted" id="nb-netted" style="width:0%"></i></span><span class="nbv" id="nb-netted-v">—</span></div>
+      </div>
+      <p class="prose" style="margin-top:16px" id="net-note"></p>
+    </section>
+
+    <!-- 03 · live time series -->
+    <section>
+      <h2><span class="n">03</span>Live time series</h2>
+      <p class="sec-note" id="series-note">
+        From the independent per-cron D1 archive (<code>/history</code>) — one row per cron, separate from the live
+        Durable-Object state, so these curves are cross-checkable against the on-chain receipts.
+      </p>
+      <div class="charts">
+        <div class="chart-card"><div class="chart-title">on-chain settlements (cumulative)</div><div class="chart-sub" id="sub-settle">—</div><div id="ch-settle"></div></div>
+        <div class="chart-card"><div class="chart-title">settled volume (cumulative, USDC)</div><div class="chart-sub" id="sub-vol">—</div><div id="ch-vol"></div></div>
+        <div class="chart-card"><div class="chart-title">gross trades per cron</div><div class="chart-sub" id="sub-deals">—</div><div id="ch-deals"></div></div>
+        <div class="chart-card"><div class="chart-title">wealth Gini</div><div class="chart-sub" id="sub-gini">—</div><div id="ch-gini"></div></div>
+        <div class="chart-card" style="grid-column:1/-1"><div class="chart-title">Arc market temperature (0–1) · regime bands</div><div class="chart-sub" id="sub-temp">—</div><div id="ch-temp"></div></div>
+      </div>
+    </section>
+
+    <!-- 04 · uptime & liveness -->
+    <section>
+      <h2><span class="n">04</span>Uptime &amp; liveness</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">archived window</div><div class="v sm" id="window">—</div><div class="s" id="window-sub">first → last cron</div></div>
+        <div class="stat"><div class="k">crons archived</div><div class="v sm" id="crons">—</div><div class="s">one D1 row each</div></div>
+        <div class="stat"><div class="k">last tick</div><div class="v sm" id="lasttick">—</div><div class="s" id="lasttick-sub">sub-tick index</div></div>
+        <div class="stat"><div class="k">cadence</div><div class="v sm">~1/min</div><div class="s">6 sub-ticks per cron</div></div>
+      </div>
+    </section>
+
+    <!-- 05 · trustless provenance -->
+    <section>
+      <h2><span class="n">05</span>Why these numbers are credible</h2>
+      <div class="callout prov">
+        <h3>🔏 Every real transfer is neurally sourced &amp; on-chain verifiable</h3>
+        <p>
+          Each on-chain net settlement sets its EIP-3009 <code>nonce</code> to the <code>sha256</code> of a receipt bundling the
+          frozen buyer/seller neural read-outs that caused it, hash-chained via <code>prevChain</code> and committed on Arc
+          (every proof carries its <code>commitTx</code>). A receipt invented after the fact could never hash to a mined nonce —
+          so the trades behind every figure above are provably decided by connectomes, not a human or an LLM.
+        </p>
+        <p class="mono-line" id="chainhead">chain head · loading live anchor…</p>
+        <p class="mono-line">
+          GET <b>/proofs</b> → the chain (last 64 served) · chainHead &nbsp;·&nbsp;
+          GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp;
+          or verify in-browser at <a href="/">muros.live</a> → neural proofs.
+        </p>
+      </div>
+    </section>
+
+    <!-- 06 · not yet instrumented -->
+    <section>
+      <h2><span class="n">06</span>Not yet instrumented</h2>
+      <p class="sec-note">
+        Honest gaps. Three telemetry fields this canary would like to show are not yet exposed by the worker. Each is one
+        small <em>additive</em> counter away — the exact convention that already publishes <code>successRate</code>
+        (<code>settleOk</code>/<code>settleFail</code>, additive, no state-version bump). Planned as Phase&nbsp;0.5 if there's
+        demand; this page would light them up with no redesign.
+      </p>
+      <div class="gap">
+        <h3>⏱ time-to-finality <span class="pill">not measured</span></h3>
+        <p>Arc settles with instant, deterministic finality (sub-second blocks, no reorg), so there is no wait to measure in the usual sense. A measured broadcast→receipt latency is not yet exposed as a field. Circle may hold a settle up to <code>CIRCLE_MAX_TIMEOUT_SECONDS</code> (default 12s) before returning <code>pending</code>.</p>
+      </div>
+      <div class="gap">
+        <h3>◌ pending / net-pending ratio <span class="pill">internal</span></h3>
+        <p>The in-flight per-pair net count (<code>pendingNets</code>) is internal state, and Circle <code>/status</code> reconciliation is defined but not yet wired to a public field. Net-pending placeholders are deliberately excluded from the ledger, volume and count until they actually mine.</p>
+      </div>
+      <div class="gap">
+        <h3>↩ refund / FLAT events <span class="pill">not counted</span></h3>
+        <p>Prediction-FLAT and war-stale refunds move agent balances but are not yet tallied into a public total, so a refund rate cannot be published honestly today.</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span>murmur — a population of neural agents settling real USDC on arc</span>
+      <a href="/">the swarm</a>
+      <a href="/developers">public api</a>
+      <a href="https://api.muros.live/economy" target="_blank" rel="noopener">/economy</a>
+      <a href="https://api.muros.live/history" target="_blank" rel="noopener">/history</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
+    </footer>
+  </div>
+
+  <script type="module">
+    const API = "https://api.muros.live";
+    const ECON_EVERY = 30;    // seconds between /economy polls (cheap light payload)
+    const HIST_EVERY = 120;   // seconds between /history polls (bigger, slower-moving)
+    const HIST_LIMIT = 720;   // ~12h of crons at ~1/min
+
+    // ---------- formatting helpers ----------
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const $ = (id) => document.getElementById(id);
+    function int(n) { return Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "—"; }
+    function compact(n) {
+      if (!Number.isFinite(n)) return "—";
+      const a = Math.abs(n);
+      if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+      if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
+      return String(Math.round(n));
+    }
+    function usdc(n) {
+      if (!Number.isFinite(n)) return "—";
+      return n >= 1000 ? compact(n) + " USDC" : n.toFixed(2) + " USDC";
+    }
+    function pct(x, dp) { return Number.isFinite(x) ? (x * 100).toFixed(dp == null ? 1 : dp) + "%" : "—"; }
+    function fmtDur(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return "—";
+      const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+      if (d) return d + "d " + h + "h";
+      if (h) return h + "h " + m + "m";
+      if (m) return m + "m " + (s % 60) + "s";
+      return s + "s";
+    }
+    function ago(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return "—";
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return s + "s ago";
+      if (s < 3600) return Math.floor(s / 60) + "m ago";
+      if (s < 86400) return Math.floor(s / 3600) + "h ago";
+      return Math.floor(s / 86400) + "d ago";
+    }
+    function fmtTs(ms) {
+      try { return new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC"; } catch { return "—"; }
+    }
+    function shortHash(h) { return typeof h === "string" && h.length > 16 ? h.slice(0, 10) + "…" + h.slice(-6) : (h || "—"); }
+
+    // ---------- inline-SVG charts (no external libs; hand-rolled like community.js) ----------
+    const CW = 720, CH = 190, PL = 50, PR = 14, PT = 14, PB = 24;
+    const PW = CW - PL - PR, PH = CH - PT - PB;
+
+    function downsample(arr, max) {
+      if (arr.length <= max) return arr;
+      const step = Math.ceil(arr.length / max);
+      const out = arr.filter((_, i) => i % step === 0);
+      if (out[out.length - 1] !== arr[arr.length - 1]) out.push(arr[arr.length - 1]);
+      return out;
+    }
+
+    function gridAndAxis(lo, hi, yFmt) {
+      let g = "";
+      const T = 4;
+      for (let i = 0; i <= T; i++) {
+        const val = lo + (hi - lo) * (i / T), yy = PT + PH - (i / T) * PH;
+        g += '<line class="grid" x1="' + PL + '" y1="' + yy.toFixed(1) + '" x2="' + (CW - PR) + '" y2="' + yy.toFixed(1) + '"/>';
+        g += '<text class="axis" x="' + (PL - 7) + '" y="' + (yy + 3.2).toFixed(1) + '" text-anchor="end">' + esc(yFmt(val)) + '</text>';
+      }
+      return g;
+    }
+
+    /** Line chart from a numeric series. o: {color, fill, yFmt, x0, x1, aria, zero, bandsFor(X,n)} */
+    function lineChart(ys, o) {
+      o = o || {};
+      const pts = ys.filter((v) => Number.isFinite(v));
+      if (pts.length < 2) return '<div class="chart-empty">not enough history yet</div>';
+      let lo = Math.min.apply(null, pts), hi = Math.max.apply(null, pts);
+      if (o.zero) lo = Math.min(lo, 0);
+      if (hi === lo) hi = lo + 1;
+      const padv = (hi - lo) * 0.14; hi += padv; if (!o.zero) lo = Math.max(lo - padv, o.zero ? 0 : lo - padv);
+      if (o.zero) lo = Math.min(lo, 0);
+      const n = ys.length;
+      const X = (i) => PL + (n === 1 ? PW / 2 : (i / (n - 1)) * PW);
+      const Y = (v) => PT + PH - ((v - lo) / (hi - lo)) * PH;
+      const yFmt = o.yFmt || compact;
+      let d = "", last = lo;
+      for (let i = 0; i < n; i++) {
+        const v = Number.isFinite(ys[i]) ? ys[i] : last; last = v;
+        d += (i ? " L " : "M ") + X(i).toFixed(1) + " " + Y(v).toFixed(1);
+      }
+      const color = o.color || "var(--get)";
+      let area = "";
+      if (o.fill) area = '<path class="area" d="' + d + " L " + X(n - 1).toFixed(1) + " " + (PT + PH) + " L " + PL + " " + (PT + PH) + ' Z" fill="' + color + '"/>';
+      const bands = o.bandsFor ? o.bandsFor(X, n, PT, PH) : "";
+      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + '</text>'
+        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + '</text>';
+      return '<svg class="chart-svg" viewBox="0 0 ' + CW + " " + CH + '" role="img" aria-label="' + esc(o.aria || "time series") + '">'
+        + bands + gridAndAxis(lo, hi, yFmt) + area
+        + '<path class="line" d="' + d + '" stroke="' + color + '"/>' + xlab + "</svg>";
+    }
+
+    /** Bar chart from a numeric series (per-cron activity). */
+    function barChart(ys, o) {
+      o = o || {};
+      const pts = ys.filter((v) => Number.isFinite(v));
+      if (!pts.length) return '<div class="chart-empty">not enough history yet</div>';
+      const hi = Math.max.apply(null, pts) || 1, n = ys.length;
+      const bw = Math.max(1, PW / n - (n > 120 ? 0 : 0.6));
+      let bars = "";
+      for (let i = 0; i < n; i++) {
+        const v = Number.isFinite(ys[i]) ? ys[i] : 0;
+        const h = (v / hi) * PH, x = PL + (i / n) * PW, y = PT + PH - h;
+        bars += '<rect class="bar" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0.4, h).toFixed(1) + '"/>';
+      }
+      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + '</text>'
+        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + '</text>';
+      return '<svg class="chart-svg" viewBox="0 0 ' + CW + " " + CH + '" role="img" aria-label="' + esc(o.aria || "bars") + '">'
+        + gridAndAxis(0, hi, o.yFmt || compact) + bars + xlab + "</svg>";
+    }
+
+    const REGIME_FILL = { COLD: "rgba(91,124,141,0.13)", CALM: "rgba(154,140,110,0.12)", HOT: "rgba(192,94,60,0.14)" };
+    /** Vertical regime bands behind the temperature line, built from the (downsampled) rows. */
+    function regimeBandsFor(regimes) {
+      return function (X, n, pt, ph) {
+        let out = "", i = 0;
+        while (i < n) {
+          let j = i;
+          while (j + 1 < n && regimes[j + 1] === regimes[i]) j++;
+          const x0 = X(i), x1 = X(Math.min(j + 1, n - 1));
+          const fill = REGIME_FILL[regimes[i]] || "rgba(154,140,110,0.08)";
+          out += '<rect x="' + x0.toFixed(1) + '" y="' + pt + '" width="' + Math.max(0.6, x1 - x0).toFixed(1) + '" height="' + ph + '" fill="' + fill + '"/>';
+          i = j + 1;
+        }
+        return out;
+      };
+    }
+
+    // ---------- live data ----------
+    async function j(path) {
+      const r = await fetch(API + path, { headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error("HTTP " + r.status + " on " + path);
+      return r.json();
+    }
+    function setTxt(id, v) { const el = $(id); if (el) el.textContent = v; }
+    function err(msg) { const e = $("err"); e.textContent = msg; e.classList.add("show"); $("live").classList.add("stale"); $("livetext").textContent = "stalled"; }
+
+    let econAt = 0, histAt = 0;
+
+    function renderBadges(d) {
+      const t = d.totals || {};
+      const rows = [
+        ["chain", "arc mainnet · 5042"],
+        ["mode", d.mode || "—"],
+        ["asset", "USDC"],
+        ["protocol", "x402 v2"],
+        ["live agents", int(t.liveAgents)],
+        ["source", "public GET · no key"],
+      ];
+      $("badges").innerHTML = rows.filter((b) => b[1]).map((b) => '<span class="badge">' + esc(b[0]) + " <b>" + esc(b[1]) + "</b></span>").join("");
+    }
+
+    function renderHeadline(d) {
+      const t = d.totals || {};
+      renderBadges(d);
+      const sr = t.successRate;
+      setTxt("sr", Number.isFinite(sr) ? pct(sr) : "—");
+      setTxt("sr-sub", int(t.settleOk) + " mined / " + int(t.settleAttempts) + " attempts");
+      setTxt("mined", int(t.settleOk));
+      setTxt("fail", int(t.settleFail));
+      setTxt("gross", int(t.count));
+      setTxt("vol", usdc(t.volumeUsdc));
+      setTxt("agents", int(t.liveAgents));
+      setTxt("gini", Number.isFinite(t.gini) ? t.gini.toFixed(3) : "—");
+      setTxt("meanbal", Number.isFinite(t.meanBalanceUsdc) ? t.meanBalanceUsdc.toFixed(2) : "—");
+      // success bar
+      const ok = Number(t.settleOk) || 0, fail = Number(t.settleFail) || 0, tot = ok + fail;
+      const okPct = tot ? (ok / tot) * 100 : 0;
+      $("sbar-ok").style.width = okPct.toFixed(2) + "%";
+      $("sbar-fail").style.width = (100 - okPct).toFixed(2) + "%";
+      setTxt("key-ok", int(ok));
+      setTxt("key-fail", int(fail));
+      // netting / gas amortisation (derived)
+      const gross = Number(t.count) || 0, bcast = Number(t.settleAttempts) || 0;
+      if (gross > 0 && bcast > 0) {
+        const fold = gross / bcast, avoided = 1 - bcast / gross;
+        setTxt("fold", fold.toFixed(2) + "×");
+        setTxt("fold-sub", int(gross) + " trades → " + int(bcast) + " broadcasts");
+        setTxt("avoid", pct(avoided));
+        $("nb-netted").style.width = Math.max(2, (bcast / gross) * 100).toFixed(1) + "%";
+        setTxt("nb-naive-v", int(gross) + " txs");
+        setTxt("nb-netted-v", int(bcast) + " txs");
+        $("net-note").innerHTML = "Without netting, <strong>" + int(gross) + "</strong> gross trades would each need their own on-chain transfer. "
+          + "Per-pair netting folded them into <strong>" + int(bcast) + "</strong> broadcasts (<strong>" + int(ok) + "</strong> mined) — "
+          + "<strong>" + pct(avoided) + "</strong> fewer on-chain transactions, so each tx's gas is amortised over ~" + fold.toFixed(2) + " trades instead of one. "
+          + "<em>This is the transaction-count reduction — the mechanism that amortises gas; murmur does not yet publish per-tx gas units.</em>";
+      } else {
+        setTxt("fold", "—"); setTxt("avoid", "—");
+      }
+    }
+
+    function renderSeries(h) {
+      const rowsAll = Array.isArray(h.rows) ? h.rows.slice().reverse() : []; // asc (oldest → newest)
+      const rows = downsample(rowsAll, 360);
+      const s = h.summary || {};
+      if (!rows.length) {
+        $("series-note").innerHTML = '<span class="err show" style="display:inline">history unavailable (D1 not bound or empty).</span>';
+        return;
+      }
+      const x0 = fmtTs(rows[0].ts), x1 = fmtTs(rows[rows.length - 1].ts);
+      const winLbl = rows.length + " crons · " + x0.slice(0, 10) + " → " + x1.slice(0, 10);
+      $("series-note").innerHTML = "From the independent per-cron D1 archive (<code>/history</code>) — showing the most recent <b>"
+        + int(rowsAll.length) + "</b> crons. One row per cron, separate from the live Durable-Object state, so these curves are cross-checkable against the on-chain receipts.";
+
+      // cumulative settlements
+      setTxt("sub-settle", "now " + int(s.settlements) + " · window +" + int(rows[rows.length - 1].settlements - rows[0].settlements));
+      $("ch-settle").innerHTML = lineChart(rows.map((r) => r.settlements), { color: "var(--ok)", fill: true, zero: false, x0, x1, aria: "cumulative on-chain settlements" });
+      // cumulative volume
+      setTxt("sub-vol", "now " + usdc(s.volumeUsdc));
+      $("ch-vol").innerHTML = lineChart(rows.map((r) => r.volumeUsdc), { color: "var(--accent)", fill: true, yFmt: (v) => compact(v), x0, x1, aria: "cumulative settled volume USDC" });
+      // deals per cron (bars) — use the full (undownsampled) recent rows for honest per-cron bars
+      const dealRows = rowsAll.slice(-360);
+      setTxt("sub-deals", "mean " + (dealRows.reduce((a, r) => a + (r.deals || 0), 0) / Math.max(1, dealRows.length)).toFixed(1) + " / cron");
+      $("ch-deals").innerHTML = barChart(dealRows.map((r) => r.deals), { color: "var(--get)", zero: true, x0: fmtTs(dealRows[0].ts), x1: fmtTs(dealRows[dealRows.length - 1].ts), aria: "gross trades per cron" });
+      // gini
+      setTxt("sub-gini", "now " + (Number.isFinite(rows[rows.length - 1].gini) ? rows[rows.length - 1].gini.toFixed(3) : "—"));
+      $("ch-gini").innerHTML = lineChart(rows.map((r) => r.gini), { color: "var(--warn)", yFmt: (v) => v.toFixed(2), x0, x1, aria: "wealth gini over time" });
+      // temperature with regime bands
+      const regimes = rows.map((r) => r.regime);
+      const lastRegime = regimes[regimes.length - 1] || "—";
+      setTxt("sub-temp", "regime now " + lastRegime + " · temp " + (Number.isFinite(rows[rows.length - 1].temperature) ? rows[rows.length - 1].temperature.toFixed(2) : "—"));
+      $("ch-temp").innerHTML = lineChart(rows.map((r) => r.temperature), {
+        color: "var(--paid)", yFmt: (v) => v.toFixed(2), x0, x1, aria: "arc market temperature with regime bands",
+        bandsFor: regimeBandsFor(regimes),
+      });
+
+      // uptime & liveness
+      const span = (Number(s.lastTs) || 0) - (Number(s.firstTs) || 0);
+      setTxt("window", fmtDur(span));
+      setTxt("window-sub", fmtTs(s.firstTs).slice(0, 16) + " → " + fmtTs(s.lastTs).slice(0, 16));
+      setTxt("crons", int(s.ticks));
+      setTxt("lasttick", "#" + int(s.lastTick));
+      setTxt("lasttick-sub", "archived " + ago(Date.now() - Number(s.lastTs)));
+      return winLbl;
+    }
+
+    function renderProvenance(p) {
+      if (!p || !p.enabled) { $("chainhead").textContent = "chain head · (provenance disabled)"; return; }
+      const latest = Array.isArray(p.proofs) && p.proofs[0] ? p.proofs[0] : null;
+      let line = "chain head <b>" + esc(shortHash(p.chainHead)) + "</b> · last <b>" + int(p.count) + "</b> receipts served";
+      if (latest) {
+        const rec = latest.receipt || {};
+        line += " · latest tick <b>#" + int(rec.tickIndex) + "</b> · commit <b>" + esc(shortHash(latest.commitTx)) + "</b>";
+      }
+      $("chainhead").innerHTML = line;
+    }
+
+    // ---------- poll loop (pauses when the tab is hidden — be a good citizen) ----------
+    async function refreshEcon() {
+      try { const d = await j("/economy?fields=light"); econAt = Date.now(); $("live").classList.remove("stale"); $("livetext").textContent = "live"; renderHeadline(d); }
+      catch (e) { if (!econAt) err("could not reach " + API + "/economy — " + e.message + ". The API may be unreachable from here."); }
+    }
+    async function refreshHist() {
+      try { const h = await j("/history?limit=" + HIST_LIMIT + "&order=desc"); histAt = Date.now(); renderSeries(h); }
+      catch (e) { /* history is best-effort; the headline still stands */ }
+    }
+    async function loadProvenance() {
+      try { renderProvenance(await j("/proofs")); } catch { $("chainhead").textContent = "chain head · (live anchor unavailable offline)"; }
+    }
+    async function refreshAll() { await Promise.all([refreshEcon(), refreshHist()]); }
+
+    let t = 0;
+    setInterval(() => {
+      t++;
+      if (econAt) $("ago").textContent = "updated " + ago(Date.now() - econAt);
+      if (document.hidden) return;
+      if (t % ECON_EVERY === 0) refreshEcon();
+      if (t % HIST_EVERY === 0) refreshHist();
+    }, 1000);
+    $("refresh").addEventListener("click", () => { t = 0; refreshAll(); loadProvenance(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshEcon(); if (t > HIST_EVERY) refreshHist(); } });
+
+    refreshAll();
+    loadProvenance();
+  </script>
+</body>
+</html>

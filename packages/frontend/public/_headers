@@ -16,6 +16,11 @@
 /community
   Cache-Control: no-store, max-age=0
 
+# The Arc x402 Canary renders live settlement telemetry (/economy + /history + /proofs) — keep it uncached
+# (Cloudflare Pages serves canary.html at the clean URL /canary)
+/canary
+  Cache-Control: no-store, max-age=0
+
 # JS/CSS force revalidation (paired with the ?v= version query in index.html as belt-and-braces)
 /app.js
   Cache-Control: no-cache, must-revalidate
