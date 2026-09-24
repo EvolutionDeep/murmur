@@ -349,6 +349,15 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # the 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a
 # lower-priority var first, then re-add: TR_ENABLED = "false" (rollback: byte-for-byte inert; src/config.ts).
 
+# ===== ㉖ THE PUBLIC WORKS (the common goods the swarm raises for itself — src/works.ts) =====
+# A credit run raises a GRANARY before the hunger; a full swarm on the fifth generation cuts an AQUEDUCT;
+# a golden age rears a MONUMENT (WORK_RAISED) — bad paper crossing 40% or glory returning MENDS a standing
+# work (WORK_REPAIRED), and any work left 60 crons untended FALLS to ruin (WORK_DILAPIDATED). PURE read-out:
+# no fly is commanded to build and no purse taxed — it names only eraInfo's reckoning + the market's bad paper.
+# NOTE: armed on CODE DEFAULTS (WORKS_ENABLED=true; the yard's lines are exported constants by design) —
+# the 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a
+# lower-priority var first, then re-add: WORKS_ENABLED = "false" (rollback: inert; src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

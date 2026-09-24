@@ -6857,4 +6857,97 @@ Object.assign(ja, jaTy);
 Object.assign(ko, koTy);
 Object.assign(ar, arTy);
 
+// ㉖ the public works — yard vocabulary in seven tongues (no work is built by a fly, taxed from a purse or fed to a wallet)
+const enWk = {
+  "vol.wkTitle": "the public works",
+  "vol.wkSub": "· raised, mended & fallen",
+  "tab.works.name": "The Public Works",
+  "tab.works.sub": "raised, mended & fallen",
+  "banner.works": "🏛 a public work rises",
+  "wk.head": "{raised} works raised · {repaired} mended · {dilapidated} fallen to ruin",
+  "wk.headTitle": "the yard's own roll — every line is an edge over eraInfo's reckoning and the market's bad paper the historian already keeps; no work is built by a fly, taxed from a purse or fed to a wallet",
+  "wk.row": "the {work} · raised in era {era}",
+  "wk.old": "ruins — {works}",
+  "wk.none": "no work stands — the commons has raised nothing yet",
+};
+const zhWk = {
+  "vol.wkTitle": "公共工程",
+  "vol.wkSub": "· 兴修、修缮与荒废",
+  "tab.works.name": "公共工程",
+  "tab.works.sub": "兴修、修缮与荒废",
+  "banner.works": "🏛 一桩公共工程兴起",
+  "wk.head": "兴修 {raised} 项 · 修缮 {repaired} 项 · 荒废 {dilapidated} 项",
+  "wk.headTitle": "工场自家的簿册——每一行都是对史家本已保存的纪元账量与市场坏账所数的边沿；无一工程由蝇建造、由钱袋纳税、由钱包喂养",
+  "wk.row": "{work} · 兴于第 {era} 纪元",
+  "wk.old": "残垣 —— {works}",
+  "wk.none": "无一工程在世 —— 公地尚未兴一物",
+};
+const frWk = {
+  "vol.wkTitle": "les travaux publics",
+  "vol.wkSub": "· bâtis, réparés & tombés",
+  "tab.works.name": "Les Travaux Publics",
+  "tab.works.sub": "bâtis, réparés & tombés",
+  "banner.works": "🏛 un ouvrage public s'élève",
+  "wk.head": "{raised} ouvrages bâtis · {repaired} réparés · {dilapidated} tombés en ruine",
+  "wk.headTitle": "le livre propre du chantier — chaque ligne est une lisière comptée sur l'évaluation d'eraInfo et le papier en souffrance que l'historien tient déjà ; aucun ouvrage n'est bâti par une mouche, taxé d'une bourse ni nourri d'un porte-monnaie",
+  "wk.row": "le {work} · bâti en l'ère {era}",
+  "wk.old": "ruines — {works}",
+  "wk.none": "nul ouvrage debout — le commun n'a rien bâti encore",
+};
+const esWk = {
+  "vol.wkTitle": "las obras públicas",
+  "vol.wkSub": "· alzadas, remendadas & caídas",
+  "tab.works.name": "Las Obras Públicas",
+  "tab.works.sub": "alzadas, remendadas & caídas",
+  "banner.works": "🏛 una obra pública se alza",
+  "wk.head": "{raised} obras alzadas · {repaired} remendadas · {dilapidated} caídas en ruina",
+  "wk.headTitle": "el libro propio del taller — cada línea es un borde contado sobre el computo de eraInfo y el papel moroso que el historiador ya guarda; ninguna obra la construye una mosca, la grava una bolsa ni la alimenta una cartera",
+  "wk.row": "el {work} · alzado en la era {era}",
+  "wk.old": "ruinas — {works}",
+  "wk.none": "ninguna obra en pie — el común aún no ha alzado nada",
+};
+const jaWk = {
+  "vol.wkTitle": "公共事業",
+  "vol.wkSub": "· 立て、修め、廃れ",
+  "tab.works.name": "公共事業",
+  "tab.works.sub": "立て、修め、廃れ",
+  "banner.works": "🏛 公の事業、立ち上がる",
+  "wk.head": "建て {raised} 件 · 修め {repaired} 件 · 廃 {dilapidated} 件",
+  "wk.headTitle": "現場自身の帳面——每一行は、史家がすでに保つ eraInfo の勘案と市場の不良手形に数えられし縁辺；いかなる事業も蠅が建てることなく、銭袋から課せられることなく、財布に養われることはない",
+  "wk.row": "{work} · 第 {era} 紀に立てらる",
+  "wk.old": "廃墟 —— {works}",
+  "wk.none": "立つ事業なし —— 公共はまだ何も立てず",
+};
+const koWk = {
+  "vol.wkTitle": "공공 토목",
+  "vol.wkSub": "· 세우고, 손보고, 무너지고",
+  "tab.works.name": "공공 토목",
+  "tab.works.sub": "세우고, 손보고, 무너지고",
+  "banner.works": "🏛 공공 토목이 솟는다",
+  "wk.head": "세움 {raised} 건 · 손봄 {repaired} 건 · 무픔 {dilapidated} 건",
+  "wk.headTitle": "현장 자신의 장부 — 모든 줄은 사관(史官)이 이미 간직하는 eraInfo의 헤아림과 시장의 부실 어음 위에 세운 모서리; 어떤 토목도 파리가 세우지 않고, 주머니에서 걷지 않으며, 지갑이 먹이지 않는다",
+  "wk.row": "{work} · 제 {era} 시대에 세워짐",
+  "wk.old": "폐허 — {works}",
+  "wk.none": "선 토목 없음 — 공동체가 아직 아무것도 세우지 않았다",
+};
+const arWk = {
+  "vol.wkTitle": "الأشغال العامّة",
+  "vol.wkSub": "· تُرفع وتُرمَّم وتخور",
+  "tab.works.name": "الأشغال العامّة",
+  "tab.works.sub": "تُرفع وتُرمَّم وتخور",
+  "banner.works": "🏛 يرتفع بناءٌ عامّ",
+  "wk.head": "{raised} عملاً رُفع · {repaired} رُمِّم · {dilapidated} خَرَّ إلى خراب",
+  "wk.headTitle": "دفتر الورشة نفسه — كلُّ سطرٍ حدٌّ يُعَدُّ على تقديرٍ للزمن ورقٍّ متعثّرٍ يحفظه المؤرِّخ سلفًا؛ لا ذبابةٌ تَبني العمل ولا محفظةٌ تُثقلها الضريبة ولا وعاءٌ يُطعمه",
+  "wk.row": "{work} · رُفع في الحقبة {era}",
+  "wk.old": "أطلال — {works}",
+  "wk.none": "لا عمل قائم — لم ترفع العامّة شيئًا بعد",
+};
+Object.assign(en, enWk);
+Object.assign(zh, zhWk);
+Object.assign(fr, frWk);
+Object.assign(es, esWk);
+Object.assign(ja, jaWk);
+Object.assign(ko, koWk);
+Object.assign(ar, arWk);
+
 export { en, zh, fr, es, ja, ko, ar };

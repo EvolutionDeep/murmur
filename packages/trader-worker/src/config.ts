@@ -264,6 +264,13 @@ export interface Env {
   //     seal moves no bond, commands no fly and touches no coffer; it only documents the bond series.
   TR_ENABLED?: string;                  // "true"/"false" (default TRUE)
 
+  // --- ㉖ THE PUBLIC WORKS: the common goods the swarm raises for itself — granary, aqueduct, monument (see src/works.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the yard's lines are constants (WK_AGE etc.), no knobs by design. The
+  //     master switch reads an env key. PURE read-out: no work is ever built by a fly or paid by a purse — the
+  //     roll only names what the eraInfo reckoning and the credit book already imply. WORKS_ENABLED=false ⇒
+  //     state.ts never constructs the membrane ⇒ the three WORK_* kinds can never speak (byte-for-byte rollback).
+  WORKS_ENABLED?: string;               // "true"/"false" (default TRUE)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -603,6 +610,9 @@ export interface RuntimeConfig {
   };
   treaty: {
     enabled: boolean;         // the chancery's lines are constants (TR_SIGN_AT etc.) — no knobs by design
+  };
+  works: {
+    enabled: boolean;         // the yard's lines are constants (WK_AGE etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1024,6 +1034,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     treaty: {
       enabled: (env.TR_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    works: {
+      enabled: (env.WORKS_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

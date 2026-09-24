@@ -157,7 +157,12 @@ export type ChronicleKind =
   //     outlives its probation is ratified, a grudge that sinks back to the war line breaks the seal.
   | "TREATY_SIGNED"
   | "TREATY_RATIFIED"
-  | "TREATY_BREACHED";
+  | "TREATY_BREACHED"
+  // ㉖ THE PUBLIC WORKS: the common goods the swarm raises for itself (works.ts) — a credit run raises a
+  //     granary, a golden age a monument, a full swarm's generation clock an aqueduct; time dilapidates them.
+  | "WORK_RAISED"
+  | "WORK_REPAIRED"
+  | "WORK_DILAPIDATED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -276,6 +281,9 @@ export interface ChronicleContext {
   /** ㉕ THE TREATY read-out (treaty.ts signals): this cron's seal, ratification and breach edges. Absent ⇒
    *  no TREATY_SIGNED/TREATY_RATIFIED/TREATY_BREACHED (TR_ENABLED=false never folds these in). */
   treaty?: ChronicleTreaty | null;
+  /** ㉖ THE PUBLIC WORKS read-out (works.ts signals): this cron's raising, repair and dilapidation edges. Absent ⇒
+   *  no WORK_RAISED/WORK_REPAIRED/WORK_DILAPIDATED (WORKS_ENABLED=false never folds these in). */
+  works?: ChronicleWorks | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -450,6 +458,25 @@ export interface ChronicleTreaty {
   /** The bond sank back to the war threshold under a live seal — the feud resumes where the ink stopped. */
   breached: { a: number; b: number; nameA: string; nameB: string; terms: number } | null;
   counts: { signed: number; ratified: number; breached: number; lived: number };
+}
+
+/** ㉖ THE PUBLIC WORKS: one cron's construction edges (works.ts; edges over the eraInfo reckoning and the
+ *  credit book the market already publishes — the membrane fires at most one edge per class per cron, so a
+ *  non-null facet IS news THIS cron and cannot replay). The `work` token is the kind as a bare enum noun
+ *  (granary/aqueduct/monument), like {status}/{regime} stay English. */
+export interface ChronicleWorkEdge {
+  kind: string;
+  era: number;
+  lived?: number;
+}
+export interface ChronicleWorks {
+  /** The commons breaks ground: a work raised this cron, and the age it was raised in. */
+  raised: ChronicleWorkEdge | null;
+  /** A standing work mended — the run deepening or the glory returning refreshed it. */
+  repaired: ChronicleWorkEdge | null;
+  /** A work fell to ruin unattended — the roll records how long it stood. */
+  dilapidated: ChronicleWorkEdge | null;
+  counts: { raised: number; repaired: number; dilapidated: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -657,6 +684,7 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉕ TREATY: the chancery only speaks edges (one seal per pair per cooldown, one ratification per seal,
   //     one breach per seal) — a breach must land fast (war is near), a ratification may savor the peace.
   TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60,
+  WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -806,6 +834,9 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   TREATY_SIGNED: "Two houses set their seals — {houseA} and {houseB} bury the feud under a treaty of {terms} clauses; era {era} has bled enough for both.",
   TREATY_RATIFIED: "The treaty holds — {houseA} and {houseB} have kept their {terms} clauses past the probation; what was signed in anger is ratified now in habit.",
   TREATY_BREACHED: "The seal is broken — {houseA} tears the treaty of {terms} clauses with {houseB}; the old feud resumes where the ink stopped.",
+WORK_RAISED: "The commons breaks ground — the {work} rises in era {era}: a thing the swarm owns together and no single purse paid for.",
+WORK_REPAIRED: "The {work} is mended — what the commons raised, the commons keeps; a public thing repaired is a society intending to stay.",
+WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no hand was sent to it; the decay is the ledger's own.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1721,6 +1752,25 @@ export class Chronicler {
         const br = tr.breached;
         out.push(await this.emit(ctx, "TREATY_BREACHED", 4, [br.a, br.b],
           { houseA: br.nameA, houseB: br.nameB, terms: br.terms }, { terms: br.terms }));
+      }
+    }
+
+    // ㉖ The Public Works: the common goods (works.ts signals, folded in ONLY while WORKS_ENABLED — off ⇒ no
+    //     `works` key ⇒ these three detectors never speak). The membrane fires at most one edge per class per
+    //     cron, so a non-null facet is news this cron. NO actors: a public work belongs to nobody and everybody.
+    const wk = ctx.works;
+    if (wk) {
+      if (wk.raised && this.ready("WORK_RAISED", ctx)) {
+        const r = wk.raised;
+        out.push(await this.emit(ctx, "WORK_RAISED", 3, [], { work: r.kind, era: r.era }, { era: r.era }));
+      }
+      if (wk.repaired && this.ready("WORK_REPAIRED", ctx)) {
+        const rp = wk.repaired;
+        out.push(await this.emit(ctx, "WORK_REPAIRED", 2, [], { work: rp.kind }, {}));
+      }
+      if (wk.dilapidated && this.ready("WORK_DILAPIDATED", ctx)) {
+        const d = wk.dilapidated;
+        out.push(await this.emit(ctx, "WORK_DILAPIDATED", 3, [], { work: d.kind, lived: d.lived ?? 0 }, { lived: d.lived ?? 0 }));
       }
     }
 

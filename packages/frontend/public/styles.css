@@ -750,6 +750,17 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .ty-row.ty-old { color: #6a5050; font-style: italic; }
 .ty-row.ty-none { color: var(--muted); font-style: italic; }
 
+/* ㉖ the public works (drawer volume): the yard's roll — raised, mended, fallen to ruin */
+.chron-works { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }
+.wk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.wk-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.wk-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.wk-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.wk-row.wk-head { color: var(--ink); }
+.wk-row.wk-live { color: #4a5a3a; }
+.wk-row.wk-old { color: #6a5050; font-style: italic; }
+.wk-row.wk-none { color: var(--muted); font-style: italic; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1863,6 +1874,8 @@ html[dir="rtl"] .lx-row,
 html[dir="rtl"] .rm-title,
 html[dir="rtl"] .rm-row,
 html[dir="rtl"] .ty-title,
-html[dir="rtl"] .ty-row {
+html[dir="rtl"] .ty-row,
+html[dir="rtl"] .wk-title,
+html[dir="rtl"] .wk-row {
   direction: rtl; text-align: right;
 }

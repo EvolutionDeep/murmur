@@ -73,6 +73,7 @@ import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js
 import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
+import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -137,6 +138,10 @@ const KEY_RUMOR = "rumor:v1";
  *  corrupt/absent blob restarts an empty chancery (no seal is back-dated), never ledger state.
  *  Bounded (≤ 6 active + 12 archived + a pruned cool map), DO-safe. */
 const KEY_TREATY = "treaty:v1";
+/** ㉖ The Public Works yard (the standing works, the ruin archive, the per-kind raise cool, counts) — its
+ *  OWN key: a corrupt/absent blob restarts an empty yard, never ledger state. Bounded (≤ 3 standing + 10
+ *  archived + a pruned cool map), DO-safe. */
+const KEY_WORKS = "works:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -256,6 +261,8 @@ export class FlyStateDO {
   private rumor: RumorMill | null = null;
   /** ㉕ The Treaty chancery (seals set, ratified, broken — the roll of formal peace) — null while TR_ENABLED=false (byte-for-byte inert). */
   private treaty: TreatyMembrane | null = null;
+  /** ㉖ The Public Works yard (granaries raised, monuments mended, aqueducts fallen) — null while WORKS_ENABLED=false (byte-for-byte inert). */
+  private works: WorksMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -617,6 +624,20 @@ export class FlyStateDO {
     this.treaty = new TreatyMembrane({ enabled: true });
     if (stored) this.treaty.restore(stored);
     return this.treaty;
+  }
+
+  /**
+   * ㉖ Lazily load the Works yard (null while WORKS_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts an empty yard: no work is back-dated, and with nothing standing the first
+   * round only documents a run or a glory already at its line. It can never poison the ledger.
+   */
+  private async ensureWorks(): Promise<WorksMembrane | null> {
+    if (!this.cfg.works.enabled) return null;
+    if (this.works) return this.works;
+    const stored = await this.state.storage.get<string>(KEY_WORKS);
+    this.works = new WorksMembrane({ enabled: true });
+    if (stored) this.works.restore(stored);
+    return this.works;
   }
 
   /**
@@ -1287,6 +1308,7 @@ export class FlyStateDO {
     if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
     if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
+    if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1714,6 +1736,9 @@ export class FlyStateDO {
       // ㉕ TREATY: fold the chancery's diplomatic edges ONLY while TR is on. Off ⇒ no `treaty` key ⇒ the
       // historian's three treaty detectors never speak (byte-for-byte the pre-Treaty build).
       const treaty = this.cfg.treaty.enabled ? this.treaty?.signals() ?? null : null;
+      // ㉖ WORKS: fold the yard's construction edges ONLY while WORKS is on. Off ⇒ no `works` key ⇒ the
+      // historian's three works detectors never speak (byte-for-byte the pre-Works build).
+      const works = this.cfg.works.enabled ? this.works?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1815,6 +1840,7 @@ export class FlyStateDO {
         lexicon,
         rumor,
         treaty,
+        works,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2110,6 +2136,32 @@ export class FlyStateDO {
       tr.round(tick, facts);
     } catch (e) {
       console.warn("[DO] treaty drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉖ THE PUBLIC WORKS — read the era's fortune and the credit book's dread and let the yard raise, mend
+   * or lose a common work. PURE read-out end to end, NO causal leg: no fly is commanded to build and no
+   * purse taxed — the roll only names what eraInfo's reckoning and the market's bad paper already imply.
+   * Best-effort: a public work can never break the live tick.
+   */
+  private async driveWorks(tick: number): Promise<void> {
+    const wk = await this.ensureWorks();
+    if (!wk) return;
+    try {
+      const info = this.chronicler ? this.chronicler.eraInfo() : null;
+      const snap = this.lastEconomy;
+      const facts: WorksFacts = {
+        era: info ? info.era : 0,
+        generation: info ? info.generation : 0,
+        civLevel: info ? info.civLevel : 0,
+        civPhase: info ? info.civPhase : "ascendant",
+        size: snap ? snap.agents.filter((a) => !a.dead).length : 0,
+        credit: snap?.market ? { run: snap.market.run, badRate: snap.market.badRate } : null,
+      };
+      wk.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] works drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2602,6 +2654,10 @@ export class FlyStateDO {
     // over — pure read-out end to end, no causal leg, no override anywhere. No economy (cold) ⇒ no drive.
     if (economy) await this.driveTreaty(economy, swarm.getTickIndex());
 
+    // ㉖ THE PUBLIC WORKS rides after the chancery: it reads eraInfo's civilizational reckoning and the
+    // market's bad paper — pure read-out, no causal leg, and no economy required (a cold swarm simply thirsts less).
+    await this.driveWorks(swarm.getTickIndex());
+
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
@@ -2916,6 +2972,8 @@ export class FlyStateDO {
       if (rumor) (economy as { rumor?: unknown }).rumor = rumor;
       const treaty = await this.treatyReadout();
       if (treaty) (economy as { treaty?: unknown }).treaty = treaty;
+      const works = await this.worksReadout();
+      if (works) (economy as { works?: unknown }).works = works;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2989,7 +3047,8 @@ export class FlyStateDO {
     const lexicon = await this.lexiconReadout();
     const rumor = await this.rumorReadout();
     const treaty = await this.treatyReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty) return json(snap);
+    const works = await this.worksReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -3002,6 +3061,7 @@ export class FlyStateDO {
       ...(lexicon ? { lexicon } : null),
       ...(rumor ? { rumor } : null),
       ...(treaty ? { treaty } : null),
+      ...(works ? { works } : null),
     });
   }
 
@@ -3145,6 +3205,13 @@ export class FlyStateDO {
     const tr = await this.ensureTreaty();
     if (!tr) return null;
     return tr.signals();
+  }
+
+  /** ㉖ The public works read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Works build). */
+  private async worksReadout(): Promise<WorksSignals | null> {
+    const wk = await this.ensureWorks();
+    if (!wk) return null;
+    return wk.signals();
   }
 
   /**
@@ -4151,6 +4218,7 @@ export class FlyStateDO {
     this.lexicon = null;   // ㉓ and the lexicon: every coined, spread and buried word is unremembered with everything else
     this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
     this.treaty = null;    // ㉕ and the chancery: every seal set, ratified or broken is void with everything else
+    this.works = null;     // ㉖ and the yard: every work raised, mended or lost to ruin is un-built with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -4173,6 +4241,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_LEXICON);
     await this.state.storage.delete(KEY_RUMOR);
     await this.state.storage.delete(KEY_TREATY);
+    await this.state.storage.delete(KEY_WORKS);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

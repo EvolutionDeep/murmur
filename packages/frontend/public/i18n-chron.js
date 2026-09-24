@@ -95,6 +95,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   TREATY_SIGNED: "两家落印 —— {houseA} 与 {houseB} 将世仇葬于一纸 {terms} 款之约；第 {era} 纪元，两家血流得都够了。",
   TREATY_RATIFIED: "条约守住了 —— {houseA} 与 {houseB} 将这 {terms} 款越过观察之期；怒中所签，今以习常而批准。",
   TREATY_BREACHED: "印信已毁 —— {houseA} 撕毁与 {houseB} 的 {terms} 款之约；旧仇自墨尽之处续起。",
+  WORK_RAISED: "公众动工 —— 公共的 {work} 在第 {era} 纪元竖起：全群共有之物，却无一只钱袋为它付过账。",
+  WORK_REPAIRED: "{work} 被修补 —— 公众所建，公众守之；一件公物被修补，是一个社会决意长住的证明。",
+  WORK_DILAPIDATED: "{work} 沦为残垣 —— 它立了 {lived} 遍钟点而无人伸手；这衰朽是账册自己的。",
 };
 
 const fr = {
@@ -182,6 +185,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   TREATY_SIGNED: "Deux maisons posent leurs sceaux — {houseA} et {houseB} enterrent la vendetta sous un traité de {terms} clauses ; l'ère {era} a saigné assez pour elles deux.",
   TREATY_RATIFIED: "Le traité tient — {houseA} et {houseB} ont gardé leurs {terms} clauses au-delà de l'épreuve ; ce qui fut signé dans la colère est ratifié dans l'habitude.",
   TREATY_BREACHED: "Le sceau est brisé — {houseA} déchire le traité de {terms} clauses qui le liait à {houseB} ; la vieille vendetta reprend où l'encre s'est arrêtée.",
+  WORK_RAISED: "Le commun perce la terre — le {work} s'élève en l'ère {era} : une chose que l'essaim possède ensemble et qu'aucune bourse seule a payée.",
+  WORK_REPAIRED: "Le {work} est réparé — ce que le commun a bâti, le commun l'entretient ; une chose publique remise est une société qui compte rester.",
+  WORK_DILAPIDATED: "Le {work} tombe en ruine — {lived} crons il a tenu et nulle main ne fut envoyée ; la décrépitude est au registre lui-même.",
 };
 
 const es = {
@@ -269,6 +275,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   TREATY_SIGNED: "Dos casas ponen sus sellos — {houseA} y {houseB} entierran la vendetta bajo un tratado de {terms} cláusulas; la era {era} ha sangrado bastante para ambas.",
   TREATY_RATIFIED: "El tratado se mantiene — {houseA} y {houseB} han guardado sus {terms} cláusulas más allá de la prueba; lo firmado en ira se ratifica ahora en hábito.",
   TREATY_BREACHED: "El sello está roto — {houseA} rasga el tratado de {terms} cláusulas con {houseB}; la vieja vendetta se reanuda donde la tinta se detuvo.",
+  WORK_RAISED: "El común rompe tierra — el {work} se alza en la era {era}: una cosa que el enjambre posee junto y ninguna bolsa sola pagó.",
+  WORK_REPAIRED: "El {work} se repara — lo que el común alzó, el común lo cuida; una cosa pública remendada es una sociedad que intenta quedarse.",
+  WORK_DILAPIDATED: "El {work} cae en ruina — {lived} crones estuvo en pie y ninguna mano fue enviada a él; la decadencia es del registro mismo.",
 };
 
 const ja = {
@@ -356,6 +365,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   TREATY_SIGNED: "二つの家、印を押す —— {houseA} と {houseB} 、世怨を {terms} 条の約の下に葬る；第 {era} 紀、両家ともに出血はすでに十分なり。",
   TREATY_RATIFIED: "条約は持つ —— {houseA} と {houseB} 、その {terms} 条を観望の期間を越えて守りぬ；怒中に調印されしものは、今や習いとして批准さる。",
   TREATY_BREACHED: "印、破らる —— {houseA} 、{houseB} との {terms} 条の約を裂く；旧怨はインク尽きたるところより再開す。",
+  WORK_RAISED: "公共が礎を置く —— {work}は第 {era} 紀に立てらる：群れ皆で所有しつつ、ただ一つの銭袋も代価を払わざりしもの。",
+  WORK_REPAIRED: "{work}は修めらる —— 公共が立てしものを公共が守る；公物修めらるるは、留まらんと誓う社会の証なり。",
+  WORK_DILAPIDATED: "{work}は廃と化す —— {lived} クロン立ちたりしも、手を差し伸ぶる者なし；この衰えは帳簿自身のものなり。",
 };
 
 const ko = {
@@ -443,6 +455,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   TREATY_SIGNED: "두 가문이 인장을 찍는다 — {houseA} 와 {houseB} , {terms}개 조항의 조약 아래 대대적 골을 묻는다; 제 {era} 시대, 두 가문 모두 흘릴 만큼 흘렸다.",
   TREATY_RATIFIED: "조약은 버틴다 — {houseA} 와 {houseB} , 그 {terms}개 조항을 유예의 강을 넘어 지켰다; 분필에 서명된 것이 이제 습관에 비준된다.",
   TREATY_BREACHED: "인장이 깨졌다 — {houseA} , {houseB} 와의 {terms}개 조항의 조약을 찢는다; 옛 골은 먹이 마친 자리에서 다시 시작된다.",
+  WORK_RAISED: "공동체가 땅을 판다 — {work}이(가) 제 {era} 시대에 솟는다; 무리가 함께 소유하나 아무 주머니도 값을 치르지 않은 것.",
+  WORK_REPAIRED: "{work}이(가) 손본다 — 공동체가 세운 것을 공동체가 지킨다; 고쳐지는 공물은 머물고자 하는 사회의 표지다.",
+  WORK_DILAPIDATED: "{work}이(가) 폐허로 무너진다 — {lived} 크론을 섰으나 손길 없었으니; 그 쇠퇴는 대장부가 스스로 쓴 것이다.",
 };
 
 const ar = {
@@ -530,6 +545,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   TREATY_SIGNED: "دارٌ تضعان أختامهما — {houseA} و{houseB} يدفنان الثأر تحت معاهدةٍ من {terms} بندًا؛ حقبةُ {era} أُريفت منها الدماء ما يكفيهما.",
   TREATY_RATIFIED: "المعاهدة تصمد — {houseA} و{houseB} حفِظا بنودهما الـ{terms} بعد امتحانها؛ وما وُقِع في الغضب يُصدَّق الآن في العادة.",
   TREATY_BREACHED: "الختم انكسر — {houseA} يمزّق معاهدةَ البنودِ الـ{terms} مع {houseB}؛ والثأر القديم يُستأنف من حيث توقف الحبر.",
+  WORK_RAISED: "العامّة تشقّ الأرض — {work} يُقام في الحقبة {era}: ملكٌ للسابلة كلِّهم لم تدفع له محفظةٌ واحدة.",
+  WORK_REPAIRED: "{work} يُرمَّم — ما رفعته العامّة تحفظه العامّة؛ شيءٌ عامٌّ مرمّم هو مجتمعٌ ينوي البقاء.",
+  WORK_DILAPIDATED: "{work} ينهار إلى خراب — {lived} دورةٍ قام ولم تُرسَل إليه يد؛ وهذا الأفول من السجلّ نفسه.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

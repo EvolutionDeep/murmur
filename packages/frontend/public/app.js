@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=91";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=92";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -325,6 +325,7 @@ let econGuilds = null;      // ㉒ the guilds read-out {charter,pact,monopoly,ro
 let econLexicon = null;     // ㉓ the lexicon read-out {coinage,spread,dying,lexicon[],dead[],counts} — words the tellings made
 let econRumor = null;       // ㉔ the rumor mill read-out {afoot,bent,faded,active,counts,echo} — the tale that carries itself
 let econTreaty = null;      // ㉕ the treaty read-out {signed,ratified,breached,active[],archive[],counts} — seals between houses
+let econWorks = null;       // ㉖ the public works read-out {raised,repaired,dilapidated,active[],archive[],counts} — the common goods
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -1894,6 +1895,13 @@ function spawnChronFx(e) {
     if (e.kind === "TREATY_RATIFIED") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
     else chronFx.push({ kind: "law", t0: now, dur: 3000 });
     setBanner(T("banner.treaty"), ct(e.kind, t), LAW_GOLD);
+  } else if (e.kind === "WORK_RAISED" || e.kind === "WORK_REPAIRED" || e.kind === "WORK_DILAPIDATED") {
+    // ㉖ the public works: breaking ground washes the field in the warm holy tint (a commons raising a thing
+    // nobody owns alone is the closest the swarm gets to a harvest); a mending or a fall ripples law-gold.
+    const t = e.tokens || {};
+    if (e.kind === "WORK_RAISED") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
+    else chronFx.push({ kind: "law", t0: now, dur: 3000 });
+    setBanner(T("banner.works"), ct(e.kind, t), LAW_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -3383,6 +3391,7 @@ function applyEconomy(econ) {
   if (econ.lexicon) { econLexicon = econ.lexicon; renderLexSection(); }
   if (econ.rumor) { econRumor = econ.rumor; renderRumorSection(); }
   if (econ.treaty) { econTreaty = econ.treaty; renderTreatySection(); }
+  if (econ.works) { econWorks = econ.works; renderWorksSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -4446,6 +4455,53 @@ function renderTreatySection() {
   }
 }
 
+// ================= ㉖ the public works section (raised, mended, fallen — the roll of common goods) =================
+// A plain-language read-out of works.ts: the lifetime tally (works raised, mended, lost to ruin), the
+// STANDING yard (which work, raised in which era) and the ruins. PURE read-out end to end — no work is
+// built by a fly or paid by a purse; the honesty note lives in the head title. {work} is a membrane enum
+// (granary/aqueduct/monument) and stays English raw, the project's convention. The volume hides while /economy ships no works key.
+function renderWorksSection() {
+  const host = $("chron-works");
+  const body = $("wk-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="works"]');
+  const u = econWorks;
+  if (!u || !u.counts) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+  const n = u.counts;
+  const head = document.createElement("div");
+  head.className = "wk-row wk-head";
+  head.textContent = T("wk.head", { raised: n.raised, repaired: n.repaired, dilapidated: n.dilapidated });
+  head.title = T("wk.headTitle");
+  body.appendChild(head);
+  const rows = u.active || [];
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "wk-row wk-live";
+    row.textContent = T("wk.row", { work: r.kind, era: r.raisedEra });
+    body.appendChild(row);
+  }
+  const ended = (u.archive || []).filter((s) => s && s.kind);
+  if (ended.length) {
+    const old = document.createElement("div");
+    old.className = "wk-row wk-old";
+    old.textContent = T("wk.old", { works: ended.map((s) => `${s.kind} \u00b7 era ${s.raisedEra} \u00b7 ${s.end}`).join("  \u2023  ") });
+    body.appendChild(old);
+  }
+  if (!rows.length) {
+    const none = document.createElement("div");
+    none.className = "wk-row wk-none";
+    none.textContent = T("wk.none");
+    body.appendChild(none);
+  }
+}
+
 // Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
 function fmtMurCompact(n) {
   n = Number(n) || 0;
@@ -4659,6 +4715,7 @@ function openWallets() {
       if (e.lexicon) { econLexicon = e.lexicon; renderLexSection(); }
   if (e.rumor) { econRumor = e.rumor; renderRumorSection(); }
   if (e.treaty) { econTreaty = e.treaty; renderTreatySection(); }
+  if (e.works) { econWorks = e.works; renderWorksSection(); }
   }).catch(() => {});
 }
 
@@ -5212,6 +5269,7 @@ const CHRON_ICONS = {
   COINAGE: "✍", WORD_SPREAD: "❈", WORD_DIES: "✒",
   RUMOR_AFOOT: "🪶", RUMOR_BENT: "🌀", RUMOR_FADED: "🤫",
   TREATY_SIGNED: "📜", TREATY_RATIFIED: "🕊", TREATY_BREACHED: "⚔",
+  WORK_RAISED: "🏛", WORK_REPAIRED: "🔧", WORK_DILAPIDATED: "🏚",
 };
 
 function renderChron() {
@@ -5411,13 +5469,16 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     TREATY_SIGNED: "Two houses set their seals — {houseA} and {houseB} bury the feud under a treaty of {terms} clauses; era {era} has bled enough for both.",
     TREATY_RATIFIED: "The treaty holds — {houseA} and {houseB} have kept their {terms} clauses past the probation; what was signed in anger is ratified now in habit.",
     TREATY_BREACHED: "The seal is broken — {houseA} tears the treaty of {terms} clauses with {houseB}; the old feud resumes where the ink stopped.",
+    WORK_RAISED: "The commons breaks ground — the {work} rises in era {era}: a thing the swarm owns together and no single purse paid for.",
+    WORK_REPAIRED: "The {work} is mended — what the commons raised, the commons keeps; a public thing repaired is a society intending to stay.",
+    WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no hand was sent to it; the decay is the ledger's own.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60, WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -7159,6 +7220,7 @@ async function poll() {
     if (econ.lexicon) { econLexicon = econ.lexicon; renderLexSection(); }
     if (econ.rumor) { econRumor = econ.rumor; renderRumorSection(); }
     if (econ.treaty) { econTreaty = econ.treaty; renderTreatySection(); }
+    if (econ.works) { econWorks = econ.works; renderWorksSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -7841,7 +7903,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderGuildSection(); renderLexSection(); renderRumorSection(); renderTreatySection(); renderBourseSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderGuildSection(); renderLexSection(); renderRumorSection(); renderTreatySection(); renderWorksSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

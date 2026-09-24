@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=91" />
+  <link rel="stylesheet" href="./styles.css?v=92" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -154,6 +154,7 @@
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="lexicon" hidden><span class="ct-ico">❈</span><span class="ct-name" data-i18n="tab.lexicon.name">The Lexicon</span><span class="ct-sub" data-i18n="tab.lexicon.sub">coinages, spreads &amp; silences</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="rumor" hidden><span class="ct-ico">🪶</span><span class="ct-name" data-i18n="tab.rumor.name">The Rumor Mill</span><span class="ct-sub" data-i18n="tab.rumor.sub">tales afoot, bent &amp; quiet</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="treaty" hidden><span class="ct-ico">📜</span><span class="ct-name" data-i18n="tab.treaty.name">The Treaty</span><span class="ct-sub" data-i18n="tab.treaty.sub">seals set, ratified &amp; broken</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="works" hidden><span class="ct-ico">🏛</span><span class="ct-name" data-i18n="tab.works.name">The Public Works</span><span class="ct-sub" data-i18n="tab.works.sub">raised, mended &amp; fallen</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="tech"><span class="ct-ico">✵</span><span class="ct-name" data-i18n="tab.tech.name">The Ladder of Arts</span><span class="ct-sub" data-i18n="tab.tech.sub">inventions, customs &amp; forgotten arts</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="cities"><span class="ct-ico">♜</span><span class="ct-name" data-i18n="tab.cities.name">The Named Places</span><span class="ct-sub" data-i18n="tab.cities.sub">hamlets, towns &amp; the census</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="war" hidden><span class="ct-ico">⚑</span><span class="ct-name" data-i18n="tab.war.name">The War Coffer</span><span class="ct-sub" data-i18n="tab.war.sub">on-chain vaults, bouts &amp; the tax purse</span></button>
@@ -263,6 +264,16 @@
       <div class="chron-treaty" id="chron-treaty" hidden>
         <div class="ty-title"><span data-i18n="vol.tyTitle">the treaty chancery</span> <em data-i18n="vol.tySub">· seals set, ratified &amp; broken</em></div>
         <div class="ty-body" id="ty-body"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="works">
+      <!-- ㉖ the public works: the common goods the swarm raises for itself — a credit run raises a granary,
+           a golden age a monument, a full swarm's generation clock an aqueduct; time dilapidates them (a pure
+           read-out of works.ts over eraInfo's reckoning + the market's bad paper). NO causal leg: no work is
+           built by a fly, taxed from a purse or fed to a wallet — the roll only names the commons. -->
+      <div class="chron-works" id="chron-works" hidden>
+        <div class="wk-title"><span data-i18n="vol.wkTitle">the public works</span> <em data-i18n="vol.wkSub">· raised, mended &amp; fallen</em></div>
+        <div class="wk-body" id="wk-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="tech">
@@ -568,6 +579,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=105" type="module"></script>
+  <script src="./app.js?v=106" type="module"></script>
 </body>
 </html>
