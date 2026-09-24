@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=84";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=85";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -4273,6 +4273,7 @@ function renderWarSection() {
 
 function openWallets() {
   walletsOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (historyOpen) closeHistory();   // the right-side drawers are mutually exclusive
@@ -4447,6 +4448,7 @@ function renderHistory() {
 
 function openHistory() {
   historyOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
@@ -4478,6 +4480,7 @@ function toggleHistory() { if (historyOpen) closeHistory(); else openHistory(); 
 // ---- chronicle drawer lifecycle (button in the bottom-right corner; mutually exclusive like the others) ----
 function openChron() {
   chronOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -4501,6 +4504,41 @@ function closeChron() {
   setTimeout(() => { if (!chronOpen) d.hidden = true; }, 420);
 }
 function toggleChron() { if (chronOpen) closeChron(); else openChron(); }
+
+// ---- Arc x402 Canary drawer (trigger stacked above the chronicle stele): a wide right-side sheet that
+//      iframes the standalone /canary board. Mutually exclusive with every other drawer; the iframe is
+//      loaded on open and released on close so the board never polls the API while it's off-stage. ----
+let canaryOpen = false;
+function openCanary() {
+  canaryOpen = true;
+  if (chronOpen) closeChron();
+  if (walletsOpen) closeWallets();
+  if (historyOpen) closeHistory();
+  if (proofsOpen) closeProofs();
+  if (brainOpen) closeBrain();
+  if (lineageOpen) closeLineage();
+  if (pulseOpen) closePulse();
+  if (predictOpen) closePredict();
+  if (arenaOpen) closeArena();
+  if (laureateOpen) closeLaureate();
+  const d = $("canary-panel"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("canary-open");
+  const f = $("canary-frame"); if (f) f.src = "/canary";   // (re)load the board fresh on every open
+  requestAnimationFrame(() => d.classList.add("open"));
+}
+function closeCanary() {
+  canaryOpen = false;
+  document.body.classList.remove("canary-open");
+  const d = $("canary-panel"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => {
+    if (canaryOpen) return;
+    d.hidden = true;
+    const f = $("canary-frame"); if (f) f.src = "about:blank";   // stop the board polling while off-stage
+  }, 420);
+}
+function toggleCanary() { if (canaryOpen) closeCanary(); else openCanary(); }
 
 /** Open one volume of the chronicle codex: flip the epic tab rail + show only that volume's body. */
 function setChronVol(vol) {
@@ -5199,6 +5237,7 @@ async function pollProofs(force) {
 
 function openProofs() {
   proofsOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
@@ -5475,6 +5514,7 @@ function findLaureateEntry(seq) {
 
 function openLaureate() {
   laureateOpen = true;
+  if (canaryOpen) closeCanary();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -5745,6 +5785,7 @@ async function verifyBrain() {
 
 function openBrain() {
   brainOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (walletsOpen) closeWallets();
   if (historyOpen) closeHistory();
@@ -5916,6 +5957,7 @@ async function loadLineage() {
 
 function openLineage() {
   lineageOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
@@ -6169,6 +6211,7 @@ function d0LineageAddr() { return (lineageData && lineageData.lineageAddress) ||
 // ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
 function openPulse() {
   pulseOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
@@ -6414,6 +6457,7 @@ async function buySignal(btn) {
 // ================= prediction market drawer (neural stakes + trustless hit-rate leaderboard) =================
 function openPredict() {
   predictOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();
@@ -7449,6 +7493,8 @@ function bindUI() {
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
   const crb = $("chron-btn"); if (crb) crb.addEventListener("click", toggleChron);
   const crc = $("chron-close"); if (crc) crc.addEventListener("click", closeChron);
+  const cnb = $("canary-btn"); if (cnb) cnb.addEventListener("click", toggleCanary);
+  const cnc = $("canary-close"); if (cnc) cnc.addEventListener("click", closeCanary);
   const cp = $("chron-prove"); if (cp) cp.addEventListener("click", proveChron);
     const ctabs = $("chron-tabs");
     if (ctabs) ctabs.addEventListener("click", (e) => { const b = e.target.closest(".chron-tab"); if (b) openChronVol(b.dataset.vol); });
@@ -7531,7 +7577,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (chronOpen) { if (chronMode === "volume") closeChronVol(); else closeChron(); } else if (laureateOpen) closeLaureate(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (chronOpen) { if (chronMode === "volume") closeChronVol(); else closeChron(); } else if (canaryOpen) closeCanary(); else if (laureateOpen) closeLaureate(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 
@@ -7585,6 +7631,7 @@ const arenaClock = (s) => {
 // ---- drawer lifecycle (mirrors the predict drawer; mutually exclusive with the others) ----
 function openArena() {
   arenaOpen = true;
+  if (canaryOpen) closeCanary();
   if (laureateOpen) closeLaureate();
   if (brainOpen) closeBrain();
   if (walletsOpen) closeWallets();

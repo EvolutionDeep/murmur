@@ -936,6 +936,48 @@ body.history-open .panel-pop, body.chron-open .panel-pop { opacity: 0.1; pointer
 @media (prefers-reduced-motion: reduce) { .chron-btn { animation: none; } }
 /* the trigger bows out while the drawer is on stage, or when the inspector claims the bottom edge */
 body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-events: none; }
+
+/* ============ the Arc x402 Canary trigger + drawer ============
+   The trigger is an accent pill stacked directly above the dark chronicle stele (bottom-right), so the live
+   settlement board is one obvious tap away instead of buried behind /developers. It reads as "live telemetry"
+   (a blipping gem + a breathing label) — visually secondary to the chronicle, but unmistakably present. */
+.canary-btn {
+  position: fixed; z-index: 6; right: var(--pad); bottom: calc(var(--pad) + 118px);
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-width: 212px; padding: 11px 24px 10px;
+  font-family: var(--mono); color: var(--ink);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.22), rgba(var(--accent-rgb), 0.09));
+  border: 1px solid rgba(var(--accent-rgb), 0.85); border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(var(--ink-rgb), 0.16);
+  backdrop-filter: blur(3px); cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease, opacity 0.25s ease;
+}
+.canary-btn:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 10px 28px rgba(var(--ink-rgb), 0.22); }
+.canary-btn:active { transform: translateY(1px); }
+.canary-orn { font-size: 13px; line-height: 1; color: var(--accent); animation: canary-blip 2.6s ease-in-out infinite; }
+.canary-word { font-family: var(--display); font-weight: 600; font-size: 19px; line-height: 1.15; letter-spacing: 0.14em; text-transform: uppercase; }
+.canary-badge { font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-top: 3px; }
+@keyframes canary-blip { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .canary-orn { animation: none; } }
+/* the trigger bows out while the canary sheet, the chronicle, or the inspector owns the stage; the chronicle
+   stele bows out too while the wide canary sheet covers the corner */
+body.canary-open .canary-btn, body.chron-open .canary-btn, body.ins-open .canary-btn { opacity: 0; pointer-events: none; }
+body.canary-open .chron-btn { opacity: 0; pointer-events: none; }
+body.canary-open .panel-pop, body.canary-open .panel-econ, body.canary-open .panel-temp { opacity: 0.1; pointer-events: none; }
+
+/* the canary drawer is a WIDE sheet (the board carries multi-column stat grids + charts); its body is a bare
+   edge-to-edge iframe of /canary — no padding, the embedded page scrolls itself */
+.drawer.panel-canary { width: clamp(340px, 90vw, 1040px); }
+.panel-canary .drawer-head { align-items: center; }
+.panel-canary .drawer-body.canary-body { padding: 0; overflow: hidden; }
+.canary-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--paper); }
+.canary-pop {
+  flex: none; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent); text-decoration: none; white-space: nowrap;
+  border: 1px solid var(--hair); border-radius: 999px; padding: 3px 10px;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.canary-pop:hover { color: var(--ink); border-color: rgba(var(--accent-rgb), 0.7); background: rgba(var(--accent-rgb), 0.12); }
 .panel-chron .chron-era { margin: 0 0 8px; padding: 7px 9px; gap: 6px; flex: none; }
 .panel-chron .chron-era-name { font-size: 14px; }
 .panel-chron .chron-verify-bar { margin: 0 0 8px; flex: none; }
@@ -1639,7 +1681,7 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   /* first panel clears the (wrapping) pinned topbar and leaves a band of artwork above it */
   .panel-econ { margin-top: clamp(96px, 20vh, 220px); }
   /* last panel in the column must clear the fixed bottom dock (Chronicle pill + layer toggles) */
-  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 148px); }
+  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 160px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
@@ -1658,6 +1700,9 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   /* right-side drawers widen toward near-full-width sheets on a narrow screen (Chronicle included) */
   .wallets { width: min(94vw, 372px); }
   .drawer { width: min(96vw, 440px); }
+  .drawer.panel-canary { width: min(98vw, 1040px); }
+  .panel-canary .drawer-sub { display: none; }
+  .panel-canary .canary-pop { margin-left: auto; }
   .drawer-head { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); }
 
   /* the Chronicle trigger becomes a compact centred pill docked above the safe area — always
@@ -1672,11 +1717,22 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   .chron-btn .chron-orn { margin-left: 0; }
   .chron-btn .chron-badge { display: none; }
 
+  /* the Canary trigger joins the bottom dock as a compact centred pill directly above the Chronicle pill
+     (dock order, bottom → top: Chronicle +12 · Canary +58 · layer toggles +104) */
+  .canary-btn {
+    left: 0; right: 0; margin-inline: auto; width: max-content; max-width: 92vw;
+    min-width: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 58px);
+    flex-direction: row; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 20px; z-index: 20; border-radius: 999px;
+  }
+  .canary-btn .canary-word { font-size: 15px; letter-spacing: 0.1em; }
+  .canary-btn .canary-badge { display: none; }
+
   /* ambient layer switches dock as a single centred row directly above the Chronicle pill */
   .layer-toggles {
     left: 0; right: 0; margin-inline: auto; transform: none; top: auto;
     width: max-content; max-width: 94vw;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);
     z-index: 20; justify-content: center;
   }
   .layer-toggles .layer-btn { padding: 7px 12px; }

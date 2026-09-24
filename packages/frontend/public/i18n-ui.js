@@ -6129,4 +6129,78 @@ Object.assign(ja, jaChron);
 Object.assign(ko, koChron);
 Object.assign(ar, arChron);
 
+// The Arc x402 Canary drawer (homepage): the trigger pill + the drawer chrome. "Arc" / "x402" / "Canary"
+// are brand + protocol tokens and stay put; only the human-readable parts translate. Symmetric across all
+// seven languages (en/zh/fr/es/ja/ko/ar) — keep the key set identical when editing.
+const enCanary = {
+  "canary.word": "Canary",
+  "canary.badge": "live x402 telemetry",
+  "canary.openTitle": "The Arc x402 Canary — live, read-only telemetry for the swarm's real-money x402 settlement rail on Arc mainnet",
+  "canary.title": "The Arc x402 Canary",
+  "canary.sub": "live x402 settlement telemetry",
+  "canary.popout": "open full board ↗",
+  "canary.aria": "the Arc x402 canary — live settlement telemetry",
+};
+const zhCanary = {
+  "canary.word": "金丝雀",
+  "canary.badge": "x402 实时遥测",
+  "canary.openTitle": "Arc x402 金丝雀——蜂群在 Arc 主网上真钱 x402 结算轨的实时只读遥测",
+  "canary.title": "Arc x402 金丝雀",
+  "canary.sub": "x402 实时结算遥测",
+  "canary.popout": "打开完整看板 ↗",
+  "canary.aria": "Arc x402 金丝雀——实时结算遥测",
+};
+const frCanary = {
+  "canary.word": "Canari",
+  "canary.badge": "télémétrie x402 en direct",
+  "canary.openTitle": "Le Canari x402 d'Arc — télémétrie en direct et en lecture seule du rail de règlement x402 à argent réel de l'essaim sur Arc mainnet",
+  "canary.title": "Le Canari x402 d'Arc",
+  "canary.sub": "télémétrie de règlement x402 en direct",
+  "canary.popout": "ouvrir le tableau complet ↗",
+  "canary.aria": "le canari x402 d'Arc — télémétrie de règlement en direct",
+};
+const esCanary = {
+  "canary.word": "Canario",
+  "canary.badge": "telemetría x402 en vivo",
+  "canary.openTitle": "El Canario x402 de Arc — telemetría en vivo de solo lectura del rail de liquidación x402 con dinero real del enjambre en Arc mainnet",
+  "canary.title": "El Canario x402 de Arc",
+  "canary.sub": "telemetría de liquidación x402 en vivo",
+  "canary.popout": "abrir el panel completo ↗",
+  "canary.aria": "el canario x402 de Arc — telemetría de liquidación en vivo",
+};
+const jaCanary = {
+  "canary.word": "カナリア",
+  "canary.badge": "x402 ライブテレメトリ",
+  "canary.openTitle": "Arc x402 カナリア——Arc メインネット上の群れの実銭 x402 決済レール、そのライブ読み取り専用テレメトリ",
+  "canary.title": "Arc x402 カナリア",
+  "canary.sub": "x402 決済テレメトリ（ライブ）",
+  "canary.popout": "フルボードを開く ↗",
+  "canary.aria": "Arc x402 カナリア——ライブ決済テレメトリ",
+};
+const koCanary = {
+  "canary.word": "카나리아",
+  "canary.badge": "x402 실시간 텔레메트리",
+  "canary.openTitle": "Arc x402 카나리아 — Arc 메인넷에서 스웜의 실자금 x402 결제 레일에 대한 실시간 읽기 전용 텔레메트리",
+  "canary.title": "Arc x402 카나리아",
+  "canary.sub": "x402 실시간 결제 텔레메트리",
+  "canary.popout": "전체 보드 열기 ↗",
+  "canary.aria": "Arc x402 카나리아 — 실시간 결제 텔레메트리",
+};
+const arCanary = {
+  "canary.word": "الكناري",
+  "canary.badge": "قياسات x402 مباشرة",
+  "canary.openTitle": "كناري Arc x402 — قياسات مباشرة للقراءة فقط لمسار تسوية x402 بأموال حقيقية للسرب على شبكة Arc الرئيسية",
+  "canary.title": "كناري Arc x402",
+  "canary.sub": "قياسات تسوية x402 المباشرة",
+  "canary.popout": "فتح اللوحة الكاملة ↗",
+  "canary.aria": "كناري Arc x402 — قياسات التسوية المباشرة",
+};
+Object.assign(en, enCanary);
+Object.assign(zh, zhCanary);
+Object.assign(fr, frCanary);
+Object.assign(es, esCanary);
+Object.assign(ja, jaCanary);
+Object.assign(ko, koCanary);
+Object.assign(ar, arCanary);
+
 export { en, zh, fr, es, ja, ko, ar };

@@ -152,6 +152,19 @@
     .foot a:hover { color: var(--ink); }
     .err { color: var(--paid); font-size: 13px; margin-top: 14px; display: none; }
     .err.show { display: block; }
+
+    /* ---- embed-compact mode: when this page is loaded inside an iframe (the homepage drawer), drop its
+       own sticky topbar + long lede/srcline and tighten the hero so the live telemetry fills the sheet.
+       Guarded by html.embedded, set only when window.self !== window.top — so the standalone /canary page
+       (opened top-level) is byte-for-byte unchanged. ---- */
+    html.embedded .topbar { display: none; }
+    html.embedded .wrap { max-width: none; padding: clamp(14px, 3vw, 24px) clamp(14px, 3vw, 24px) 44px; }
+    html.embedded .hero h1 { font-size: clamp(22px, 4.4vw, 31px); }
+    html.embedded .hero .lede { display: none; }
+    html.embedded .hero .srcline { display: none; }
+    html.embedded .badges { margin-top: 14px; }
+    html.embedded .liverow { margin-top: 14px; }
+    html.embedded section { margin-top: 34px; }
   </style>
 </head>
 <body>
@@ -353,6 +366,9 @@
   </div>
 
   <script type="module">
+    // Embed-compact mode: inside an iframe (the homepage drawer) drop this page's own topbar + long lede so
+    // the live telemetry fills the sheet. Top-level /canary is unchanged (window.self === window.top).
+    if (window.self !== window.top) document.documentElement.classList.add("embedded");
     const API = "https://api.muros.live";
     const ECON_EVERY = 30;    // seconds between /economy polls (cheap light payload)
     const HIST_EVERY = 120;   // seconds between /history polls (bigger, slower-moving)
