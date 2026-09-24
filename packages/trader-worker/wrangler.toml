@@ -295,6 +295,14 @@ ARCHIVE_BURN_CIV_MAX = "15"                   # civLevel at or below this, recor
 WORKSHOP_ENABLED = "true"                      # master switch — ARMED: explorers may reinvent lost arts
 WORKSHOP_REINVENT_PCT = "0.03"                 # per explorer per cron, P they rediscover the highest lost art
 
+# ===== ⑳ THE COURT (verdicts, exile, amnesty — src/court.ts) =====
+# A pure read-out membrane over the social ledger the economy already keeps: broken IOUs, betrayals and live
+# feuds become docketed cases — indictment, a hash-seated jury, a verdict, exile from the commons' protection
+# until an era turn brings amnesty. No money moves; COURT_ROLL is the court's own bounded book.
+COURTS_ENABLED = "true"                        # master switch — ARMED: the court sits
+COURT_FILE_PCT = "0.25"                        # per eligible matter per cron, P the court opens a case
+COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 3..9)
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

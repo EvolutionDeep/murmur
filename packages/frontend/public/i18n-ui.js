@@ -6203,4 +6203,119 @@ Object.assign(ja, jaCanary);
 Object.assign(ko, koCanary);
 Object.assign(ar, arCanary);
 
+// ⑳ THE COURT drawer volume (court.ts read-out): tab + volume titles, the docket toll, the outlaw roll and
+// the localized crime names. Symmetric across all seven languages — keep the key set identical when editing.
+const enCourt = {
+  "vol.crtTitle": "the court",
+  "vol.crtSub": "· dockets, verdicts & amnesty",
+  "tab.court.name": "The Court",
+  "tab.court.sub": "dockets, verdicts & amnesty",
+  "banner.court": "⚖ the court sits",
+  "crt.head": "{indicted} indicted · {convicted} convicted · {cleared} cleared",
+  "crt.headTitle": "The court tries only what the ledgers already recorded — broken IOUs, betrayals, feuds. Every verdict is re-derivable from the case's hash; no sentence ever moves money.",
+  "crt.toll": "{exiles} exiled · {amnesties} amnesties · {open} cases open",
+  "crt.outlaw": "outlaw — fly #{id}, convicted of {crime}; beyond the commons' protection since tick {since}",
+  "crt.none": "the outlaw roll is empty",
+  "crt.crime.debt": "debt",
+  "crt.crime.treason": "treason",
+  "crt.crime.feud": "feud",
+};
+const zhCourt = {
+  "vol.crtTitle": "法庭",
+  "vol.crtSub": "· 审判、判决与大赦",
+  "tab.court.name": "法庭",
+  "tab.court.sub": "审判、判决与大赦",
+  "banner.court": "⚖ 法庭开庭",
+  "crt.head": "受审 {indicted} · 定罪 {convicted} · 无罪 {cleared}",
+  "crt.headTitle": "法庭只审理账簿早已记录之事——破弃的借据、背信与宿怨。每一纸判决都可由案件哈希复推；任何宣判不移动一分钱。",
+  "crt.toll": "流放 {exiles} · 大赦 {amnesties} 次 · 在案 {open} 件",
+  "crt.outlaw": "流民——果蝇 #{id}，因{crime}定罪；自 tick {since} 起失去公地庇护",
+  "crt.none": "流放册上空无一人",
+  "crt.crime.debt": "债务背信",
+  "crt.crime.treason": "背信",
+  "crt.crime.feud": "世仇",
+};
+const frCourt = {
+  "vol.crtTitle": "la cour",
+  "vol.crtSub": "· audiences, verdicts & amnistie",
+  "tab.court.name": "La Cour",
+  "tab.court.sub": "audiences, verdicts & amnistie",
+  "banner.court": "⚖ la cour siège",
+  "crt.head": "{indicted} inculpés · {convicted} condamnés · {cleared} acquittés",
+  "crt.headTitle": "La cour ne juge que ce que les registres ont déjà consigné — reconnaissances rompues, trahisons, inimitiés. Chaque verdict se re-déduit du hash du dossier ; aucune sentence ne déplace de monnaie.",
+  "crt.toll": "{exiles} bannis · {amnesties} amnisties · {open} dossiers ouverts",
+  "crt.outlaw": "banni — la mouche #{id}, condamnée pour {crime} ; hors de la protection du commun depuis le tick {since}",
+  "crt.none": "le rôle des bannis est vide",
+  "crt.crime.debt": "dette",
+  "crt.crime.treason": "trahison",
+  "crt.crime.feud": "inimitié",
+};
+const esCourt = {
+  "vol.crtTitle": "la corte",
+  "vol.crtSub": "· procesos, veredictos & amnistía",
+  "tab.court.name": "La Corte",
+  "tab.court.sub": "procesos, veredictos & amnistía",
+  "banner.court": "⚖ la corte se sienta",
+  "crt.head": "{indicted} procesados · {convicted} condenados · {cleared} absueltos",
+  "crt.headTitle": "La corte solo juzga lo que los libros ya registraron — pagarés rotos, traiciones, vendettas. Cada veredicto se re-deriva del hash del caso; ninguna sentencia mueve moneda.",
+  "crt.toll": "{exiles} desterrados · {amnesties} amnistías · {open} causas abiertas",
+  "crt.outlaw": "desterrado — la mosca #{id}, condenada por {crime}; fuera de la protección del común desde el tick {since}",
+  "crt.none": "el rol de desterrados está vacío",
+  "crt.crime.debt": "deuda",
+  "crt.crime.treason": "traición",
+  "crt.crime.feud": "vendetta",
+};
+const jaCourt = {
+  "vol.crtTitle": "法廷",
+  "vol.crtSub": "· 審理、判決と大赦",
+  "tab.court.name": "法廷",
+  "tab.court.sub": "審理、判決と大赦",
+  "banner.court": "⚖ 法廷が開く",
+  "crt.head": "起訴 {indicted} · 有罪 {convicted} · 無罪 {cleared}",
+  "crt.headTitle": "法廷が審くのは帳簿がすでに記録した事柄のみ——破られた IOU、裏切り、遺恨。あらゆる判決は案件ハッシュから再導出でき、どんな宣告も資金を動かさない。",
+  "crt.toll": "追放 {exiles} · 大赦 {amnesties} 回 · 審理中 {open} 件",
+  "crt.outlaw": "追放者——ハエ #{id}、{crime} の有罪判決；tick {since} よりコモンズの保護の外",
+  "crt.none": "追放名簿は空",
+  "crt.crime.debt": "債務背信",
+  "crt.crime.treason": "裏切り",
+  "crt.crime.feud": "遺恨",
+};
+const koCourt = {
+  "vol.crtTitle": "법정",
+  "vol.crtSub": "· 심판, 판결 그리고 사면",
+  "tab.court.name": "법정",
+  "tab.court.sub": "심판, 판결 그리고 사면",
+  "banner.court": "⚖ 법정이 열린다",
+  "crt.head": "기소 {indicted} · 유죄 {convicted} · 무죄 {cleared}",
+  "crt.headTitle": "법정은 장부가 이미 기록한 것만 심판한다—위반된 차용 증서, 배신, 세습 분쟁. 모든 판결은 사건 해시에서 재도출되며 어떤 선고도 자금을 움직이지 않는다.",
+  "crt.toll": "추방 {exiles} · 사면 {amnesties}회 · 계류 {open}건",
+  "crt.outlaw": "추방자—파리 #{id}, {crime}로 유죄; tick {since}부터 컴먼스의 보호 밖",
+  "crt.none": "추방 명부가 비어 있다",
+  "crt.crime.debt": "채무 불이행",
+  "crt.crime.treason": "배신",
+  "crt.crime.feud": "세습 분쟁",
+};
+const arCourt = {
+  "vol.crtTitle": "المحكمة",
+  "vol.crtSub": "· محاكمات وأحكام وعفو",
+  "tab.court.name": "المحكمة",
+  "tab.court.sub": "محاكمات وأحكام وعفو",
+  "banner.court": "⚖ المحكمة منعقدة",
+  "crt.head": "{indicted} اتُّهموا · {convicted} أُدينوا · {cleared} بُرِّئوا",
+  "crt.headTitle": "لا تنظر المحكمة إلا فيما سجلت الدفاتر سلفًا — سندات مخْلَفَة وخيانات وثأرات. كل حكم قابل لاشتقاق من هاش القضية، ولا ينقل أي حكم مالًا.",
+  "crt.toll": "{exiles} منفَون · {amnesties} عفو · {open} قضايا معلقة",
+  "crt.outlaw": "منفي — الذبابة #{id} أُدينت بـ{crime}؛ خارج حماية المشاع منذ النقطة {since}",
+  "crt.none": "سجل المنفيين فارغ",
+  "crt.crime.debt": "ديون",
+  "crt.crime.treason": "خيانة",
+  "crt.crime.feud": "ثأر",
+};
+Object.assign(en, enCourt);
+Object.assign(zh, zhCourt);
+Object.assign(fr, frCourt);
+Object.assign(es, esCourt);
+Object.assign(ja, jaCourt);
+Object.assign(ko, koCourt);
+Object.assign(ar, arCourt);
+
 export { en, zh, fr, es, ja, ko, ar };

@@ -683,6 +683,17 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .bou-meta { font-size: 9.5px; color: var(--muted); }
 [dir="rtl"] .bou-fill { inset: 0 0 0 auto; }
 
+/* ⑳ the court (drawer volume): the docket toll + the outlaw roll — a pure read-out of court.ts */
+.chron-court { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }
+.crt-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.crt-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.crt-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.crt-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.crt-row.crt-head { color: var(--ink); }
+.crt-row.crt-toll { color: #5a4a33; }
+.crt-row.crt-outlaw { color: #9c3b2e; }
+.crt-row.crt-none { color: var(--muted); font-style: italic; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1784,6 +1795,8 @@ html[dir="rtl"] .dist-legend li,
 html[dir="rtl"] .epitaph-head,
 html[dir="rtl"] .ep-line,
 html[dir="rtl"] .bou-title,
-html[dir="rtl"] .bou-row {
+html[dir="rtl"] .bou-row,
+html[dir="rtl"] .crt-title,
+html[dir="rtl"] .crt-row {
   direction: rtl; text-align: right;
 }

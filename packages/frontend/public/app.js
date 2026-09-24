@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=85";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=86";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -319,6 +319,7 @@ let econApprentice = null;  // ⑯ apprenticeship read-out {keepers[], skilled, 
 let econArchive = null;     // ⑰ archive read-out {records[], recorded, decodes, recording, decode, archiveBurned} — what's been carved in stone
 let econWorkshop = null;    // ⑱ workshop read-out {reinventions, reinvention} — knowledge rebirth
 let econBourse = null;      // ⑲ the bourse read-out from /bourse {climate, signals, lastBlock, stimulus, …} — the project coin's tape, felt + narrated
+let econCourt = null;       // ⑳ the court read-out {indictment,trial,verdict,exile,amnesty,outlaws,openCases,counts} — verdicts, exile & amnesty
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -1845,6 +1846,12 @@ function spawnChronFx(e) {
     const anchor = cofferAnchor();
     chronFx.push({ kind: "silence", x: anchor.x, y: anchor.y, t0: now, dur: 3200 });
     setBanner(T("banner.coin"), ct(e.kind, e.tokens || {}), ASH_GREY);
+  } else if (e.kind === "INDICTMENT" || e.kind === "TRIAL" || e.kind === "VERDICT" || e.kind === "EXILE" || e.kind === "AMNESTY") {
+    // ⑳ the court sits: a law-gold ripple for the docket's stages; an exile cracks judgement-red.
+    // Reuses the existing "law" fx (assembly/decree) — no new canvas pass, no new render branch.
+    const t = e.tokens || {};
+    if (e.kind === "EXILE" || e.kind === "AMNESTY") chronFx.push({ kind: "law", t0: now, dur: 3000 });
+    setBanner(T("banner.court"), ct(e.kind, t), e.kind === "EXILE" ? CRACK_RED : LAW_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -3328,6 +3335,7 @@ function applyEconomy(econ) {
   if (econ.apprentice) { econApprentice = econ.apprentice; renderApprenticeSection(); }
   if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
   if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
+  if (econ.court) { econCourt = econ.court; renderCourtSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -4098,6 +4106,49 @@ function renderWorkshopSection() {
   }
 }
 
+// ================= ⑳ the court section (verdicts, exile, amnesty) =================
+// A plain-language docket read-out of court.ts: how many cases the court has sat and how they ended,
+// who stands exiled beyond the commons' protection right now. PURE READ-OUT — the court moves no money;
+// its roll is its own bounded book. The whole volume (tab included) hides while /economy ships no court key.
+function renderCourtSection() {
+  const host = $("chron-court");
+  const body = $("crt-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="court"]');
+  const c = econCourt;
+  if (!c || !c.counts) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+  const n = c.counts;
+  const head = document.createElement("div");
+  head.className = "crt-row crt-head";
+  head.textContent = T("crt.head", { indicted: n.indicted, convicted: n.convicted, cleared: n.cleared });
+  head.title = T("crt.headTitle");
+  body.appendChild(head);
+  const toll = document.createElement("div");
+  toll.className = "crt-row crt-toll";
+  toll.textContent = T("crt.toll", { exiles: n.exiles, amnesties: n.amnesties, open: c.openCases || 0 });
+  body.appendChild(toll);
+  const roll = (c.outlaws || []).slice(-6).reverse();
+  for (const o of roll) {
+    const row = document.createElement("div");
+    row.className = "crt-row crt-outlaw";
+    row.textContent = T("crt.outlaw", { id: o.id, crime: T("crt.crime." + (o.crime || "debt")), since: o.since });
+    body.appendChild(row);
+  }
+  if (!roll.length) {
+    const none = document.createElement("div");
+    none.className = "crt-row crt-none";
+    none.textContent = T("crt.none");
+    body.appendChild(none);
+  }
+}
+
 // Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
 function fmtMurCompact(n) {
   n = Number(n) || 0;
@@ -4305,6 +4356,7 @@ function openWallets() {
     if (e.apprentice) { econApprentice = e.apprentice; renderApprenticeSection(); }
   if (e.archive) { econArchive = e.archive; renderArchiveSection(); }
   if (e.workshop) { econWorkshop = e.workshop; renderWorkshopSection(); }
+      if (e.court) { econCourt = e.court; renderCourtSection(); }
   }).catch(() => {});
 }
 
@@ -4852,6 +4904,7 @@ const CHRON_ICONS = {
   TRANSMISSION: "✋", SURPASS: "▲", SCHOOL: "⛫", CRAFT_LOST: "☠",
   RECORDING: "✒", DECODE: "◉", ARCHIVE_BURNED: "▲", REINVENTION: "⚒",
   COIN_FEVER: "¤", WHALE_MOVE: "〰", TITHE: "◇", COIN_SILENCE: "◌",
+  INDICTMENT: "§", TRIAL: "⚖", VERDICT: "☰", EXILE: "➤", AMNESTY: "✹",
 };
 
 function renderChron() {
@@ -5031,13 +5084,18 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     WHALE_MOVE: "A whale stirs — {amount} MURMUR crosses the bourse in a single stroke; the colony flinches as its own coin shudders.",
     TITHE: "The tithe swells — {total} MURMUR has bled through the tax wallet, crossing {milestone}; the treasury's pulse glows for the whole swarm to feel.",
     COIN_SILENCE: "The bourse falls silent — {crons} crons without a single MURMUR transfer; the coin sleeps, and the world dims around it.",
+    INDICTMENT: "The court sits — fly #{id} is indicted for {crime}; the ledgers accuse where the swarm never could.",
+    TRIAL: "A trial opens — fly #{id} answers for {crime} before {jurors} jurors, seated by the hash of the case itself.",
+    VERDICT: "The jury speaks — fly #{id}, tried for {crime}: {finding} by {votes} of {jurors} votes.",
+    EXILE: "Exile — convicted of {crime}, fly #{id} is cast beyond the commons' protection until a new era's mercy.",
+    AMNESTY: "Amnesty — the new era pardons the outlaw roll; {outlaws} names struck from the court's book.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -6773,6 +6831,7 @@ async function poll() {
       if (econ.apprentice) { econApprentice = econ.apprentice; renderApprenticeSection(); }
     if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
     if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
+    if (econ.court) { econCourt = econ.court; renderCourtSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -7455,7 +7514,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderBourseSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

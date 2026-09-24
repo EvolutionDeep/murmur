@@ -75,6 +75,11 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   WHALE_MOVE: "巨鲸扰动 —— {amount} MURMUR 一笔划过交易所；殖民地因自己的代币震颤而瑟缩。",
   TITHE: "什一税涌涨 —— {total} MURMUR 已从税收钱包流过，越过 {milestone}；宝库的脉动为整个蜂群亮起。",
   COIN_SILENCE: "交易所沉寂 —— {crons} 个周期无一笔 MURMUR 转账；代币沉睡，世界随之暗下。",
+  INDICTMENT: "法庭开庭 —— 果蝇 #{id} 因{crime}被起诉；账簿提出了蜂群从未能提出的指控。",
+  TRIAL: "审判开始 —— 果蝇 #{id} 就{crime}之罪名在 {jurors} 名陪审员前受审；陪审员由案件自身的哈希抽定。",
+  VERDICT: "陪审团宣判 —— 果蝇 #{id}，因{crime}受审：{jurors} 票中 {votes} 票判定{finding}；编年史记下此刻。",
+  EXILE: "流放 —— 果蝇 #{id} 因{crime}获罪，被逐出公地庇护，待新纪元之仁慈方可召回。",
+  AMNESTY: "大赦 —— 新纪元赦免流放册；{outlaws} 个名字从法庭卷册中勾销。",
 };
 
 const fr = {
@@ -142,6 +147,11 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   WHALE_MOVE: "Une baleine remue — {amount} MURMUR traverse la bourse d'un seul trait ; la colonie tressaille tandis que sa propre monnaie frissonne.",
   TITHE: "La dîme enfle — {total} MURMUR ont coulé à travers le portefeuille fiscal, franchissant {milestone} ; le pouls du trésor brille pour tout l'essaim.",
   COIN_SILENCE: "La bourse se tait — {crons} crons sans un seul transfert de MURMUR ; la monnaie dort, et le monde s'assombrit autour d'elle.",
+  INDICTMENT: "Le tribunal siège — la mouche #{id} est inculpée de {crime} ; les registres accusent là où l'essaim n'a jamais pu le faire.",
+  TRIAL: "Un procès s'ouvre — la mouche #{id} répond du {crime} devant {jurors} jurés, désignés par le hash même du dossier.",
+  VERDICT: "Le jury parle — la mouche #{id}, jugée pour {crime} : {finding} par {votes} voix sur {jurors}.",
+  EXILE: "Bannissement — convaincue de {crime}, la mouche #{id} est rejetée hors de la protection du commun, jusqu'à la miséricorde d'un nouvel âge.",
+  AMNESTY: "Amnistie — le nouvel âge pardonne le rôle des bannis ; {outlaws} noms rayés du livre du tribunal.",
 };
 
 const es = {
@@ -209,6 +219,11 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   WHALE_MOVE: "Una ballena se agita — {amount} MURMUR cruza la bolsa de un solo golpe; la colonia se estremece mientras su propia moneda tiembla.",
   TITHE: "El diezmo crece — {total} MURMUR han fluido por la cartera fiscal, cruzando {milestone}; el pulso del tesoro brilla para todo el enjambre.",
   COIN_SILENCE: "La bolsa enmudece — {crons} crons sin una sola transferencia de MURMUR; la moneda duerme, y el mundo se oscurece a su alrededor.",
+  INDICTMENT: "La corte se sienta — la mosca #{id} es procesada por {crime}; los libros acusan donde el enjambre nunca pudo.",
+  TRIAL: "Se abre un juicio — la mosca #{id} responde por {crime} ante {jurors} jurados, sentados por el hash del propio caso.",
+  VERDICT: "El jurado habla — la mosca #{id}, juzgada por {crime}: {finding} por {votes} de {jurors} votos.",
+  EXILE: "Destierro — condenada por {crime}, la mosca #{id} queda fuera de la protección del común hasta la misericordia de una nueva era.",
+  AMNESTY: "Amnistía — la nueva era perdona el rol de desterrados; {outlaws} nombres tachados del libro de la corte.",
 };
 
 const ja = {
@@ -276,6 +291,11 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   WHALE_MOVE: "巨鯨、騒ぐ —— {amount} MURMUR、一筆にして取引所を渡る；殖民地、己が幣の戦くにおののく。",
   TITHE: "什一税、満つ —— {total} MURMUR、税財布を流れ越え、{milestone} を跨ぐ；宝庫の脈、蜂群全体のために輝く。",
   COIN_SILENCE: "取引所、静まる —— {crons} クロン、一筆の MURMUR 移転もなし；幣、眠り、世界、周りにて暗む。",
+  INDICTMENT: "法廷開く —— ハエ #{id}、{crime} の罪で起訴される；蜂群の成し得ざりし訴えを、帳簿がなす。",
+  TRIAL: "審理始まる —— ハエ #{id}、{crime} の罪に陪審 {jurors} 人の前で答う；陪審は案件自身のハッシュにより席に着く。",
+  VERDICT: "陪審、告ぐ —— ハエ #{id}、{crime} の審理：{jurors} 票中 {votes} 票をもって{finding}；編年史、この刻を記す。",
+  EXILE: "追放 —— {crime} の有罪にて、ハエ #{id}、コモンズの保護の外へ逐われる；新紀元の慈悲あるまで。",
+  AMNESTY: "大赦 —— 新紀元、追放名簿を赦す；{outlaws} 名、法廷の書より消える。",
 };
 
 const ko = {
@@ -343,6 +363,11 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   WHALE_MOVE: "고래가 요동치다 — {amount} MURMUR가 단 한 번에 거래소를 가로지르다; 제 화폐가 떨림에 군락이 움츠러들다.",
   TITHE: "십일조가 불어나다 — {total} MURMUR가 세금 지갑을 흘러 {milestone}을 넘다; 금고의 맥이 온 군집이 느끼도록 빛나다.",
   COIN_SILENCE: "거래소가 고요해지다 — {crons} 크론 동안 단 한 건의 MURMUR 이체도 없다; 화폐가 잠들고, 그 주위의 세계가 어두워지다.",
+  INDICTMENT: "법정이 서다 — 파리 #{id}, {crime}로 기소되다; 무리가 할 수 없었던 고발을 장부가 하다.",
+  TRIAL: "재판이 열리다 — 파리 #{id}, {crime}로 배심 {jurors}명 앞에서 답하다; 배심은 사건 자신의 해시로 앉혀지다.",
+  VERDICT: "배심이 말하다 — 파리 #{id}, {crime} 심판: {jurors}표 중 {votes}표로 {finding}; 연대기가 이 시각을 기록하다.",
+  EXILE: "추방 — {crime}로 유죄, 파리 #{id}는 컴먼스의 보호 밖으로 쫓겨나니, 새 시대의 자비까지.",
+  AMNESTY: "사면 — 새 시대가 추방 명부를 사면하니, {outlaws}개의 이름이 법정의 책에서 지워지다.",
 };
 
 const ar = {
@@ -410,6 +435,11 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   WHALE_MOVE: "حوتٌ يتحرّك — {amount} MURMUR تعبر البورصة في حركةٍ واحدة؛ ترتجف المستعمرة بينما عملتها ترتعد.",
   TITHE: "العُشر يتعاظم — {total} MURMUR تدفّقت عبر محفظة الضريبة، متجاوزةً {milestone}؛ نبض الخزينة يتوهّج ليشعر به السرب كله.",
   COIN_SILENCE: "البورصة تصمت — {crons} دورةً دون أي تحويل MURMUR واحد؛ العملة تنام، والعالم يُظلم حولها.",
+  INDICTMENT: "المحكمة تنعقد — الذبابة #{id} تُتهم بـ{crime}؛ الدفاتر تتهم حيث لم يستطع السرب الاتهام.",
+  TRIAL: "يبدأ الفصل في الدعوى — الذبابة #{id} تجيب عن {crime} أمام {jurors} من المحلَّفين، أُجلسوا بهاش القضية ذاتها.",
+  VERDICT: "المحلَّفون ينطقون — الذبابة #{id}، محاكَمة بـ{crime}: {finding} بـ{votes} من {jurors} أصواتًا.",
+  EXILE: "نفي — بعد الإدانة بـ{crime} تُطرد الذبابة #{id} خارج حماية المشاع حتى رحمة عصرٍ جديد.",
+  AMNESTY: "عفو — العصر الجديد يعفو عن سجل المنفيين؛ {outlaws} أسماء تُشطب من كتاب المحكمة.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

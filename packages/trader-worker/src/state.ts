@@ -67,6 +67,7 @@ import { ApprenticeMembrane, type ApprenticeSignals } from "./apprentice.js";
 import { ArchiveMembrane, type ArchiveSignals } from "./archive.js";
 import { WorkshopMembrane, type WorkshopSignals } from "./workshop.js";
 import { BourseMeter, coinStimuli, sampleBourseActivity, type BourseSignals } from "./bourse.js";
+import { CourtMembrane, type CourtFacts, type CourtSignals } from "./court.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -111,6 +112,9 @@ const KEY_CITIES = "cities:v1";
 const KEY_APPRENTICE = "apprentice:v1";
 const KEY_ARCHIVE = "archive:v1";
 const KEY_WORKSHOP = "workshop:v1";
+/** ⑳ The Court (live docket, outlaw roll, counts) — its OWN key: a corrupt/absent blob restarts an
+ *  empty docket, never ledger state. Bounded (≤ 8 cases / 16 outlaws / 64 matter keys), DO-safe. */
+const KEY_COURT = "court:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -218,6 +222,8 @@ export class FlyStateDO {
   private archive: ArchiveMembrane | null = null;
   /** ⑱ The Workshop (knowledge rebirth) — null while WORKSHOP_ENABLED=false. */
   private workshop: WorkshopMembrane | null = null;
+  /** ⑳ The Court (verdicts, exile, amnesty) — null while COURTS_ENABLED=false (byte-for-byte inert). */
+  private court: CourtMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -493,6 +499,20 @@ export class FlyStateDO {
     this.workshop = new WorkshopMembrane({ enabled: true, reinventP: w.reinventP });
     if (stored) this.workshop.restore(stored);
     return this.workshop;
+  }
+
+  /**
+   * ⑳ Lazily load the Court membrane (null while COURTS_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts with an empty docket; it can never poison the ledger.
+   */
+  private async ensureCourt(): Promise<CourtMembrane | null> {
+    if (!this.cfg.court.enabled) return null;
+    if (this.court) return this.court;
+    const stored = await this.state.storage.get<string>(KEY_COURT);
+    const c = this.cfg.court;
+    this.court = new CourtMembrane({ enabled: true, fileP: c.fileP, jurySize: c.jurySize });
+    if (stored) this.court.restore(stored);
+    return this.court;
   }
 
   /**
@@ -1157,6 +1177,7 @@ export class FlyStateDO {
     if (this.cities) batch[KEY_CITIES] = this.cities.serialize();
     if (this.apprentice) batch[KEY_APPRENTICE] = this.apprentice.serialize();
     if (this.archive) batch[KEY_ARCHIVE] = this.archive.serialize();
+    if (this.court) batch[KEY_COURT] = this.court.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1566,6 +1587,9 @@ export class FlyStateDO {
       const bourse = bouSig
         ? { fever: bouSig.fever, whale: bouSig.whale, tithe: bouSig.tithe, silence: bouSig.silence }
         : null;
+      // ⑳ COURT: fold the docket's edge events ONLY while COURT is on. Off ⇒ no `court` key ⇒ the
+      // historian's five court detectors never speak (byte-for-byte the pre-court build).
+      const court = this.cfg.court.enabled ? this.court?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1661,6 +1685,7 @@ export class FlyStateDO {
         archive,
         workshop,
         bourse,
+        court,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1795,6 +1820,32 @@ export class FlyStateDO {
       }
     } catch (e) {
       console.warn("[DO] workshop drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑳ THE COURT — turn the ledgers' own grievances into docketed cases: indictment, trial, verdict, exile,
+   * and the amnesty that turns of an era bring. PURE READ-OUT: every fact is borrowed from the economy's
+   * social signals, the historian's era counter and the snapshot's living ids; the court writes only its
+   * OWN bounded roll — it moves no money and never touches a connectome, genome, fingerprint or
+   * manifestHash. Best-effort: a sitting court can never break the live tick.
+   */
+  private async driveCourt(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const crt = await this.ensureCourt();
+    if (!crt || !snapshot) return;
+    try {
+      const social = this.economy?.socialSignals() ?? null;
+      const era = this.chronicler ? this.chronicler.eraInfo().era : 0;
+      const facts: CourtFacts = {
+        deadbeat: social?.deadbeat ?? null,
+        betrayal: social?.betrayal ?? null,
+        feud: social?.topFeud ?? null,
+        era,
+        livingIds: snapshot.flies.map((f) => f.id),
+      };
+      crt.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] court drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2260,6 +2311,9 @@ export class FlyStateDO {
     await this.driveArchive(swarm.getTickIndex(), snapshot);
     // ⑱ WORKSHOP rides after archive: it reads the tech membrane's lost set and the population's explorers.
     await this.driveWorkshop(swarm.getTickIndex(), snapshot);
+    // ⑳ COURT rides after the workshop: it reads the social ledger facts + the historian's era, and its
+    // edge events fold into the SAME cron's historian context (driveCourt must precede observeChronicle).
+    await this.driveCourt(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2563,6 +2617,8 @@ export class FlyStateDO {
       if (archive) (economy as { archive?: unknown }).archive = archive;
       const workshop = await this.workshopReadout();
       if (workshop) (economy as { workshop?: unknown }).workshop = workshop;
+      const court = await this.courtReadout();
+      if (court) (economy as { court?: unknown }).court = court;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2630,13 +2686,15 @@ export class FlyStateDO {
     // ⑰ ARCHIVE folded identically.
     const archive = await this.archiveReadout();
     const workshop = await this.workshopReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop) return json(snap);
+    const court = await this.courtReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
       ...(tech ? { tech } : null), ...(cities ? { cities } : null), ...(apprentice ? { apprentice } : null),
       ...(archive ? { archive } : null),
       ...(workshop ? { workshop } : null),
+      ...(court ? { court } : null),
     });
   }
 
@@ -2738,6 +2796,13 @@ export class FlyStateDO {
     const wrk = await this.ensureWorkshop();
     if (!wrk) return null;
     return wrk.signals();
+  }
+
+  /** ⑳ The court's read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-court build). */
+  private async courtReadout(): Promise<CourtSignals | null> {
+    const crt = await this.ensureCourt();
+    if (!crt) return null;
+    return crt.signals();
   }
 
   /**
@@ -3738,6 +3803,7 @@ export class FlyStateDO {
     this.cities = null;    // ⑭ and the places: the map goes back to open ground
         this.apprentice = null;  // ⑯ and the educations: every personal art is unwitnessed with everything else
     this.archive = null;     // ⑰ and the archive: every record is burned with everything else
+    this.court = null;     // ⑳ and the court: the docket and the outlaw roll are dust with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -3754,6 +3820,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_APPRENTICE);
     await this.state.storage.delete(KEY_ARCHIVE);
     await this.state.storage.delete(KEY_WORKSHOP);
+    await this.state.storage.delete(KEY_COURT);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

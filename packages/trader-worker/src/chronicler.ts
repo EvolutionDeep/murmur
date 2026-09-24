@@ -124,7 +124,17 @@ export type ChronicleKind =
   | "COIN_FEVER"
   | "WHALE_MOVE"
   | "TITHE"
-  | "COIN_SILENCE";
+  | "COIN_SILENCE"
+  // ⑳ THE COURT — the docket's whole life, read-only (court.ts): a case indicted from the ledgers'
+  //     own facts, a jury seated by the hash of the case, the verdict vote, an exile from the commons'
+  //     protection, and the amnesty that turns of an era bring. Folded into the context ONLY while
+  //     COURTS_ENABLED (state.ts ships no `court` key otherwise), so an off membrane leaves every old
+  //     line byte-for-byte the pre-court build.
+  | "INDICTMENT"
+  | "TRIAL"
+  | "VERDICT"
+  | "EXILE"
+  | "AMNESTY";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -225,6 +235,9 @@ export interface ChronicleContext {
   /** ⑲ THE BOURSE read-out (bourse.ts signals): MURMUR's on-chain climate this cron. Absent ⇒
    *  no COIN_FEVER/WHALE_MOVE/TITHE/COIN_SILENCE (BOURSE_ENABLED=false never folds these in). */
   bourse?: ChronicleBourse | null;
+  /** ⑳ THE COURT read-out (court.ts signals): this cron's docket edge events. Absent ⇒ no
+   *  INDICTMENT/TRIAL/VERDICT/EXILE/AMNESTY (COURTS_ENABLED=false never folds these in). */
+  court?: ChronicleCourt | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -304,6 +317,25 @@ export interface ChronicleBourse {
   tithe: { milestoneMurmur: number; totalMurmur: number } | null;
   /** A long silence of the tape, spoken once per still spell. */
   silence: { crons: number } | null;
+}
+
+/** ⑳ THE COURT: one cron's docket edge events (court.ts; every facet null on a quiet cron — the membrane
+ *  resets its pending signals each round, so a non-null facet IS news THIS cron and cannot replay). */
+export interface ChronicleCourt {
+  /** A case filed this cron: the accused fly and the crime the ledger fact names. */
+  indictment: { id: number; crime: string } | null;
+  /** A jury seated this cron for that defendant (jurors = seats actually filled). */
+  trial: { id: number; crime: string; jurors: number } | null;
+  /** A verdict rendered this cron: how many of the seated jurors voted guilty. */
+  verdict: { id: number; crime: string; guilty: boolean; votes: number; jurors: number } | null;
+  /** A convicted fly whose evidence crossed the exile bar, cast beyond the commons' protection. */
+  exile: { id: number; crime: string } | null;
+  /** The outlaw roll pardoned at the turn of an era (outlaws = names struck from the book). */
+  amnesty: { outlaws: number } | null;
+  /** The court's own bounded roll and docket counts, surfaced for the drawer (never re-derived here). */
+  outlaws: { id: number; crime: string; since: number }[];
+  openCases: number;
+  counts: { indicted: number; convicted: number; cleared: number; exiles: number; amnesties: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -415,6 +447,7 @@ lastCraftLostKey: string | null;    // the dying keeper id of the last announced
   lastDecodeKey: string | null;         // the fly id of the last announced DECODE
   lastArchiveBurnedKey: string | null;  // the rung+recorder of the last announced ARCHIVE_BURNED
   lastReinventionKey: string | null;     // the fly id of the last announced REINVENTION
+  lastAmnestyEra: number;               // the era an AMNESTY line was last written for (one per era, ever)
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -490,6 +523,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     cooldowns only pace a persistent whale stir and a stuttering fever. A tithe milestone is rare by
   //     construction (millions of MURMUR of flow); a silence is one line per still spell.
   COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120,
+  // ⑳ COURT: the membrane paces its own docket calendar (≤ one indictment, one convening and one verdict
+  //     per cron; exile rides a verdict, amnesty rings at most once per era). These cooldowns only guard
+  //     against a stuttering roll of the same kind — gravitas kept: an exile and an amnesty are rare words.
+  INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -600,6 +637,14 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   WHALE_MOVE: "A whale stirs — {amount} MURMUR crosses the bourse in a single stroke; the colony flinches as its own coin shudders.",
   TITHE: "The tithe swells — {total} MURMUR has bled through the tax wallet, crossing {milestone}; the treasury's pulse glows for the whole swarm to feel.",
   COIN_SILENCE: "The bourse falls silent — {crons} crons without a single MURMUR transfer; the coin sleeps, and the world dims around it.",
+  // ⑳ THE COURT — the docket speaks for the ledgers. {crime} is debt/treason/feud, {finding} guilty/cleared;
+  //     every number is a real read-out of the membranes that already recorded it (economy socialSignals,
+  //     the court's own bounded roll). Mirrored byte-for-byte in CHRON_. Fires only while COURTS_ENABLED.
+  INDICTMENT: "The court sits — fly #{id} is indicted for {crime}; the ledgers accuse where the swarm never could.",
+  TRIAL: "A trial opens — fly #{id} answers for {crime} before {jurors} jurors, seated by the hash of the case itself.",
+  VERDICT: "The jury speaks — fly #{id}, tried for {crime}: {finding} by {votes} of {jurors} votes.",
+  EXILE: "Exile — convicted of {crime}, fly #{id} is cast beyond the commons' protection until a new era's mercy.",
+  AMNESTY: "Amnesty — the new era pardons the outlaw roll; {outlaws} names struck from the court's book.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1371,6 +1416,40 @@ export class Chronicler {
       }
     }
 
+    // ⑳ The Court: the docket's edge events (court.ts signals, folded in ONLY while COURTS_ENABLED — off ⇒
+    //     no `court` key ⇒ these five detectors never speak). The membrane's calendar already paces the
+    //     lifecycle (one stage per cron, pending reset every round), so each non-null facet is news; the
+    //     era-tracker below is the one hard guard — an amnesty may be written once per era, ever.
+    const crt = ctx.court;
+    if (crt) {
+      if (crt.indictment && this.ready("INDICTMENT", ctx)) {
+        const i = crt.indictment;
+        out.push(await this.emit(ctx, "INDICTMENT", 2, [i.id],
+          { id: i.id, crime: i.crime }, { id: i.id }));
+      }
+      if (crt.trial && this.ready("TRIAL", ctx)) {
+        const t = crt.trial;
+        out.push(await this.emit(ctx, "TRIAL", 2, [t.id],
+          { id: t.id, crime: t.crime, jurors: t.jurors }, { id: t.id, jurors: t.jurors }));
+      }
+      if (crt.verdict && this.ready("VERDICT", ctx)) {
+        const v = crt.verdict;
+        out.push(await this.emit(ctx, "VERDICT", v.guilty ? 3 : 2, [v.id],
+          { id: v.id, crime: v.crime, finding: v.guilty ? "guilty" : "cleared", votes: v.votes, jurors: v.jurors },
+          { id: v.id, guilty: v.guilty ? 1 : 0, votes: v.votes, jurors: v.jurors }));
+      }
+      if (crt.exile && this.ready("EXILE", ctx)) {
+        const x = crt.exile;
+        out.push(await this.emit(ctx, "EXILE", 4, [x.id],
+          { id: x.id, crime: x.crime }, { id: x.id }));
+      }
+      if (crt.amnesty && this.ready("AMNESTY", ctx) && s.era !== s.lastAmnestyEra) {
+        s.lastAmnestyEra = s.era;
+        out.push(await this.emit(ctx, "AMNESTY", 2, [],
+          { outlaws: crt.amnesty.outlaws }, { outlaws: crt.amnesty.outlaws }));
+      }
+    }
+
     return out;
   }
 
@@ -1511,6 +1590,7 @@ function freshState(): ChroniclerState {
     lastInventionKey: null, lastDiffusionKey: null, lastLostArtKey: null, lastFoundingKey: null, lastCensusGen: -1,
 lastTransmissionKey: null, lastSurpassKey: null, lastSchoolKey: null, lastCraftLostKey: null,
     lastRecordingKey: null, lastDecodeKey: null, lastArchiveBurnedKey: null, lastReinventionKey: null,
+    lastAmnestyEra: -1,
     headHash: GENESIS_HASH,
   };
 }

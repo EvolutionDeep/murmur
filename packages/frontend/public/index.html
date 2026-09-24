@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=85" />
+  <link rel="stylesheet" href="./styles.css?v=86" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -148,6 +148,7 @@
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="custom"><span class="ct-ico">⚜</span><span class="ct-name" data-i18n="tab.custom.name">The Old Way</span><span class="ct-sub" data-i18n="tab.custom.sub">fashions &amp; the houses that resist</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="faith"><span class="ct-ico">✶</span><span class="ct-name" data-i18n="tab.faith.name">The Faith Membrane</span><span class="ct-sub" data-i18n="tab.faith.sub">gods, sects &amp; holy days</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="law"><span class="ct-ico">⛬</span><span class="ct-name" data-i18n="tab.law.name">The Assembly</span><span class="ct-sub" data-i18n="tab.law.sub">seats, decrees &amp; the swarm's law</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="court" hidden><span class="ct-ico">⚖</span><span class="ct-name" data-i18n="tab.court.name">The Court</span><span class="ct-sub" data-i18n="tab.court.sub">dockets, verdicts &amp; amnesty</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="tech"><span class="ct-ico">✵</span><span class="ct-name" data-i18n="tab.tech.name">The Ladder of Arts</span><span class="ct-sub" data-i18n="tab.tech.sub">inventions, customs &amp; forgotten arts</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="cities"><span class="ct-ico">♜</span><span class="ct-name" data-i18n="tab.cities.name">The Named Places</span><span class="ct-sub" data-i18n="tab.cities.sub">hamlets, towns &amp; the census</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="war" hidden><span class="ct-ico">⚑</span><span class="ct-name" data-i18n="tab.war.name">The War Coffer</span><span class="ct-sub" data-i18n="tab.war.sub">on-chain vaults, bouts &amp; the tax purse</span></button>
@@ -203,6 +204,14 @@
       <div class="chron-commons" id="chron-commons" hidden>
         <div class="com-title"><span data-i18n="vol.lawTitle">the commons in law</span> <em data-i18n="vol.lawSub">· assembly &amp; decrees</em></div>
         <div class="com-body" id="com-body"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="court">
+      <!-- ⑳ the court: the docket the ledgers filled — indictments, trials by hashed jury, verdicts, the
+           outlaw roll and the era's amnesty (a pure read-out of court.ts — no money moves by any verdict) -->
+      <div class="chron-court" id="chron-court" hidden>
+        <div class="crt-title"><span data-i18n="vol.crtTitle">the court</span> <em data-i18n="vol.crtSub">· dockets, verdicts &amp; amnesty</em></div>
+        <div class="crt-body" id="crt-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="tech">
@@ -508,6 +517,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=99" type="module"></script>
+  <script src="./app.js?v=100" type="module"></script>
 </body>
 </html>

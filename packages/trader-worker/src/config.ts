@@ -229,6 +229,11 @@ export interface Env {
   WORKSHOP_ENABLED?: string;            // "true"/"false" (default TRUE)
   WORKSHOP_REINVENT_PCT?: string;       // 0..1 — per explorer per cron, P they reinvent a lost art (default 0.03)
 
+  // --- ⑳ COURT: verdicts, exile, amnesty — the legislature ⑧ gave a court to sit under (see src/court.ts) ---
+  COURTS_ENABLED?: string;              // "true"/"false" (default TRUE)
+  COURT_FILE_PCT?: string;              // 0..1 — per eligible matter per cron, P the court opens a case (default 0.25)
+  COURT_JURY_SIZE?: string;             // seated citizen jurors (default 5; clamped 3..9)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -545,6 +550,11 @@ export interface RuntimeConfig {
   workshop: {
     enabled: boolean;
     reinventP: number;        // per explorer per cron, P they reinvent a lost art (default 0.03)
+  };
+  court: {
+    enabled: boolean;
+    fileP: number;            // per eligible matter per cron, P a case is filed (default 0.25)
+    jurySize: number;         // seated citizen jurors (default 5, clamped 3..9)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -943,6 +953,11 @@ export function loadConfig(env: Env): RuntimeConfig {
     workshop: {
       enabled: (env.WORKSHOP_ENABLED ?? "true").toLowerCase() !== "false",
       reinventP: clamp(Number(env.WORKSHOP_REINVENT_PCT || "0.03"), 0, 1),
+    },
+    court: {
+      enabled: (env.COURTS_ENABLED ?? "true").toLowerCase() !== "false",
+      fileP: clamp(Number(env.COURT_FILE_PCT || "0.25"), 0, 1),
+      jurySize: clampInt(Number(env.COURT_JURY_SIZE || "5"), 3, 9),
     },
 
     socialStimulus: {
