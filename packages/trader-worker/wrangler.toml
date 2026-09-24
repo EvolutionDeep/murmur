@@ -317,7 +317,7 @@ BOURSE_TAX_WALLET = "0xc38e7c9e5cb1b59a53e892b938a7d79f0b741cb3" # the argus tax
 BOURSE_WHALE_MURMUR = "1000000"                # a single main leg ≥ this many whole MURMUR is a whale stir (~p99 of the live tape)
 BOURSE_LOOKBACK = "1200"                       # max blocks one sample may span (~10 min at 0.51 s/block); also the cold-start window
 BOURSE_TITHE_MILESTONE_MURMUR = "5000000"      # cumulative tithe crossing every this-many MURMUR speaks a TITHE line
-TOKEN_STIMULUS_ENABLED = "false"               # ⑲ feeling switch — dark deploy; arms the coin→connectome fold
+TOKEN_STIMULUS_ENABLED = "true"                # ⑲ feeling switch — ARMED: the coin climate now reaches the connectome through the SAME four visitor channels (food/threat/light/dark, the ① bus precedent), under the TOKEN_STIMULUS_MAX ceiling; NO new sensory channel (manifestHash never rotates), no genome touched, no money moved (set "false" for a one-deploy byte-for-byte rollback)
 TOKEN_STIMULUS_MAX = "0.35"                    # hard master ceiling on any one felt coin channel, 0..1 (0 ⇒ nothing felt)
 
 # ===== ① NEURAL FEEDBACK BUS (the civilizational climate fed BACK into the connectome — src/socialStimulus.ts) =====
