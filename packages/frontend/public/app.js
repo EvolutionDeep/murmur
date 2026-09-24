@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=83";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=84";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -381,7 +381,7 @@ let lastHistSample = 0;
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
-let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true;
+let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true, showChron = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
@@ -876,6 +876,13 @@ let focusCacheId = null, focusSet = null; // cached highlight set: focus + its c
 const houseOf = new Map();                // flyId → {name, sigil, color} — the bloodline, from /economy agents
 const monuments = [];                     // fading grave steles at OBSERVED death positions
 const chronFx = [];                       // transient canvas events spawned by fresh chronicle entries
+// ---- the chronicle AMBIENT layer (⑪ faith / ⑬⑯ ladder+schools / ⑲ bourse): persistent world-space read-outs
+// of the econ* module vars, drawn every frame beside renderFaithFx. Pure decoration — it simulates nothing. ----
+let chronAnchor = { x: 0, y: 0 }, chronAnchorT = -1e9;         // cached coffer anchor (recomputed ≤ every 400ms)
+let chronOff = null, chronOffCtx = null, chronOffKey = "";     // baked "stele grove": one blit per frame (the graveOff pattern)
+let chronSteleSigCache = "", chronSteleSigT = -1e9;            // cached stele signature (recomputed ≤ every 500ms)
+const keeperIds = new Set();                                   // ⑯ ids that are a craft's LAST living keeper (a fragile ✋ halo)
+let chronFaith = null;                                         // ⑪ cached {reigning, sects:[…]} totem summary (per religion poll)
 const MONUMENT_MS = 42000;                // how long a stele lingers before it fades into the paper
 // ---- the persistent necropolis: headstones rebuilt from the server's grave ledger (econDynasty.graves) ----
 const graveField = [];                    // stable, weathered stones scattered across the field's lower band
@@ -894,6 +901,9 @@ const VELLUM = [236, 227, 208];           // aged parchment base tone
 let chronBanner = null;                   // the epic centre-caption flashed when the chronicle "happens"
 const LAW_GOLD = [186, 152, 66];          // the legislative shockwave tint (assembly / decree)
 const FAITH_GOLD = [226, 186, 96];        // ⑪ the candlelight tint of the faith membrane (prophet / pilgrimage / holy day)
+const COIN_GOLD = [214, 176, 84];         // ⑲ the bourse's coin-gold: treasury pulse, fever embers, the whale shockwave
+const TECH_BRONZE = [176, 128, 74];       // ⑬⑯ the bronze of an invention stele, a raised school, a craft passed hand to hand
+const ASH_GREY = [126, 122, 116];         // a lost art / a silent tape: cold ash where warmth was
 
 function rebuildHouseMap() {
   houseOf.clear();
@@ -1345,6 +1355,128 @@ function renderChronFx(pal, now) {
       ctx.beginPath(); ctx.arc(VW / 2, VH / 2, R, 0, TAU); ctx.stroke();
       continue;
     }
+    if (fx.kind === "invent") {
+      // ⑬⑱ an art found / rekindled: a bronze ✵ (⚒ for rebirth, over a warm core) rises inside widening rings
+      const f = fx.a != null ? sim.get(fx.a) : null;
+      const x = f ? f.x : fx.x, y = f ? f.y : fx.y;
+      if (x == null || y == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(TECH_BRONZE, 0.8); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 10 + age * 40, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(TECH_BRONZE, 0.35); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, 5 + age * 24, 0, TAU); ctx.stroke();
+      if (fx.rekindle) { ctx.fillStyle = rgba(FIRE_MID, (1 - age) * 0.22); ctx.beginPath(); ctx.arc(x, y, 8 + age * 10, 0, TAU); ctx.fill(); }
+      ctx.font = "600 22px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(TECH_BRONZE, 0.95);
+      ctx.fillText(fx.glyph || "✵", x, y - 18 - age * 16);
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "lostart") {
+      // ⑬⑯⑰ an art gone dark: the point dims, a cold ☒ sinks, ash motes fall away (the reverse of an invention)
+      const f = fx.a != null ? sim.get(fx.a) : null;
+      const x = f ? f.x : fx.x, y = f ? f.y : fx.y;
+      if (x == null || y == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.fillStyle = rgba([30, 26, 22], (1 - age) * 0.16);
+      ctx.beginPath(); ctx.arc(x, y, 16 + age * 8, 0, TAU); ctx.fill();
+      ctx.font = "600 20px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(ASH_GREY, 0.9);
+      ctx.fillText("☒", x, y - 6 + age * 14);
+      for (let k = 0; k < 5; k++) {
+        const ph = (fnv1a("ash:" + k) % 100) / 100;
+        const ax = x + Math.sin(ph * TAU + age * 3) * (6 + age * 16), ay = y + age * (18 + ph * 20);
+        ctx.fillStyle = rgba(ASH_GREY, (1 - age) * 0.4);
+        ctx.beginPath(); ctx.arc(ax, ay, 1.1, 0, TAU); ctx.fill();
+      }
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "school") {
+      // ⑯ a school is raised: a ⛫ settles onto the capital as a soft founding ring contracts around it
+      const x = fx.x, y = fx.y;
+      if (x == null || y == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(TECH_BRONZE, 0.5); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(x, y, 8 + (1 - age) * 26, 0, TAU); ctx.stroke();
+      ctx.font = "600 20px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(TECH_BRONZE, 0.92);
+      ctx.fillText("⛫", x, y - 12 - (1 - age) * 8);
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "transmit") {
+      // ⑯ a craft passes hand to hand: a bronze ✋ thread (tool-coloured, unlike the gold alliance thread);
+      // a SURPASS additionally crowns the apprentice with a rising ▲.
+      const ma = sim.get(fx.a), mb = sim.get(fx.b);
+      if (!ma || !mb) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(TECH_BRONZE, 0.9); ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(ma.x, ma.y); ctx.lineTo(mb.x, mb.y); ctx.stroke();
+      ctx.font = "600 15px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(TECH_BRONZE, 0.95);
+      ctx.fillText("✋", (ma.x + mb.x) / 2, (ma.y + mb.y) / 2 - 8);
+      if (fx.surpass) { const c = sim.get(fx.crown); if (c) { ctx.fillStyle = rgba(GILT_HI, 0.95); ctx.fillText("▲", c.x, c.y - 18 - age * 12); } }
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "coin") {
+      // ⑲ the treasury swells: a coin-gold ¤ (fever) / ◇ (tithe) pulse at the coffer, ringed by motes flowing IN
+      const x = fx.x, y = fx.y;
+      if (x == null || y == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      if (fx.fever) { ctx.fillStyle = rgba(COIN_GOLD, (1 - age) * 0.04 * clamp((fx.mult || 1) / 3)); ctx.fillRect(0, 0, VW, VH); }
+      const R = 12 + age * 34;
+      ctx.strokeStyle = rgba(COIN_GOLD, 0.75); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+      for (let k = 0; k < 6; k++) {
+        const ph = (k / 6) * TAU + age * 2, rr = R + (1 - age) * 22;
+        ctx.fillStyle = rgba(COIN_GOLD, (1 - age) * 0.6);
+        ctx.beginPath(); ctx.arc(x + Math.cos(ph) * rr, y + Math.sin(ph) * rr, 1.4, 0, TAU); ctx.fill();
+      }
+      ctx.font = "600 20px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(COIN_GOLD, 0.95);
+      ctx.fillText(fx.fever ? "¤" : "◇", x, y);
+      ctx.restore();
+      continue;
+    }
+    if (fx.kind === "whale") {
+      // ⑲ a whale strokes the tape: one wide, slow coin-gold shockwave rolls out from the coffer (broader than law)
+      const x = fx.x, y = fx.y;
+      if (x == null || y == null) continue;
+      const R = age * Math.min(VW, VH) * 0.7;
+      if (R <= 0) continue;
+      ctx.strokeStyle = rgba(COIN_GOLD, (1 - age) * 0.4); ctx.lineWidth = 4 * (1 - age) + 0.6;
+      ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = rgba(COIN_GOLD, (1 - age) * 0.2); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(x, y, R * 0.66, 0, TAU); ctx.stroke();
+      continue;
+    }
+    if (fx.kind === "silence") {
+      // ⑲ the tape goes quiet: a grey ◌ hush-ring closes over the coffer as the coin-embers thin (see ambient)
+      const x = fx.x, y = fx.y;
+      if (x == null || y == null) continue;
+      ctx.save();
+      ctx.globalAlpha = env;
+      ctx.strokeStyle = rgba(ASH_GREY, 0.6); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(x, y, 30 - age * 16, 0, TAU); ctx.stroke();
+      ctx.font = "600 20px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = rgba(ASH_GREY, 0.8);
+      ctx.fillText("◌", x, y);
+      ctx.restore();
+      continue;
+    }
     const a = sim.get(fx.a), b = sim.get(fx.b);
     if (!a || !b) continue;
     const colr = fx.kind === "alliance" ? GOLD_THREAD : CRACK_RED;
@@ -1389,12 +1521,224 @@ function renderFaithFx(now) {
   ctx.restore();
 }
 
+/** The bourse's "coffer anchor": the centroid of the live capitals (so the treasury sits ON the continent,
+ *  never adrift), else the field's heart. A pure read-out of the territory seats — recomputed on demand. */
+function cofferAnchor() {
+  if (territories && territories.length) {
+    let cx = 0, cy = 0, n = 0;
+    for (const p of territories) { const s = politySeat(p); if (s) { cx += s.x; cy += s.y; n++; } }
+    if (n) return { x: cx / n, y: cy / n };
+  }
+  return { x: VW / 2, y: VH / 2 };
+}
+/** A named house's capital seat (case-insensitive), or null when that house holds no live dominion — used to
+ *  anchor an invention / a school to the family the chronicle credits. */
+function houseSeat(name) {
+  if (!name || !territories) return null;
+  const k = String(name).toLowerCase();
+  for (const p of territories) { if (p.name && p.name.toLowerCase() === k) { const s = politySeat(p); if (s) return { x: s.x, y: s.y }; } }
+  return null;
+}
+
+/** The cached coffer anchor, recomputed at most every 400ms (politySeat walks each capital's swarm, so we
+ *  never want it per-frame). */
+function chronCofferNow(now) {
+  if (now - chronAnchorT > 400) { chronAnchor = cofferAnchor(); chronAnchorT = now; }
+  return chronAnchor;
+}
+/** A coarse signature of the stele grove, recomputed at most every 500ms, so the offscreen rebakes ONLY when the
+ *  ladder/schools change or a credited capital genuinely relocates (>40px) — never per frame (graveFieldSig discipline). */
+function chronSteleSigNow(now) {
+  if (now - chronSteleSigT > 500) {
+    let s = "";
+    const t = econTech;
+    if (t && Array.isArray(t.rungs)) for (const r of t.rungs) s += "r" + r.rung + (r.houseName || "") + "|";
+    if (t && Array.isArray(t.lost)) for (const l of t.lost) s += "l" + l.rung + "|";
+    const a = econApprentice;
+    if (a && Array.isArray(a.schools)) for (const sc of a.schools) s += "s" + (sc.houseName || sc.name || "") + "|";
+    if (territories) for (const p of territories) { const st = politySeat(p); if (st) s += p.name + "@" + Math.round(st.x / 40) + "," + Math.round(st.y / 40) + ";"; }
+    chronSteleSigCache = s; chronSteleSigT = now;
+  }
+  return chronSteleSigCache;
+}
+/** Carve the stele grove onto the offscreen: a small bronze ✵ for each adopted rung near its credited capital, a
+ *  cold ☒ scar for each lost art, a ⛫ for each standing school. Static between rebakes (capped at 24 marks). */
+function paintChronSteles(g) {
+  g.textAlign = "center"; g.textBaseline = "middle";
+  const cof = cofferAnchor();
+  let budget = 24;
+  const seatFor = (houseName, seed) => {
+    const s = houseSeat(houseName);
+    if (s) return s;
+    const px = (fnv1a(seed) % 1000) / 1000, py = (fnv1a(seed + ":y") % 1000) / 1000;
+    return { x: cof.x + (px - 0.5) * 96, y: cof.y + (py - 0.5) * 72 };
+  };
+  const t = econTech;
+  if (t && Array.isArray(t.rungs)) for (const r of t.rungs) {
+    if (budget-- <= 0) break;
+    const s = seatFor(r.houseName, "rung:" + r.rung + ":" + (r.name || ""));
+    const jx = s.x + ((fnv1a("j" + r.rung) % 40) - 20), jy = s.y + 20 + ((fnv1a("k" + r.rung) % 26) - 13);
+    g.save();
+    g.strokeStyle = rgba(TECH_BRONZE, 0.4); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(jx, jy + 5); g.lineTo(jx, jy - 5); g.stroke();
+    g.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    g.fillStyle = rgba(TECH_BRONZE, 0.62);
+    g.fillText("✵", jx, jy - 8);
+    g.restore();
+  }
+  if (t && Array.isArray(t.lost)) for (const l of t.lost) {
+    if (budget-- <= 0) break;
+    const s = seatFor(null, "lost:" + l.rung + ":" + (l.name || ""));
+    const jx = s.x + ((fnv1a("lj" + l.rung) % 40) - 20), jy = s.y + 20 + ((fnv1a("lk" + l.rung) % 26) - 13);
+    g.save();
+    g.font = "600 12px ui-monospace, SFMono-Regular, Menlo, monospace";
+    g.fillStyle = rgba(ASH_GREY, 0.42);
+    g.fillText("☒", jx, jy - 6);
+    g.restore();
+  }
+  const a = econApprentice;
+  if (a && Array.isArray(a.schools)) for (const sc of a.schools) {
+    if (budget-- <= 0) break;
+    const s = seatFor(sc.houseName || sc.name, "school:" + (sc.name || ""));
+    const jx = s.x, jy = s.y - 26;
+    g.save();
+    g.strokeStyle = rgba(TECH_BRONZE, 0.3); g.lineWidth = 1;
+    g.beginPath(); g.arc(jx, jy + 2, 9, 0, TAU); g.stroke();
+    g.font = "600 14px ui-monospace, SFMono-Regular, Menlo, monospace";
+    g.fillStyle = rgba(TECH_BRONZE, 0.6);
+    g.fillText("⛫", jx, jy);
+    g.restore();
+  }
+}
+
+/** The chronicle made PERSISTENT: three world-space read-outs of the econ* module vars, drawn every frame beside
+ *  renderFaithFx — ⑪ the reigning-god totem over the coffer, ⑬⑯ the ladder/school stele grove (baked, blit once)
+ *  + a fragile ✋ halo on every last-living keeper, ⑲ the bourse coffer ◇ with its tithe-pulse ring, coin-embers
+ *  and a faint fever wash. Purely decorative: it reads state, simulates nothing, moves no fly, holds no key.
+ *  Gated by the #chronicle toggle; the whole call is try/caught at the site so it can never veto a frame. */
+function renderChronAmbient(pal, now) {
+  if (!showChron) return;
+  const q = quality;
+  const anchor = chronCofferNow(now);
+
+  // ---- ⑲ the Bourse: a treasury ◇ at the coffer, its tithe-pulse ring, coin-embers drifting in, a fever wash ----
+  const b = econBourse;
+  if (b && b.enabled) {
+    const cli = b.climate || {}, sig = b.signals || {};
+    const fever = clamp(Number(cli.feverLevel) || 0);
+    const quiet = Number(cli.quietCrons) || 0;
+    const whaleExcess = Number(cli.whaleExcess) || 0;
+    const tax = Number(sig.taxTotalMurmur) || 0;
+    const milestone = Number(b.titheMilestoneMurmur) || 0;
+    const taxFrac = milestone > 0 ? clamp((tax % milestone) / milestone) : 0;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 700);
+    const dim = quiet > 0;                       // a silent tape: the coffer cools to ash
+    const coinCol = dim ? ASH_GREY : COIN_GOLD;
+    if (fever > 0.02 && !dim) { ctx.fillStyle = rgba(COIN_GOLD, fever * 0.03); ctx.fillRect(0, 0, VW, VH); }
+    const R = 15 + pulse * 2;
+    ctx.save();
+    ctx.strokeStyle = rgba(coinCol, 0.5 + 0.2 * pulse); ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(anchor.x, anchor.y, R, 0, TAU); ctx.stroke();
+    if (milestone > 0) {                          // the milestone arc fills clockwise from 12 o'clock (the treasury's pulse)
+      ctx.strokeStyle = rgba(coinCol, 0.85); ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.arc(anchor.x, anchor.y, R + 3.5, -Math.PI / 2, -Math.PI / 2 + TAU * taxFrac); ctx.stroke();
+    }
+    if (whaleExcess > 0) {                        // a whale just crossed the line: a brief red rim (echoes the whale FX)
+      ctx.strokeStyle = rgba(CRACK_RED, 0.5 + 0.3 * pulse); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(anchor.x, anchor.y, R + 7, 0, TAU); ctx.stroke();
+    }
+    ctx.font = "600 16px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = rgba(coinCol, 0.7 + 0.25 * pulse);
+    ctx.fillText("◇", anchor.x, anchor.y);
+    ctx.restore();
+    if (q >= 1 && fever > 0.02) {                 // coin-embers drifting toward the coffer; density/alpha rise with fever, thin in silence
+      const n = Math.min(18, Math.round(4 + fever * (dim ? 6 : 16)));
+      ctx.save();
+      for (let i = 0; i < n; i++) {
+        const ph = (fnv1a("ember:" + i) % 1000) / 1000;
+        const tt = ((now * 0.00012 + ph) % 1);
+        const ang = ph * TAU + Math.sin(now * 0.0004 + i) * 0.4;
+        const rad = (1 - tt) * (46 + ph * 40);
+        const ex = anchor.x + Math.cos(ang) * rad, ey = anchor.y + Math.sin(ang) * rad;
+        const al = (dim ? 0.18 : 0.4) * Math.sin(Math.PI * tt) * (0.4 + 0.6 * fever);
+        ctx.fillStyle = rgba(coinCol, al);
+        ctx.beginPath(); ctx.arc(ex, ey, 1.2 + ph, 0, TAU); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // ---- ⑬⑯ the ladder + the schools: a static grove of steles near each credited capital (baked, blit once) ----
+  if (econTech || econApprentice) {
+    const key = VW + "x" + VH + "@" + DPR + ":" + chronSteleSigNow(now);
+    if (!chronOff || chronOffKey !== key) {
+      if (!chronOff) { chronOff = document.createElement("canvas"); chronOffCtx = chronOff.getContext("2d"); }
+      const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
+      if (chronOff.width !== w || chronOff.height !== h) { chronOff.width = w; chronOff.height = h; }
+      chronOffKey = key;
+      const g = chronOffCtx; g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
+      paintChronSteles(g);
+    }
+    ctx.drawImage(chronOff, 0, 0, VW, VH);
+  }
+
+  // ---- ⑯ the last keepers: a fragile ✋ tool-halo over each fly that is the sole living hand on its craft ----
+  if (q >= 1 && keeperIds.size) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 540);
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    for (const id of keeperIds) {
+      const f = sim.get(id);
+      if (!f || f.dying) continue;
+      ctx.strokeStyle = rgba(TECH_BRONZE, 0.14 + 0.1 * pulse); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(f.x, f.y, 10 + pulse * 2, 0, TAU); ctx.stroke();
+      ctx.fillStyle = rgba(TECH_BRONZE, 0.4 + 0.28 * pulse);
+      ctx.fillText("✋", f.x, f.y - 15 - pulse * 2);
+    }
+    ctx.restore();
+  }
+
+  // ---- ⑪ the reigning-god totem: a gilded celestial glyph above the coffer, ringed by the sects' sigils ----
+  if (chronFaith && q >= 1) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 900);
+    const gx = anchor.x, gy = anchor.y - 54 - pulse * 3;
+    const reign = chronFaith.reigning;
+    const godGlyph = reign === "SCORCH" ? "☀" : reign === "FROST" ? "❄" : "☾";
+    const godCol = reign === "FROST" ? mix(FAITH_GOLD, [150, 190, 220], 0.4) : reign === "SCORCH" ? mix(FAITH_GOLD, [240, 150, 80], 0.3) : FAITH_GOLD;
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const halo = ctx.createRadialGradient(gx, gy, 0, gx, gy, 26);
+    halo.addColorStop(0, rgba(godCol, 0.22 + 0.1 * pulse)); halo.addColorStop(1, rgba(godCol, 0));
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(gx, gy, 26, 0, TAU); ctx.fill();
+    ctx.font = "600 22px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = rgba(godCol, 0.8 + 0.15 * pulse);
+    ctx.fillText(godGlyph, gx, gy);
+    const sects = chronFaith.sects || [];
+    const maxAdh = Math.max(1, ...sects.map((s) => s.adherents || 0));
+    ctx.font = "600 12px ui-monospace, SFMono-Regular, Menlo, monospace";
+    for (let i = 0; i < sects.length && i < 6; i++) {
+      const s = sects[i];
+      const ang = Math.PI * (0.15 + 0.7 * (sects.length === 1 ? 0.5 : i / (sects.length - 1)));
+      const rx = gx + Math.cos(ang) * 34, ry = gy + Math.sin(ang) * 20 + 8;
+      const sz = 0.5 + 0.5 * ((s.adherents || 0) / maxAdh);
+      ctx.fillStyle = rgba(godCol, 0.3 + 0.4 * sz);
+      ctx.fillText(s.prophetId != null ? "✶" : "†", rx, ry);
+    }
+    ctx.restore();
+  }
+}
+
 /** Turn one fresh chronicle entry into a canvas event (+ a one-shot social impulse so an alliance
  *  visibly pulls its two colonies together for an instant, a feud shoves them apart). */
 function spawnChronFx(e) {
   const actors = Array.isArray(e.actors) ? e.actors : [];
   const a = actors[0], b = actors[1];
   const now = performance.now();
+  // a reconnect can hand us a whole batch of entries at once — bound the live FX list so it can never grow
+  // without limit (drop the oldest; each entry self-clears on age anyway, this is only a flood guard).
+  if (chronFx.length > 48) chronFx.splice(0, chronFx.length - 48);
   if (e.kind === "ALLIANCE") {
     if (a == null || b == null) return;
     chronFx.push({ kind: "alliance", a, b, t0: now, dur: 2600 });
@@ -1457,6 +1801,50 @@ function spawnChronFx(e) {
     const t = e.tokens || {};
     chronFx.push({ kind: "holy", t0: now, dur: 3600 });
     setBanner(T("banner.pilgrimage"), T("banner.pilgrimageOf", { name: t.name || "?", n: t.adherents != null ? t.adherents : "" }), FAITH_GOLD);
+  } else if (e.kind === "INVENTION" || e.kind === "DIFFUSION" || e.kind === "REINVENTION") {
+    // ⑬⑱ an art is found / spreads / is rekindled: a bronze ✵ (⚒ for a rebirth) bursts up over the discoverer.
+    // INVENTION/DIFFUSION name no single hand (actors empty) → anchor the credited house's capital, else the coffer.
+    const t = e.tokens || {};
+    const live = a != null ? sim.get(a) : null;
+    const anchor = live ? null : (houseSeat(t.credit) || cofferAnchor());
+    chronFx.push({ kind: "invent", a: live ? a : null, x: anchor ? anchor.x : null, y: anchor ? anchor.y : null,
+      glyph: e.kind === "REINVENTION" ? "⚒" : "✵", rekindle: e.kind === "REINVENTION", t0: now, dur: 3000 });
+    setBanner(T("banner.tech"), ct(e.kind, t), TECH_BRONZE);
+  } else if (e.kind === "LOST_ART" || e.kind === "CRAFT_LOST" || e.kind === "ARCHIVE_BURNED") {
+    // ⑬⑯⑰ an art goes dark: a cold ☒ sinks over the last hand that held it (or the coffer) with falling ash.
+    const t = e.tokens || {};
+    const live = a != null ? sim.get(a) : null;
+    const anchor = live ? null : cofferAnchor();
+    chronFx.push({ kind: "lostart", a: live ? a : null, x: anchor ? anchor.x : null, y: anchor ? anchor.y : null, t0: now, dur: 3000 });
+    setBanner(T("banner.craft"), ct(e.kind, t), ASH_GREY);
+  } else if (e.kind === "SCHOOL") {
+    // ⑯ a house raises a school: a ⛫ settles onto its capital inside a soft founding ring.
+    const t = e.tokens || {};
+    const anchor = houseSeat(t.house) || cofferAnchor();
+    chronFx.push({ kind: "school", x: anchor.x, y: anchor.y, sigil: t.sigil || "", t0: now, dur: 3200 });
+    setBanner(T("banner.craft"), ct(e.kind, t), TECH_BRONZE);
+  } else if (e.kind === "TRANSMISSION" || e.kind === "SURPASS") {
+    // ⑯ a craft passes hand to hand: a bronze ✋ thread master↔apprentice; SURPASS crowns the climbing student.
+    if (a == null || b == null) return;
+    const crown = e.kind === "SURPASS" ? a : b;   // the apprentice: SURPASS lists the student first, TRANSMISSION second
+    chronFx.push({ kind: "transmit", a, b, crown, surpass: e.kind === "SURPASS", t0: now, dur: 2800 });
+    setBanner(T("banner.craft"), ct(e.kind, e.tokens || {}), TECH_BRONZE);
+  } else if (e.kind === "COIN_FEVER" || e.kind === "TITHE") {
+    // ⑲ the treasury swells: a coin-gold ¤/◇ pulse at the coffer, ringed by motes flowing in; a fever warms the field.
+    const t = e.tokens || {};
+    const anchor = cofferAnchor();
+    chronFx.push({ kind: "coin", x: anchor.x, y: anchor.y, fever: e.kind === "COIN_FEVER", mult: Number(t.mult) || 1, t0: now, dur: 3000 });
+    setBanner(T("banner.coin"), ct(e.kind, t), COIN_GOLD);
+  } else if (e.kind === "WHALE_MOVE") {
+    // ⑲ a whale strokes the tape: a wide, slow coin-gold 〰 shockwave rolls out from the coffer.
+    const anchor = cofferAnchor();
+    chronFx.push({ kind: "whale", x: anchor.x, y: anchor.y, t0: now, dur: 3400 });
+    setBanner(T("banner.coin"), ct(e.kind, e.tokens || {}), COIN_GOLD);
+  } else if (e.kind === "COIN_SILENCE") {
+    // ⑲ the tape goes quiet: a grey ◌ hush-ring closes over the coffer.
+    const anchor = cofferAnchor();
+    chronFx.push({ kind: "silence", x: anchor.x, y: anchor.y, t0: now, dur: 3200 });
+    setBanner(T("banner.coin"), ct(e.kind, e.tokens || {}), ASH_GREY);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -2461,6 +2849,11 @@ function render(pal, now) {
 
   // ⑪ the faith membrane made visible: prophet halos + the holy-day candle wash (a pure read-out)
   renderFaithFx(now);
+
+  // the chronicle made PERSISTENT: ⑪ the reigning-god totem, ⑬⑯ the ladder/school stele grove + last-keeper
+  // halos, ⑲ the bourse coffer + coin-embers — world-space read-outs of the econ* vars, gated by #chronicle.
+  // Wrapped so a decoration bug can never veto the rest of the frame (the flies are already drawn above).
+  try { renderChronAmbient(pal, now); } catch { /* ambient only — never break the frame */ }
   ctx.restore();               // ---- back to SCREEN space: the manuscript chrome and captions never move ----
 
   // a slow day/night + temperature tone drift laid over the whole field (kept LIGHT: this is a parchment atlas)
@@ -3401,6 +3794,9 @@ function renderReligionSection() {
   holyDay = !!(c && c.holyIn === 0);
   prophetIds.clear();
   if (c && Array.isArray(c.sects)) for (const s of c.sects) if (s && s.prophetId != null) prophetIds.add(s.prophetId);
+  // cache a light summary for the canvas totem (the reigning god + the sects' sizes) so the frame loop never
+  // re-walks econReligion — refreshed here on every religion poll, whether or not the drawer is open.
+  chronFaith = c ? { reigning: c.reigning, sects: (Array.isArray(c.sects) ? c.sects : []).map((s) => ({ name: s.name, adherents: s.adherents || 0, prophetId: s.prophetId != null ? s.prophetId : null })) } : null;
   const host = $("chron-religion");
   const body = $("rel-body");
   if (!host || !body) return;
@@ -3609,12 +4005,21 @@ function renderCitiesSection() {
 // fragile-knowledge count (the last keeper of an art dying untaught). A pure read-out — it teaches nothing new
 // to any fly and moves no neuron. Hidden while APPRENTICE is off, or while TECH withholds the ladder.
 function renderApprenticeSection() {
-  const host = $("chron-apprentice");
-  const body = $("appr-body");
-  if (!host || !body) return;
   const a = econApprentice;
   const keepers = (a && Array.isArray(a.keepers)) ? a.keepers : [];
   const schools = (a && Array.isArray(a.schools)) ? a.schools : [];
+  // keep the canvas read-out in sync whether or not the drawer is open: mark the flies that are the LAST living
+  // keeper of their craft (a sole hand on an art) so the frame loop can halo them as fragile knowledge. Cheap,
+  // recomputed only on an apprentice poll; the render loop reads the Set, never re-derives it.
+  keeperIds.clear();
+  {
+    const byCraft = new Map();
+    for (const k of keepers) { if (!k || k.id == null) continue; const c = String(k.craft || ""); byCraft.set(c, (byCraft.get(c) || 0) + 1); }
+    for (const k of keepers) { if (!k || k.id == null) continue; if ((byCraft.get(String(k.craft || "")) || 0) === 1) keeperIds.add(k.id); }
+  }
+  const host = $("chron-apprentice");
+  const body = $("appr-body");
+  if (!host || !body) return;
   if (!a || (!keepers.length && !schools.length && !a.lineages)) { host.hidden = true; return; }
   host.hidden = false;
   body.textContent = "";
@@ -7035,6 +7440,7 @@ function bindUI() {
     else if (b.dataset.layer === "societies") showSocieties = on;
     else if (b.dataset.layer === "territory") { showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { showGraves = on; if (!on) hideEpitaph(); }
+    else if (b.dataset.layer === "chronicle") showChron = on;
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);

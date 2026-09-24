@@ -6069,4 +6069,64 @@ Object.assign(ja, jaBou);
 Object.assign(ko, koBou);
 Object.assign(ar, arBou);
 
+// ---- the chronicle AMBIENT layer (#chronicle toggle): the layer label + tooltip, and the three banner GROUP
+// titles (coin / tech / craft). The banner SUBTITLES reuse the existing per-kind ct() templates, so no new
+// per-kind copy lives here and i18n-chron.js stays byte-identical (the worker mirror guard is unaffected).
+const enChron = {
+  "layers.chronicle": "chronicle",
+  "layers.chronicleTitle": "the chronicle made ambient: the reigning-god totem, the ladder of arts carved as steles beside each capital, the last keepers of a craft haloed, and the bourse treasury pulsing at the heart of the map — drawn live from the chronicle's own read-outs (a visualisation only; no economic change)",
+  "banner.coin": "◈ the bourse stirs",
+  "banner.tech": "✵ the ladder climbs",
+  "banner.craft": "✋ the hands that remember",
+};
+const zhChron = {
+  "layers.chronicle": "编年史",
+  "layers.chronicleTitle": "把编年史化为氛围：主神图腾、技艺之梯以碑林刻于各省会之侧、末代守艺者头顶光环、交易所国库在地图中心脉动 —— 皆由编年史自身的读数实时绘出（仅为可视化，不改经济）",
+  "banner.coin": "◈ 交易所波动",
+  "banner.tech": "✵ 技艺之梯上升",
+  "banner.craft": "✋ 记得此艺的双手",
+};
+const frChron = {
+  "layers.chronicle": "chronique",
+  "layers.chronicleTitle": "la chronique rendue ambiante : le totem du dieu régnant, l'échelle des arts gravée en stèles près de chaque capitale, les derniers gardiens d'un art auréolés, et le trésor de la bourse pulsant au cœur de la carte — dessinés en direct d'après les propres relevés de la chronique (une visualisation seulement ; aucun changement économique)",
+  "banner.coin": "◈ la bourse frémit",
+  "banner.tech": "✵ l'échelle s'élève",
+  "banner.craft": "✋ les mains qui se souviennent",
+};
+const esChron = {
+  "layers.chronicle": "crónica",
+  "layers.chronicleTitle": "la crónica hecha ambiente: el tótem del dios reinante, la escala de las artes tallada en estelas junto a cada capital, los últimos guardianes de un arte aureolados, y el tesoro de la bolsa latiendo en el corazón del mapa — dibujado en vivo a partir de las propias lecturas de la crónica (solo una visualización; ningún cambio económico)",
+  "banner.coin": "◈ la bolsa se agita",
+  "banner.tech": "✵ la escala asciende",
+  "banner.craft": "✋ las manos que recuerdan",
+};
+const jaChron = {
+  "layers.chronicle": "編年史",
+  "layers.chronicleTitle": "編年史を空気として描く：主神のトーテム、各首都の傍らに碑として刻まれた技の階梯、ある芸の最後の守り手に光輪、地図の中心で脈打つ取引所の金庫 —— いずれも編年史自身の読み取りからライブ描画（可視化のみ；経済には一切影響しない）",
+  "banner.coin": "◈ 取引所が揺れる",
+  "banner.tech": "✵ 技の階梯が昇る",
+  "banner.craft": "✋ 記憶する手々",
+};
+const koChron = {
+  "layers.chronicle": "연대기",
+  "layers.chronicleTitle": "연대기를 앰비언스로: 재위신의 토템, 각 수도 옆에 비석으로 새긴 기술의 사다리, 어떤 기예의 마지막 수호자에 광륜, 지도 한복판에서 맥동하는 거래소 금고 —— 모두 연대기 자신의 판독값에서 실시간으로 그림(시각화일 뿐; 경제에는 아무 변화 없음)",
+  "banner.coin": "◈ 거래소가 꿈틀인다",
+  "banner.tech": "✵ 기술의 사다리가 오른다",
+  "banner.craft": "✋ 기억하는 손들",
+};
+const arChron = {
+  "layers.chronicle": "السجل",
+  "layers.chronicleTitle": "السجل مُجسَّدًا كأجواء: طوطم الإله الحاكم، وسلّم الفنون منقوشًا كشواهد عند كل عاصمة، وآخر حَرَسَة حرفةٍ يعلوهم هالة، وخزينة البورصة تنبض في قلب الخريطة — تُرسم جميعها مباشرةً من قراءات السجل نفسه (مجرّد تصوّر؛ بلا أي تغيير اقتصادي)",
+  "banner.coin": "◈ البورصة تتململ",
+  "banner.tech": "✵ سلّم الفنون يصعد",
+  "banner.craft": "✋ الأيدي التي تتذكّر",
+};
+Object.assign(en, enChron);
+Object.assign(zh, zhChron);
+Object.assign(fr, frChron);
+Object.assign(es, esChron);
+Object.assign(ja, jaChron);
+Object.assign(ko, koChron);
+Object.assign(ar, arChron);
+
 export { en, zh, fr, es, ja, ko, ar };
