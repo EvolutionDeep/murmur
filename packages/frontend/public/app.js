@@ -880,6 +880,8 @@ const MONUMENT_MS = 42000;                // how long a stele lingers before it 
 const graveField = [];                    // stable, weathered stones scattered across the field's lower band
 let selectedGrave = null;                 // the stone whose epitaph card is open
 const GRAVE_CAP = 120;                    // most-recent stones kept on the field
+let graveOff = null, graveOffCtx = null, graveKey = "";   // baked necropolis: one blit per frame
+let graveFieldSig = "";                   // ledger signature: rebake only when the grave ledger changes
 // A reused slot id (live-retirement recycles a dead fly's id for its offspring) means id alone no longer
 // identifies an individual — (id, bornTick) does. Stones + selection key on this composite so a new
 // occupant of an old id never aliases the grave of the fly that was buried in that slot before it.
@@ -1075,6 +1077,7 @@ function rebuildGraveField() {
     });
   }
   if (selectedGrave) { const keep = graveField.find((g) => g.uid === selectedGrave.uid); selectedGrave = keep || null; }
+  graveFieldSig = graveField.length + ":" + (graveField.length ? graveField[0].uid : "");
 }
 
 /** An arched headstone silhouette centred on the origin: flat base at +h, rounded top at -h. */
@@ -1093,50 +1096,63 @@ function glyphFor(g) {
   return "†";
 }
 
-/** Draw the necropolis: a weathered stone per buried wallet. Thinned under load (every Nth stone) and
- *  gated by the graveyard toggle; the selected stone wears a gilded halo. */
+/** Draw the necropolis: the stones are STATIC (plots, tilts, weathering and glyphs all derive from the
+ *  closed grave ledger), so the whole field is baked into a world-space offscreen and blitted ONCE per
+ *  frame — per-stone per-frame fillText used to grow with the death ledger and drag frameMsAvg over the
+ *  budget as the colony aged. Only the gilded halo on the selected stone is drawn live. */
 function renderGraveyard(pal, now) {
   if (!showGraves || !graveField.length) return;
-  const step = quality >= 2 ? 1 : quality >= 1 ? 2 : 3;   // thin under load: draw every Nth stone
-  ctx.save();
-  ctx.textAlign = "center";
-  for (let i = 0; i < graveField.length; i += step) {
-    const g = graveField[i], wx = g.weather, w = 8, h = 12;
-    const sel = selectedGrave && selectedGrave.uid === g.uid;
+  const key = VW + "x" + VH + "@" + DPR + ":" + graveFieldSig;
+  if (!graveOff || graveKey !== key) {
+    if (!graveOff) { graveOff = document.createElement("canvas"); graveOffCtx = graveOff.getContext("2d"); }
+    const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
+    if (graveOff.width !== w || graveOff.height !== h) { graveOff.width = w; graveOff.height = h; }
+    graveKey = key;
+    const g = graveOffCtx; g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
+    paintGraveyard(g);
+  }
+  ctx.drawImage(graveOff, 0, 0, VW, VH);
+  if (selectedGrave) {                                            // a gilded halo on the chosen stone
+    const h = 12;
+    ctx.strokeStyle = rgba(GILT, 0.9); ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(selectedGrave.x, selectedGrave.y - 1, h + 7, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = rgba(GILT_HI, 0.5); ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(selectedGrave.x, selectedGrave.y - 1, h + 10, 0, TAU); ctx.stroke();
+  }
+}
+
+/** Bake every weathered headstone onto a target context (the necropolis offscreen). */
+function paintGraveyard(g) {
+  g.textAlign = "center";
+  for (const gr of graveField) {
+    const wx = gr.weather, w = 8, h = 12;
     const stone = mix([151, 143, 129], INK, 0.18 + wx * 0.42);   // fresh warm stone → dark weathered
-    ctx.save();
-    ctx.translate(g.x, g.y); ctx.rotate(g.tilt);
-    ctx.fillStyle = rgba([40, 34, 26], 0.16);                     // ground shadow
-    ctx.beginPath(); ctx.ellipse(0, h + 2, w + 3, 3.2, 0, 0, TAU); ctx.fill();
-    stonePath(ctx, w, h); ctx.fillStyle = rgb(stone); ctx.fill();
-    ctx.lineWidth = 1; ctx.strokeStyle = rgba(INK, 0.5); ctx.stroke();
-    ctx.strokeStyle = rgba(GILT_HI, 0.5); ctx.lineWidth = 1.1;    // gilt highlight on the top-left rim
-    ctx.beginPath(); ctx.moveTo(-w, h * 0.2); ctx.lineTo(-w, -h * 0.28);
-    ctx.quadraticCurveTo(-w, -h, 0, -h); ctx.stroke();
-    ctx.textBaseline = "middle";
-    ctx.font = "600 9px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = rgba(INK, 0.72); ctx.fillText(glyphFor(g), 0, -h * 0.34);   // the death-mark
-    ctx.font = "7px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = rgba(INK, 0.5); ctx.fillText("#" + g.id, 0, h * 0.36);      // the buried wallet
+    g.save();
+    g.translate(gr.x, gr.y); g.rotate(gr.tilt);
+    g.fillStyle = rgba([40, 34, 26], 0.16);                     // ground shadow
+    g.beginPath(); g.ellipse(0, h + 2, w + 3, 3.2, 0, 0, TAU); g.fill();
+    stonePath(g, w, h); g.fillStyle = rgb(stone); g.fill();
+    g.lineWidth = 1; g.strokeStyle = rgba(INK, 0.5); g.stroke();
+    g.strokeStyle = rgba(GILT_HI, 0.5); g.lineWidth = 1.1;    // gilt highlight on the top-left rim
+    g.beginPath(); g.moveTo(-w, h * 0.2); g.lineTo(-w, -h * 0.28);
+    g.quadraticCurveTo(-w, -h, 0, -h); g.stroke();
+    g.textBaseline = "middle";
+    g.font = "600 9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    g.fillStyle = rgba(INK, 0.72); g.fillText(glyphFor(gr), 0, -h * 0.34);   // the death-mark
+    g.font = "7px ui-monospace, SFMono-Regular, Menlo, monospace";
+    g.fillStyle = rgba(INK, 0.5); g.fillText("#" + gr.id, 0, h * 0.36);      // the buried wallet
     if (wx > 0.45) {                                                            // weathering cracks
-      ctx.strokeStyle = rgba(INK, 0.32 * wx); ctx.lineWidth = 0.6;
-      const cx = ((g.seed >>> 3) % (w * 2)) - w;
-      ctx.beginPath(); ctx.moveTo(cx, -h * 0.6); ctx.lineTo(cx + 2, -h * 0.1); ctx.lineTo(cx - 1, h * 0.4); ctx.stroke();
+      g.strokeStyle = rgba(INK, 0.32 * wx); g.lineWidth = 0.6;
+      const cx = ((gr.seed >>> 3) % (w * 2)) - w;
+      g.beginPath(); g.moveTo(cx, -h * 0.6); g.lineTo(cx + 2, -h * 0.1); g.lineTo(cx - 1, h * 0.4); g.stroke();
     }
-    ctx.restore();
-    if (wx > 0.5 && quality >= 1) {                               // moss creeping up the base
-      ctx.fillStyle = rgba([96, 120, 76], 0.5 * wx);
-      ctx.beginPath(); ctx.ellipse(g.x - w + 2, g.y + h + 1, 2.4, 1.1, 0, 0, TAU);
-      ctx.ellipse(g.x + w - 2, g.y + h + 1, 2.0, 1.0, 0, 0, TAU); ctx.fill();
-    }
-    if (sel) {                                                    // a gilded halo on the chosen stone
-      ctx.strokeStyle = rgba(GILT, 0.9); ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.arc(g.x, g.y - 1, h + 7, 0, TAU); ctx.stroke();
-      ctx.strokeStyle = rgba(GILT_HI, 0.5); ctx.lineWidth = 0.8;
-      ctx.beginPath(); ctx.arc(g.x, g.y - 1, h + 10, 0, TAU); ctx.stroke();
+    g.restore();
+    if (wx > 0.5) {                                               // moss creeping up the base
+      g.fillStyle = rgba([96, 120, 76], 0.5 * wx);
+      g.beginPath(); g.ellipse(gr.x - w + 2, gr.y + h + 1, 2.4, 1.1, 0, 0, TAU);
+      g.ellipse(gr.x + w - 2, gr.y + h + 1, 2.0, 1.0, 0, 0, TAU); g.fill();
     }
   }
-  ctx.restore();
 }
 
 /** Open the epitaph card for a buried wallet. A DOM overlay (not canvas type) so every line stays crisp,
@@ -2393,8 +2409,9 @@ function render(pal, now) {
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
-        const dx = a.x - b.x, dy = a.y - b.y, dd = Math.hypot(dx, dy);
-        if (dd < R) {
+        const dx = a.x - b.x, dy = a.y - b.y, dd2 = dx * dx + dy * dy;   // squared first: sqrt only for pairs that actually link
+        if (dd2 < R * R) {
+          const dd = Math.sqrt(dd2);
           const al = (1 - dd / R) * (cohSmoothed - 0.34) * 0.5;
           ctx.strokeStyle = rgba(mix([26, 26, 24], acc, 0.4), al);
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -2422,12 +2439,16 @@ function render(pal, now) {
     ctx.beginPath(); ctx.arc(r.x, r.y, rad, 0, TAU); ctx.stroke();
   }
 
-  // the flies
+  // the flies (viewport-culled: once zoomed in, only the visible subset is drawn at all — the swarm
+  // spans the whole world rect, so at high zoom most bodies used to be painted straight off-screen)
+  const fx0 = -cam.x / cam.z - 48, fy0 = -cam.y / cam.z - 48;
+  const fx1 = (VW - cam.x) / cam.z + 48, fy1 = (VH - cam.y) / cam.z + 48;
   for (const f of sim.values()) {
     let alpha = clamp((now - f.born) / 900);
     if (f.dying) alpha = clamp(1 - (now - (f.dieT || now)) / 820);
     if (alpha <= 0.001) continue;
     if (f.dying && !f._mon) plantMonument(f, now);   // a death observed live leaves a fading stele
+    if (f.x < fx0 || f.x > fx1 || f.y < fy0 || f.y > fy1) continue;   // off-screen: nothing to paint
     drawFly(f, acc, alpha, now);
   }
 
@@ -2492,10 +2513,14 @@ function drawFly(f, acc, alpha, now) {
     }
   }
 
-  // the articulated fly — or, at the lowest quality tier, the original cheap comma + wing arcs
+  // the articulated fly — or, at the lowest quality tier, the original cheap comma + wing arcs.
+  // A fly the eye is actually ON (selected, hovered, or zoomed in on) keeps its full anatomy even when
+  // the adaptive tier has shed it for the swarm: one articulated body is cheap, and the individual the
+  // reader is studying must never collapse to a comma-blob.
+  const inspected = f.id === selectedId || f.id === hoverId || cam.z >= 1.5;
   ctx.save();
   ctx.translate(f.x, f.y); ctx.rotate(f.heading);
-  if (quality >= 1) drawFlyAnatomy(f, size, flap, alpha, body, acc, fap, now);
+  if (quality >= 1 || inspected) drawFlyAnatomy(f, size, flap, alpha, body, acc, fap, now, inspected);
   else {
     const wspread = 0.5 + flap * 0.9;
     ctx.strokeStyle = rgba(acc, (0.1 + f.wing * 0.22) * alpha);
@@ -2561,8 +2586,8 @@ function drawFly(f, acc, alpha, now) {
 // eyes + feathery antennae, and a proboscis that pumps while feeding. The named action pattern drives
 // the pose — COURT extends & vibrates ONE wing (the male love song), GROOM sweeps the front legs over the
 // head, FLIGHT/RETREAT blur the spread wings, REST/HALT fold everything tight. Detail is shed at quality<2.
-function drawFlyAnatomy(f, s, flap, alpha, body, acc, fap, now) {
-  const detail = quality >= 2;
+function drawFlyAnatomy(f, s, flap, alpha, body, acc, fap, now, forceDetail) {
+  const detail = quality >= 2 || forceDetail;
   const rest = f.rest ?? 0;
   const lp = f.legPhase ?? 0;
   const parked = fap === "REST" || fap === "HALT";
@@ -2750,6 +2775,8 @@ function drawTempHistory() {
 // degrade gracefully instead of locking up.
 let last = performance.now(), frame = 0;
 let frameMsAvg = 16, quality = 2, lastQualityAt = 0, loopWarned = false;  // 2=full 1=no motes/mesh/trails-heavy 0=minimal
+// read-only perf probe for diagnostics (never writes anything): frame cost, adaptive tier, swarm & ledger size
+window.__murmurPerf = () => ({ frameMsAvg: Math.round(frameMsAvg * 10) / 10, quality, flies: sim.size, graves: graveField.length });
 function loop(now) {
   try {
     const ms = now - last;
