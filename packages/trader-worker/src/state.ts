@@ -65,6 +65,7 @@ import { TechMembrane, type TechSignals } from "./invention.js";
 import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { ApprenticeMembrane, type ApprenticeSignals } from "./apprentice.js";
 import { ArchiveMembrane, type ArchiveSignals } from "./archive.js";
+import { WorkshopMembrane, type WorkshopSignals } from "./workshop.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -108,6 +109,7 @@ const KEY_CITIES = "cities:v1";
  *  live population), DO-safe. */
 const KEY_APPRENTICE = "apprentice:v1";
 const KEY_ARCHIVE = "archive:v1";
+const KEY_WORKSHOP = "workshop:v1";
 const KEY_COMMONS = "commons:v1";
 /** ⑮ The Laureate's poem hash chain — its OWN key: a poem is a pure read-out, so a corrupt/absent blob only
  *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
@@ -210,6 +212,8 @@ export class FlyStateDO {
   private apprentice: ApprenticeMembrane | null = null;
   /** ⑰ The Archive (externalized knowledge) — null while ARCHIVE_ENABLED is off. */
   private archive: ArchiveMembrane | null = null;
+  /** ⑱ The Workshop (knowledge rebirth) — null while WORKSHOP_ENABLED=false. */
+  private workshop: WorkshopMembrane | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** ⑮ The Laureate (the swarm's poet) — null while POET_ENABLED=false (byte-for-byte inert). */
@@ -467,6 +471,20 @@ export class FlyStateDO {
     this.archive = new ArchiveMembrane({ enabled: true, recordP: a.recordP, decodeP: a.decodeP, burnCivMax: a.burnCivMax });
     if (stored) this.archive.restore(stored);
     return this.archive;
+  }
+
+  /**
+   * Lazily load the Workshop membrane (null while WORKSHOP_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts with zero reinventions; it can never poison the ledger.
+   */
+  private async ensureWorkshop(): Promise<WorkshopMembrane | null> {
+    if (!this.cfg.workshop.enabled) return null;
+    if (this.workshop) return this.workshop;
+    const stored = await this.state.storage.get<string>(KEY_WORKSHOP);
+    const w = this.cfg.workshop;
+    this.workshop = new WorkshopMembrane({ enabled: true, reinventP: w.reinventP });
+    if (stored) this.workshop.restore(stored);
+    return this.workshop;
   }
 
   /**
@@ -1104,6 +1122,7 @@ export class FlyStateDO {
     if (this.cities) batch[KEY_CITIES] = this.cities.serialize();
     if (this.apprentice) batch[KEY_APPRENTICE] = this.apprentice.serialize();
     if (this.archive) batch[KEY_ARCHIVE] = this.archive.serialize();
+    if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
     if (this.poet) batch[KEY_POET] = this.poet.serialize();
     if (this.prediction) batch[KEY_PREDICT] = this.prediction.serialize();
@@ -1499,6 +1518,12 @@ export class FlyStateDO {
             decodes: archSig.decodes,
           }
         : null;
+      // ⑱ WORKSHOP: fold the reinvention read-out ONLY while WORKSHOP is on. Off ⇒ no `workshop` key
+      // ⇒ the historian's REINVENTION detector never speaks.
+      const wrkSig = this.cfg.workshop.enabled ? this.workshop?.signals() ?? null : null;
+      const workshop = wrkSig
+        ? { reinvention: wrkSig.reinvention, reinventions: wrkSig.reinventions }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1592,6 +1617,7 @@ export class FlyStateDO {
         cities,
         apprentice,
         archive,
+        workshop,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1700,6 +1726,32 @@ export class FlyStateDO {
       arch.round(tick, keeperMap, inventedTop, civLevel, flyIds);
     } catch (e) {
       console.warn("[DO] archive drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ⑱ THE WORKSHOP — give explorer flies agency to reinvent lost arts between generation edges.
+   * Reads the tech membrane's `lost` set and the population's EXPLORE-state flies. On success:
+   * restores the art to the ladder (invention.restoreArt) and injects the fly as first keeper
+   * (apprentice.injectKeeper). PURE READ-OUT + two writes that only ADD state, never remove.
+   */
+  private async driveWorkshop(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const wrk = await this.ensureWorkshop();
+    if (!wrk || !snapshot) return;
+    try {
+      const techSig = this.cfg.tech.enabled ? this.tech?.signals() ?? null : null;
+      const lostArts = techSig ? techSig.lost : [];
+      const explorerIds = snapshot.flies.filter((f) => f.state === "EXPLORE").map((f) => f.id);
+      wrk.round(tick, lostArts, explorerIds);
+      // On reinvention: restore the art to the ladder and inject the fly as its first new keeper.
+      const sig = wrk.signals();
+      if (sig.reinvention && this.tech && this.apprentice) {
+        const r = sig.reinvention;
+        this.tech.restoreArt(r.rung, tick, snapshot.flies.length);
+        this.apprentice.injectKeeper(r.id, r.rung);
+      }
+    } catch (e) {
+      console.warn("[DO] workshop drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2131,6 +2183,8 @@ export class FlyStateDO {
     await this.driveApprentice(swarm.getTickIndex(), snapshot);
     // ⑰ ARCHIVE rides after apprenticeship: it reads ⑯'s keeper map to decide who inscribes.
     await this.driveArchive(swarm.getTickIndex(), snapshot);
+    // ⑱ WORKSHOP rides after archive: it reads the tech membrane's lost set and the population's explorers.
+    await this.driveWorkshop(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2390,6 +2444,8 @@ export class FlyStateDO {
       if (apprentice) (economy as { apprentice?: unknown }).apprentice = apprentice;
       const archive = await this.archiveReadout();
       if (archive) (economy as { archive?: unknown }).archive = archive;
+      const workshop = await this.workshopReadout();
+      if (workshop) (economy as { workshop?: unknown }).workshop = workshop;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2456,12 +2512,14 @@ export class FlyStateDO {
     const apprentice = await this.apprenticeReadout();
     // ⑰ ARCHIVE folded identically.
     const archive = await this.archiveReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive) return json(snap);
+    const workshop = await this.workshopReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
       ...(tech ? { tech } : null), ...(cities ? { cities } : null), ...(apprentice ? { apprentice } : null),
       ...(archive ? { archive } : null),
+      ...(workshop ? { workshop } : null),
     });
   }
 
@@ -2557,6 +2615,12 @@ export class FlyStateDO {
     const arch = await this.ensureArchive();
     if (!arch) return null;
     return arch.signals();
+  }
+
+  private async workshopReadout(): Promise<WorkshopSignals | null> {
+    const wrk = await this.ensureWorkshop();
+    if (!wrk) return null;
+    return wrk.signals();
   }
 
   /**
@@ -3572,6 +3636,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_CITIES);
     await this.state.storage.delete(KEY_APPRENTICE);
     await this.state.storage.delete(KEY_ARCHIVE);
+    await this.state.storage.delete(KEY_WORKSHOP);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

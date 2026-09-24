@@ -5743,4 +5743,62 @@ Object.assign(ja, jaArch);
 Object.assign(ko, koArch);
 Object.assign(ar, arArch);
 
+// ⑱ Workshop (knowledge rebirth)
+const enWrk = {
+  "vol.wrkTitle": "the workshop",
+  "vol.wrkSub": "· reinventions from the ashes",
+  "wrk.head": "{n} arts reinvented",
+  "wrk.headTitle": "the workshop’s tally — lost arts rediscovered by exploring minds",
+  "wrk.event": "fly #{id} reinvented rung {rung} · {name}",
+};
+const zhWrk = {
+  "vol.wrkTitle": "工坊",
+  "vol.wrkSub": "· 从灰烬中重生",
+  "wrk.head": "已重新发明 {n} 门技艺",
+  "wrk.headTitle": "工坊的计数 —— 被探索者重新发现的失传技艺",
+  "wrk.event": "第{id}号蝇重新发明第{rung}阶 · {name}",
+};
+const frWrk = {
+  "vol.wrkTitle": "l’atelier",
+  "vol.wrkSub": "· réinventions depuis les cendres",
+  "wrk.head": "{n} arts réinventés",
+  "wrk.headTitle": "le compte de l’atelier — arts perdus redécouverts par des esprits explorateurs",
+  "wrk.event": "mouche #{id} a réinventé le rang {rung} · {name}",
+};
+const esWrk = {
+  "vol.wrkTitle": "el taller",
+  "vol.wrkSub": "· reinvenciones desde las cenizas",
+  "wrk.head": "{n} artes reinventados",
+  "wrk.headTitle": "el registro del taller — artes perdidos redescubiertos por mentes exploradoras",
+  "wrk.event": "mosca #{id} reinventó escalón {rung} · {name}",
+};
+const jaWrk = {
+  "vol.wrkTitle": "工房",
+  "vol.wrkSub": "· 灰燼からの再発明",
+  "wrk.head": "{n} 件の芸を再発明",
+  "wrk.headTitle": "工房の記録 —— 探索者により再発見された失われた芸",
+  "wrk.event": "第{id}号蠅が第{rung}階を再発明 · {name}",
+};
+const koWrk = {
+  "vol.wrkTitle": "공방",
+  "vol.wrkSub": "· 재에서 다시 발명하다",
+  "wrk.head": "{n}개 기술 재발명",
+  "wrk.headTitle": "공방의 기록 —— 탐험가에 의해 재발견된 잃어버린 기술",
+  "wrk.event": "{id}번 파리 · {rung}단 재발명 · {name}",
+};
+const arWrk = {
+  "vol.wrkTitle": "المشغل",
+  "vol.wrkSub": "· إعادة اختراع من الرماد",
+  "wrk.head": "{n} فنون أُعيد اختراعها",
+  "wrk.headTitle": "سجلّ المشغل — فنون مفقودة أعاد اكتشافها عقول مستكشفة",
+  "wrk.event": "الذبابة #{id} أعادت اختراع الدرجة {rung} · {name}",
+};
+Object.assign(en, enWrk);
+Object.assign(zh, zhWrk);
+Object.assign(fr, frWrk);
+Object.assign(es, esWrk);
+Object.assign(ja, jaWrk);
+Object.assign(ko, koWrk);
+Object.assign(ar, arWrk);
+
 export { en, zh, fr, es, ja, ko, ar };

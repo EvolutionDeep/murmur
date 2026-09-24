@@ -220,6 +220,17 @@ export class ApprenticeMembrane {
   }
 
   /**
+   * Inject a keeper from outside the normal teaching path (called by the Workshop on reinvention).
+   * The fly becomes the first living mind to carry the art. Idempotent: if already a keeper at
+   * this rung or higher, no-op.
+   */
+  injectKeeper(flyId: number, rung: number): void {
+    const existing = this.craft.get(flyId);
+    if (existing != null && existing >= rung) return;
+    this.craft.set(flyId, rung);
+  }
+
+  /**
    * Chronicle + endpoint read-outs, recomputed from the ledger just kept (pure, never persists): the roster of
    * living keepers, the swarm's remembered peak, the standing schools, and this cron's four edge events.
    */

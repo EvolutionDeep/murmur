@@ -70,6 +70,7 @@ const zh = {
   RECORDING: "刻于石上 —— 第{id}号蝇将{name}刻下，使其比每一只握过它的心都长寿；蜂群的知识不再只是手的形状。",
   DECODE: "一个心灵读石 —— 第{id}号蝇研读{name}的记录，领悟了没有活师能传的技艺；艺术回归一颗从未遇见过手的首领。",
   ARCHIVE_BURNED: "档案馆在燃烧 —— 第{recordedBy}号蝇刻下的{name}最后一篇记录毁于一个读不懂它的黑暗时代；这门艺在所有意义上真正消失了。",
+REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重新发现了{name}；工坊再次点燃，技艺之梯重得一阶。",
 };
 
 const fr = {
@@ -132,6 +133,7 @@ const fr = {
   RECORDING: "Gravé dans la pierre — la mouche #{id} pose {name} pour qu'il survive à chaque esprit qui l'a porté ; le savoir de l'essaim n'est plus seulement la forme d'une main.",
   DECODE: "Un esprit lit la pierre — la mouche #{id} étudie le registre de {name} et saisit ce qu'aucun maître vivant ne pouvait transmettre ; l'art retourne à une tête qui n'a jamais rencontré de main.",
   ARCHIVE_BURNED: "Les archives brûlent — le dernier registre écrit de {name}, gravé par la mouche #{recordedBy}, est perdu dans un âge sombre qui ne savait pas le lire ; l'art est maintenant perdu en tout sens.",
+REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres d'un âge oublié ; l'atelier s'embrase à nouveau et l'échelle regagne un barreau.",
 };
 
 const es = {
@@ -194,6 +196,7 @@ const es = {
   RECORDING: "Grabado en piedra — la mosca #{id} fija {name} para que sobreviva a cada mente que lo sostuvo ; el saber del enjambre ya no es solo la forma de una mano.",
   DECODE: "Una mente lee la piedra — la mosca #{id} estudia el registro de {name} y comprende lo que ningún maestro vivo podía transmitir ; el arte regresa a una cabeza que nunca conoció una mano.",
   ARCHIVE_BURNED: "El archivo arde — el último registro escrito de {name}, grabado por la mosca #{recordedBy}, se pierde en una edad oscura que no supo leerlo ; el arte ya se ha ido en todo sentido.",
+REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cenizas de una era olvidada ; el taller se enciende de nuevo y la escalera recupera un peldaño.",
 };
 
 const ja = {
@@ -256,6 +259,7 @@ const ja = {
   RECORDING: "石に刻まる —— 蠅#{id}、{name}を刻み、之を握りし全て心より長らえしむ；蜂群の知識、もはや手の形のみあらず。",
   DECODE: "一霊、石を読む —— 蠅#{id}、{name}の記録を読み解き、生ける師の伝え得ざりし芸を悟る；芸、いまだ手に逢わざりし頭へ帰る。",
   ARCHIVE_BURNED: "書庫、焼く —— 蠅#{recordedBy}の刻みし{name}の最後の一巻、之を読まざりし暗黒の時代に失わる；芸、全ての意味にて消え去れり。",
+REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name}を再発見せり；工房、再び火を灯し、技の階梯、一段を取り戻す。",
 };
 
 const ko = {
@@ -318,6 +322,7 @@ const ko = {
   RECORDING: "돌에 새기다 — 파리 #{id}이 {name}을 새겨, 이를 쥔 모든 마음보다 오래 살게 하다; 벌떼의 지식은 더 이상 손의 모양만이 아니다.",
   DECODE: "한 마음이 돌을 읽다 — 파리 #{id}이 {name}의 기록을 파고들어, 살아 있는 스승이 전할 수 없었던 기예를 깨닫다; 기예, 아직 손을 만나지 못한 머리로 돌아가다.",
   ARCHIVE_BURNED: "기록실이 타다 — 파리 #{recordedBy}이 새긴 {name}의 마지막 기록을 읽을 줄 모르던 암흑 시대에 잃다; 기예, 모든 의미로 사라지다.",
+REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을 다시 발견하다; 공방에 다시 불이 붙고 기술의 사다리가 한 단을 되찾다.",
 };
 
 const ar = {
@@ -380,6 +385,7 @@ const ar = {
   RECORDING: "محفور في الحجر — الذبابة #{id} تنقش {name} ليبقى بعد كل عقلٍ حمله؛ معرفة السرب لم تعد مجرّد شكل اليد.",
   DECODE: "عقلٌ يقرأ الحجر — الذبابة #{id} تدرس سجلّ {name} وتدرك ما عجز أي معلّم حيّ عن نقله؛ الفنّ يعود إلى رأسٍ لم يلتقِ يدًا قطّ.",
   ARCHIVE_BURNED: "الأرشيف يحترق — آخر سجلٍّ مكتوب لـ{name}، نقشته الذبابة #{recordedBy}، يضيع في عصرٍ مظلمٍ لم يعرف قراءته؛ الفنّ ضاع الآن بكل معنى.",
+REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكتشاف {name} من رماد عصرٍ منسيّ؛ المشغل يشتعل من جديد والسلّم يستعيد درجة.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

@@ -290,6 +290,11 @@ ARCHIVE_RECORD_PCT = "0.02"                   # per keeper per cron, P they carv
 ARCHIVE_DECODE_PCT = "0.08"                   # per unskilled fly per cron, P they are seen studying a record
 ARCHIVE_BURN_CIV_MAX = "15"                   # civLevel at or below this, records may burn
 
+# ===== ⑱ THE WORKSHOP (knowledge rebirth — src/workshop.ts) =====
+# When a dark age strips an art from the ladder, explorer flies may reinvent it between generation edges.
+WORKSHOP_ENABLED = "true"                      # master switch — ARMED: explorers may reinvent lost arts
+WORKSHOP_REINVENT_PCT = "0.03"                 # per explorer per cron, P they rediscover the highest lost art
+
 # ===== ① NEURAL FEEDBACK BUS (the civilizational climate fed BACK into the connectome — src/socialStimulus.ts) =====
 # Every other civilizational layer here is a PURE READ-OUT: it narrates the society into the chronicle but the
 # flies never feel it. This one closes the loop — it turns the historian's OWN reckoning (eraInfo's civPhase /

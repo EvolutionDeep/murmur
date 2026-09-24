@@ -199,6 +199,25 @@ export class TechMembrane {
   }
 
   /**
+   * Restore a lost art back onto the ladder (called by the Workshop membrane's reinvention path).
+   * The rung is re-added with fresh adoption; the `lost` set is cleaned. Idempotent: if the rung
+   * is already present, this is a no-op.
+   */
+  restoreArt(rung1: number, tick: number, size: number): void {
+    const rung = rung1 - 1; // convert 1-based to 0-based
+    if (rung < 0 || rung >= LADDER_LEN) return;
+    if (this.arts.has(rung)) return; // already restored
+    const r = LADDER[rung];
+    this.arts.set(rung, {
+      rung, name: r.name, gen: this.lastGen, tick,
+      adopted: Math.max(1, Math.round(size * 0.1)), // 10% adoption on reinvention
+      houseId: null, houseName: null,
+    });
+    this.lost.delete(rung);
+    this.diffused.delete(rung);
+  }
+
+  /**
    * Chronicle + endpoint read-outs, recomputed from the ledger just kept (pure, never persists): the arts in
    * force, what was lost, the next rung's horizon, and this cron's three events.
    */

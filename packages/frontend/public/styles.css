@@ -649,6 +649,15 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .arch-row.arch-head { color: var(--ink); }
 .arch-row.arch-record { color: #6a4a3f; }
 
+/* ⑱ workshop (knowledge rebirth) */
+.chron-workshop { flex: 1 1 0; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }
+.wrk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.wrk-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.wrk-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.wrk-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.wrk-row.wrk-head { color: var(--ink); }
+.wrk-row.wrk-event { color: #3f5a4a; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }

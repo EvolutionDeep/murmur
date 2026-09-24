@@ -115,7 +115,8 @@ export type ChronicleKind =
     | "CRAFT_LOST"
     | "RECORDING"
     | "DECODE"
-    | "ARCHIVE_BURNED";
+    | "ARCHIVE_BURNED"
+    | "REINVENTION";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -210,6 +211,9 @@ export interface ChronicleContext {
    *  CRAFT_LOST (APPRENTICE_ENABLED=false never folds these in). */
   apprentice?: ChronicleApprentice | null;
   archive?: ChronicleArchive | null;
+  /** ⑱ WORKSHOP read-out (workshop.ts signals): the reinvention event this cron. Absent ⇒
+   *  no REINVENTION (WORKSHOP_ENABLED=false never folds these in). */
+  workshop?: ChronicleWorkshop | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -271,6 +275,12 @@ export interface ChronicleArchive {
   records: number;                 // surviving records at this cron
   recorded: number;                // cumulative inscriptions ever made
   decodes: number;                 // cumulative decode observations
+}
+
+/** ⑱ The Workshop: knowledge rebirth signals folded into the chronicle context. */
+export interface ChronicleWorkshop {
+  reinvention: { id: number; rung: number; name: string } | null;
+  reinventions: number;            // cumulative reinventions since inception
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -381,6 +391,7 @@ lastCraftLostKey: string | null;    // the dying keeper id of the last announced
   lastRecordingKey: string | null;      // the keeper id of the last announced RECORDING
   lastDecodeKey: string | null;         // the fly id of the last announced DECODE
   lastArchiveBurnedKey: string | null;  // the rung+recorder of the last announced ARCHIVE_BURNED
+  lastReinventionKey: string | null;     // the fly id of the last announced REINVENTION
   headHash: string;                 // hash of the most-recently-emitted entry (GENESIS_HASH until first emit)
 }
 
@@ -451,7 +462,7 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120,
   // ⑰ Archive: a RECORDING is rare (a keeper chooses to inscribe); DECODE is one-per-cohort; ARCHIVE_BURNED
   //     is mourned like a dark age's toll on the written word.
-  RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200,
+  RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -553,6 +564,7 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   RECORDING: "Carved in stone — fly #{id} sets down {name} so it will outlive every mind that held it; the swarm's knowledge is no longer only the shape of a hand.",
   DECODE: "A mind reads the stone — fly #{id} studies the record of {name} and grasps what no living teacher could pass; the art returns to a head that never met a hand.",
   ARCHIVE_BURNED: "The archive burns — the last written record of {name}, set down by fly #{recordedBy}, is lost to a dark age that could not read it; the art is now gone in every sense.",
+REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes of a forgotten age; the workshop fires again and the ladder regains a rung.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1281,6 +1293,19 @@ export class Chronicler {
       }
     }
 
+    // ⑱ Workshop: REINVENTION
+    const wrk = ctx.workshop;
+    if (wrk?.reinvention) {
+      const key = `${wrk.reinvention.id}`;
+      if (key !== s.lastReinventionKey && this.ready("REINVENTION", ctx)) {
+        const r = wrk.reinvention;
+        s.lastReinventionKey = key;
+        out.push(await this.emit(ctx, "REINVENTION", 3, [r.id],
+          { id: r.id, rung: r.rung, name: r.name },
+          { rung: r.rung, id: r.id }));
+      }
+    }
+
     return out;
   }
 
@@ -1420,7 +1445,7 @@ function freshState(): ChroniclerState {
     generation: 0, genStartCron: 0, civLevel: CIV_START, prevCivVolume: 0, civGolden: false, civDark: false,
     lastInventionKey: null, lastDiffusionKey: null, lastLostArtKey: null, lastFoundingKey: null, lastCensusGen: -1,
 lastTransmissionKey: null, lastSurpassKey: null, lastSchoolKey: null, lastCraftLostKey: null,
-    lastRecordingKey: null, lastDecodeKey: null, lastArchiveBurnedKey: null,
+    lastRecordingKey: null, lastDecodeKey: null, lastArchiveBurnedKey: null, lastReinventionKey: null,
     headHash: GENESIS_HASH,
   };
 }

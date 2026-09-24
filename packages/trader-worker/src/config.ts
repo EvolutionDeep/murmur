@@ -211,6 +211,8 @@ export interface Env {
   ARCHIVE_RECORD_PCT?: string;          // 0..1 — per keeper per cron, P they inscribe their craft (default 0.02)
   ARCHIVE_DECODE_PCT?: string;          // 0..1 — per unskilled fly per cron, P they are seen studying a record (default 0.08)
   ARCHIVE_BURN_CIV_MAX?: string;        // civLevel at or below this, records may burn (default 15; clamped 0..100)
+  WORKSHOP_ENABLED?: string;            // "true"/"false" (default TRUE)
+  WORKSHOP_REINVENT_PCT?: string;       // 0..1 — per explorer per cron, P they reinvent a lost art (default 0.03)
 
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
@@ -508,6 +510,10 @@ export interface RuntimeConfig {
     recordP: number;          // per keeper per cron, P they inscribe (default 0.02)
     decodeP: number;          // per unskilled fly per cron, P they decode (default 0.08)
     burnCivMax: number;       // civLevel ≤ this ⇒ records may burn (default 15)
+  };
+  workshop: {
+    enabled: boolean;
+    reinventP: number;        // per explorer per cron, P they reinvent a lost art (default 0.03)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -876,6 +882,10 @@ export function loadConfig(env: Env): RuntimeConfig {
       recordP: clamp(Number(env.ARCHIVE_RECORD_PCT || "0.02"), 0, 1),
       decodeP: clamp(Number(env.ARCHIVE_DECODE_PCT || "0.08"), 0, 1),
       burnCivMax: clampInt(Number(env.ARCHIVE_BURN_CIV_MAX || "15"), 0, 100),
+    },
+    workshop: {
+      enabled: (env.WORKSHOP_ENABLED ?? "true").toLowerCase() !== "false",
+      reinventP: clamp(Number(env.WORKSHOP_REINVENT_PCT || "0.03"), 0, 1),
     },
 
     socialStimulus: {
