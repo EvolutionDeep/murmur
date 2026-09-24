@@ -33,7 +33,7 @@
     "example": "npx --yes tsx examples/settle.ts"
   },
   "dependencies": {
-    "viem": "^2.21.45"
+    "viem": "^2.56.8"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",
