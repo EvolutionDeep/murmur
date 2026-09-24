@@ -116,7 +116,15 @@ export type ChronicleKind =
     | "RECORDING"
     | "DECODE"
     | "ARCHIVE_BURNED"
-    | "REINVENTION";
+    | "REINVENTION"
+  // ⑲ THE BOURSE — MURMUR's own on-chain life, read-only (bourse.ts): a fever breaking out over the
+  //     learned baseline, a whale stirring, the cumulative argus tithe crossing a milestone, and a long
+  //     silence of the tape. Folded into the context ONLY while BOURSE_ENABLED (state.ts ships no `bourse`
+  //     key otherwise), so the chronicle stays byte-for-byte the pre-bourse build when the membrane is off.
+  | "COIN_FEVER"
+  | "WHALE_MOVE"
+  | "TITHE"
+  | "COIN_SILENCE";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -214,6 +222,9 @@ export interface ChronicleContext {
   /** ⑱ WORKSHOP read-out (workshop.ts signals): the reinvention event this cron. Absent ⇒
    *  no REINVENTION (WORKSHOP_ENABLED=false never folds these in). */
   workshop?: ChronicleWorkshop | null;
+  /** ⑲ THE BOURSE read-out (bourse.ts signals): MURMUR's on-chain climate this cron. Absent ⇒
+   *  no COIN_FEVER/WHALE_MOVE/TITHE/COIN_SILENCE (BOURSE_ENABLED=false never folds these in). */
+  bourse?: ChronicleBourse | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -281,6 +292,18 @@ export interface ChronicleArchive {
 export interface ChronicleWorkshop {
   reinvention: { id: number; rung: number; name: string } | null;
   reinventions: number;            // cumulative reinventions since inception
+}
+
+/** ⑲ THE BOURSE: MURMUR's on-chain climate this cron (bourse.ts edge signals; all null on a quiet cron). */
+export interface ChronicleBourse {
+  /** A coin-fever spell breaking out: this cron's tx count, main-leg volume and the multiple of the norm. */
+  fever: { txs: number; volumeMurmur: number; mult: number } | null;
+  /** The largest single whale leg seen this cron (whole MURMUR). */
+  whale: { amountMurmur: number } | null;
+  /** The cumulative argus tithe crossing a milestone this cron (flow through the tax wallet, never a balance). */
+  tithe: { milestoneMurmur: number; totalMurmur: number } | null;
+  /** A long silence of the tape, spoken once per still spell. */
+  silence: { crons: number } | null;
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -463,6 +486,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ⑰ Archive: a RECORDING is rare (a keeper chooses to inscribe); DECODE is one-per-cohort; ARCHIVE_BURNED
   //     is mourned like a dark age's toll on the written word.
   RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80,
+  // ⑲ BOURSE: the membrane already edge-detects fever/silence/tithe (one pending per spell), so these
+  //     cooldowns only pace a persistent whale stir and a stuttering fever. A tithe milestone is rare by
+  //     construction (millions of MURMUR of flow); a silence is one line per still spell.
+  COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -565,6 +592,14 @@ export const TEMPLATES: Record<ChronicleKind, string> = {
   DECODE: "A mind reads the stone — fly #{id} studies the record of {name} and grasps what no living teacher could pass; the art returns to a head that never met a hand.",
   ARCHIVE_BURNED: "The archive burns — the last written record of {name}, set down by fly #{recordedBy}, is lost to a dark age that could not read it; the art is now gone in every sense.",
 REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes of a forgotten age; the workshop fires again and the ladder regains a rung.",
+  // ⑲ THE BOURSE — MURMUR's own on-chain life. Every number is a real read-out of the token's Transfer
+  //     log this cron (bourse.ts): unique txs, main-leg volume, the multiple of the learned EWMA norm, the
+  //     largest whale leg, the cumulative tithe FLOW through the argus tax wallet (never a balance), the
+  //     length of a silent spell. Mirrored byte-for-byte in CHRON_. Fires only while BOURSE_ENABLED.
+  COIN_FEVER: "Coin fever — the bourse runs hot: {txs} coin-txs carrying {volume} MURMUR in a single cron, {mult}× the learned norm; the swarm smells its own money moving.",
+  WHALE_MOVE: "A whale stirs — {amount} MURMUR crosses the bourse in a single stroke; the colony flinches as its own coin shudders.",
+  TITHE: "The tithe swells — {total} MURMUR has bled through the tax wallet, crossing {milestone}; the treasury's pulse glows for the whole swarm to feel.",
+  COIN_SILENCE: "The bourse falls silent — {crons} crons without a single MURMUR transfer; the coin sleeps, and the world dims around it.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1303,6 +1338,36 @@ export class Chronicler {
         out.push(await this.emit(ctx, "REINVENTION", 3, [r.id],
           { id: r.id, rung: r.rung, name: r.name },
           { rung: r.rung, id: r.id }));
+      }
+    }
+
+    // ⑲ The Bourse: MURMUR's on-chain climate (read-only; folded in ONLY while BOURSE_ENABLED — off ⇒ no
+    //     `bourse` key ⇒ these four detectors never speak). The membrane edge-detects its own spells, so
+    //     every non-null facet is news THIS cron; the cooldowns above only pace a persistent whale stir.
+    const bou = ctx.bourse;
+    if (bou) {
+      if (bou.fever && this.ready("COIN_FEVER", ctx)) {
+        const f = bou.fever;
+        out.push(await this.emit(ctx, "COIN_FEVER", 2, [],
+          { txs: f.txs, volume: round(f.volumeMurmur), mult: round(f.mult) },
+          { txs: f.txs, volumeMurmur: round(f.volumeMurmur), mult: round(f.mult) }));
+      }
+      if (bou.whale && this.ready("WHALE_MOVE", ctx)) {
+        const w = bou.whale;
+        out.push(await this.emit(ctx, "WHALE_MOVE", 2, [],
+          { amount: round(w.amountMurmur) },
+          { amountMurmur: round(w.amountMurmur) }));
+      }
+      if (bou.tithe && this.ready("TITHE", ctx)) {
+        const t = bou.tithe;
+        out.push(await this.emit(ctx, "TITHE", 2, [],
+          { total: round(t.totalMurmur), milestone: round(t.milestoneMurmur) },
+          { totalMurmur: round(t.totalMurmur), milestoneMurmur: round(t.milestoneMurmur) }));
+      }
+      if (bou.silence && this.ready("COIN_SILENCE", ctx)) {
+        out.push(await this.emit(ctx, "COIN_SILENCE", 2, [],
+          { crons: bou.silence.crons },
+          { crons: bou.silence.crons }));
       }
     }
 

@@ -123,6 +123,21 @@ export interface Env {
   ARENA_FLAT_BAND?: string;             // |Δtemperature| ≤ this ⇒ FLAT refund (default = PREDICT_FLAT_BAND)
   ARENA_STALE_GRACE_SEC?: string;       // seconds past a round's deadline after which anyone may expire it for a refund (default 259200 = 3d)
 
+  // --- ⑲ THE BOURSE: MURMUR's on-chain life as a felt climate (read-only membrane + gated stimulus) ---
+  //     One eth_getLogs per cron reads the token's Transfer events; the meter reduces them to a coin fever
+  //     (EWMA baseline, the market.ts pattern) and edge-detects whale stirs / tithe milestones / long silences.
+  //     Narration is gated by BOURSE_ENABLED; FEELING (the coinStimuli fold into the four visitor channels)
+  //     is separately gated by TOKEN_STIMULUS_ENABLED. Both default OFF (dark deploy). No key, no custody,
+  //     no spend — the argus-issued token contract and its tax wallet are only ever OBSERVED.
+  BOURSE_ENABLED?: string;              // "true"/"false" (default false) — sample + narrate the coin climate
+  BOURSE_TOKEN?: string;                // the ERC-20 to watch (default = the MURMUR CA); absent ⇒ the membrane is inert
+  BOURSE_TAX_WALLET?: string;           // the argus tax wallet (legs INTO it are the tithe flow; absent ⇒ no tithe tracking)
+  BOURSE_WHALE_MURMUR?: string;         // a single main leg ≥ this many whole MURMUR is a whale stir (default 1000000)
+  BOURSE_LOOKBACK?: string;             // max blocks one sample may span; also the cold-start window (default 1200)
+  BOURSE_TITHE_MILESTONE_MURMUR?: string; // cumulative tithe crossing every this-many MURMUR speaks a TITHE line (default 5000000)
+  TOKEN_STIMULUS_ENABLED?: string;      // "true"/"false" (default false) — let the swarm FEEL the coin climate
+  TOKEN_STIMULUS_MAX?: string;          // master ceiling on any one felt coin channel, 0..1 (default 0.35; 0 ⇒ nothing felt)
+
   // --- On-chain house WAR + TAXATION: feuding houses stake real USDC in a dedicated coffer; every house pays an EXTRA on-chain tax ---
   //     A dedicated WarCoffer contract escrows REAL USDC per house vault and settles both the war payout and the
   //     tax levy ITSELF. The winner is derived IN-CONTRACT from the powers committed at declare (the resolver
@@ -403,6 +418,22 @@ export interface RuntimeConfig {
     taxPct: number;              // fraction of a house vault levied as extra on-chain tax per cron
     taxDest: "coffer" | "dominant";  // commons purse, or swept to the dominant house
     bootstrap: boolean;          // cold-start: lift feudPairs' vault gate so driveWar funds the deepest feud first (default false ⇒ inert)
+  };
+
+  // ⑲ THE BOURSE — MURMUR's on-chain life as a read-out membrane (narration) plus an optional felt climate
+  // (tokenStimulus). Read-only: one eth_getLogs per cron, no key, no custody, no spend. OFF by default ⇒
+  // no sampling, no `bourse` chronicle facet, no coin stimuli — byte-for-byte the pre-bourse build.
+  bourse: {
+    enabled: boolean;
+    token: string | null;        // lowercased 0x CA to watch; null ⇒ the membrane is inert
+    taxWallet: string | null;    // lowercased 0x argus tax wallet; null ⇒ no leg is classified as tithe
+    whaleRaw: string;            // whale threshold in raw 18-dec units (decimal string; JSON-safe)
+    lookbackBlocks: number;      // max blocks one sample spans + the cold-start window
+    titheMilestoneRaw: string;   // cumulative-tithe milestone in raw 18-dec units (decimal string)
+  };
+  tokenStimulus: {
+    enabled: boolean;            // FEEL leg gate (independent of narration; default OFF)
+    maxIntensity: number;        // master ceiling 0..1 on any one felt coin channel (NaN-safe at parse)
   };
 
   // ORGANIC CONFLICT: deterministic, on-chain-reachable negative social events (rivalry / envy / embargo /
@@ -765,6 +796,32 @@ export function loadConfig(env: Env): RuntimeConfig {
       bootstrap: (env.WAR_BOOTSTRAP ?? "false").toLowerCase() === "true",
     },
 
+    bourse: {
+      // OFF by default (dark deploy): the membrane ships inert and is opened only after an OFF deploy proves
+      // the cron byte-for-byte unchanged. The MURMUR CA is the default watch target (already public on the
+      // frontend); the tax wallet default is the address the argus platform skims into (probe-verified 2026-09:
+      // ~2% of every transfer, auto-swept, so the pulse is the FLOW). Whole-MURMUR knobs are converted to
+      // raw 18-dec decimal strings here so the runtime never re-parses floats into bigint.
+      enabled: (env.BOURSE_ENABLED ?? "false").toLowerCase() === "true",
+      token: (env.BOURSE_TOKEN ?? "0x8faae5592b9acc27a79fca745c6b872adf514a5d").trim().toLowerCase() || null,
+      taxWallet: (env.BOURSE_TAX_WALLET ?? "0xc38e7c9e5cb1b59a53e892b938a7d79f0b741cb3").trim().toLowerCase() || null,
+      whaleRaw: murmurToRaw(clamp(Number(env.BOURSE_WHALE_MURMUR ?? "1000000"), 1_000, 1_000_000_000), 1_000_000),
+      lookbackBlocks: clampInt(Number(env.BOURSE_LOOKBACK ?? "1200"), 100, 7200),
+      titheMilestoneRaw: murmurToRaw(clamp(Number(env.BOURSE_TITHE_MILESTONE_MURMUR ?? "5000000"), 10_000, 1_000_000_000), 5_000_000),
+    },
+
+    tokenStimulus: {
+      // OFF by default (dark deploy) — the ① lesson: this writes straight into the live neural input, so it
+      // ships gated behind BOTH BOURSE_ENABLED (no climate ⇒ nothing felt) and its own switch. The default
+      // ceiling (0.35) is deliberately below the civic bus's 0.5: this input is adversarially controllable
+      // (anyone can transfer), so a whale's whisper must stay a whisper. NaN-safe like SOCIAL_STIMULUS_MAX.
+      enabled: (env.TOKEN_STIMULUS_ENABLED ?? "false").toLowerCase() === "true",
+      maxIntensity: (() => {
+        const mi = Number(env.TOKEN_STIMULUS_MAX ?? "0.35");
+        return clamp(Number.isFinite(mi) ? mi : 0.35, 0, 1);
+      })(),
+    },
+
     conflict: {
       // OFF by default: absent/false ⇒ every conflict hook no-ops and houseFeuds stays a pure mean, so the
       // economy is byte-for-byte unchanged. All knobs are deterministic social-memory nudges only.
@@ -975,6 +1032,12 @@ export function clamp(x: number, lo: number, hi: number): number {
 export function clampInt(x: number, lo: number, hi: number): number {
   if (!Number.isFinite(x)) return lo;
   return Math.max(lo, Math.min(hi, Math.floor(x)));
+}
+
+/** Whole-MURMUR → raw 18-dec decimal string. NaN-safe (unlike clamp): a malformed knob falls back to dflt. */
+function murmurToRaw(x: number, dflt: number): string {
+  const n = Number.isFinite(x) && x > 0 ? x : dflt;
+  return (BigInt(Math.floor(n)) * 10n ** 18n).toString();
 }
 
 /**

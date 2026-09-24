@@ -87,6 +87,7 @@ export default {
             "GET  /lineage/:hash (one bred brain: genome body + parents/children + re-derived structural spec + on-chain commit)",
             "GET  /lineage/verify?hash=0x… (recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL)",
             "GET  /arena        (human-vs-swarm MURMUR arena: live book + parimutuel odds + you-vs-the-swarm hit rate)",
+            "GET  /bourse       (⑲ the MURMUR coin tape as the swarm feels it: fever/whales/argus-tithe flow/silences — read-only, inert until BOURSE_ENABLED)",
             "GET  /community  (token-gated governance forum: browse free; post/propose/vote need a MURMUR-holding wallet signature — see /community for the sub-endpoints)",
             "GET  /history      (D1 long-term archive: one row per cron — temperature/regime/deals/volume/gini/topStates)",
             "GET  /stimuli",

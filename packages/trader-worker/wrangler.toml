@@ -295,6 +295,31 @@ ARCHIVE_BURN_CIV_MAX = "15"                   # civLevel at or below this, recor
 WORKSHOP_ENABLED = "true"                      # master switch — ARMED: explorers may reinvent lost arts
 WORKSHOP_REINVENT_PCT = "0.03"                 # per explorer per cron, P they rediscover the highest lost art
 
+# ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
+# A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
+# into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates
+# the 2% argus tax skim as a cumulative TITHE FLOW (never a balance — argus auto-sweeps the wallet), and
+# flags whales / silences. Two independent legs, two independent switches:
+#   BOURSE_ENABLED         — sample the tape, expose GET /bourse, let the historian speak the four new
+#                            kinds (COIN_FEVER / WHALE_MOVE / TITHE / COIN_SILENCE).
+#   TOKEN_STIMULUS_ENABLED — let the coin climate reach the connectome through the SAME four visitor
+#                            channels (food/threat/light/dark, the ① bus precedent): NO new sensory
+#                            channel ⇒ manifestHash never rotates; no genome touched; no money moved.
+# ADVERSARIAL-INPUT SAFETY: TOKEN_STIMULUS_MAX is a hard master ceiling on any one felt channel (0.35,
+# deliberately below the civic bus's 0.5) — a hostile burst can startle the swarm but never own it. The
+# worker holds NO token key and signs NOTHING; the whole layer is getLogs + pure math.
+# DARK DEPLOY: both default "false" ⇒ byte-for-byte today's behaviour. Rollback = flip to "false" and
+# redeploy (no code change). NOTE: enabling BOURSE_ENABLED rotates chroniclerRulesHash (four new kinds),
+# so the frontend mirror MUST be deployed first.
+BOURSE_ENABLED = "false"                       # ⑲ narration switch — dark deploy; flip after the frontend mirror is live
+BOURSE_TOKEN = "0x8faae5592b9acc27a79fca745c6b872adf514a5d"   # the MURMUR CA on Arc mainnet
+BOURSE_TAX_WALLET = "0xc38e7c9e5cb1b59a53e892b938a7d79f0b741cb3" # the argus tax wallet (tithe flow sink)
+BOURSE_WHALE_MURMUR = "1000000"                # a single main leg ≥ this many whole MURMUR is a whale stir (~p99 of the live tape)
+BOURSE_LOOKBACK = "1200"                       # max blocks one sample may span (~10 min at 0.51 s/block); also the cold-start window
+BOURSE_TITHE_MILESTONE_MURMUR = "5000000"      # cumulative tithe crossing every this-many MURMUR speaks a TITHE line
+TOKEN_STIMULUS_ENABLED = "false"               # ⑲ feeling switch — dark deploy; arms the coin→connectome fold
+TOKEN_STIMULUS_MAX = "0.35"                    # hard master ceiling on any one felt coin channel, 0..1 (0 ⇒ nothing felt)
+
 # ===== ① NEURAL FEEDBACK BUS (the civilizational climate fed BACK into the connectome — src/socialStimulus.ts) =====
 # Every other civilizational layer here is a PURE READ-OUT: it narrates the society into the chronicle but the
 # flies never feel it. This one closes the loop — it turns the historian's OWN reckoning (eraInfo's civPhase /

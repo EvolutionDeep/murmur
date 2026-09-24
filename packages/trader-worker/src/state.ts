@@ -66,6 +66,7 @@ import { CityMembrane, houseCreditOf, type CitySignals } from "./cities.js";
 import { ApprenticeMembrane, type ApprenticeSignals } from "./apprentice.js";
 import { ArchiveMembrane, type ArchiveSignals } from "./archive.js";
 import { WorkshopMembrane, type WorkshopSignals } from "./workshop.js";
+import { BourseMeter, coinStimuli, sampleBourseActivity, type BourseSignals } from "./bourse.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -110,6 +111,9 @@ const KEY_CITIES = "cities:v1";
 const KEY_APPRENTICE = "apprentice:v1";
 const KEY_ARCHIVE = "archive:v1";
 const KEY_WORKSHOP = "workshop:v1";
+/** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
+ *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
+const KEY_BOURSE = "bourse:v1";
 const KEY_COMMONS = "commons:v1";
 /** ⑮ The Laureate's poem hash chain — its OWN key: a poem is a pure read-out, so a corrupt/absent blob only
  *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
@@ -214,6 +218,10 @@ export class FlyStateDO {
   private archive: ArchiveMembrane | null = null;
   /** ⑱ The Workshop (knowledge rebirth) — null while WORKSHOP_ENABLED=false. */
   private workshop: WorkshopMembrane | null = null;
+  /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
+  private bourse: BourseMeter | null = null;
+  /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
+  private bourseSignals: BourseSignals | null = null;
   /** ⑧ The commons (fly self-legislation) — null while LAW_ENABLED/institutions/economy is off. */
   private commons: CommonsAssembly | null = null;
   /** ⑮ The Laureate (the swarm's poet) — null while POET_ENABLED=false (byte-for-byte inert). */
@@ -485,6 +493,33 @@ export class FlyStateDO {
     this.workshop = new WorkshopMembrane({ enabled: true, reinventP: w.reinventP });
     if (stored) this.workshop.restore(stored);
     return this.workshop;
+  }
+
+  /**
+   * ⑲ Lazily load the Bourse meter (null while BOURSE_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts cold: it re-learns the tape's norm from scratch and can never poison
+   * the ledger — the bourse only ever READS the chain (getLogs) and never signs a transaction.
+   */
+  private async ensureBourse(): Promise<BourseMeter | null> {
+    if (!this.cfg.bourse.enabled || !this.cfg.bourse.token) return null;
+    if (this.bourse) return this.bourse;
+    const stored = await this.state.storage.get<string>(KEY_BOURSE);
+    this.bourse = new BourseMeter();
+    if (stored) this.bourse.restore(stored);
+    return this.bourse;
+  }
+
+  /**
+   * ⑲ Sample the MURMUR tape (read-only getLogs from the meter's lastBlock) and fold it into the meter.
+   * Returns null when the bourse is off, or when the RPC failed (lastBlock does NOT advance, so the next
+   * cron re-reads the same window — the tape is never silently skipped). Strictly best-effort.
+   */
+  private async driveBourse(): Promise<BourseSignals | null> {
+    const b = await this.ensureBourse();
+    if (!b) return null;
+    b.setWhaleHint(Number(BigInt(this.cfg.bourse.whaleRaw) / 10n ** 18n));
+    const sample = await sampleBourseActivity(this.cfg, b.lastBlock);
+    return b.update(sample, { titheMilestoneRaw: BigInt(this.cfg.bourse.titheMilestoneRaw) });
   }
 
   /**
@@ -1123,6 +1158,7 @@ export class FlyStateDO {
     if (this.apprentice) batch[KEY_APPRENTICE] = this.apprentice.serialize();
     if (this.archive) batch[KEY_ARCHIVE] = this.archive.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
+    if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
     if (this.poet) batch[KEY_POET] = this.poet.serialize();
     if (this.prediction) batch[KEY_PREDICT] = this.prediction.serialize();
@@ -1524,6 +1560,12 @@ export class FlyStateDO {
       const workshop = wrkSig
         ? { reinvention: wrkSig.reinvention, reinventions: wrkSig.reinventions }
         : null;
+      // ⑲ BOURSE: fold the coin tape's edge events ONLY while BOURSE is on. Off ⇒ no `bourse` key ⇒ the
+      // historian's four coin detectors never speak (the ctx.bourse guards in reckon() stay asleep).
+      const bouSig = this.cfg.bourse.enabled ? this.bourseSignals : null;
+      const bourse = bouSig
+        ? { fever: bouSig.fever, whale: bouSig.whale, tithe: bouSig.tithe, silence: bouSig.silence }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1618,6 +1660,7 @@ export class FlyStateDO {
         apprentice,
         archive,
         workshop,
+        bourse,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1848,6 +1891,7 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
       if (req.method === "GET" && path === "/arena") return await this.getArena();
       if (req.method === "GET" && path === "/war") return await this.getWar();
+      if (req.method === "GET" && path === "/bourse") return await this.getBourse();
       if (req.method === "GET" && path === "/lineage") return await this.getLineage(url);
       if (req.method === "GET" && path === "/lineage/verify") return await this.getLineageVerify(url);
       if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
@@ -1941,6 +1985,20 @@ export class FlyStateDO {
         };
     this.prevTemperature = temperature;
 
+    // 2b) ⑲ THE BOURSE — read the MURMUR tape (read-only getLogs, no signing) and fold it into the meter.
+    //     The signals feed BOTH legs: the historian's four coin detectors (step 7's ctx.bourse) and, below,
+    //     the coin-climate stimulus fold. Gated behind BOURSE_ENABLED (default OFF ⇒ bourseSignals stays
+    //     null and nothing anywhere changes). Best-effort: an RPC failure only means this cron has no coin
+    //     reading; the tick itself never blocks (lastBlock does not advance, so nothing is skipped).
+    this.bourseSignals = null;
+    if (this.cfg.bourse.enabled) {
+      try {
+        this.bourseSignals = await this.driveBourse();
+      } catch (e) {
+        console.warn("[DO] bourse sample failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // 3) Collect the visitor stimuli queued since the last tick (injected on the first sub-tick only).
     const stimuli = this.pendingStimuli.splice(0, this.pendingStimuli.length);
     // 3b) ① NEURAL FEEDBACK BUS — fold the civilizational climate the historian ALREADY reckoned (eraInfo's
@@ -1965,6 +2023,23 @@ export class FlyStateDO {
         }
       } catch (e) {
         console.warn("[DO] social stimulus failed (non-fatal):", (e as Error).message);
+      }
+    }
+
+    // 3c) ⑲ BOURSE STIMULUS LEG — the coin tape's climate, felt through the SAME four visitor channels
+    //     (food/threat/light/dark), exactly like the civic bus above: no sensory channel is added, so the
+    //     manifestHash never rotates and no genome is touched. Gated behind TOKEN_STIMULUS_ENABLED (default
+    //     OFF ⇒ byte-for-byte today's stimuli). A hard master ceiling (cfg.tokenStimulus.maxIntensity,
+    //     default 0.35 — deliberately below the civic bus) caps what ANY coin climate can ever inject, so a
+    //     hostile airdrop burst can startle the swarm but never own it. Best-effort: never blocks the tick.
+    if (this.cfg.tokenStimulus.enabled && this.bourseSignals) {
+      try {
+        const coin = coinStimuli(this.bourseSignals.climate, {
+          maxIntensity: this.cfg.tokenStimulus.maxIntensity,
+        });
+        if (coin.length) stimuli.push(...coin);
+      } catch (e) {
+        console.warn("[DO] token stimulus failed (non-fatal):", (e as Error).message);
       }
     }
 
@@ -2284,6 +2359,48 @@ export class FlyStateDO {
     return json({
       ...base, houses, stats, wars,
       state: { openedWar: rt.cursor.openedWar, resolvedWar: rt.cursor.resolvedWar, pairsInCooldown: Object.keys(rt.lastByPair).length },
+    });
+  }
+
+  /**
+   * GET /bourse — ⑲ the MURMUR tape read-out: static wiring (token/tax wallet/whale threshold/milestone),
+   * the meter's learned baselines, the cumulative tithe FLOW through the argus tax wallet (never a balance
+   * — argus auto-sweeps it) and the current climate. Lazy: a GET never touches the chain; it only reports
+   * what the last cron's sample left behind. Inert (enabled:false, climate:null) until BOURSE_ENABLED.
+   */
+  private async getBourse() {
+    const b = this.cfg.bourse;
+    const base = {
+      enabled: b.enabled && b.token != null,
+      network: arcNetworkTag(this.cfg.isTestnet),
+      chainId: this.cfg.chainId,
+      token: b.token,
+      taxWallet: b.taxWallet,
+      whaleThresholdMurmur: Number(BigInt(b.whaleRaw) / 10n ** 18n),
+      titheMilestoneMurmur: Number(BigInt(b.titheMilestoneRaw) / 10n ** 18n),
+      lookbackBlocks: b.lookbackBlocks,
+      stimulus: this.cfg.tokenStimulus.enabled,
+      maxIntensity: this.cfg.tokenStimulus.maxIntensity,
+    };
+    if (!base.enabled) return json({ ...base, climate: null, signals: null, lastBlock: 0 });
+    const meter = await this.ensureBourse();
+    const sig = meter?.signals() ?? null;
+    return json({
+      ...base,
+      climate: sig?.climate ?? null,
+      signals: sig
+        ? {
+            txs: sig.txs,
+            volumeMurmur: sig.volumeMurmur,
+            taxTotalMurmur: sig.taxTotalMurmur,
+            whaleTotal: sig.whaleTotal,
+            baselineTxs: sig.baselineTxs,
+            baselineVolumeMurmur: sig.baselineVolumeMurmur,
+            quietCrons: sig.quietCrons,
+            sampledAt: sig.sampledAt,
+          }
+        : null,
+      lastBlock: meter?.lastBlock ?? 0,
     });
   }
 

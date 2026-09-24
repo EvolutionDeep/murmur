@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { en, zh, fr, es, ja, ko, ar } from "./i18n-ui.js?v=71";
-import { CHRON_TPL } from "./i18n-chron.js?v=64";
+import { CHRON_TPL } from "./i18n-chron.js?v=65";
 
 export const SUPPORTED = ["en", "zh", "fr", "es", "ja", "ko", "ar"];
 export const RTL = new Set(["ar"]);

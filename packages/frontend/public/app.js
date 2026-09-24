@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=81";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=82";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -4300,6 +4300,7 @@ const CHRON_ICONS = {
   CITY_FOUNDED: "⌂", URBANIZATION: "♜", CENSUS: "⌗", PLAGUE_WAVE: "☠",
   TRANSMISSION: "✋", SURPASS: "▲", SCHOOL: "⛫", CRAFT_LOST: "☠",
   RECORDING: "✒", DECODE: "◉", ARCHIVE_BURNED: "▲", REINVENTION: "⚒",
+  COIN_FEVER: "¤", WHALE_MOVE: "〰", TITHE: "◇", COIN_SILENCE: "◌",
 };
 
 function renderChron() {
@@ -4475,13 +4476,17 @@ const CHRON_ = {
     DECODE: "A mind reads the stone — fly #{id} studies the record of {name} and grasps what no living teacher could pass; the art returns to a head that never met a hand.",
     ARCHIVE_BURNED: "The archive burns — the last written record of {name}, set down by fly #{recordedBy}, is lost to a dark age that could not read it; the art is now gone in every sense.",
 REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes of a forgotten age; the workshop fires again and the ladder regains a rung.",
+    COIN_FEVER: "Coin fever — the bourse runs hot: {txs} coin-txs carrying {volume} MURMUR in a single cron, {mult}× the learned norm; the swarm smells its own money moving.",
+    WHALE_MOVE: "A whale stirs — {amount} MURMUR crosses the bourse in a single stroke; the colony flinches as its own coin shudders.",
+    TITHE: "The tithe swells — {total} MURMUR has bled through the tax wallet, crossing {milestone}; the treasury's pulse glows for the whole swarm to feel.",
+    COIN_SILENCE: "The bourse falls silent — {crons} crons without a single MURMUR transfer; the coin sleeps, and the world dims around it.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },

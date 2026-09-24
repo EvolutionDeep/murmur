@@ -1001,6 +1001,32 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/bourse": {
+      get: {
+        tags: ["predictions"],
+        operationId: "getBourse",
+        summary: "⑲ The Bourse: the MURMUR coin tape as the swarm feels it — fever, whales, the argus tithe flow, silences",
+        description: "Read-only membrane over the project coin's Transfer logs on Arc: each cron folds every new MURMUR transfer into an EWMA baseline (unique-tx counted, so an airdrop burst cannot fake activity), separates the 2% argus tax skim as a cumulative TITHE FLOW (never a balance — argus auto-sweeps the wallet), flags whale legs and long silences, and derives a coin climate the connectome can FEEL through the same four visitor stimulus channels (food/threat/light/dark — no new channel, manifestHash never rotates) under a hard master ceiling. The four edge events (COIN_FEVER / WHALE_MOVE / TITHE / COIN_SILENCE) reach the historian's chronicle. This GET is lazy: it never touches the chain, it only reports what the last cron left behind. Inert (enabled:false) until BOURSE_ENABLED is set.",
+        ...ok(
+          obj({
+            enabled: { type: "boolean", description: "True when BOURSE_ENABLED is set and a token address is configured." },
+            network: { type: "string", description: "The Arc network tag." },
+            chainId: { type: "integer" },
+            token: { type: ["string", "null"], description: "The MURMUR token address being watched." },
+            taxWallet: { type: ["string", "null"], description: "The argus tax wallet; legs into it are the tithe flow, excluded from volume/whale math." },
+            whaleThresholdMurmur: { type: "number", description: "A single main leg at or above this (whole MURMUR) is a whale stir." },
+            titheMilestoneMurmur: { type: "number", description: "The tithe total is announced each time it crosses a multiple of this." },
+            lookbackBlocks: { type: "integer", description: "Cold-start window cap; warm crons continue from lastBlock+1." },
+            stimulus: { type: "boolean", description: "True when TOKEN_STIMULUS_ENABLED lets the climate reach the connectome." },
+            maxIntensity: { type: "number", description: "The hard master ceiling on any one coin-stimulus channel (0 ⇒ nothing is ever felt)." },
+            climate: { type: ["object", "null"], additionalProperties: true, description: "feverLevel/quietCrons/whaleExcess/titheCrossed — what the stimulus leg reads." },
+            signals: { type: ["object", "null"], additionalProperties: true, description: "txs/volumeMurmur/taxTotalMurmur/whaleTotal/baselines/quietCrons/sampledAt (null before the first successful cron)." },
+            lastBlock: { type: "integer", description: "Highest token block already folded in (0 ⇒ cold)." },
+          }, ["enabled", "lastBlock"]),
+          "Bourse (coin tape) state.",
+        ).response,
+      },
+    },
     "/history": {
       get: {
         tags: ["swarm"],

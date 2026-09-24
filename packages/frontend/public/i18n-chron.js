@@ -71,6 +71,10 @@ const zh = {
   DECODE: "一个心灵读石 —— 第{id}号蝇研读{name}的记录，领悟了没有活师能传的技艺；艺术回归一颗从未遇见过手的首领。",
   ARCHIVE_BURNED: "档案馆在燃烧 —— 第{recordedBy}号蝇刻下的{name}最后一篇记录毁于一个读不懂它的黑暗时代；这门艺在所有意义上真正消失了。",
 REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重新发现了{name}；工坊再次点燃，技艺之梯重得一阶。",
+  COIN_FEVER: "币市狂热 —— 交易所灼热：单个周期内 {txs} 笔币交易搬运 {volume} MURMUR，是习得常态的 {mult} 倍；蜂群嗅到了自己金钱的流动。",
+  WHALE_MOVE: "巨鲸扰动 —— {amount} MURMUR 一笔划过交易所；殖民地因自己的代币震颤而瑟缩。",
+  TITHE: "什一税涌涨 —— {total} MURMUR 已从税收钱包流过，越过 {milestone}；宝库的脉动为整个蜂群亮起。",
+  COIN_SILENCE: "交易所沉寂 —— {crons} 个周期无一笔 MURMUR 转账；代币沉睡，世界随之暗下。",
 };
 
 const fr = {
@@ -134,6 +138,10 @@ const fr = {
   DECODE: "Un esprit lit la pierre — la mouche #{id} étudie le registre de {name} et saisit ce qu'aucun maître vivant ne pouvait transmettre ; l'art retourne à une tête qui n'a jamais rencontré de main.",
   ARCHIVE_BURNED: "Les archives brûlent — le dernier registre écrit de {name}, gravé par la mouche #{recordedBy}, est perdu dans un âge sombre qui ne savait pas le lire ; l'art est maintenant perdu en tout sens.",
 REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres d'un âge oublié ; l'atelier s'embrase à nouveau et l'échelle regagne un barreau.",
+  COIN_FEVER: "Fièvre de la monnaie — la bourse s'emballe : {txs} transactions portant {volume} MURMUR en un seul cron, {mult}× la norme apprise ; l'essaim sent son propre argent bouger.",
+  WHALE_MOVE: "Une baleine remue — {amount} MURMUR traverse la bourse d'un seul trait ; la colonie tressaille tandis que sa propre monnaie frissonne.",
+  TITHE: "La dîme enfle — {total} MURMUR ont coulé à travers le portefeuille fiscal, franchissant {milestone} ; le pouls du trésor brille pour tout l'essaim.",
+  COIN_SILENCE: "La bourse se tait — {crons} crons sans un seul transfert de MURMUR ; la monnaie dort, et le monde s'assombrit autour d'elle.",
 };
 
 const es = {
@@ -197,6 +205,10 @@ const es = {
   DECODE: "Una mente lee la piedra — la mosca #{id} estudia el registro de {name} y comprende lo que ningún maestro vivo podía transmitir ; el arte regresa a una cabeza que nunca conoció una mano.",
   ARCHIVE_BURNED: "El archivo arde — el último registro escrito de {name}, grabado por la mosca #{recordedBy}, se pierde en una edad oscura que no supo leerlo ; el arte ya se ha ido en todo sentido.",
 REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cenizas de una era olvidada ; el taller se enciende de nuevo y la escalera recupera un peldaño.",
+  COIN_FEVER: "Fiebre de la moneda — la bolsa se calienta: {txs} transacciones que llevan {volume} MURMUR en un solo cron, {mult}× la norma aprendida; el enjambre huele su propio dinero moverse.",
+  WHALE_MOVE: "Una ballena se agita — {amount} MURMUR cruza la bolsa de un solo golpe; la colonia se estremece mientras su propia moneda tiembla.",
+  TITHE: "El diezmo crece — {total} MURMUR han fluido por la cartera fiscal, cruzando {milestone}; el pulso del tesoro brilla para todo el enjambre.",
+  COIN_SILENCE: "La bolsa enmudece — {crons} crons sin una sola transferencia de MURMUR; la moneda duerme, y el mundo se oscurece a su alrededor.",
 };
 
 const ja = {
@@ -260,6 +272,10 @@ const ja = {
   DECODE: "一霊、石を読む —— 蠅#{id}、{name}の記録を読み解き、生ける師の伝え得ざりし芸を悟る；芸、いまだ手に逢わざりし頭へ帰る。",
   ARCHIVE_BURNED: "書庫、焼く —— 蠅#{recordedBy}の刻みし{name}の最後の一巻、之を読まざりし暗黒の時代に失わる；芸、全ての意味にて消え去れり。",
 REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name}を再発見せり；工房、再び火を灯し、技の階梯、一段を取り戻す。",
+  COIN_FEVER: "幣熱 —— 取引所、灼く：一のクロンに {txs} 筆の幣取引、{volume} MURMUR を運び、習いし常の {mult} 倍；蜂群、己が金の動くを嗅ぐ。",
+  WHALE_MOVE: "巨鯨、騒ぐ —— {amount} MURMUR、一筆にして取引所を渡る；殖民地、己が幣の戦くにおののく。",
+  TITHE: "什一税、満つ —— {total} MURMUR、税財布を流れ越え、{milestone} を跨ぐ；宝庫の脈、蜂群全体のために輝く。",
+  COIN_SILENCE: "取引所、静まる —— {crons} クロン、一筆の MURMUR 移転もなし；幣、眠り、世界、周りにて暗む。",
 };
 
 const ko = {
@@ -323,6 +339,10 @@ const ko = {
   DECODE: "한 마음이 돌을 읽다 — 파리 #{id}이 {name}의 기록을 파고들어, 살아 있는 스승이 전할 수 없었던 기예를 깨닫다; 기예, 아직 손을 만나지 못한 머리로 돌아가다.",
   ARCHIVE_BURNED: "기록실이 타다 — 파리 #{recordedBy}이 새긴 {name}의 마지막 기록을 읽을 줄 모르던 암흑 시대에 잃다; 기예, 모든 의미로 사라지다.",
 REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을 다시 발견하다; 공방에 다시 불이 붙고 기술의 사다리가 한 단을 되찾다.",
+  COIN_FEVER: "화폐 열병 — 거래소가 뜨겁게 달아오르다: 한 크론에 {txs}건의 화폐 거래가 {volume} MURMUR를 나르니, 학습된 평시의 {mult}배; 군집이 제 돈이 움직이는 냄새를 맡다.",
+  WHALE_MOVE: "고래가 요동치다 — {amount} MURMUR가 단 한 번에 거래소를 가로지르다; 제 화폐가 떨림에 군락이 움츠러들다.",
+  TITHE: "십일조가 불어나다 — {total} MURMUR가 세금 지갑을 흘러 {milestone}을 넘다; 금고의 맥이 온 군집이 느끼도록 빛나다.",
+  COIN_SILENCE: "거래소가 고요해지다 — {crons} 크론 동안 단 한 건의 MURMUR 이체도 없다; 화폐가 잠들고, 그 주위의 세계가 어두워지다.",
 };
 
 const ar = {
@@ -386,6 +406,10 @@ const ar = {
   DECODE: "عقلٌ يقرأ الحجر — الذبابة #{id} تدرس سجلّ {name} وتدرك ما عجز أي معلّم حيّ عن نقله؛ الفنّ يعود إلى رأسٍ لم يلتقِ يدًا قطّ.",
   ARCHIVE_BURNED: "الأرشيف يحترق — آخر سجلٍّ مكتوب لـ{name}، نقشته الذبابة #{recordedBy}، يضيع في عصرٍ مظلمٍ لم يعرف قراءته؛ الفنّ ضاع الآن بكل معنى.",
 REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكتشاف {name} من رماد عصرٍ منسيّ؛ المشغل يشتعل من جديد والسلّم يستعيد درجة.",
+  COIN_FEVER: "حُمّى العملة — البورصة تشتعل: {txs} حركة عملة تحمل {volume} MURMUR في دورةٍ واحدة، أي {mult}× من المعتاد المتعلَّم؛ السرب يشمّ أمواله وهي تتحرّك.",
+  WHALE_MOVE: "حوتٌ يتحرّك — {amount} MURMUR تعبر البورصة في حركةٍ واحدة؛ ترتجف المستعمرة بينما عملتها ترتعد.",
+  TITHE: "العُشر يتعاظم — {total} MURMUR تدفّقت عبر محفظة الضريبة، متجاوزةً {milestone}؛ نبض الخزينة يتوهّج ليشعر به السرب كله.",
+  COIN_SILENCE: "البورصة تصمت — {crons} دورةً دون أي تحويل MURMUR واحد؛ العملة تنام، والعالم يُظلم حولها.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
