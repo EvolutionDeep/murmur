@@ -72,6 +72,7 @@ import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js";
 import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
+import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -132,6 +133,10 @@ const KEY_LEXICON = "lexicon:v1";
  *  blob restarts a silent market (the boot round seeds the cursor, history is never re-told), never
  *  ledger state. Bounded (one tale + three counters), DO-safe. */
 const KEY_RUMOR = "rumor:v1";
+/** ㉕ The Treaty (live seals, the ended-roll archive, the per-pair cool, counts) — its OWN key: a
+ *  corrupt/absent blob restarts an empty chancery (no seal is back-dated), never ledger state.
+ *  Bounded (≤ 6 active + 12 archived + a pruned cool map), DO-safe. */
+const KEY_TREATY = "treaty:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -247,8 +252,10 @@ export class FlyStateDO {
   private guilds: GuildsMembrane | null = null;
   /** ㉓ The Lexicon membrane (coinage, spread, silence) — null while LEX_ENABLED=false (byte-for-byte inert). */
   private lexicon: LexiconMembrane | null = null;
-    /** ㉔ The Rumor Mill membrane (a tale afoot, its bend, its quiet, the telling-day echo) — null while RM_ENABLED=false (byte-for-byte inert). */
-    private rumor: RumorMill | null = null;
+  /** ㉔ The Rumor Mill membrane (a tale afoot, its bend, its quiet, the telling-day echo) — null while RM_ENABLED=false (byte-for-byte inert). */
+  private rumor: RumorMill | null = null;
+  /** ㉕ The Treaty chancery (seals set, ratified, broken — the roll of formal peace) — null while TR_ENABLED=false (byte-for-byte inert). */
+  private treaty: TreatyMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -596,6 +603,20 @@ export class FlyStateDO {
     this.rumor = new RumorMill({ enabled: true });
     if (stored) this.rumor.restore(stored);
     return this.rumor;
+  }
+
+  /**
+   * ㉕ Lazily load the Treaty chancery (null while TR_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts an empty chancery: no seal is ever back-dated, and with no treaty live
+   * the first round only documents feuds already at depth. It can never poison the ledger.
+   */
+  private async ensureTreaty(): Promise<TreatyMembrane | null> {
+    if (!this.cfg.treaty.enabled) return null;
+    if (this.treaty) return this.treaty;
+    const stored = await this.state.storage.get<string>(KEY_TREATY);
+    this.treaty = new TreatyMembrane({ enabled: true });
+    if (stored) this.treaty.restore(stored);
+    return this.treaty;
   }
 
   /**
@@ -1264,7 +1285,8 @@ export class FlyStateDO {
     if (this.games) batch[KEY_GAMES] = this.games.serialize();
     if (this.guilds) batch[KEY_GUILDS] = this.guilds.serialize();
     if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
-        if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
+    if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
+    if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1686,9 +1708,12 @@ export class FlyStateDO {
       // ㉓ LEXICON: fold the desk's word edges ONLY while LEX is on. Off ⇒ no `lexicon` key ⇒ the
       // historian's three lexicon detectors never speak (byte-for-byte the pre-Lexicon build).
       const lexicon = this.cfg.lexicon.enabled ? this.lexicon?.signals() ?? null : null;
-            // ㉔ RUMOR MILL: fold the mill's tale edges ONLY while RM is on. Off ⇒ no `rumor` key ⇒ the
-            // historian's three rumor detectors never speak (byte-for-byte the pre-Rumor build).
-            const rumor = this.cfg.rumor.enabled ? this.rumor?.signals() ?? null : null;
+      // ㉔ RUMOR MILL: fold the mill's tale edges ONLY while RM is on. Off ⇒ no `rumor` key ⇒ the
+      // historian's three rumor detectors never speak (byte-for-byte the pre-Rumor build).
+      const rumor = this.cfg.rumor.enabled ? this.rumor?.signals() ?? null : null;
+      // ㉕ TREATY: fold the chancery's diplomatic edges ONLY while TR is on. Off ⇒ no `treaty` key ⇒ the
+      // historian's three treaty detectors never speak (byte-for-byte the pre-Treaty build).
+      const treaty = this.cfg.treaty.enabled ? this.treaty?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1789,6 +1814,7 @@ export class FlyStateDO {
         guilds,
         lexicon,
         rumor,
+        treaty,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2062,6 +2088,28 @@ export class FlyStateDO {
       rm.round(tick, facts);
     } catch (e) {
       console.warn("[DO] rumor drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉕ THE TREATY — document the feuds the house-bond ledger has ALREADY recorded: the chancery reads
+   * this cron's aggregate cross-house bonds (the very series WarCoffer declares wars over) and sets
+   * seals, ratifies them, or records their breach as the bond crosses its own lines. PURE read-out end
+   * to end — unlike ㉔ there is NO causal leg: no reading, role or register is ever overridden by a
+   * seal. Best-effort: diplomacy can never break the live tick.
+   */
+  private async driveTreaty(economy: AgentEconomy, tick: number): Promise<void> {
+    const tr = await this.ensureTreaty();
+    if (!tr) return;
+    try {
+      tr.setNames((id) => economy.houseNameById(id) ?? `House ${id}`);
+      const facts: TreatyFacts = {
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        feuds: economy.houseFeuds().map((f) => ({ a: f.a, b: f.b, score: f.score })),
+      };
+      tr.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] treaty drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2550,6 +2598,9 @@ export class FlyStateDO {
     // ㉔ RUMOR MILL rides after the lexicon: it hears the same already-history roll; its telling-day
     // echo (the apply hook in the sub-tick loop) is the only causal leg — the drive itself is pure read-out.
     await this.driveRumor(swarm.getTickIndex());
+    // ㉕ THE TREATY rides after the mill: it reads the SAME house-bond series the war resolver feuds
+    // over — pure read-out end to end, no causal leg, no override anywhere. No economy (cold) ⇒ no drive.
+    if (economy) await this.driveTreaty(economy, swarm.getTickIndex());
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2863,6 +2914,8 @@ export class FlyStateDO {
       if (lexicon) (economy as { lexicon?: unknown }).lexicon = lexicon;
       const rumor = await this.rumorReadout();
       if (rumor) (economy as { rumor?: unknown }).rumor = rumor;
+      const treaty = await this.treatyReadout();
+      if (treaty) (economy as { treaty?: unknown }).treaty = treaty;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2935,7 +2988,8 @@ export class FlyStateDO {
     const guilds = await this.guildsReadout();
     const lexicon = await this.lexiconReadout();
     const rumor = await this.rumorReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor) return json(snap);
+    const treaty = await this.treatyReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -2947,6 +3001,7 @@ export class FlyStateDO {
       ...(guilds ? { guilds } : null),
       ...(lexicon ? { lexicon } : null),
       ...(rumor ? { rumor } : null),
+      ...(treaty ? { treaty } : null),
     });
   }
 
@@ -3083,6 +3138,13 @@ export class FlyStateDO {
     const rm = await this.ensureRumor();
     if (!rm) return null;
     return rm.signals();
+  }
+
+  /** ㉕ The treaty chancery read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Treaty build). */
+  private async treatyReadout(): Promise<TreatySignals | null> {
+    const tr = await this.ensureTreaty();
+    if (!tr) return null;
+    return tr.signals();
   }
 
   /**
@@ -4087,7 +4149,8 @@ export class FlyStateDO {
     this.games = null;     // ㉑ and the games: the stadium and its standing mark are forgotten with everything else
     this.guilds = null;    // ㉒ and the guilds: every seal, pact and monopoly is unspoken with everything else
     this.lexicon = null;   // ㉓ and the lexicon: every coined, spread and buried word is unremembered with everything else
-        this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
+    this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
+    this.treaty = null;    // ㉕ and the chancery: every seal set, ratified or broken is void with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -4108,7 +4171,8 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_GAMES);
     await this.state.storage.delete(KEY_GUILDS);
     await this.state.storage.delete(KEY_LEXICON);
-        await this.state.storage.delete(KEY_RUMOR);
+    await this.state.storage.delete(KEY_RUMOR);
+    await this.state.storage.delete(KEY_TREATY);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

@@ -152,7 +152,12 @@ export type ChronicleKind =
   //     retelling until nobody agrees on what was first said, and at last goes quiet.
   | "RUMOR_AFOOT"
   | "RUMOR_BENT"
-  | "RUMOR_FADED";
+  | "RUMOR_FADED"
+  // ㉕ THE TREATY: formal diplomacy between houses (treaty.ts) — a deep feud sets seals, a peace that
+  //     outlives its probation is ratified, a grudge that sinks back to the war line breaks the seal.
+  | "TREATY_SIGNED"
+  | "TREATY_RATIFIED"
+  | "TREATY_BREACHED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -268,6 +273,9 @@ export interface ChronicleContext {
   /** ㉔ THE RUMOR MILL read-out (rumor.ts signals): this cron's afoot, bend and quiet edges. Absent ⇒
    *  no RUMOR_AFOOT/RUMOR_BENT/RUMOR_FADED (RM_ENABLED=false never folds these in). */
   rumor?: ChronicleRumor | null;
+  /** ㉕ THE TREATY read-out (treaty.ts signals): this cron's seal, ratification and breach edges. Absent ⇒
+   *  no TREATY_SIGNED/TREATY_RATIFIED/TREATY_BREACHED (TR_ENABLED=false never folds these in). */
+  treaty?: ChronicleTreaty | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -429,6 +437,19 @@ export interface ChronicleRumor {
   counts: { afoot: number; bends: number; faded: number };
   /** The live override's shape: the act hearers are read as on a telling-day, and the heard fraction. */
   echo: { act: string; ratio: number } | null;
+}
+
+/** ㉕ THE TREATY: one cron's diplomatic edges (treaty.ts; edges over the house-bond series the economy
+ *  already publishes — the membrane fires at most one edge per class per cron, so a non-null facet IS
+ *  news THIS cron and cannot replay). */
+export interface ChronicleTreaty {
+  /** Two houses set their seals: the pair, their names, the clause count, the era the pen moved in. */
+  signed: { a: number; b: number; nameA: string; nameB: string; terms: number; era: number } | null;
+  /** A seal outlived its probation with the spite genuinely lifted — what anger signed, habit ratified. */
+  ratified: { a: number; b: number; nameA: string; nameB: string; terms: number } | null;
+  /** The bond sank back to the war threshold under a live seal — the feud resumes where the ink stopped. */
+  breached: { a: number; b: number; nameA: string; nameB: string; terms: number } | null;
+  counts: { signed: number; ratified: number; breached: number; lived: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -633,6 +654,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     so these cooldowns are pure gravitas — a tale taking wing should feel spontaneous, its bending
   //     rare, its quiet slow. Mirrored in CHRON_.
   RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120,
+  // ㉕ TREATY: the chancery only speaks edges (one seal per pair per cooldown, one ratification per seal,
+  //     one breach per seal) — a breach must land fast (war is near), a ratification may savor the peace.
+  TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -776,6 +800,12 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   RUMOR_AFOOT: "A tale takes wing — the {topic} of era {era} passes from fly to fly: {heard} ears already lean in.",
   RUMOR_BENT: "The tale bends — told {heard} times over, the {topic} is now heard as {heardAs}; nobody agrees any more on what was first said.",
   RUMOR_FADED: "The tale quiets — the {topic} is told no more; {heard} ears carried it while it lived.",
+  // ㉕ THE TREATY — formal diplomacy between houses. {houseA}/{houseB} are the houses' own names, {terms}
+  //     counts the clauses the depth of the grudge forced (treaty.ts), {era} the age the pen moved in.
+  //     Every edge is re-derivable by replaying the house-bond series. Mirrored verbatim in the frontend CHRON_.
+  TREATY_SIGNED: "Two houses set their seals — {houseA} and {houseB} bury the feud under a treaty of {terms} clauses; era {era} has bled enough for both.",
+  TREATY_RATIFIED: "The treaty holds — {houseA} and {houseB} have kept their {terms} clauses past the probation; what was signed in anger is ratified now in habit.",
+  TREATY_BREACHED: "The seal is broken — {houseA} tears the treaty of {terms} clauses with {houseB}; the old feud resumes where the ink stopped.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1668,6 +1698,29 @@ export class Chronicler {
         const fd = rm.faded;
         out.push(await this.emit(ctx, "RUMOR_FADED", 2, [],
           { topic: fd.topic, heard: fd.heard }, { heard: fd.heard }));
+      }
+    }
+
+    // ㉕ The Treaty: formal diplomacy (treaty.ts signals, folded in ONLY while TR_ENABLED — off ⇒ no
+    //     `treaty` key ⇒ these three detectors never speak). The membrane fires at most one edge per class
+    //     per cron, so a non-null facet is news this cron. The actors are the two houses themselves —
+    //     a seal always has two signatories, a breach always has two sides.
+    const tr = ctx.treaty;
+    if (tr) {
+      if (tr.signed && this.ready("TREATY_SIGNED", ctx)) {
+        const sg = tr.signed;
+        out.push(await this.emit(ctx, "TREATY_SIGNED", 3, [sg.a, sg.b],
+          { houseA: sg.nameA, houseB: sg.nameB, terms: sg.terms, era: sg.era }, { terms: sg.terms, era: sg.era }));
+      }
+      if (tr.ratified && this.ready("TREATY_RATIFIED", ctx)) {
+        const rt = tr.ratified;
+        out.push(await this.emit(ctx, "TREATY_RATIFIED", 2, [rt.a, rt.b],
+          { houseA: rt.nameA, houseB: rt.nameB, terms: rt.terms }, { terms: rt.terms }));
+      }
+      if (tr.breached && this.ready("TREATY_BREACHED", ctx)) {
+        const br = tr.breached;
+        out.push(await this.emit(ctx, "TREATY_BREACHED", 4, [br.a, br.b],
+          { houseA: br.nameA, houseB: br.nameB, terms: br.terms }, { terms: br.terms }));
       }
     }
 

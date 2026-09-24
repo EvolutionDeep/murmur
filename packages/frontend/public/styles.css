@@ -739,6 +739,17 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .rm-row.rm-none { color: var(--muted); font-style: italic; }
 .rm-row.rm-echo { color: #4a5a68; }
 
+/* ㉕ the treaty (drawer volume): the chancery's book — seals set, ratified, broken, lapsed */
+.chron-treaty { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }
+.ty-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.ty-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.ty-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.ty-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.ty-row.ty-head { color: var(--ink); }
+.ty-row.ty-live { color: #5a4a33; }
+.ty-row.ty-old { color: #6a5050; font-style: italic; }
+.ty-row.ty-none { color: var(--muted); font-style: italic; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1850,6 +1861,8 @@ html[dir="rtl"] .gd-row,
 html[dir="rtl"] .lx-title,
 html[dir="rtl"] .lx-row,
 html[dir="rtl"] .rm-title,
-html[dir="rtl"] .rm-row {
+html[dir="rtl"] .rm-row,
+html[dir="rtl"] .ty-title,
+html[dir="rtl"] .ty-row {
   direction: rtl; text-align: right;
 }

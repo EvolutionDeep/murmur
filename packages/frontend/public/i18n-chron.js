@@ -92,6 +92,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   RUMOR_AFOOT: "一事生翼 —— 第 {era} 纪元的 {topic} 从一只蜂传到下一只蜂：{heard} 只耳朵已经凑近。",
   RUMOR_BENT: "故事弯了 —— 讲过 {heard} 遍之后，那 {topic} 被听成了 {heardAs}；再没有人说得清当初讲的是什么。",
   RUMOR_FADED: "故事静了 —— 那 {topic} 不再被讲起；它活着时，有 {heard} 只耳朵抬过它。",
+  TREATY_SIGNED: "两家落印 —— {houseA} 与 {houseB} 将世仇葬于一纸 {terms} 款之约；第 {era} 纪元，两家血流得都够了。",
+  TREATY_RATIFIED: "条约守住了 —— {houseA} 与 {houseB} 将这 {terms} 款越过观察之期；怒中所签，今以习常而批准。",
+  TREATY_BREACHED: "印信已毁 —— {houseA} 撕毁与 {houseB} 的 {terms} 款之约；旧仇自墨尽之处续起。",
 };
 
 const fr = {
@@ -176,6 +179,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   RUMOR_AFOOT: "Un récit prend l'aile — le {topic} de l'ère {era} passe de mouche en mouche : {heard} oreilles se penchent déjà.",
   RUMOR_BENT: "Le récit se courbe — dit {heard} fois, le {topic} s'entend désormais en {heardAs} ; plus personne n'accorde sur ce qui fut dit d'abord.",
   RUMOR_FADED: "Le récit s'apaise — le {topic} n'est plus conté ; {heard} oreilles l'ont porté tant qu'il vivait.",
+  TREATY_SIGNED: "Deux maisons posent leurs sceaux — {houseA} et {houseB} enterrent la vendetta sous un traité de {terms} clauses ; l'ère {era} a saigné assez pour elles deux.",
+  TREATY_RATIFIED: "Le traité tient — {houseA} et {houseB} ont gardé leurs {terms} clauses au-delà de l'épreuve ; ce qui fut signé dans la colère est ratifié dans l'habitude.",
+  TREATY_BREACHED: "Le sceau est brisé — {houseA} déchire le traité de {terms} clauses qui le liait à {houseB} ; la vieille vendetta reprend où l'encre s'est arrêtée.",
 };
 
 const es = {
@@ -260,6 +266,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   RUMOR_AFOOT: "Un relato toma alas — el {topic} de la era {era} pasa de mosca en mosca: {heard} orejas ya se inclinan.",
   RUMOR_BENT: "El relato se dobla — dicho {heard} veces, el {topic} se oye ahora como {heardAs}; ya nadie concuerda en qué fue dicho primero.",
   RUMOR_FADED: "El relato se aquieta — el {topic} ya no se cuenta; {heard} orejas lo cargaron mientras vivía.",
+  TREATY_SIGNED: "Dos casas ponen sus sellos — {houseA} y {houseB} entierran la vendetta bajo un tratado de {terms} cláusulas; la era {era} ha sangrado bastante para ambas.",
+  TREATY_RATIFIED: "El tratado se mantiene — {houseA} y {houseB} han guardado sus {terms} cláusulas más allá de la prueba; lo firmado en ira se ratifica ahora en hábito.",
+  TREATY_BREACHED: "El sello está roto — {houseA} rasga el tratado de {terms} cláusulas con {houseB}; la vieja vendetta se reanuda donde la tinta se detuvo.",
 };
 
 const ja = {
@@ -344,6 +353,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   RUMOR_AFOOT: "物語が翼を持つ —— 第{era}紀の{topic}が蜂から蜂へ渡る：すでに {heard} 枚の耳が傾いている。",
   RUMOR_BENT: "物語が曲がる —— {heard} 遍語られたのち、{topic}は今{heardAs}に聞こえる；最初に何を言ったのか、もはや誰も知らない。",
   RUMOR_FADED: "物語が静まる —— {topic}はもはや語られぬ；生きてるあいだ {heard} 枚の耳がそれを担いだ。",
+  TREATY_SIGNED: "二つの家、印を押す —— {houseA} と {houseB} 、世怨を {terms} 条の約の下に葬る；第 {era} 紀、両家ともに出血はすでに十分なり。",
+  TREATY_RATIFIED: "条約は持つ —— {houseA} と {houseB} 、その {terms} 条を観望の期間を越えて守りぬ；怒中に調印されしものは、今や習いとして批准さる。",
+  TREATY_BREACHED: "印、破らる —— {houseA} 、{houseB} との {terms} 条の約を裂く；旧怨はインク尽きたるところより再開す。",
 };
 
 const ko = {
@@ -428,6 +440,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   RUMOR_AFOOT: "이야기가 날개를 편다 — 제{era} 시대의 {topic}, 벌레에서 벌레로 건네진다: 이미 {heard}개의 귀가 기울었다.",
   RUMOR_BENT: "이야기가 굽는다 — {heard}번 들려진 뒤, {topic}은 이제 {heardAs}(으)로 들려진다; 처음 무슨 말이었는지 이제 아무도 모른다.",
   RUMOR_FADED: "이야기가 잦아든다 — {topic}, 다시 들려지지 않으니; 살아 있는 동안 {heard}개의 귀가 이를 실어 날랐다.",
+  TREATY_SIGNED: "두 가문이 인장을 찍는다 — {houseA} 와 {houseB} , {terms}개 조항의 조약 아래 대대적 골을 묻는다; 제 {era} 시대, 두 가문 모두 흘릴 만큼 흘렸다.",
+  TREATY_RATIFIED: "조약은 버틴다 — {houseA} 와 {houseB} , 그 {terms}개 조항을 유예의 강을 넘어 지켰다; 분필에 서명된 것이 이제 습관에 비준된다.",
+  TREATY_BREACHED: "인장이 깨졌다 — {houseA} , {houseB} 와의 {terms}개 조항의 조약을 찢는다; 옛 골은 먹이 마친 자리에서 다시 시작된다.",
 };
 
 const ar = {
@@ -512,6 +527,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   RUMOR_AFOOT: "حكاية تفرّد جناحها — {topic} الحقبةِ {era} يجول من ذبابة إلى ذبابة: {heard} أذناً قد أرهفت.",
   RUMOR_BENT: "الحكاية تنحني — بعد {heard} حكايةٍ تُسمعُ {topic} الآن {heardAs}؛ لم يعد أحدٌ يتفق على ما قِيل أول مرة.",
   RUMOR_FADED: "الحكاية تهدأ — {topic} لا يُحكى بعد الآن؛ {heard} أذنٍ حملته ما عاش.",
+  TREATY_SIGNED: "دارٌ تضعان أختامهما — {houseA} و{houseB} يدفنان الثأر تحت معاهدةٍ من {terms} بندًا؛ حقبةُ {era} أُريفت منها الدماء ما يكفيهما.",
+  TREATY_RATIFIED: "المعاهدة تصمد — {houseA} و{houseB} حفِظا بنودهما الـ{terms} بعد امتحانها؛ وما وُقِع في الغضب يُصدَّق الآن في العادة.",
+  TREATY_BREACHED: "الختم انكسر — {houseA} يمزّق معاهدةَ البنودِ الـ{terms} مع {houseB}؛ والثأر القديم يُستأنف من حيث توقف الحبر.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

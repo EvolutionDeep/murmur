@@ -6764,4 +6764,97 @@ Object.assign(ja, jaRm);
 Object.assign(ko, koRm);
 Object.assign(ar, arRm);
 
+// ㉕ the treaty — chancery vocabulary in seven tongues (a seal moves no bond, commands no fly, touches no coin)
+const enTy = {
+  "vol.tyTitle": "the treaty chancery",
+  "vol.tySub": "· seals set, ratified & broken",
+  "tab.treaty.name": "The Treaty",
+  "tab.treaty.sub": "seals set, ratified & broken",
+  "banner.treaty": "📜 a treaty is signed",
+  "ty.head": "{signed} seals set · {ratified} ratified · {breached} broken · {lived} lapsed",
+  "ty.headTitle": "the chancery's own book — every line is an edge over the house-bond series the war ledger already keeps; a seal moves no bond, commands no fly and touches no coin",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} clauses · {status}",
+  "ty.old": "ended seals — {seals}",
+  "ty.none": "no seal is live — the fields are at their old distances",
+};
+const zhTy = {
+  "vol.tyTitle": "条约衙署",
+  "vol.tySub": "· 落印、批准与毁约",
+  "tab.treaty.name": "条约",
+  "tab.treaty.sub": "落印、批准与毁约",
+  "banner.treaty": "📜 一纸条约落印",
+  "ty.head": "落印 {signed} 约 · 批准 {ratified} 约 · 毁约 {breached} 约 · 期满 {lived} 约",
+  "ty.headTitle": "衙署自家的簿册——每一行都是对战争账册本已保存的家际纽带序列所数的边沿；印信不动纽带，不令一蝇，不碰一币",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} 款 · {status}",
+  "ty.old": "已终之印 —— {seals}",
+  "ty.none": "无印在世 —— 诸田野仍是旧日距离",
+};
+const frTy = {
+  "vol.tyTitle": "la chancellerie des traités",
+  "vol.tySub": "· sceaux posés, ratifiés & brisés",
+  "tab.treaty.name": "Le Traité",
+  "tab.treaty.sub": "sceaux posés, ratifiés & brisés",
+  "banner.treaty": "📜 un traité est signé",
+  "ty.head": "{signed} sceaux posés · {ratified} ratifiés · {breached} brisés · {lived} échus",
+  "ty.headTitle": "le livre propre de la chancellerie — chaque ligne est une lisière comptée sur la série de liens entre maisons que le registre de guerre tient déjà ; un sceau ne meut aucun lien, ne commande aucune mouche et ne touche aucune pièce",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} clauses · {status}",
+  "ty.old": "sceaux achevés — {seals}",
+  "ty.none": "nul sceau en vie — les champs gardent leurs anciennes distances",
+};
+const esTy = {
+  "vol.tyTitle": "la cancillería de tratados",
+  "vol.tySub": "· sellos puestos, ratificados & rotos",
+  "tab.treaty.name": "El Tratado",
+  "tab.treaty.sub": "sellos puestos, ratificados & rotos",
+  "banner.treaty": "📜 un tratado es firmado",
+  "ty.head": "{signed} sellos puestos · {ratified} ratificados · {breached} rotos · {lived} extinguidos",
+  "ty.headTitle": "el libro propio de la cancillería — cada línea es un borde contado sobre la serie de lazos entre casas que el registro de guerra ya guarda; un sello no mueve lazo, no manda mosca y no toca moneda",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} cláusulas · {status}",
+  "ty.old": "sellos finados — {seals}",
+  "ty.none": "ningún sello vive — los campos guardan sus antiguas distancias",
+};
+const jaTy = {
+  "vol.tyTitle": "条約の庁",
+  "vol.tySub": "· 印は押され、批准され、破られ",
+  "tab.treaty.name": "条約",
+  "tab.treaty.sub": "印は押され、批准され、破られ",
+  "banner.treaty": "📜 一紙の条約、調印さる",
+  "ty.head": "落印 {signed} 約 · 批准 {ratified} 約 · 破約 {breached} 約 · 満期 {lived} 約",
+  "ty.headTitle": "庁自身の帳面——每一行は、戦の帳簿がすでに保つ家間紐帯の系列に数えられし縁辺；印は紐帯を動さず、一蠅をも命ぜず、一銭にも触れぬ",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} 条 · {status}",
+  "ty.old": "終わりし印 —— {seals}",
+  "ty.none": "在世の印なし —— 野はなお旧き距離のまかなり",
+};
+const koTy = {
+  "vol.tyTitle": "조약의 정서각",
+  "vol.tySub": "· 찍힌 인장, 비준, 파기",
+  "tab.treaty.name": "조약",
+  "tab.treaty.sub": "찍힌 인장, 비준, 파기",
+  "banner.treaty": "📜 한 조약에 인장이 찍힌다",
+  "ty.head": "{signed} 인장 찍혔고 · {ratified} 비준되었고 · {breached} 깨졌으며 · {lived} 만료되었다",
+  "ty.headTitle": "정서각 자신의 장부 — 모든 줄은 전쟁 대장이 이미 간직하는 가문 간 유대 계열 위에 세운 모서리; 인장은 유대를 흔들지 않고, 파리를 명하지 않으며, 엽전 하나 건드리지 않는다",
+  "ty.row": "{nameA} ↔ {nameB} · 조항 {terms}개 · {status}",
+  "ty.old": "막을 내린 인장 — {seals}",
+  "ty.none": "살아 있는 인장 없음 — 들은 오래된 거리 그대로다",
+};
+const arTy = {
+  "vol.tyTitle": "ديوان المعاهدات",
+  "vol.tySub": "· أختامٌ تُوضع وتُصدَّق وتُنتقض",
+  "tab.treaty.name": "المعاهدة",
+  "tab.treaty.sub": "أختامٌ موضوعة ومُصدَّقة ومنقوضة",
+  "banner.treaty": "📜 وُقِّعت معاهدة",
+  "ty.head": "{signed} ختمًا وُضع · {ratified} صُدِّق · {breached} انتُقض · {lived} انقضى",
+  "ty.headTitle": "دفتر الديوان نفسه — كل سطر حافٌّ يُعَدّ على سلسلة الروابط بين الدور التي يحملها سجل الحرب سلفًا؛ الختم لا يحرك رابطًا ولا يأمر ذبابة ولا يمسّ عملة",
+  "ty.row": "{nameA} ↔ {nameB} · {terms} بندًا · {status}",
+  "ty.old": "أختامٌ انقضت — {seals}",
+  "ty.none": "لا ختمَ حيّ — الحقول على مسافاتها القديمة",
+};
+Object.assign(en, enTy);
+Object.assign(zh, zhTy);
+Object.assign(fr, frTy);
+Object.assign(es, esTy);
+Object.assign(ja, jaTy);
+Object.assign(ko, koTy);
+Object.assign(ar, arTy);
+
 export { en, zh, fr, es, ja, ko, ar };

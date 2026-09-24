@@ -257,6 +257,13 @@ export interface Env {
   //     SAME read-out line, never on the stimulus bus — whose two precedents stay dark-deployed OFF.
   RM_ENABLED?: string;                  // "true"/"false" (default TRUE)
 
+  // --- ㉕ THE TREATY: formal diplomacy between houses — sealed, ratified, breached (see src/treaty.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The chancery
+  //     has no knobs (its lines are exported constants: TR_SIGN_AT / TR_BREACH_AT / TR_TERM…); only the
+  //     master switch reads an env key. PURE read-out — unlike ㉔ there is no causal leg here at all: the
+  //     seal moves no bond, commands no fly and touches no coffer; it only documents the bond series.
+  TR_ENABLED?: string;                  // "true"/"false" (default TRUE)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -593,6 +600,9 @@ export interface RuntimeConfig {
   };
   rumor: {
     enabled: boolean;         // the mill's bounds are constants (RM_HEARD_CAP etc.) — no knobs by design
+  };
+  treaty: {
+    enabled: boolean;         // the chancery's lines are constants (TR_SIGN_AT etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1011,6 +1021,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     rumor: {
       enabled: (env.RM_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    treaty: {
+      enabled: (env.TR_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

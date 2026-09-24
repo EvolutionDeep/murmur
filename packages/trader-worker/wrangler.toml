@@ -339,6 +339,16 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a lower-priority
 # var first, then re-add: RM_ENABLED = "false" (rollback: byte-for-byte inert; semantics in src/config.ts).
 
+# ===== ㉕ THE TREATY (formal diplomacy between houses — src/treaty.ts) =====
+# A cross-house grudge deep enough (≤ -0.45) forces a PEN: two houses set seals on a treaty of bounded
+# clauses (TREATY_SIGNED); a peace that outlives its probation with the spite lifted is RATIFIED; a bond
+# that sinks back to the war threshold (≤ -0.6) BREAKS the seal (TREATY_BREACHED) — and a treaty that simply
+# runs its term lapses quietly, harvest not news. PURE read-out: the seal moves no bond, commands no fly,
+# touches no coffer — it documents the house-bond series economy.houseFeuds() already publishes.
+# NOTE: armed on CODE DEFAULTS (TR_ENABLED=true; the chancery's lines are exported constants by design) —
+# the 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a
+# lower-priority var first, then re-add: TR_ENABLED = "false" (rollback: byte-for-byte inert; src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates
