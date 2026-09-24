@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600&family=Noto+Sans+JP:wght@400;600&family=Noto+Sans+KR:wght@400;600&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet" />
   <style>
     :root {
       --paper: #f2eee6;
@@ -83,6 +84,9 @@
     .refresh:hover { color: var(--ink); border-color: var(--accent); }
     .srcline { font-size: 11.5px; color: var(--muted); word-break: break-all; }
     .srcline code { background: rgba(var(--ink-rgb), 0.06); padding: 1px 5px; border-radius: 4px; }
+    /* CJK/Arabic need real glyphs; mono stack falls back per-glyph so 7 languages never tofu. */
+    [dir="rtl"] .wrap { direction: rtl; text-align: right; }
+    [dir="rtl"] .badge, [dir="rtl"] .stat, [dir="rtl"] .callout, [dir="rtl"] .gap { text-align: right; }
 
     section { margin-top: 54px; }
     h2 { font-family: var(--display); font-size: 23px; font-weight: 400; letter-spacing: -0.005em; margin-bottom: 6px; }
@@ -176,20 +180,20 @@
         <circle cx="12" cy="14" r="3.1" /><circle cx="20.5" cy="11.5" r="2.3" /><circle cx="17.5" cy="21" r="1.9" />
       </svg>
       <span class="name">murmur</span>
-      <span class="sub">x402 canary</span>
+      <span class="sub" data-cn="wordmark.sub">x402 canary</span>
     </a>
     <nav class="toplinks">
-      <a href="/">← the swarm</a>
-      <a href="/developers">developers</a>
-      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="/" data-cn="nav.swarm">← the swarm</a>
+      <a href="/developers" data-cn="nav.developers">developers</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener" data-cn="nav.source">source</a>
       <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
     </nav>
   </header>
 
   <div class="wrap">
     <div class="hero">
-      <h1>The Arc <em>x402 Canary</em></h1>
-      <p class="lede">
+      <h1 data-cn-h="hero.h1">The Arc <em>x402 Canary</em></h1>
+      <p class="lede" data-cn="hero.lede">
         A live, read-only telemetry window into murmur's real-money x402 settlement rail on Arc mainnet.
         Every figure below is pulled client-side from the same free, keyless, CORS-open endpoints the swarm
         itself runs on — no synthetic load, no testnet, no LLM anywhere in the loop. A population of autonomous
@@ -198,11 +202,11 @@
       </p>
       <div class="badges" id="badges"></div>
       <div class="liverow">
-        <span class="live" id="live"><span class="dot"></span><span id="livetext">connecting…</span></span>
+        <span class="live" id="live"><span class="dot"></span><span id="livetext" data-cn="live.connecting">connecting…</span></span>
         <span id="ago">—</span>
-        <button class="refresh" id="refresh" type="button">refresh</button>
+        <button class="refresh" id="refresh" type="button" data-cn="btn.refresh">refresh</button>
       </div>
-      <p class="srcline" style="margin-top:12px">
+      <p class="srcline" style="margin-top:12px" data-cn-h="hero.srcline">
         reads <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — view source, it's all client-side.
       </p>
       <p class="err" id="err"></p>
@@ -210,122 +214,122 @@
 
     <!-- 01 · settlement reliability -->
     <section>
-      <h2><span class="n">01</span>Settlement reliability</h2>
-      <p class="sec-note">
+      <h2><span class="n">01</span><span data-cn="s1.title">Settlement reliability</span></h2>
+      <p class="sec-note" data-cn-h="s1.note">
         Terminal outcomes of real on-chain net settlements. <code>successRate = settleOk ÷ settleAttempts</code> over
         genuine broadcast attempts (shadow dry-runs excluded), plus the measured <em>submit→finality</em> latency of each
         mined settle (timed at the facilitator facade, so it covers whichever rail is live). All additive lifetime
         counters, persisted across deploys — read live from <code>/economy</code>.
       </p>
       <div class="stat-grid">
-        <div class="stat lead"><div class="k">settlement success rate</div><div class="v" id="sr">—</div><div class="s" id="sr-sub">settleOk / settleAttempts</div></div>
-        <div class="stat"><div class="k">on-chain mined</div><div class="v sm" id="mined">—</div><div class="s">real Arc txs (netted)</div></div>
-        <div class="stat"><div class="k">failed broadcasts</div><div class="v sm" id="fail">—</div><div class="s">verify/settle never mined</div></div>
-        <div class="stat"><div class="k">gross trades settled</div><div class="v sm" id="gross">—</div><div class="s">lifetime ledger count</div></div>
-        <div class="stat"><div class="k">settled volume</div><div class="v sm" id="vol">—</div><div class="s">lifetime USDC</div></div>
-        <div class="stat"><div class="k">live agents</div><div class="v sm" id="agents">—</div><div class="s">trading now</div></div>
-        <div class="stat"><div class="k">wealth Gini</div><div class="v sm" id="gini">—</div><div class="s">emergent inequality</div></div>
-        <div class="stat"><div class="k">mean balance</div><div class="v sm" id="meanbal">—</div><div class="s">USDC / agent</div></div>
-        <div class="stat"><div class="k">settle latency · avg</div><div class="v sm" id="lat-avg">—</div><div class="s" id="lat-avg-sub">submit → finality</div></div>
-        <div class="stat"><div class="k">settle latency · max</div><div class="v sm" id="lat-max">—</div><div class="s">slowest mined settle</div></div>
-        <div class="stat"><div class="k">settle latency · last</div><div class="v sm" id="lat-last">—</div><div class="s" id="lat-last-sub">most recent settle</div></div>
+        <div class="stat lead"><div class="k" data-cn="st.sr">settlement success rate</div><div class="v" id="sr">—</div><div class="s" id="sr-sub">settleOk / settleAttempts</div></div>
+        <div class="stat"><div class="k" data-cn="st.mined">on-chain mined</div><div class="v sm" id="mined">—</div><div class="s" data-cn="st.mined.sub">real Arc txs (netted)</div></div>
+        <div class="stat"><div class="k" data-cn="st.fail">failed broadcasts</div><div class="v sm" id="fail">—</div><div class="s" data-cn="st.fail.sub">verify/settle never mined</div></div>
+        <div class="stat"><div class="k" data-cn="st.gross">gross trades settled</div><div class="v sm" id="gross">—</div><div class="s" data-cn="st.gross.sub">lifetime ledger count</div></div>
+        <div class="stat"><div class="k" data-cn="st.vol">settled volume</div><div class="v sm" id="vol">—</div><div class="s" data-cn="st.vol.sub">lifetime USDC</div></div>
+        <div class="stat"><div class="k" data-cn="st.agents">live agents</div><div class="v sm" id="agents">—</div><div class="s" data-cn="st.agents.sub">trading now</div></div>
+        <div class="stat"><div class="k" data-cn="st.gini">wealth Gini</div><div class="v sm" id="gini">—</div><div class="s" data-cn="st.gini.sub">emergent inequality</div></div>
+        <div class="stat"><div class="k" data-cn="st.mean">mean balance</div><div class="v sm" id="meanbal">—</div><div class="s" data-cn="st.mean.sub">USDC / agent</div></div>
+        <div class="stat"><div class="k" data-cn="st.latavg">settle latency · avg</div><div class="v sm" id="lat-avg">—</div><div class="s" id="lat-avg-sub" data-cn="st.latavg.sub">submit → finality</div></div>
+        <div class="stat"><div class="k" data-cn="st.latmax">settle latency · max</div><div class="v sm" id="lat-max">—</div><div class="s" data-cn="st.latmax.sub">slowest mined settle</div></div>
+        <div class="stat"><div class="k" data-cn="st.latlast">settle latency · last</div><div class="v sm" id="lat-last">—</div><div class="s" id="lat-last-sub" data-cn="st.latlast.sub">most recent settle</div></div>
       </div>
       <div class="sbar-wrap">
         <div class="sbar"><i class="ok" id="sbar-ok" style="width:0%"></i><i class="fail" id="sbar-fail" style="width:0%"></i></div>
         <div class="sbar-key">
-          <span><i class="sw" style="background:var(--ok)"></i>mined <b id="key-ok">—</b></span>
-          <span><i class="sw" style="background:var(--warn)"></i>failed <b id="key-fail">—</b></span>
+          <span><i class="sw" style="background:var(--ok)"></i><span data-cn="key.mined">mined</span> <b id="key-ok">—</b></span>
+          <span><i class="sw" style="background:var(--warn)"></i><span data-cn="key.failed">failed</span> <b id="key-fail">—</b></span>
         </div>
       </div>
     </section>
 
     <!-- 02 · netting & gas amortisation -->
     <section>
-      <h2><span class="n">02</span>Netting &amp; gas amortisation</h2>
-      <p class="sec-note">
+      <h2><span class="n">02</span><span data-cn="s2.title">Netting &amp; gas amortisation</span></h2>
+      <p class="sec-note" data-cn-h="s2.note">
         Micropayments are not broadcast one-per-trade. Per-pair nets accumulate bilaterally and only the difference
         moves on-chain, so gas is amortised over more value per transaction. The fold figures are derived live from
         <code>/economy</code> totals — <code>count</code> (gross trades) against <code>settleAttempts</code> (broadcasts) —
         and the <em>net-pending</em> gauges below read the live in-flight accumulator (pairs folded, not yet broadcast).
       </p>
       <div class="stat-grid">
-        <div class="stat"><div class="k">netting fold ratio</div><div class="v" id="fold">—</div><div class="s" id="fold-sub">gross trades per broadcast</div></div>
-        <div class="stat"><div class="k">on-chain txs avoided</div><div class="v" id="avoid">—</div><div class="s">vs one tx per trade</div></div>
-        <div class="stat"><div class="k">net-pending pairs</div><div class="v sm" id="np-pairs">—</div><div class="s">folded, awaiting flush</div></div>
-        <div class="stat"><div class="k">trades in flight</div><div class="v sm" id="np-trades">—</div><div class="s">gross, not yet mined</div></div>
-        <div class="stat"><div class="k">pending buffer fold</div><div class="v sm" id="np-fold">—</div><div class="s" id="np-fold-sub">trades per pending net</div></div>
+        <div class="stat"><div class="k" data-cn="st.fold">netting fold ratio</div><div class="v" id="fold">—</div><div class="s" data-cn="st.fold.sub">gross trades per broadcast</div></div>
+        <div class="stat"><div class="k" data-cn="st.avoid">on-chain txs avoided</div><div class="v" id="avoid">—</div><div class="s" data-cn="st.avoid.sub">vs one tx per trade</div></div>
+        <div class="stat"><div class="k" data-cn="st.nppairs">net-pending pairs</div><div class="v sm" id="np-pairs">—</div><div class="s" data-cn="st.nppairs.sub">folded, awaiting flush</div></div>
+        <div class="stat"><div class="k" data-cn="st.nptrades">trades in flight</div><div class="v sm" id="np-trades">—</div><div class="s" data-cn="st.nptrades.sub">gross, not yet mined</div></div>
+        <div class="stat"><div class="k" data-cn="st.npfold">pending buffer fold</div><div class="v sm" id="np-fold">—</div><div class="s" id="np-fold-sub" data-cn="st.npfold.sub">trades per pending net</div></div>
       </div>
       <div class="netbars" style="margin-top:18px">
-        <div class="nbrow"><span class="nbl">naive rail · 1 tx / trade</span><span class="nbtrack"><i class="nb-naive" id="nb-naive" style="width:100%"></i></span><span class="nbv" id="nb-naive-v">—</span></div>
-        <div class="nbrow"><span class="nbl">murmur · per-pair nets</span><span class="nbtrack"><i class="nb-netted" id="nb-netted" style="width:0%"></i></span><span class="nbv" id="nb-netted-v">—</span></div>
+        <div class="nbrow"><span class="nbl" data-cn="nb.naive">naive rail · 1 tx / trade</span><span class="nbtrack"><i class="nb-naive" id="nb-naive" style="width:100%"></i></span><span class="nbv" id="nb-naive-v">—</span></div>
+        <div class="nbrow"><span class="nbl" data-cn="nb.netted">murmur · per-pair nets</span><span class="nbtrack"><i class="nb-netted" id="nb-netted" style="width:0%"></i></span><span class="nbv" id="nb-netted-v">—</span></div>
       </div>
       <p class="prose" style="margin-top:16px" id="net-note"></p>
     </section>
 
     <!-- 03 · prediction FLAT / refunds -->
     <section>
-      <h2><span class="n">03</span>Prediction FLAT &amp; refunds</h2>
-      <p class="sec-note">
+      <h2><span class="n">03</span><span data-cn="s3.title">Prediction FLAT &amp; refunds</span></h2>
+      <p class="sec-note" data-cn-h="s3.note">
         The swarm also bets real USDC each cron on the next tick's Arc temperature, resolved parimutuel by the chain
         (zero-sum, no house). A <code>FLAT</code> resolution — inside the flat band — refunds every stake as
         <em>net-zero</em> flows, so <strong>nothing broadcasts on the settlement rail</strong>: a FLAT round is a
         resolution outcome, not a refund transaction. Rate below is read live from <code>/predictions</code>.
       </p>
       <div class="stat-grid">
-        <div class="stat lead"><div class="k">FLAT / refund rate</div><div class="v" id="flat-rate">—</div><div class="s" id="flat-rate-sub">of recent resolved rounds</div></div>
-        <div class="stat"><div class="k">rounds resolved</div><div class="v sm" id="flat-resolved">—</div><div class="s">lifetime</div></div>
-        <div class="stat"><div class="k">committed on-chain</div><div class="v sm" id="flat-committed">—</div><div class="s">decisive → registry</div></div>
-        <div class="stat"><div class="k">window shown</div><div class="v sm" id="flat-window">—</div><div class="s" id="flat-window-sub">recent resolutions</div></div>
+        <div class="stat lead"><div class="k" data-cn="st.flat">FLAT / refund rate</div><div class="v" id="flat-rate">—</div><div class="s" id="flat-rate-sub" data-cn="st.flat.sub">of recent resolved rounds</div></div>
+        <div class="stat"><div class="k" data-cn="st.flatres">rounds resolved</div><div class="v sm" id="flat-resolved">—</div><div class="s" data-cn="st.flatres.sub">lifetime</div></div>
+        <div class="stat"><div class="k" data-cn="st.flatcom">committed on-chain</div><div class="v sm" id="flat-committed">—</div><div class="s" data-cn="st.flatcom.sub">decisive → registry</div></div>
+        <div class="stat"><div class="k" data-cn="st.flatwin">window shown</div><div class="v sm" id="flat-window">—</div><div class="s" id="flat-window-sub" data-cn="st.flatwin.sub">recent resolutions</div></div>
       </div>
       <div class="sbar-wrap">
         <div class="sbar"><i class="ok" id="fbar-flat" style="width:0%"></i><i id="fbar-dec" style="width:0%;background:var(--get)"></i></div>
         <div class="sbar-key">
-          <span><i class="sw" style="background:var(--ok)"></i>FLAT (refunded) <b id="fkey-flat">—</b></span>
-          <span><i class="sw" style="background:var(--get)"></i>decisive (UP/DOWN) <b id="fkey-dec">—</b></span>
+          <span><i class="sw" style="background:var(--ok)"></i><span data-cn="fkey.flat">FLAT (refunded)</span> <b id="fkey-flat">—</b></span>
+          <span><i class="sw" style="background:var(--get)"></i><span data-cn="fkey.dec">decisive (UP/DOWN)</span> <b id="fkey-dec">—</b></span>
         </div>
       </div>
     </section>
 
     <!-- 04 · live time series -->
     <section>
-      <h2><span class="n">04</span>Live time series</h2>
-      <p class="sec-note" id="series-note">
+      <h2><span class="n">04</span><span data-cn="s4.title">Live time series</span></h2>
+      <p class="sec-note" id="series-note" data-cn-h="s4.note">
         From the independent per-cron D1 archive (<code>/history</code>) — one row per cron, separate from the live
         Durable-Object state, so these curves are cross-checkable against the on-chain receipts.
       </p>
       <div class="charts">
-        <div class="chart-card"><div class="chart-title">on-chain settlements (cumulative)</div><div class="chart-sub" id="sub-settle">—</div><div id="ch-settle"></div></div>
-        <div class="chart-card"><div class="chart-title">settled volume (cumulative, USDC)</div><div class="chart-sub" id="sub-vol">—</div><div id="ch-vol"></div></div>
-        <div class="chart-card"><div class="chart-title">gross trades per cron</div><div class="chart-sub" id="sub-deals">—</div><div id="ch-deals"></div></div>
-        <div class="chart-card"><div class="chart-title">wealth Gini</div><div class="chart-sub" id="sub-gini">—</div><div id="ch-gini"></div></div>
-        <div class="chart-card" style="grid-column:1/-1"><div class="chart-title">Arc market temperature (0–1) · regime bands</div><div class="chart-sub" id="sub-temp">—</div><div id="ch-temp"></div></div>
+        <div class="chart-card"><div class="chart-title" data-cn="ch.settle">on-chain settlements (cumulative)</div><div class="chart-sub" id="sub-settle">—</div><div id="ch-settle"></div></div>
+        <div class="chart-card"><div class="chart-title" data-cn="ch.vol">settled volume (cumulative, USDC)</div><div class="chart-sub" id="sub-vol">—</div><div id="ch-vol"></div></div>
+        <div class="chart-card"><div class="chart-title" data-cn="ch.deals">gross trades per cron</div><div class="chart-sub" id="sub-deals">—</div><div id="ch-deals"></div></div>
+        <div class="chart-card"><div class="chart-title" data-cn="ch.gini">wealth Gini</div><div class="chart-sub" id="sub-gini">—</div><div id="ch-gini"></div></div>
+        <div class="chart-card" style="grid-column:1/-1"><div class="chart-title" data-cn="ch.temp">Arc market temperature (0–1) · regime bands</div><div class="chart-sub" id="sub-temp">—</div><div id="ch-temp"></div></div>
       </div>
     </section>
 
     <!-- 05 · uptime & liveness -->
     <section>
-      <h2><span class="n">05</span>Uptime &amp; liveness</h2>
+      <h2><span class="n">05</span><span data-cn="s5.title">Uptime &amp; liveness</span></h2>
       <div class="stat-grid">
-        <div class="stat"><div class="k">archived window</div><div class="v sm" id="window">—</div><div class="s" id="window-sub">first → last cron</div></div>
-        <div class="stat"><div class="k">crons archived</div><div class="v sm" id="crons">—</div><div class="s">one D1 row each</div></div>
-        <div class="stat"><div class="k">last tick</div><div class="v sm" id="lasttick">—</div><div class="s" id="lasttick-sub">sub-tick index</div></div>
-        <div class="stat"><div class="k">cadence</div><div class="v sm">~1/min</div><div class="s">6 sub-ticks per cron</div></div>
+        <div class="stat"><div class="k" data-cn="st.window">archived window</div><div class="v sm" id="window">—</div><div class="s" id="window-sub" data-cn="st.window.sub">first → last cron</div></div>
+        <div class="stat"><div class="k" data-cn="st.crons">crons archived</div><div class="v sm" id="crons">—</div><div class="s" data-cn="st.crons.sub">one D1 row each</div></div>
+        <div class="stat"><div class="k" data-cn="st.lasttick">last tick</div><div class="v sm" id="lasttick">—</div><div class="s" id="lasttick-sub" data-cn="st.lasttick.sub">sub-tick index</div></div>
+        <div class="stat"><div class="k" data-cn="st.cadence">cadence</div><div class="v sm">~1/min</div><div class="s" data-cn="st.cadence.sub">6 sub-ticks per cron</div></div>
       </div>
     </section>
 
     <!-- 06 · trustless provenance -->
     <section>
-      <h2><span class="n">06</span>Why these numbers are credible</h2>
+      <h2><span class="n">06</span><span data-cn="s6.title">Why these numbers are credible</span></h2>
       <div class="callout prov">
-        <h3>🔏 Every real transfer is neurally sourced &amp; on-chain verifiable</h3>
-        <p>
+        <h3 data-cn="s6.h3">🔏 Every real transfer is neurally sourced &amp; on-chain verifiable</h3>
+        <p data-cn-h="s6.p">
           Each on-chain net settlement sets its EIP-3009 <code>nonce</code> to the <code>sha256</code> of a receipt bundling the
           frozen buyer/seller neural read-outs that caused it, hash-chained via <code>prevChain</code> and committed on Arc
           (every proof carries its <code>commitTx</code>). A receipt invented after the fact could never hash to a mined nonce —
           so the trades behind every figure above are provably decided by connectomes, not a human or an LLM.
         </p>
-        <p class="mono-line" id="chainhead">chain head · loading live anchor…</p>
-        <p class="mono-line">
+        <p class="mono-line" id="chainhead" data-cn="dyn.chain.loading">chain head · loading live anchor…</p>
+        <p class="mono-line" data-cn-h="s6.getline">
           GET <b>/proofs</b> → the chain (last 64 served) · chainHead &nbsp;·&nbsp;
           GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp;
           or verify in-browser at <a href="/">muros.live</a> → neural proofs.
@@ -335,32 +339,32 @@
 
     <!-- 07 · caveats & honest limits -->
     <section>
-      <h2><span class="n">07</span>Caveats &amp; honest limits</h2>
-      <p class="sec-note">
+      <h2><span class="n">07</span><span data-cn="s7.title">Caveats &amp; honest limits</span></h2>
+      <p class="sec-note" data-cn="s7.note">
         All six headline metrics are now instrumented. What follows are the honest edges of each figure — what it does
         and does not claim — so nothing above is over-read.
       </p>
       <div class="gap">
-        <h3>⏱ latency is submit→receipt, on an instant-finality chain <span class="pill">context</span></h3>
-        <p>Arc finalises deterministically (sub-second blocks, no reorg), so <code>settleMs*</code> measures the RPC broadcast→receipt round-trip, not a reorg-confirmation wait. Values are naturally small; the signal is the tail (<code>max</code>) and any drift over time.</p>
+        <h3><span data-cn="gap1.h3">⏱ latency is submit→receipt, on an instant-finality chain</span> <span class="pill" data-cn="pill.context">context</span></h3>
+        <p data-cn-h="gap1.p">Arc finalises deterministically (sub-second blocks, no reorg), so <code>settleMs*</code> measures the RPC broadcast→receipt round-trip, not a reorg-confirmation wait. Values are naturally small; the signal is the tail (<code>max</code>) and any drift over time.</p>
       </div>
       <div class="gap">
-        <h3>◌ net-pending is an instantaneous gauge <span class="pill">context</span></h3>
-        <p><code>netPending</code>/<code>netPendingTrades</code> are sampled at snapshot time and drain at the next cron flush; they are not lifetime totals. Circle <code>/status</code> reconciliation stays defined-but-unwired (the internal rail settles on-chain directly).</p>
+        <h3><span data-cn="gap2.h3">◌ net-pending is an instantaneous gauge</span> <span class="pill" data-cn="pill.context">context</span></h3>
+        <p data-cn-h="gap2.p"><code>netPending</code>/<code>netPendingTrades</code> are sampled at snapshot time and drain at the next cron flush; they are not lifetime totals. Circle <code>/status</code> reconciliation stays defined-but-unwired (the internal rail settles on-chain directly).</p>
       </div>
       <div class="gap">
-        <h3>↩ FLAT rate is windowed, gas is a tx-count reduction <span class="pill">context</span></h3>
-        <p>The FLAT/refund rate is computed over the recent resolutions <code>/predictions</code> serves (a lifetime FLAT tally is not exposed). And “txs avoided” is the transaction-<em>count</em> reduction that amortises gas — murmur does not yet publish per-tx gas units.</p>
+        <h3><span data-cn="gap3.h3">↩ FLAT rate is windowed, gas is a tx-count reduction</span> <span class="pill" data-cn="pill.context">context</span></h3>
+        <p data-cn-h="gap3.p">The FLAT/refund rate is computed over the recent resolutions <code>/predictions</code> serves (a lifetime FLAT tally is not exposed). And “txs avoided” is the transaction-<em>count</em> reduction that amortises gas — murmur does not yet publish per-tx gas units.</p>
       </div>
     </section>
 
     <footer class="foot">
-      <span>murmur — a population of neural agents settling real USDC on arc</span>
-      <a href="/">the swarm</a>
-      <a href="/developers">public api</a>
+      <span data-cn="foot.tag">murmur — a population of neural agents settling real USDC on arc</span>
+      <a href="/" data-cn="foot.swarm">the swarm</a>
+      <a href="/developers" data-cn="foot.api">public api</a>
       <a href="https://api.muros.live/economy" target="_blank" rel="noopener">/economy</a>
       <a href="https://api.muros.live/history" target="_blank" rel="noopener">/history</a>
-      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener">source</a>
+      <a href="https://github.com/EvolutionDeep/murmur" target="_blank" rel="noopener" data-cn="nav.source">source</a>
       <a href="https://x.com/murmur_arc" target="_blank" rel="noopener">@murmur_arc</a>
     </footer>
   </div>
@@ -375,7 +379,420 @@
     const PRED_EVERY = 60;    // seconds between /predictions polls (FLAT / refund rate)
     const HIST_LIMIT = 720;   // ~12h of crons at ~1/min
 
-    // ---------- formatting helpers ----------
+    // ---------- i18n: this standalone page localises itself. Same-origin with the app, so it inherits the
+    // chosen language from localStorage["murmur:lang"], else browser locale, else English. A storage-event
+    // listener lets the drawer flip live when the user switches on the main site. ----------
+    const SUPPORTED = ["en", "zh", "fr", "es", "ja", "ko", "ar"];
+    const RTL = { ar: 1 };
+    const STORE_KEY = "murmur:lang";
+
+    const en = {
+      "meta.title": "murmur — Arc x402 Canary · live settlement telemetry",
+      "meta.desc": "Live, read-only telemetry for murmur's real-money x402 settlement rail on Arc mainnet: settlement success rate, netting fold ratio and gas amortisation, on-chain settlement and volume growth, market temperature and wealth Gini — all read client-side from the public api.muros.live endpoints. No synthetic load, no testnet, no LLM.",
+      "nav.swarm": "← the swarm", "nav.developers": "developers", "nav.source": "source", "wordmark.sub": "x402 canary",
+      "hero.h1": "The Arc <em>x402 Canary</em>",
+      "hero.lede": "A live, read-only telemetry window into murmur's real-money x402 settlement rail on Arc mainnet. Every figure below is pulled client-side from the same free, keyless, CORS-open endpoints the swarm itself runs on — no synthetic load, no testnet, no LLM anywhere in the loop. A population of autonomous fruit-fly nervous systems trades around the clock and settles real USDC over x402 / EIP-3009, folded into per-pair nets to amortise gas.",
+      "hero.srcline": "reads <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — view source, it's all client-side.",
+      "btn.refresh": "refresh", "live.connecting": "connecting…", "live.live": "live", "live.stalled": "stalled", "live.updated": "updated {x}",
+      "ago.s": "{n}s ago", "ago.m": "{n}m ago", "ago.h": "{n}h ago", "ago.d": "{n}d ago",
+      "s1.title": "Settlement reliability",
+      "s1.note": "Terminal outcomes of real on-chain net settlements. <code>successRate = settleOk ÷ settleAttempts</code> over genuine broadcast attempts (shadow dry-runs excluded), plus the measured <em>submit→finality</em> latency of each mined settle (timed at the facilitator facade, so it covers whichever rail is live). All additive lifetime counters, persisted across deploys — read live from <code>/economy</code>.",
+      "st.sr": "settlement success rate", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "on-chain mined", "st.mined.sub": "real Arc txs (netted)",
+      "st.fail": "failed broadcasts", "st.fail.sub": "verify/settle never mined", "st.gross": "gross trades settled", "st.gross.sub": "lifetime ledger count",
+      "st.vol": "settled volume", "st.vol.sub": "lifetime USDC", "st.agents": "live agents", "st.agents.sub": "trading now",
+      "st.gini": "wealth Gini", "st.gini.sub": "emergent inequality", "st.mean": "mean balance", "st.mean.sub": "USDC / agent",
+      "st.latavg": "settle latency · avg", "st.latavg.sub": "submit → finality", "st.latmax": "settle latency · max", "st.latmax.sub": "slowest mined settle",
+      "st.latlast": "settle latency · last", "st.latlast.sub": "most recent settle", "key.mined": "mined", "key.failed": "failed",
+      "s2.title": "Netting & gas amortisation",
+      "s2.note": "Micropayments are not broadcast one-per-trade. Per-pair nets accumulate bilaterally and only the difference moves on-chain, so gas is amortised over more value per transaction. The fold figures are derived live from <code>/economy</code> totals — <code>count</code> (gross trades) against <code>settleAttempts</code> (broadcasts) — and the <em>net-pending</em> gauges below read the live in-flight accumulator (pairs folded, not yet broadcast).",
+      "st.fold": "netting fold ratio", "st.fold.sub": "gross trades per broadcast", "st.avoid": "on-chain txs avoided", "st.avoid.sub": "vs one tx per trade",
+      "st.nppairs": "net-pending pairs", "st.nppairs.sub": "folded, awaiting flush", "st.nptrades": "trades in flight", "st.nptrades.sub": "gross, not yet mined",
+      "st.npfold": "pending buffer fold", "st.npfold.sub": "trades per pending net", "nb.naive": "naive rail · 1 tx / trade", "nb.netted": "murmur · per-pair nets",
+      "s3.title": "Prediction FLAT & refunds",
+      "s3.note": "The swarm also bets real USDC each cron on the next tick's Arc temperature, resolved parimutuel by the chain (zero-sum, no house). A <code>FLAT</code> resolution — inside the flat band — refunds every stake as <em>net-zero</em> flows, so <strong>nothing broadcasts on the settlement rail</strong>: a FLAT round is a resolution outcome, not a refund transaction. Rate below is read live from <code>/predictions</code>.",
+      "st.flat": "FLAT / refund rate", "st.flat.sub": "of recent resolved rounds", "st.flatres": "rounds resolved", "st.flatres.sub": "lifetime",
+      "st.flatcom": "committed on-chain", "st.flatcom.sub": "decisive → registry", "st.flatwin": "window shown", "st.flatwin.sub": "recent resolutions",
+      "fkey.flat": "FLAT (refunded)", "fkey.dec": "decisive (UP/DOWN)",
+      "s4.title": "Live time series",
+      "s4.note": "From the independent per-cron D1 archive (<code>/history</code>) — one row per cron, separate from the live Durable-Object state, so these curves are cross-checkable against the on-chain receipts.",
+      "s4.note.live": "From the independent per-cron D1 archive (<code>/history</code>) — showing the most recent <b>{n}</b> crons. One row per cron, separate from the live Durable-Object state, so these curves are cross-checkable against the on-chain receipts.",
+      "s4.note.err": "history unavailable (D1 not bound or empty).",
+      "ch.settle": "on-chain settlements (cumulative)", "ch.vol": "settled volume (cumulative, USDC)", "ch.deals": "gross trades per cron", "ch.gini": "wealth Gini", "ch.temp": "Arc market temperature (0–1) · regime bands", "chart.empty": "not enough history yet",
+      "s5.title": "Uptime & liveness", "st.window": "archived window", "st.window.sub": "first → last cron", "st.crons": "crons archived", "st.crons.sub": "one D1 row each",
+      "st.lasttick": "last tick", "st.lasttick.sub": "sub-tick index", "st.cadence": "cadence", "st.cadence.sub": "6 sub-ticks per cron",
+      "s6.title": "Why these numbers are credible", "s6.h3": "🔏 Every real transfer is neurally sourced & on-chain verifiable",
+      "s6.p": "Each on-chain net settlement sets its EIP-3009 <code>nonce</code> to the <code>sha256</code> of a receipt bundling the frozen buyer/seller neural read-outs that caused it, hash-chained via <code>prevChain</code> and committed on Arc (every proof carries its <code>commitTx</code>). A receipt invented after the fact could never hash to a mined nonce — so the trades behind every figure above are provably decided by connectomes, not a human or an LLM.",
+      "s6.getline": "GET <b>/proofs</b> → the chain (last 64 served) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; or verify in-browser at <a href=\"/\">muros.live</a> → neural proofs.",
+      "s7.title": "Caveats & honest limits", "s7.note": "All six headline metrics are now instrumented. What follows are the honest edges of each figure — what it does and does not claim — so nothing above is over-read.",
+      "gap1.h3": "⏱ latency is submit→receipt, on an instant-finality chain", "gap1.p": "Arc finalises deterministically (sub-second blocks, no reorg), so <code>settleMs*</code> measures the RPC broadcast→receipt round-trip, not a reorg-confirmation wait. Values are naturally small; the signal is the tail (<code>max</code>) and any drift over time.",
+      "gap2.h3": "◌ net-pending is an instantaneous gauge", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> are sampled at snapshot time and drain at the next cron flush; they are not lifetime totals. Circle <code>/status</code> reconciliation stays defined-but-unwired (the internal rail settles on-chain directly).",
+      "gap3.h3": "↩ FLAT rate is windowed, gas is a tx-count reduction", "gap3.p": "The FLAT/refund rate is computed over the recent resolutions <code>/predictions</code> serves (a lifetime FLAT tally is not exposed). And “txs avoided” is the transaction-<em>count</em> reduction that amortises gas — murmur does not yet publish per-tx gas units.",
+      "pill.context": "context",
+      "dyn.srsub": "{ok} mined / {att} attempts", "dyn.timed": "{n} timed settles", "dyn.npfoldsub": "{t} trades → {p} nets", "dyn.npempty": "buffer empty · all flushed", "dyn.foldsub": "{g} trades → {b} broadcasts", "dyn.nbtxs": "{n} txs",
+      "dyn.netnote": "Without netting, <strong>{gross}</strong> gross trades would each need their own on-chain transfer. Per-pair netting folded them into <strong>{bcast}</strong> broadcasts (<strong>{ok}</strong> mined) — <strong>{pct}</strong> fewer on-chain transactions, so each tx's gas is amortised over ~{fold} trades instead of one. <em>This is the transaction-count reduction — the mechanism that amortises gas; murmur does not yet publish per-tx gas units.</em>",
+      "dyn.subsettle": "now {x} · window +{y}", "dyn.subvol": "now {x}", "dyn.subdeals": "mean {x} / cron", "dyn.subgini": "now {x}", "dyn.subtemp": "regime now {r} · temp {t}", "dyn.lastticksub": "archived {x}",
+      "dyn.pred.disabled": "prediction market disabled", "dyn.pred.none": "no resolved rounds yet", "dyn.pred.rate": "{flat} FLAT of last {n} rounds", "dyn.pred.window": "{span} · windowed, not lifetime", "dyn.pred.span": "rounds #{a}–#{b}",
+      "dyn.chain.loading": "chain head · loading live anchor…", "dyn.chain.disabled": "chain head · (provenance disabled)", "dyn.chain.offline": "chain head · (live anchor unavailable offline)",
+      "dyn.chain.line": "chain head <b>{h}</b> · last <b>{c}</b> receipts served", "dyn.chain.line2": " · latest tick <b>#{t}</b> · commit <b>{x}</b>",
+      "err.reach": "could not reach {api}/economy — {msg}. The API may be unreachable from here.",
+      "bd.chain": "chain", "bd.chain.v": "arc mainnet · 5042", "bd.mode": "mode", "bd.asset": "asset", "bd.protocol": "protocol", "bd.agents": "live agents", "bd.source": "source", "bd.source.v": "public GET · no key",
+      "foot.tag": "murmur — a population of neural agents settling real USDC on arc", "foot.swarm": "the swarm", "foot.api": "public api",
+    };
+
+    const zh = {
+      "meta.title": "murmur — Arc x402 金丝雀 · 实时结算遥测",
+      "meta.desc": "针对 murmur 在 Arc 主网上真钱 x402 结算轨的实时只读遥测：结算成功率、净额折叠比与 gas 摊销、链上结算量与成交额增长、市场温度与财富基尼系数——全部在客户端从公开的 api.muros.live 端点读取。无合成负载、无测试网、无大语言模型。",
+      "nav.swarm": "← 返回蜂群", "nav.developers": "开发者", "nav.source": "源码", "wordmark.sub": "x402 金丝雀",
+      "hero.h1": "Arc <em>x402 金丝雀</em>",
+      "hero.lede": "一扇实时、只读的遥测窗口，映照 murmur 在 Arc 主网上真钱 x402 结算轨的运行。下方每一个数字都由客户端直接从蜂群自身所依赖的那批免费、免密钥、CORS 全开的端点拉取——没有合成负载、没有测试网、整条链路里没有大语言模型。一个自主果蝇神经系统种群全天候交易，通过 x402 / EIP-3009 结算真实 USDC，并折叠成逐对手净额以摊销 gas。",
+      "hero.srcline": "读取 <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> —— 源码可见，全在客户端完成。",
+      "btn.refresh": "刷新", "live.connecting": "连接中…", "live.live": "实时", "live.stalled": "停摆", "live.updated": "更新于 {x}",
+      "ago.s": "{n} 秒前", "ago.m": "{n} 分钟前", "ago.h": "{n} 小时前", "ago.d": "{n} 天前",
+      "s1.title": "结算可靠性",
+      "s1.note": "真实链上净额结算的终局结果。<code>successRate = settleOk ÷ settleAttempts</code> 只统计真实的广播尝试（排除影子空跑），外加每笔已上链结算实测的 <em>提交→终局</em> 延迟（在 facilitator 门面计时，覆盖当前启用的任一条轨道）。全部为可累加的生命周期计数器，跨部署持久保存——实时读取自 <code>/economy</code>。",
+      "st.sr": "结算成功率", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "已上链结算", "st.mined.sub": "真实 Arc 交易（净额）",
+      "st.fail": "广播失败", "st.fail.sub": "verify/settle 从未上链", "st.gross": "已结算总交易", "st.gross.sub": "生命周期账本计数",
+      "st.vol": "结算成交额", "st.vol.sub": "生命周期 USDC", "st.agents": "在线代理", "st.agents.sub": "正在交易",
+      "st.gini": "财富基尼", "st.gini.sub": "涌现的不平等", "st.mean": "平均余额", "st.mean.sub": "USDC / 代理",
+      "st.latavg": "结算延迟 · 均值", "st.latavg.sub": "提交 → 终局", "st.latmax": "结算延迟 · 最大", "st.latmax.sub": "最慢的一笔已上链结算",
+      "st.latlast": "结算延迟 · 最近", "st.latlast.sub": "最近一次结算", "key.mined": "已上链", "key.failed": "失败",
+      "s2.title": "净额结算与 gas 摊销",
+      "s2.note": "微支付并非逐笔交易各广播一次。逐对手净额双边累积，只有差额上链，于是 gas 被摊到每笔交易更大的价值上。折叠数字实时派生自 <code>/economy</code> 汇总——<code>count</code>（总交易）对 <code>settleAttempts</code>（广播次数）；而下面的 <em>待净额</em> 表读取实时的在途累加器（已折叠、尚未广播的对）。",
+      "st.fold": "净额折叠比", "st.fold.sub": "每次广播对应的总交易", "st.avoid": "省下的链上交易", "st.avoid.sub": "对比一笔交易一 tx",
+      "st.nppairs": "待净额对", "st.nppairs.sub": "已折叠，待冲刷", "st.nptrades": "在途交易", "st.nptrades.sub": "总笔数，尚未上链",
+      "st.npfold": "缓冲折叠比", "st.npfold.sub": "每个待净额的交易数", "nb.naive": "朴素轨道 · 1 tx / 交易", "nb.netted": "murmur · 逐对手净额",
+      "s3.title": "预测 FLAT 与退款",
+      "s3.note": "蜂群每个 cron 还会用真实 USDC 押注下一 tick 的 Arc 温度，由链上以 pari-mutuel 方式判定（零和、无庄家）。一次 <code>FLAT</code> 判定（落在平坦区间内）会把所有注金以<em>净零</em>流退还，于是<strong>结算轨上不产生任何广播</strong>：FLAT 轮是判定结果，而非退款交易。下方比率实时读取自 <code>/predictions</code>。",
+      "st.flat": "FLAT / 退款率", "st.flat.sub": "占最近已判定轮", "st.flatres": "已判定轮数", "st.flatres.sub": "生命周期",
+      "st.flatcom": "已上链承诺", "st.flatcom.sub": "决定性 → 注册表", "st.flatwin": "展示窗口", "st.flatwin.sub": "最近判定数",
+      "fkey.flat": "FLAT（已退款）", "fkey.dec": "决定性（UP/DOWN）",
+      "s4.title": "实时时间序列",
+      "s4.note": "来自独立的逐-cron D1 归档（<code>/history</code>）——每个 cron 一行，与实时 Durable-Object 状态分离，因此这些曲线可与链上收据相互印证。",
+      "s4.note.live": "来自独立的逐-cron D1 归档（<code>/history</code>）——展示最近的 <b>{n}</b> 个 cron。每个 cron 一行，与实时 Durable-Object 状态分离，因此这些曲线可与链上收据相互印证。",
+      "s4.note.err": "历史不可用（D1 未绑定或为空）。",
+      "ch.settle": "链上结算（累计）", "ch.vol": "结算成交额（累计，USDC）", "ch.deals": "每 cron 总交易", "ch.gini": "财富基尼", "ch.temp": "Arc 市场温度（0–1）· 体制区间", "chart.empty": "历史数据尚不足",
+      "s5.title": "运行时间与活性", "st.window": "归档窗口", "st.window.sub": "首个 → 末尾 cron", "st.crons": "已归档 cron", "st.crons.sub": "每个一行 D1",
+      "st.lasttick": "最后 tick", "st.lasttick.sub": "子 tick 索引", "st.cadence": "节奏", "st.cadence.sub": "每个 cron 六个子 tick",
+      "s6.title": "这些数字为何可信", "s6.h3": "🔏 每一笔真实转账都源自神经、且可链上验证",
+      "s6.p": "每笔链上净额结算都把自己的 EIP-3009 <code>nonce</code> 设为一张收据的 <code>sha256</code>，该收据封装了促成这笔结算的、已冻结的买/卖方神经读出，并经 <code>prevChain</code> 串成哈希链承诺到 Arc 上（每个证明都带有其 <code>commitTx</code>）。事后伪造的收据永远无法哈希成某个已上链的 nonce——所以上方每个数字背后的交易，可证明是由连接组决定的，而非人或大语言模型。",
+      "s6.getline": "GET <b>/proofs</b> → 哈希链（最多提供最近 64 条）· chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; 或在浏览器端于 <a href=\"/\">muros.live</a> → 神经证明 中验证。",
+      "s7.title": "注意事项与诚实的边界", "s7.note": "六项核心指标现均已埋点。以下是每个数字诚实的边界——它声称了什么、又没声称什么——好让上文不被过度解读。",
+      "gap1.h3": "⏱ 延迟是提交→回执，且在即时终局的链上", "gap1.p": "Arc 确定性终局（亚秒区块、无重组），因此 <code>settleMs*</code> 度量的是 RPC 广播→回执的往返，而非重组确认等待。数值天然偏小；信号在于尾部（<code>max</code>）以及随时间的漂移。",
+      "gap2.h3": "◌ 待净额是瞬时表", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> 在快照时刻采样，并在下一个 cron 冲刷时排空；它们不是生命周期总量。Circle 的 <code>/status</code> 对账保持“已定义但未接线”（内部轨道直接链上结算）。",
+      "gap3.h3": "↩ FLAT 率是窗口化的，gas 是交易计数的减少", "gap3.p": "FLAT/退款率基于 <code>/predictions</code> 所提供的最近判定计算（未暴露生命周期的 FLAT 总计）。而“省下的交易”是摊销 gas 的交易<em>计数</em>减少——murmur 尚未公布每笔交易的 gas 用量。",
+      "pill.context": "背景",
+      "dyn.srsub": "{ok} 已上链 / {att} 次尝试", "dyn.timed": "{n} 笔计时结算", "dyn.npfoldsub": "{t} 笔交易 → {p} 个净额", "dyn.npempty": "缓冲为空 · 全部已冲刷", "dyn.foldsub": "{g} 笔交易 → {b} 次广播", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "若无净额结算，<strong>{gross}</strong> 笔总交易将各自需要一笔独立的链上转账。逐对手净额把它们折叠成 <strong>{bcast}</strong> 次广播（<strong>{ok}</strong> 笔已上链）——链上交易少了 <strong>{pct}</strong>，于是每笔 tx 的 gas 被摊到约 {fold} 笔交易而非一笔。<em>这是交易计数层面的减少——即摊销 gas 的机制；murmur 尚未公布每笔交易的 gas 用量。</em>",
+      "dyn.subsettle": "当前 {x} · 窗口 +{y}", "dyn.subvol": "当前 {x}", "dyn.subdeals": "均值 {x} / cron", "dyn.subgini": "当前 {x}", "dyn.subtemp": "当前体制 {r} · 温度 {t}", "dyn.lastticksub": "归档于 {x}",
+      "dyn.pred.disabled": "预测市场已禁用", "dyn.pred.none": "尚无已判定轮次", "dyn.pred.rate": "最近 {n} 轮中有 {flat} 轮 FLAT", "dyn.pred.window": "{span} · 窗口化，非生命周期", "dyn.pred.span": "第 #{a}–#{b} 轮",
+      "dyn.chain.loading": "链头 · 正在加载实时锚点…", "dyn.chain.disabled": "链头 · （溯源已禁用）", "dyn.chain.offline": "链头 · （离线时实时锚点不可用）",
+      "dyn.chain.line": "链头 <b>{h}</b> · 已提供最近 <b>{c}</b> 条收据", "dyn.chain.line2": " · 最新 tick <b>#{t}</b> · 承诺 <b>{x}</b>",
+      "err.reach": "无法访问 {api}/economy —— {msg}。该 API 可能从这里不可达。",
+      "bd.chain": "链", "bd.chain.v": "arc 主网 · 5042", "bd.mode": "模式", "bd.asset": "资产", "bd.protocol": "协议", "bd.agents": "在线代理", "bd.source": "来源", "bd.source.v": "公开 GET · 免密钥",
+      "foot.tag": "murmur —— 一群在 arc 上结算真实 USDC 的神经代理", "foot.swarm": "蜂群", "foot.api": "公开 api",
+    };
+
+
+    const fr = {
+      "meta.title": "murmur — Arc x402 Canari · télémétrie de règlement en direct",
+      "meta.desc": "Télémétrie en lecture seule et en direct du rail de règlement x402 en argent réel de murmur sur le mainnet Arc : taux de réussite des règlements, ratio de regroupement par compensation et amortisation du gas, règlements on-chain et croissance du volume, température du marché et indice de Gini — tout lu côté client depuis les points de terminaison publics de api.muros.live. Aucune charge synthétique, pas de testnet, aucun LLM.",
+      "nav.swarm": "← l'essaim", "nav.developers": "développeurs", "nav.source": "source", "wordmark.sub": "canari x402",
+      "hero.h1": "Le Canari <em>Arc x402</em>",
+      "hero.lede": "Une fenêtre de télémétrie en direct et en lecture seule sur le rail de règlement x402 en argent réel de murmur sur le mainnet Arc. Chaque chiffre ci-dessous est récupéré côté client depuis les mêmes points de terminaison gratuits, sans clé et ouverts en CORS sur lesquels l'essaim fonctionne lui-même — aucune charge synthétique, pas de testnet, aucun LLM nulle part dans la boucle. Une population de systèmes nerveux autonomes de drosophiles négocie en permanence et règle de vrais USDC via x402 / EIP-3009, regroupés en soldes bilatéraux pour amortir le gas.",
+      "hero.srcline": "lit <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — voir la source, tout est côté client.",
+      "btn.refresh": "actualiser", "live.connecting": "connexion…", "live.live": "en direct", "live.stalled": "figé", "live.updated": "mis à jour {x}",
+      "ago.s": "il y a {n} s", "ago.m": "il y a {n} min", "ago.h": "il y a {n} h", "ago.d": "il y a {n} j",
+      "s1.title": "Fiabilité des règlements",
+      "s1.note": "Résultats finaux de vrais règlements nets on-chain. <code>successRate = settleOk ÷ settleAttempts</code> sur de véritables tentatives de diffusion (hors essais à blanc), plus la latence mesurée <em>soumission→finalité</em> de chaque règlement miné (chronométrée au niveau de la façade du facilitateur, couvrant donc le rail actif). Tous des compteurs cumulatifs à vie, persistés entre les déploiements — lus en direct depuis <code>/economy</code>.",
+      "st.sr": "taux de réussite des règlements", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "miné on-chain", "st.mined.sub": "vraies tx Arc (compensées)",
+      "st.fail": "diffusions échouées", "st.fail.sub": "verify/settle jamais minés", "st.gross": "échanges bruts réglés", "st.gross.sub": "nombre de registre à vie",
+      "st.vol": "volume réglé", "st.vol.sub": "USDC à vie", "st.agents": "agents actifs", "st.agents.sub": "en négociation",
+      "st.gini": "Gini de richesse", "st.gini.sub": "inégalité émergente", "st.mean": "solde moyen", "st.mean.sub": "USDC / agent",
+      "st.latavg": "latence de règlement · moy.", "st.latavg.sub": "soumission → finalité", "st.latmax": "latence de règlement · max", "st.latmax.sub": "règlement miné le plus lent",
+      "st.latlast": "latence de règlement · dern.", "st.latlast.sub": "règlement le plus récent", "key.mined": "miné", "key.failed": "échoué",
+      "s2.title": "Compensation et amortisation du gas",
+      "s2.note": "Les micropaiements ne sont pas diffusés un par échange. Les soldes bilatéraux s'accumulent de part et d'autre et seule la différence passe on-chain, si bien que le gas est amorti sur plus de valeur par transaction. Les ratios de regroupement sont dérivés en direct des totaux <code>/economy</code> — <code>count</code> (échanges bruts) face à <code>settleAttempts</code> (diffusions) — et les jauges <em>en attente de compensation</em> ci-dessous lisent l'accumulateur en vol (paires regroupées, pas encore diffusées).",
+      "st.fold": "ratio de regroupement", "st.fold.sub": "échanges bruts par diffusion", "st.avoid": "tx on-chain évitées", "st.avoid.sub": "vs une tx par échange",
+      "st.nppairs": "paires en attente", "st.nppairs.sub": "regroupées, en attente de purge", "st.nptrades": "échanges en vol", "st.nptrades.sub": "bruts, pas encore minés",
+      "st.npfold": "regroupement du tampon", "st.npfold.sub": "échanges par solde en attente", "nb.naive": "rail naïf · 1 tx / échange", "nb.netted": "murmur · soldes bilatéraux",
+      "s3.title": "FLAT de prédiction et remboursements",
+      "s3.note": "L'essaim mise aussi de vrais USDC à chaque cron sur la température Arc du tick suivant, résolue en parimutuel par la chaîne (somme nulle, sans maison). Une résolution <code>FLAT</code> — dans la bande plate — rembourse chaque mise en flux <em>nets nuls</em>, si bien que <strong>rien n'est diffusé sur le rail de règlement</strong> : un tour FLAT est un résultat de résolution, pas une transaction de remboursement. Le taux ci-dessous est lu en direct depuis <code>/predictions</code>.",
+      "st.flat": "taux FLAT / remboursement", "st.flat.sub": "des tours résolus récents", "st.flatres": "tours résolus", "st.flatres.sub": "à vie",
+      "st.flatcom": "engagé on-chain", "st.flatcom.sub": "décisif → registre", "st.flatwin": "fenêtre affichée", "st.flatwin.sub": "résolutions récentes",
+      "fkey.flat": "FLAT (remboursé)", "fkey.dec": "décisif (HAUSSE/BAISSE)",
+      "s4.title": "Séries temporelles en direct",
+      "s4.note": "De l'archive D1 indépendante par cron (<code>/history</code>) — une ligne par cron, séparée de l'état Durable-Object en direct, de sorte que ces courbes sont recoupables avec les reçus on-chain.",
+      "s4.note.live": "De l'archive D1 indépendante par cron (<code>/history</code>) — montrant les <b>{n}</b> crons les plus récents. Une ligne par cron, séparée de l'état Durable-Object en direct, de sorte que ces courbes sont recoupables avec les reçus on-chain.",
+      "s4.note.err": "historique indisponible (D1 non lié ou vide).",
+      "ch.settle": "règlements on-chain (cumul)", "ch.vol": "volume réglé (cumul, USDC)", "ch.deals": "échanges bruts par cron", "ch.gini": "Gini de richesse", "ch.temp": "température du marché Arc (0–1) · bandes de régime", "chart.empty": "pas encore assez d'historique",
+      "s5.title": "Disponibilité et vivacité", "st.window": "fenêtre archivée", "st.window.sub": "premier → dernier cron", "st.crons": "crons archivés", "st.crons.sub": "une ligne D1 chacun",
+      "st.lasttick": "dernier tick", "st.lasttick.sub": "index de sous-tick", "st.cadence": "rythme", "st.cadence.sub": "6 sous-ticks par cron",
+      "s6.title": "Pourquoi ces chiffres sont crédibles", "s6.h3": "🔏 Chaque vrai transfert est d'origine neuronale et vérifiable on-chain",
+      "s6.p": "Chaque règlement net on-chain fixe son <code>nonce</code> EIP-3009 au <code>sha256</code> d'un reçu regroupant les lectures neuronales gelées de l'acheteur/vendeur qui l'ont causé, chaînées par <code>prevChain</code> et engagées sur Arc (chaque preuve porte son <code>commitTx</code>). Un reçu inventé après coup ne pourrait jamais hasher vers un nonce miné — ainsi les échanges derrière chaque chiffre ci-dessus sont prouvés décidés par des connectomes, ni par un humain ni par un LLM.",
+      "s6.getline": "GET <b>/proofs</b> → la chaîne (64 derniers servis) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; ou vérifiez dans le navigateur sur <a href=\"/\">muros.live</a> → preuves neuronales.",
+      "s7.title": "Réserves et limites honnêtes", "s7.note": "Les six indicateurs phares sont désormais instrumentés. Ce qui suit sont les bords honnêtes de chaque chiffre — ce qu'il affirme et n'affirme pas — pour que rien ci-dessus ne soit surinterprété.",
+      "gap1.h3": "⏱ la latence est soumission→reçu, sur une chaîne à finalité instantanée", "gap1.p": "Arc finalise de manière déterministe (blocs sub-seconde, pas de réorganisation), donc <code>settleMs*</code> mesure l'aller-retour diffusion RPC→reçu, pas une attente de confirmation de réorganisation. Les valeurs sont naturellement petites ; le signal est la queue (<code>max</code>) et toute dérive dans le temps.",
+      "gap2.h3": "◌ l'en attente de compensation est une jauge instantanée", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> sont échantillonnés au moment du instantané et se vident à la purge du cron suivant ; ce ne sont pas des totaux à vie. La réconciliation <code>/status</code> de Circle reste définie mais non branchée (le rail interne règle directement on-chain).",
+      "gap3.h3": "↩ le taux FLAT est fenêtré, le gas est une réduction du nombre de tx", "gap3.p": "Le taux FLAT/remboursement est calculé sur les résolutions récentes servies par <code>/predictions</code> (un total FLAT à vie n'est pas exposé). Et « tx évitées » est la réduction du <em>nombre</em> de transactions qui amortit le gas — murmur ne publie pas encore le gas par transaction.",
+      "pill.context": "contexte",
+      "dyn.srsub": "{ok} minés / {att} tentatives", "dyn.timed": "{n} règlements chronométrés", "dyn.npfoldsub": "{t} échanges → {p} soldes", "dyn.npempty": "tampon vide · tout est purgé", "dyn.foldsub": "{g} échanges → {b} diffusions", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "Sans compensation, <strong>{gross}</strong> échanges bruts nécessiteraient chacun leur propre transfert on-chain. La compensation bilatérale les a regroupés en <strong>{bcast}</strong> diffusions (<strong>{ok}</strong> minées) — <strong>{pct}</strong> de transactions on-chain en moins, si bien que le gas de chaque tx est amorti sur ~{fold} échanges au lieu d'un. <em>C'est la réduction du nombre de transactions — le mécanisme qui amortit le gas ; murmur ne publie pas encore le gas par transaction.</em>",
+      "dyn.subsettle": "maintenant {x} · fenêtre +{y}", "dyn.subvol": "maintenant {x}", "dyn.subdeals": "moyenne {x} / cron", "dyn.subgini": "maintenant {x}", "dyn.subtemp": "régime actuel {r} · temp {t}", "dyn.lastticksub": "archivé {x}",
+      "dyn.pred.disabled": "marché de prédiction désactivé", "dyn.pred.none": "aucun tour résolu pour l'instant", "dyn.pred.rate": "{flat} FLAT sur les {n} derniers tours", "dyn.pred.window": "{span} · fenêtré, pas à vie", "dyn.pred.span": "tours #{a}–#{b}",
+      "dyn.chain.loading": "tête de chaîne · chargement de l'ancre en direct…", "dyn.chain.disabled": "tête de chaîne · (provenance désactivée)", "dyn.chain.offline": "tête de chaîne · (ancre en direct indisponible hors ligne)",
+      "dyn.chain.line": "tête de chaîne <b>{h}</b> · {c} derniers reçus servis", "dyn.chain.line2": " · dernier tick <b>#{t}</b> · engagement <b>{x}</b>",
+      "err.reach": "impossible d'atteindre {api}/economy — {msg}. L'API est peut-être injoignable d'ici.",
+      "bd.chain": "chaîne", "bd.chain.v": "mainnet arc · 5042", "bd.mode": "mode", "bd.asset": "actif", "bd.protocol": "protocole", "bd.agents": "agents actifs", "bd.source": "source", "bd.source.v": "GET public · sans clé",
+      "foot.tag": "murmur — une population d'agents neuronaux réglant de vrais USDC sur arc", "foot.swarm": "l'essaim", "foot.api": "api publique",
+    };
+
+    const es = {
+      "meta.title": "murmur — Arc x402 Canario · telemetría de liquidación en vivo",
+      "meta.desc": "Telemetría en vivo y de solo lectura del riel de liquidación x402 con dinero real de murmur en la mainnet de Arc: tasa de éxito de liquidación, ratio de plegado por neteo y amortización de gas, liquidaciones y volumen en cadena, temperatura del mercado e índice de Gini — todo leído en el cliente desde los endpoints públicos de api.muros.live. Sin carga sintética, sin testnet, sin LLM.",
+      "nav.swarm": "← el enjambre", "nav.developers": "desarrolladores", "nav.source": "código", "wordmark.sub": "canario x402",
+      "hero.h1": "El Canario <em>Arc x402</em>",
+      "hero.lede": "Una ventana de telemetría en vivo y de solo lectura sobre el riel de liquidación x402 con dinero real de murmur en la mainnet de Arc. Cada cifra de abajo se obtiene en el cliente de los mismos endpoints gratuitos, sin clave y abiertos en CORS en los que el propio enjambre opera — sin carga sintética, sin testnet, sin LLM en ningún punto del ciclo. Una población de sistemas nerviosos autónomos de mosca de la fruta opera las 24 horas y liquida USDC reales mediante x402 / EIP-3009, plegados en neteos por par para amortizar el gas.",
+      "hero.srcline": "lee <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — mira el código, todo es en el cliente.",
+      "btn.refresh": "actualizar", "live.connecting": "conectando…", "live.live": "en vivo", "live.stalled": "detenido", "live.updated": "actualizado {x}",
+      "ago.s": "hace {n} s", "ago.m": "hace {n} min", "ago.h": "hace {n} h", "ago.d": "hace {n} d",
+      "s1.title": "Fiabilidad de la liquidación",
+      "s1.note": "Resultados finales de liquidaciones netas reales en cadena. <code>successRate = settleOk ÷ settleAttempts</code> sobre intentos reales de difusión (excluidas las simulaciones), más la latencia medida <em>envío→finalidad</em> de cada liquidación minada (cronometrada en la fachada del facilitador, por lo que cubre cualquier riel activo). Todos contadores acumulativos de por vida, persistidos entre despliegues — leídos en vivo desde <code>/economy</code>.",
+      "st.sr": "tasa de éxito de liquidación", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "minado en cadena", "st.mined.sub": "txs reales de Arc (neteadas)",
+      "st.fail": "difusiones fallidas", "st.fail.sub": "verify/settle nunca minados", "st.gross": "operaciones brutas liquidadas", "st.gross.sub": "conteo de libro de por vida",
+      "st.vol": "volumen liquidado", "st.vol.sub": "USDC de por vida", "st.agents": "agentes activos", "st.agents.sub": "operando ahora",
+      "st.gini": "Gini de riqueza", "st.gini.sub": "desigualdad emergente", "st.mean": "saldo medio", "st.mean.sub": "USDC / agente",
+      "st.latavg": "latencia de liquidación · media", "st.latavg.sub": "envío → finalidad", "st.latmax": "latencia de liquidación · máx", "st.latmax.sub": "liquidación minada más lenta",
+      "st.latlast": "latencia de liquidación · última", "st.latlast.sub": "liquidación más reciente", "key.mined": "minado", "key.failed": "fallido",
+      "s2.title": "Neteo y amortización de gas",
+      "s2.note": "Los micropagos no se difunden uno por operación. Los neteos por par se acumulan bilateralmente y solo la diferencia va en cadena, así que el gas se amortiza sobre más valor por transacción. Las cifras de plegado se derivan en vivo de los totales de <code>/economy</code> — <code>count</code> (operaciones brutas) frente a <code>settleAttempts</code> (difusiones) — y los indicadores <em>en espera de neteo</em> de abajo leen el acumulador en vuelo (pares plegados, aún no difundidos).",
+      "st.fold": "ratio de plegado", "st.fold.sub": "operaciones brutas por difusión", "st.avoid": "txs en cadena evitadas", "st.avoid.sub": "vs una tx por operación",
+      "st.nppairs": "pares en espera", "st.nppairs.sub": "plegados, aguardando vaciado", "st.nptrades": "operaciones en vuelo", "st.nptrades.sub": "brutas, aún no minadas",
+      "st.npfold": "plegado del búfer", "st.npfold.sub": "operaciones por neteo en espera", "nb.naive": "riel ingenuo · 1 tx / operación", "nb.netted": "murmur · neteos por par",
+      "s3.title": "FLAT de predicción y reembolsos",
+      "s3.note": "El enjambre también apuesta USDC reales en cada cron sobre la temperatura Arc del próximo tick, resuelto por parimutuel en la cadena (suma cero, sin casa). Una resolución <code>FLAT</code> — dentro de la banda plana — reembolsa cada apuesta como flujos <em>netos cero</em>, así que <strong>nada se difunde en el riel de liquidación</strong>: una ronda FLAT es un resultado de resolución, no una transacción de reembolso. La tasa de abajo se lee en vivo desde <code>/predictions</code>.",
+      "st.flat": "tasa FLAT / reembolso", "st.flat.sub": "de rondas resueltas recientes", "st.flatres": "rondas resueltas", "st.flatres.sub": "de por vida",
+      "st.flatcom": "comprometido en cadena", "st.flatcom.sub": "decisivo → registro", "st.flatwin": "ventana mostrada", "st.flatwin.sub": "resoluciones recientes",
+      "fkey.flat": "FLAT (reembolsado)", "fkey.dec": "decisivo (SUBE/BAJA)",
+      "s4.title": "Series temporales en vivo",
+      "s4.note": "Del archivo D1 independiente por cron (<code>/history</code>) — una fila por cron, separada del estado Durable-Object en vivo, de modo que estas curvas se pueden contrastar con los recibos en cadena.",
+      "s4.note.live": "Del archivo D1 independiente por cron (<code>/history</code>) — mostrando los <b>{n}</b> crons más recientes. Una fila por cron, separada del estado Durable-Object en vivo, de modo que estas curvas se pueden contrastar con los recibos en cadena.",
+      "s4.note.err": "historial no disponible (D1 no vinculado o vacío).",
+      "ch.settle": "liquidaciones en cadena (acumulado)", "ch.vol": "volumen liquidado (acumulado, USDC)", "ch.deals": "operaciones brutas por cron", "ch.gini": "Gini de riqueza", "ch.temp": "temperatura del mercado Arc (0–1) · bandas de régimen", "chart.empty": "aún no hay suficiente historial",
+      "s5.title": "Tiempo activo y vitalidad", "st.window": "ventana archivada", "st.window.sub": "primer → último cron", "st.crons": "crons archivados", "st.crons.sub": "una fila D1 cada uno",
+      "st.lasttick": "último tick", "st.lasttick.sub": "índice de sub-tick", "st.cadence": "ritmo", "st.cadence.sub": "6 sub-ticks por cron",
+      "s6.title": "Por qué estas cifras son creíbles", "s6.h3": "🔏 Cada transferencia real tiene origen neuronal y es verificable en cadena",
+      "s6.p": "Cada liquidación neta en cadena fija su <code>nonce</code> EIP-3009 al <code>sha256</code> de un recibo que agrupa las lecturas neuronales congeladas de comprador/vendedor que la causaron, encadenado por <code>prevChain</code> y comprometido en Arc (cada prueba lleva su <code>commitTx</code>). Un recibo inventado a posteriori jamás podría hashear a un nonce minado — así que las operaciones detrás de cada cifra de arriba están probadamente decididas por conectomas, ni por un humano ni por un LLM.",
+      "s6.getline": "GET <b>/proofs</b> → la cadena (últimos 64 servidos) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; o verifica en el navegador en <a href=\"/\">muros.live</a> → pruebas neuronales.",
+      "s7.title": "Advertencias y límites honestos", "s7.note": "Las seis métricas principales ya están instrumentadas. Lo que sigue son los bordes honestos de cada cifra — qué afirma y qué no — para que nada de arriba se sobreinterprete.",
+      "gap1.h3": "⏱ la latencia es envío→recibo, en una cadena de finalidad instantánea", "gap1.p": "Arc finaliza de forma determinista (bloques sub-segundo, sin reorg), así que <code>settleMs*</code> mide el viaje de difusión RPC→recibo, no una espera de confirmación de reorg. Los valores son naturalmente pequeños; la señal está en la cola (<code>max</code>) y cualquier deriva en el tiempo.",
+      "gap2.h3": "◌ el en-espera-de-neteo es un indicador instantáneo", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> se muestrean en el momento de la instantánea y se vacían en el próximo vaciado de cron; no son totales de por vida. La conciliación <code>/status</code> de Circle queda definida pero sin conectar (el riel interno liquida directamente en cadena).",
+      "gap3.h3": "↩ la tasa FLAT es por ventana, el gas es una reducción de conteo de tx", "gap3.p": "La tasa FLAT/reembolso se calcula sobre las resoluciones recientes que sirve <code>/predictions</code> (no se expone un recuento FLAT de por vida). Y «txs evitadas» es la reducción del <em>conteo</em> de transacciones que amortiza el gas — murmur aún no publica unidades de gas por transacción.",
+      "pill.context": "contexto",
+      "dyn.srsub": "{ok} minados / {att} intentos", "dyn.timed": "{n} liquidaciones cronometradas", "dyn.npfoldsub": "{t} operaciones → {p} neteos", "dyn.npempty": "búfer vacío · todo vaciado", "dyn.foldsub": "{g} operaciones → {b} difusiones", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "Sin neteo, <strong>{gross}</strong> operaciones brutas necesitarían cada una su propia transferencia en cadena. El neteo por pares las plegó en <strong>{bcast}</strong> difusiones (<strong>{ok}</strong> minadas) — <strong>{pct}</strong> menos transacciones en cadena, así que el gas de cada tx se amortiza sobre ~{fold} operaciones en vez de una. <em>Esta es la reducción de conteo de transacciones — el mecanismo que amortiza el gas; murmur aún no publica el gas por transacción.</em>",
+      "dyn.subsettle": "ahora {x} · ventana +{y}", "dyn.subvol": "ahora {x}", "dyn.subdeals": "media {x} / cron", "dyn.subgini": "ahora {x}", "dyn.subtemp": "régimen ahora {r} · temp {t}", "dyn.lastticksub": "archivado {x}",
+      "dyn.pred.disabled": "mercado de predicción desactivado", "dyn.pred.none": "aún no hay rondas resueltas", "dyn.pred.rate": "{flat} FLAT de las últimas {n} rondas", "dyn.pred.window": "{span} · por ventana, no de por vida", "dyn.pred.span": "rondas #{a}–#{b}",
+      "dyn.chain.loading": "cabecera de cadena · cargando ancla en vivo…", "dyn.chain.disabled": "cabecera de cadena · (procedencia desactivada)", "dyn.chain.offline": "cabecera de cadena · (ancla en vivo no disponible sin conexión)",
+      "dyn.chain.line": "cabecera de cadena <b>{h}</b> · últimos <b>{c}</b> recibos servidos", "dyn.chain.line2": " · último tick <b>#{t}</b> · compromiso <b>{x}</b>",
+      "err.reach": "no se pudo acceder a {api}/economy — {msg}. La API puede ser inalcanzable desde aquí.",
+      "bd.chain": "cadena", "bd.chain.v": "mainnet arc · 5042", "bd.mode": "modo", "bd.asset": "activo", "bd.protocol": "protocolo", "bd.agents": "agentes activos", "bd.source": "fuente", "bd.source.v": "GET público · sin clave",
+      "foot.tag": "murmur — una población de agentes neuronales que liquidan USDC reales en arc", "foot.swarm": "el enjambre", "foot.api": "api pública",
+    };
+
+
+    const ja = {
+      "meta.title": "murmur — Arc x402 カナリア · リアルタイム決済テレメトリ",
+      "meta.desc": "Arc メインネット上の murmur の実金 x402 決済レールの、ライブ・読み取り専用のテレメトリ。決済成功率、ネッティング畳み込み比とガス償却、オンチェーン決済量と出来高の成長、市場温度と富のジニ係数——すべて公開 api.muros.live エンドポイントからクライアント側で読み取ります。合成負荷なし、テストネットなし、LLM なし。",
+      "nav.swarm": "← 群れへ", "nav.developers": "開発者", "nav.source": "ソース", "wordmark.sub": "x402 カナリア",
+      "hero.h1": "Arc <em>x402 カナリア</em>",
+      "hero.lede": "Arc メインネット上の murmur の実金 x402 決済レールを映す、ライブ・読み取り専用のテレメトリ窓。以下のすべての数値は、群れ自身が駆動している同じ無料・鍵不要・CORS 公開エンドポイントからクライアント側で取得したものです——合成負荷なし、テストネットなし、ループ内に LLM は一切ありません。自律的なショウジョウバエ神経系の群れが終日取引し、実 USDC を x402 / EIP-3009 経由で決済し、ガスを償却するためにペア別のネットへ畳み込みます。",
+      "hero.srcline": "<code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> を読み取り —— ソース公開、すべてクライアント側。",
+      "btn.refresh": "更新", "live.connecting": "接続中…", "live.live": "ライブ", "live.stalled": "停止", "live.updated": "{x} に更新",
+      "ago.s": "{n} 秒前", "ago.m": "{n} 分前", "ago.h": "{n} 時間前", "ago.d": "{n} 日前",
+      "s1.title": "決済の信頼性",
+      "s1.note": "実際のオンチェーン純決済の最終結果。<code>successRate = settleOk ÷ settleAttempts</code> は正当なブロードキャスト試行のみを集計（影の空打ちは除外）。さらに各マイニング済み決済の実測 <em>送信→アルティメシー</em> 遅延（facilitator ファサードで計時するため、稼働中のいずれのレールもカバー）。すべて寿命にわたる加算カウンタで、デプロイをまたぎ永続化——<code>/economy</code> からライブ読み取り。",
+      "st.sr": "決済成功率", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "オンチェーン記録済み", "st.mined.sub": "実 Arc トランザクション（ネット済み）",
+      "st.fail": "ブロードキャスト失敗", "st.fail.sub": "verify/settle が未記録", "st.gross": "決済総取引数", "st.gross.sub": "寿命台帳カウント",
+      "st.vol": "決済出来高", "st.vol.sub": "寿命 USDC", "st.agents": "稼働エージェント", "st.agents.sub": "取引中",
+      "st.gini": "富のジニ係数", "st.gini.sub": "創発する格差", "st.mean": "平均残高", "st.mean.sub": "USDC / エージェント",
+      "st.latavg": "決済遅延 · 平均", "st.latavg.sub": "送信 → アルティメシー", "st.latmax": "決済遅延 · 最大", "st.latmax.sub": "最遅の記録済み決済",
+      "st.latlast": "決済遅延 · 直近", "st.latlast.sub": "直近の決済", "key.mined": "記録済み", "key.failed": "失敗",
+      "s2.title": "ネッティングとガス償却",
+      "s2.note": "マイクロペイメントは取引ごとにブロードキャストされません。ペア別のネットが双方向に蓄積し、差分のみがオンチェーンへ移るため、ガスは取引ごとにより大きな価値へ償却されます。畳み込み数値は <code>/economy</code> 合計からライブ導出——<code>count</code>（総取引）対 <code>settleAttempts</code>（ブロードキャスト）——下の<em>保留中ネット</em>ゲージは、飛行中のアキュムレータ（畳み込み済み・未ブロードキャストのペア）を読み取ります。",
+      "st.fold": "ネッティング畳み込み比", "st.fold.sub": "ブロードキャストあたり総取引", "st.avoid": "回避したオンチェーン tx", "st.avoid.sub": "取引毎 1 tx と比較",
+      "st.nppairs": "保留ネットのペア", "st.nppairs.sub": "畳み込み済み・フラッシュ待ち", "st.nptrades": "飛行中の取引", "st.nptrades.sub": "総数・未記録",
+      "st.npfold": "バッファ畳み込み比", "st.npfold.sub": "保留ネットあたり取引数", "nb.naive": "素朴レール · 1 tx / 取引", "nb.netted": "murmur · ペア別ネット",
+      "s3.title": "予測の FLAT と返金",
+      "s3.note": "群れは毎 cron、次の tick の Arc 温度に実 USDC で賭け、チェーン上でパリミュチュエル方式（ゼロサム・胴元なし）で裁定します。<code>FLAT</code> 裁定（フラット帯域内）はすべての賭け金を<em>ネットゼロ</em>フローとして返金するため、<strong>決済レール上では何もブロードキャストされません</strong>。FLAT ラウンドは裁定結果であって返金トランザクションではありません。下の比率は <code>/predictions</code> からライブ読み取り。",
+      "st.flat": "FLAT / 返金率", "st.flat.sub": "直近の裁定済みラウンド中", "st.flatres": "裁定済みラウンド", "st.flatres.sub": "累計",
+      "st.flatcom": "オンチェーン確定", "st.flatcom.sub": "決着 → レジストリ", "st.flatwin": "表示ウィンドウ", "st.flatwin.sub": "直近の裁定数",
+      "fkey.flat": "FLAT（返金）", "fkey.dec": "決着（上昇/下落）",
+      "s4.title": "ライブ時系列",
+      "s4.note": "独立した cron 別 D1 アーカイブ（<code>/history</code>）から——cron に 1 行、ライブの Durable-Object 状態とは別系統のため、これらの曲線はオンチェーン受領書と相互検証できます。",
+      "s4.note.live": "独立した cron 別 D1 アーカイブ（<code>/history</code>）から——直近の <b>{n}</b> cron を表示。cron に 1 行、ライブの Durable-Object 状態とは別系統のため、これらの曲線はオンチェーン受領書と相互検証できます。",
+      "s4.note.err": "履歴を利用できません（D1 未バインドまたは空）。",
+      "ch.settle": "オンチェーン決済（累計）", "ch.vol": "決済出来高（累計・USDC）", "ch.deals": "cron あたり総取引", "ch.gini": "富のジニ係数", "ch.temp": "Arc 市場温度（0–1）・レジーム帯", "chart.empty": "履歴がまだ足りません",
+      "s5.title": "稼働時間と生命感", "st.window": "アーカイブ窓", "st.window.sub": "最初 → 最後 cron", "st.crons": "アーカイブ済み cron", "st.crons.sub": "各 1 D1 行",
+      "st.lasttick": "最終 tick", "st.lasttick.sub": "サブ tick インデックス", "st.cadence": "周期", "st.cadence.sub": "cron あたり 6 サブ tick",
+      "s6.title": "これらの数値が信頼できる理由", "s6.h3": "🔏 すべての実送金は神経由来であり、オンチェーンで検証可能",
+      "s6.p": "各オンチェーン純決済は、その EIP-3009 <code>nonce</code> を、生じさせた買い手/売り手の凍結済み神経読み出しを束ねた受領書の <code>sha256</code> に設定し、<code>prevChain</code> でハッシュ連鎖し Arc 上に確定します（すべての証明が <code>commitTx</code> を帯ぶ）。後から捏造した受領書は、記録済み nonce にハッシュ一致できません——ゆえに上の各数値の背後の取引は、人間でも LLM でもなく、確実にコネクトームにより決定されています。",
+      "s6.getline": "GET <b>/proofs</b> → 連鎖（直近 64 件提供）・chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; またはブラウザ上で <a href=\"/\">muros.live</a> → 神経証明 で検証。",
+      "s7.title": "留意点と誠実な限界", "s7.note": "6 つの主要指標はすべて計装済み。以下は各数値の誠実な境界——何が言えて何が言えないか——を示し、上を読み過ぎぬようにします。",
+      "gap1.h3": "⏱ 遅延は送信→受領で、即時アルティメシーのチェーン上", "gap1.p": "Arc は決定論的にアルティメシー（サブ秒ブロック・再編成なし）するため、<code>settleMs*</code> は RPC ブロードキャスト→受領の往復を計測し、再編成確認待ちではありません。値は小さく、信号は尾部（<code>max</code>）と時間による drift にあります。",
+      "gap2.h3": "◌ 保留ネットは瞬間的なゲージ", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> はスナップショット時点で採取され、次の cron フラッシュで排空します。累計値ではありません。Circle の <code>/status</code> 照合は定義済みだが未配線のまま（内部レールは直接オンチェーン決済）。",
+      "gap3.h3": "↩ FLAT 率はウィンドウ化、ガスは tx 数の削減", "gap3.p": "FLAT/返金率は <code>/predictions</code> が提供する直近裁定で計算（累計 FLAT 集計は非公開）。「回避した tx」はガスを償却する取引<em>数</em>の削減で、murmur は取引あたりのガス量をまだ公開していません。",
+      "pill.context": "背景",
+      "dyn.srsub": "{ok} 記録済み / {att} 試行", "dyn.timed": "{n} 件の計時決済", "dyn.npfoldsub": "{t} 取引 → {p} ネット", "dyn.npempty": "バッファ空 · すべてフラッシュ済み", "dyn.foldsub": "{g} 取引 → {b} ブロードキャスト", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "ネッティングがなければ、<strong>{gross}</strong> 件の総取引は各自が個別のオンチェーン送金を要したはず。ペア別ネッティングはこれを <strong>{bcast}</strong> 件のブロードキャスト（<strong>{ok}</strong> 件記録済み）へ畳み込み——オンチェーン取引が <strong>{pct}</strong> 減り、各 tx のガスは 1 件ではなく約 {fold} 取引へ償却されます。<em>これは取引数の削減——ガスを償却する仕組みで、murmur は取引あたりガス量をまだ公開していません。</em>",
+      "dyn.subsettle": "現在 {x} · 窓 +{y}", "dyn.subvol": "現在 {x}", "dyn.subdeals": "平均 {x} / cron", "dyn.subgini": "現在 {x}", "dyn.subtemp": "現在のレジーム {r} · 温度 {t}", "dyn.lastticksub": "{x} にアーカイブ",
+      "dyn.pred.disabled": "予測市場は無効", "dyn.pred.none": "まだ裁定済みラウンドなし", "dyn.pred.rate": "直近 {n} ラウンド中 {flat} が FLAT", "dyn.pred.window": "{span} · ウィンドウ化・累計ではない", "dyn.pred.span": "第 #{a}–#{b} ラウンド",
+      "dyn.chain.loading": "チェーンヘッド · ライブ・アンカー読込中…", "dyn.chain.disabled": "チェーンヘッド · （来歴が無効）", "dyn.chain.offline": "チェーンヘッド · （オフラインでライブ・アンカー利用不可）",
+      "dyn.chain.line": "チェーンヘッド <b>{h}</b> · 直近 <b>{c}</b> 件の受領書を提供", "dyn.chain.line2": " · 最終 tick <b>#{t}</b> · 確定 <b>{x}</b>",
+      "err.reach": "{api}/economy に到達できません——{msg}。この API はここから到達不能な可能性があります。",
+      "bd.chain": "チェーン", "bd.chain.v": "arc メインネット · 5042", "bd.mode": "モード", "bd.asset": "資産", "bd.protocol": "プロトコル", "bd.agents": "稼働エージェント", "bd.source": "ソース", "bd.source.v": "公開 GET · 鍵なし",
+      "foot.tag": "murmur —— arc 上で実 USDC を決済する神経エージェントの群れ", "foot.swarm": "群れ", "foot.api": "公開 api",
+    };
+
+    const ko = {
+      "meta.title": "murmur — Arc x402 카나리아 · 실시간 정산 텔레메트리",
+      "meta.desc": "Arc 메인넷의 murmur 실돈 x402 정산 레일에 대한 라이브·읽기 전용 텔레메트리입니다. 정산 성공률, 순방향(네팅) 압축비와 가스 상각, 온체인 정산량과 거래액 성장, 시장 온도와 부의 지니 계수 — 모두 공개 api.muros.live 엔드포인트에서 클라이언트 측으로 읽습니다. 합성 부하 없음, 테스트넷 없음, LLM 없음.",
+      "nav.swarm": "← 군집으로", "nav.developers": "개발자", "nav.source": "소스", "wordmark.sub": "x402 카나리아",
+      "hero.h1": "Arc <em>x402 카나리아</em>",
+      "hero.lede": "Arc 메인넷의 murmur 실돈 x402 정산 레일을 비추는 라이브·읽기 전용 텔레메트리 창입니다. 아래 모든 수치는 군집 자체가 구동하는 동일한 무료·무키·CORS 개방 엔드포인트에서 클라이언트 측으로 가져온 것입니다 — 합성 부하 없음, 테스트넷 없음, 루프 안에 LLM 없음. 자율 초파리 신경계 군집이 하루 종일 거래하고 실 USDC를 x402 / EIP-3009로 정산하며, 가스를 상각하기 위해 쌍별 순금액으로 압축합니다.",
+      "hero.srcline": "<code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> 를 읽음 — 소스 공개, 전부 클라이언트 측.",
+      "btn.refresh": "새로고침", "live.connecting": "연결 중…", "live.live": "라이브", "live.stalled": "정지", "live.updated": "{x} 에 갱신",
+      "ago.s": "{n}초 전", "ago.m": "{n}분 전", "ago.h": "{n}시간 전", "ago.d": "{n}일 전",
+      "s1.title": "정산 신뢰성",
+      "s1.note": "실제 온체인 순정산의 최종 결과. <code>successRate = settleOk ÷ settleAttempts</code>는 정당한 브로드캐스트 시도에 대해서만 집계(그림성 건조 실행 제외)되며, 각 마이닝된 정산의 실측 <em>전송→최종성</em> 지연(퍼실리테이터 퍼사드에서 시간을 측정하므로 활성 레일 모두 커버)을 포함합니다. 모두 수명 누적 카운터로, 배포를 넘어 지속 — <code>/economy</code>에서 라이브 읽기.",
+      "st.sr": "정산 성공률", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "온체인 기록됨", "st.mined.sub": "실제 Arc 트랜잭션(순방향)",
+      "st.fail": "브로드캐스트 실패", "st.fail.sub": "verify/settle 미기록", "st.gross": "정산된 총 거래", "st.gross.sub": "수명 원장 수",
+      "st.vol": "정산 거래액", "st.vol.sub": "수명 USDC", "st.agents": "활성 에이전트", "st.agents.sub": "거래 중",
+      "st.gini": "부의 지니 계수", "st.gini.sub": "창발적 불평등", "st.mean": "평균 잔고", "st.mean.sub": "USDC / 에이전트",
+      "st.latavg": "정산 지연 · 평균", "st.latavg.sub": "전송 → 최종성", "st.latmax": "정산 지연 · 최대", "st.latmax.sub": "가장 느린 기록 정산",
+      "st.latlast": "정산 지연 · 최근", "st.latlast.sub": "가장 최근 정산", "key.mined": "기록됨", "key.failed": "실패",
+      "s2.title": "네팅과 가스 상각",
+      "s2.note": "소액 결제는 거래마다 브로드캐스트되지 않습니다. 쌍별 순금액이 양방향으로 누적되어 차이만 온체인으로 이동하므로, 가스는 거래당 더 큰 가치에 상각됩니다. 압축 수치는 <code>/economy</code> 합산에서 라이브로 파생——<code>count</code>(총 거래) 대 <code>settleAttempts</code>(브로드캐스트)——아래 <em>대기 순금액</em> 게이지는 진행 중 누산기(압축됨·미브로드캐스트 쌍)를 읽습니다.",
+      "st.fold": "네팅 압축비", "st.fold.sub": "브로드캐스트당 총 거래", "st.avoid": "절약한 온체인 tx", "st.avoid.sub": "거래당 1 tx 대비",
+      "st.nppairs": "대기 순금액 쌍", "st.nppairs.sub": "압축됨·플러시 대기", "st.nptrades": "진행 중 거래", "st.nptrades.sub": "총수·미기록",
+      "st.npfold": "버퍼 압축비", "st.npfold.sub": "대기 순금액당 거래", "nb.naive": "소박 레일 · 1 tx / 거래", "nb.netted": "murmur · 쌍별 순금액",
+      "s3.title": "예측 FLAT과 환불",
+      "s3.note": "군집은 매 cron 다음 tick의 Arc 온도에 실 USDC를 베팅하며, 체인에서 퍼뮤추얼 방식(영합·하우스 없음)으로 결정합니다. <code>FLAT</code> 결정(평탄 구간 내)은 모든 베팅을 <em>순영</em> 흐름으로 환불하므로, <strong>정산 레일에서 아무것도 브로드캐스트되지 않습니다</strong>. FLAT 라운드는 결정 결과이지 환불 트랜잭션이 아닙니다. 아래 비율은 <code>/predictions</code>에서 라이브 읽기.",
+      "st.flat": "FLAT / 환불율", "st.flat.sub": "최근 결정 라운드로", "st.flatres": "결정 라운드", "st.flatres.sub": "누적",
+      "st.flatcom": "온체인 커밋", "st.flatcom.sub": "결정적 → 레지스트리", "st.flatwin": "표시 창", "st.flatwin.sub": "최근 결정 수",
+      "fkey.flat": "FLAT(환불)", "fkey.dec": "결정적(상승/하락)",
+      "s4.title": "라이브 시계열",
+      "s4.note": "독립적인 cron별 D1 아카이브(<code>/history</code>)에서——cron당 한 행, 라이브 Durable-Object 상태와 분리되므로 이 곡선들은 온체인 영수증과 교차 검증 가능합니다.",
+      "s4.note.live": "독립적인 cron별 D1 아카이브(<code>/history</code>)에서——최근 <b>{n}</b> cron 표시. cron당 한 행, 라이브 Durable-Object 상태와 분리되므로 이 곡선들은 온체인 영수증과 교차 검증 가능합니다.",
+      "s4.note.err": "기록 사용 불가(D1 미연결 또는 비어 있음).",
+      "ch.settle": "온체인 정산(누적)", "ch.vol": "정산 거래액(누적·USDC)", "ch.deals": "cron당 총 거래", "ch.gini": "부의 지니 계수", "ch.temp": "Arc 시장 온도(0–1)·레짐 대역", "chart.empty": "기록이 아직 부족합니다",
+      "s5.title": "가동 시간과 생명력", "st.window": "아카이브 창", "st.window.sub": "첫 → 마지막 cron", "st.crons": "아카이브된 cron", "st.crons.sub": "각 D1 한 행",
+      "st.lasttick": "마지막 tick", "st.lasttick.sub": "서브 tick 인덱스", "st.cadence": "주기", "st.cadence.sub": "cron당 6 서브 tick",
+      "s6.title": "이 수치가 신뢰할 만한 이유", "s6.h3": "🔏 모든 실제 송금은 신경 유래이며 온체인에서 검증 가능",
+      "s6.p": "각 온체인 순정산은 자신의 EIP-3009 <code>nonce</code>를, 이를 유발한 매수/매도자의 냉동된 신경 읽기를 묶은 영수증의 <code>sha256</code>으로 설정하고, <code>prevChain</code>로 해시 연결되어 Arc에 커밋됩니다(모든 증거가 <code>commitTx</code>를 가짐). 사후 날조한 영수증은 절대 마이닝된 nonce로 해시될 수 없습니다 — 따라서 위 각 수치 뒤의 거래는 사람도 LLM도 아닌, 증명적으로 커넥톰에 의해 결정되었습니다.",
+      "s6.getline": "GET <b>/proofs</b> → 체인(최근 64 제공)·chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; 또는 브라우저에서 <a href=\"/\">muros.live</a> → 신경 증거 로 검증.",
+      "s7.title": "주의사항과 정직한 한계", "s7.note": "여섯 핵심 지표는 모두 계측되었습니다. 다음은 각 수치의 정직한 경계 — 무엇을 주장하고 주장하지 않는가 — 로, 위 내용을 과독하지 않도록 합니다.",
+      "gap1.h3": "⏱ 지연은 전송→영수증, 즉시 최종성 체인 위에서", "gap1.p": "Arc는 결정적으로 최종(서브초 블록·리오그 없음)되므로, <code>settleMs*</code>는 RPC 브로드캐스트→영수증 왕복을 측정하지 리오그 확인 대기가 아닙니다. 값은 자연히 작고, 신호는 꼬리(<code>max</code>)와 시간 따른 표류에 있습니다.",
+      "gap2.h3": "◌ 대기 순금액은 순간 게이지", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code>는 스냅샷 시점에 샘플링되어 다음 cron 플러시 때 비워집니다. 수량 총계가 아닙니다. Circle의 <code>/status</code> 조정은 정의됨·미배선으로 남습니다(내부 레일은 직접 온체인 정산).",
+      "gap3.h3": "↩ FLAT율은 창 기준, 가스는 tx 수 감소", "gap3.p": "FLAT/환불율은 <code>/predictions</code>가 제공하는 최근 결정으로 계산(누적 FLAT 총계 미노출). 그리고 \"절약한 tx\"는 가스를 상각하는 트랜잭션 <em>수</em> 감소로, murmur는 아직 거래당 가스 단위를 공개하지 않습니다.",
+      "pill.context": "배경",
+      "dyn.srsub": "{ok} 기록 / {att} 시도", "dyn.timed": "{n} 건의 측정 정산", "dyn.npfoldsub": "{t} 거래 → {p} 순금액", "dyn.npempty": "버퍼 비움 · 모두 플러시됨", "dyn.foldsub": "{g} 거래 → {b} 브로드캐스트", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "네팅이 없다면 <strong>{gross}</strong>건의 총 거래는 각자가 별도의 온체인 송금을 필요로 했을 것입니다. 쌍별 네팅은 이를 <strong>{bcast}</strong>건의 브로드캐스트(<strong>{ok}</strong>건 기록)로 압축——온체인 트랜잭션이 <strong>{pct}</strong> 줄어, 각 tx의 가스가 한 건이 아닌 약 {fold} 거래에 상각됩니다.<em>이것은 트랜잭션 수 감소——가스를 상각하는 메커니즘이며, murmur는 아직 거래당 가스 단위를 공개하지 않습니다.</em>",
+      "dyn.subsettle": "현재 {x} · 창 +{y}", "dyn.subvol": "현재 {x}", "dyn.subdeals": "평균 {x} / cron", "dyn.subgini": "현재 {x}", "dyn.subtemp": "현재 레짐 {r} · 온도 {t}", "dyn.lastticksub": "{x} 에 아카이브",
+      "dyn.pred.disabled": "예측 시장 비활성", "dyn.pred.none": "아직 결정 라운드 없음", "dyn.pred.rate": "최근 {n} 라운드 중 {flat}이 FLAT", "dyn.pred.window": "{span} · 창 기준, 누적이 아님", "dyn.pred.span": "제 #{a}–#{b} 라운드",
+      "dyn.chain.loading": "체인 헤더 · 라이브 앵커 로딩 중…", "dyn.chain.disabled": "체인 헤더 · (프로버넌스 비활성)", "dyn.chain.offline": "체인 헤더 · (오프라인에서 라이브 앵커 사용 불가)",
+      "dyn.chain.line": "체인 헤더 <b>{h}</b> · 최근 <b>{c}</b> 영수증 제공", "dyn.chain.line2": " · 마지막 tick <b>#{t}</b> · 커밋 <b>{x}</b>",
+      "err.reach": "{api}/economy 에 도달할 수 없습니다 —— {msg}. 이 API는 여기서 접근 불가일 수 있습니다.",
+      "bd.chain": "체인", "bd.chain.v": "arc 메인넷 · 5042", "bd.mode": "모드", "bd.asset": "자산", "bd.protocol": "프로토콜", "bd.agents": "활성 에이전트", "bd.source": "소스", "bd.source.v": "공개 GET · 무키",
+      "foot.tag": "murmur —— arc 위에서 실 USDC를 정산하는 신경 에이전트 군집", "foot.swarm": "군집", "foot.api": "공개 api",
+    };
+
+    const ar = {
+      "meta.title": "murmur — كناري Arc x402 · قياسات التسوية الحية",
+      "meta.desc": "قياسات حية للقراءة فقط لسكة تسوية x402 بأموال حقيقية لدى murmur على شبكة Arc الرئيسية: معدل نجاح التسوية، ونسبة طيّ الصافي وتبديد الغاز، ونمو التسويات والحجم على السلسلة، وحرارة السوق ومؤشر جيني للثروة — تُقرأ جميعها من جانب العميل من نقاط api.muros.live العامة. لا أحمال اصطناعية، لا شبكة اختبار، لا نموذج لغوي.",
+      "nav.swarm": "العودة إلى السرب", "nav.developers": "المطوّرون", "nav.source": "المصدر", "wordmark.sub": "كناري x402",
+      "hero.h1": "كناري <em>x402</em> على Arc",
+      "hero.lede": "نافذة قياس حية للقراءة فقط على سكة تسوية x402 بأموال حقيقية لدى murmur على شبكة Arc الرئيسية. كل رقم أدناه يُسحب من جانب العميل من النقاط العامة ذاتها المجانية وبلا مفاتيح والمفتوحة CORS التي يعمل عليها السرب نفسه — لا أحمال اصطناعية، لا شبكة اختبار، ولا نموذج لغوي في الحلقة. تجمعٌ من أجهزة عصبية مستقلة لذباب الفاكهة يتداول على مدار الساعة ويسوّي USDC حقيقيًا عبر x402 / EIP-3009، مطويًا إلى صافي كل زوج لتبديد الغاز.",
+      "hero.srcline": "تقرأ <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — راجع المصدر، كل شيء من جانب العميل.",
+      "btn.refresh": "تحديث", "live.connecting": "جارٍ الاتصال…", "live.live": "مباشر", "live.stalled": "متوقف", "live.updated": "آخر تحديث {x}",
+      "ago.s": "قبل {n} ث", "ago.m": "قبل {n} د", "ago.h": "قبل {n} س", "ago.d": "قبل {n} يوم",
+      "s1.title": "موثوقية التسوية",
+      "s1.note": "النتائج النهائية لتسويات صافية حقيقية على السلسلة. <code>successRate = settleOk ÷ settleAttempts</code> على محاولات البث الحقيقية (استُبعدت التجارب الظلية)، إضافة إلى زمن <em>الإرسال→النهائية</em> المقاس لكل تسوية مثبتة (يُقاس في واجهة الميسّر، فيغطي أي سكة نشطة). كلها عدّادات تراكمية دائمة تصمد عبر عمليات النشر — تُقرأ مباشرة من <code>/economy</code>.",
+      "st.sr": "معدل نجاح التسوية", "st.sr.sub": "settleOk / settleAttempts", "st.mined": "مثبت على السلسلة", "st.mined.sub": "معاملات Arc حقيقية (مصفاة)",
+      "st.fail": "بث فاشل", "st.fail.sub": "verify/settle لم يثبت أبدًا", "st.gross": "إجمالي الصفقات المسوّاة", "st.gross.sub": "عدد الدفتر التراكمي",
+      "st.vol": "حجم التسويات", "st.vol.sub": "USDC تراكمي", "st.agents": "وكلاء أحياء", "st.agents.sub": "يتداولون الآن",
+      "st.gini": "جيني الثروة", "st.gini.sub": "عدم مساواة ناشئ", "st.mean": "متوسط الرصيد", "st.mean.sub": "USDC / وكيل",
+      "st.latavg": "زمن التسوية · متوسط", "st.latavg.sub": "إرسال → نهائية", "st.latmax": "زمن التسوية · أقصى", "st.latmax.sub": "أبطأ تسوية مثبتة",
+      "st.latlast": "زمن التسوية · الأخيرة", "st.latlast.sub": "أحدث تسوية", "key.mined": "مثبت", "key.failed": "فاشل",
+      "s2.title": "الصافي وتبديد الغاز",
+      "s2.note": "لا تُبَث المدفوعات الصغيرة صفقةً بصفقة. يصطف صافي كل زوج ثنائيًا ولا يتحرك على السلسلة سوى الفرق، فيُبَدَّد الغاز عبر قيمة أكبر لكل معاملة. أرقام الطيّ مشتقة مباشرة من مجاميع <code>/economy</code> — <code>count</code> (إجمالي الصفقات) مقابل <code>settleAttempts</code> (البثّ) — ومؤشرات <em>الصافي المعلّق</em> أدناه تقرأ مجمّع العمل الجاري الحيّ (أزواج طُوِيَت ولم تُبَث بعد).",
+      "st.fold": "نسبة طيّ الصافي", "st.fold.sub": "إجمالي صفقات لكل بث", "st.avoid": "معاملات على السلسلة مُوفَّرة", "st.avoid.sub": "مقابل معاملة لكل صفقة",
+      "st.nppairs": "أزواج صافية معلقة", "st.nppairs.sub": "مطوية، بانتظار التفريغ", "st.nptrades": "صفقات جارية", "st.nptrades.sub": "إجمالي، لم يثبت بعد",
+      "st.npfold": "طيّ المخزن المعلّق", "st.npfold.sub": "صفقات لكل صافي معلّق", "nb.naive": "سكة ساذجة · 1 tx / صفقة", "nb.netted": "murmur · صافي كل زوج",
+      "s3.title": "FLAT التنبؤي والاسترداد",
+      "s3.note": "يُراهن السرب أيضًا بـUSDC حقيقي في كل دورة على حرارة Arc في النبضة التالية، وتحسمها السلسلة بنظام الباري-موتويل (صفرية، بلا مضيف). حسم <code>FLAT</code> — داخل النطاق المستوي — يردّ كل الرهانات كتيارات <em>صفرية الصافي</em>، لذا <strong>لا يُبَث شيء على سكة التسوية</strong>: جولة FLAT نتيجة حسم وليست معاملة استرداد. النسبة أدناه تُقرأ مباشرة من <code>/predictions</code>.",
+      "st.flat": "معدل FLAT / الاسترداد", "st.flat.sub": "من آخر الجولات المحسومة", "st.flatres": "جولات محسومة", "st.flatres.sub": "تراكمي",
+      "st.flatcom": "مُلْتَز به على السلسلة", "st.flatcom.sub": "حاسم → السجل", "st.flatwin": "النافذة المعروضة", "st.flatwin.sub": "أحدث عمليات الحسم",
+      "fkey.flat": "FLAT (مسترد)", "fkey.dec": "حاسم (UP/DOWN)",
+      "s4.title": "سلاسل زمنية حية",
+      "s4.note": "من أرشيف D1 المستقل لكل دورة (<code>/history</code>) — سطر لكل دورة، منفصل عن حالة Durable Object الحية، لذا يمكن تدقيق هذه المنحنيات مقابل إيصالات السلسلة.",
+      "s4.note.live": "من أرشيف D1 المستقل لكل دورة (<code>/history</code>) — تُعرض أحدث <b>{n}</b> دورة. سطر لكل دورة، منفصل عن حالة Durable Object الحية، لذا يمكن تدقيق هذه المنحنيات مقابل إيصالات السلسلة.",
+      "s4.note.err": "السجل غير متاح (D1 غير مرتبط أو فارغ).",
+      "ch.settle": "التسويات على السلسلة (تراكمي)", "ch.vol": "حجم التسويات (تراكمي، USDC)", "ch.deals": "إجمالي الصفقات لكل دورة", "ch.gini": "جيني الثروة", "ch.temp": "حرارة سوق Arc (0–1) · نطاقات الأنظمة", "chart.empty": "لا تاريخ كافٍ بعد",
+      "s5.title": "وقت التشغيل والحيوية", "st.window": "نافذة الأرشفة", "st.window.sub": "أول → آخر دورة", "st.crons": "دورات مؤرشفة", "st.crons.sub": "سطر D1 لكل دورة",
+      "st.lasttick": "آخر نبضة", "st.lasttick.sub": "فهرس النبضات الفرعية", "st.cadence": "الإيقاع", "st.cadence.sub": "6 نبضات فرعية لكل دورة",
+      "s6.title": "لماذا تُصدَّق هذه الأرقام", "s6.h3": "🔏 كل تحويل حقيقي منسوبٌ عصبيًا وقابل للتحقق على السلسلة",
+      "s6.p": "كل تسوية صافية على السلسلة تضبط <code>nonce</code> خاصتها في EIP-3009 ليكون <code>sha256</code> إيصالٍ يجمع القراءات العصبية المجمَّدة للمشتري والبائع التي سبّبتْها، مربوطًا بسلسلة تجزئة عبر <code>prevChain</code> ومُلْتَزًا به على Arc (كل إثبات يحمل <code>commitTx</code> الخاص به). إيصالٌ مخترَع بعد الحدث لا يمكن أبدًا أن يتجزأ إلى nonce مثبت — لذا الصفقات خلف كل رقم أعلاه مُثبَت أنها حُسمت بشبكات توصيل عصبية، لا ببشر أو بنماذج لغوية.",
+      "s6.getline": "GET <b>/proofs</b> → السلسلة (آخر 64 تُقدَّم) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; أو تحقق في المتصفح على <a href=\"/\">muros.live</a> → الإثباتات العصبية.",
+      "s7.title": "تحفظات وحدود صريحة", "s7.note": "كل المؤشرات الستة الرئيسية أصبحت مقيسةً. ما يلي هو الصريح في كل رقم — ماذا يدّعي وماذا لا يدّعي — حتى لا يُقرأ ما فوق أكثر مما يحتمل.",
+      "gap1.h3": "⏱ الزمن من إرسال إلى إيصال، وعلى سلسلة نهائية فورية", "gap1.p": "تحسم Arc نهائيًا بشكل حتمي (كتل دون الثانية، لا إعادة تنظيم)، لذا يقيس <code>settleMs*</code> رحلة RPC من البث إلى الإيصال، لا انتظار تأكيد إعادة التنظيم. القيم صغيرة بالطبع؛ والإشارة في الذيل (<code>max</code>) وأي انحراف عبر الزمن.",
+      "gap2.h3": "◌ الصافي المعلّق مؤشر لحظي", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> تُؤخَذ عند لحظة اللقطة وتفرغ عند تفريغ الدورة التالية؛ ليست مجاميع دائمة. مطابقة Circle عبر <code>/status</code> تبقى معرفةً وغير موصولة (السكة الداخلية تسوّي على السلسلة مباشرة).",
+      "gap3.h3": "↩ معدل FLAT نافذي، والغاز انخفاض في عدد المعاملات", "gap3.p": "يُحسب معدل FLAT/الاسترداد على أحدث عمليات الحسم التي تقدمها <code>/predictions</code> (لا يُعرض مجموع FLAT التراكمي). و«المعاملات الموفَّرة» هو انخفاض <em>عدد</em> المعاملات الذي يبديّد الغاز — murmur لا ينشر بعد وحدات الغاز لكل معاملة.",
+      "pill.context": "سياق",
+      "dyn.srsub": "{ok} مثبت / {att} محاولة", "dyn.timed": "{n} تسويات مقاسة", "dyn.npfoldsub": "{t} صفقة → {p} صافي", "dyn.npempty": "المخزن فارغ · كلها فُرِّغت", "dyn.foldsub": "{g} صفقة → {b} بثّ", "dyn.nbtxs": "{n} tx",
+      "dyn.netnote": "دون التصفية، كانت <strong>{gross}</strong> صفقة إجمالية ستحتاج كلٌّ منها إلى تحويلها الخاص على السلسلة. طوتها تصفية الأزواج في <strong>{bcast}</strong> بثًّا (<strong>{ok}</strong> مثبت) — أقل بـ<strong>{pct}</strong> من المعاملات على السلسلة، فيُبَدَّد غاز كل tx عبر ~{fold} صفقة بدل واحدة. <em>هذا انخفاض في عدد المعاملات — وهو آلية تبديد الغاز؛ murmur لا ينشر بعد وحدات الغاز لكل معاملة.</em>",
+      "dyn.subsettle": "الآن {x} · النافذة +{y}", "dyn.subvol": "الآن {x}", "dyn.subdeals": "متوسط {x} / دورة", "dyn.subgini": "الآن {x}", "dyn.subtemp": "النظام الآن {r} · الحرارة {t}", "dyn.lastticksub": "أُرشِف {x}",
+      "dyn.pred.disabled": "سوق التنبؤ معطّل", "dyn.pred.none": "لا جولات محسومة بعد", "dyn.pred.rate": "{flat} FLAT من آخر {n} جولة", "dyn.pred.window": "{span} · نافذي، ليس تراكميًا", "dyn.pred.span": "الجولات #{a}–#{b}",
+      "dyn.chain.loading": "رأس السلسلة · جارٍ تحميل المرساة الحية…", "dyn.chain.disabled": "رأس السلسلة · (النسبة معطّلة)", "dyn.chain.offline": "رأس السلسلة · (المرساة الحية غير متاح دون اتصال)",
+      "dyn.chain.line": "رأس السلسلة <b>{h}</b> · آخر <b>{c}</b> إيصالًا قُدِّم", "dyn.chain.line2": " · أحدث نبضة <b>#{t}</b> · التزام <b>{x}</b>",
+      "err.reach": "تعذّر الوصول إلى {api}/economy — {msg}. قد لا تكون الواجهة متاحة من هنا.",
+      "bd.chain": "السلسلة", "bd.chain.v": "arc الرئيسية · 5042", "bd.mode": "الوضع", "bd.asset": "الأصل", "bd.protocol": "البروتوكول", "bd.agents": "وكلاء أحياء", "bd.source": "المصدر", "bd.source.v": "GET عام · بلا مفتاح",
+      "foot.tag": "murmur — تجمع وكلاء عصبيين يسوّون USDC حقيقيًا على arc", "foot.swarm": "السرب", "foot.api": "الواجهة العامة",
+    };
+
+    const L = { en, zh, fr, es, ja, ko, ar };
+
+    // ---------- i18n core: detect (?lang > shared localStorage > browser), translate statics, hot-swap ----------
+    function norm(v) { return SUPPORTED.includes(v) ? v : null; }
+    function bootLang() {
+      try {
+        const q = new URLSearchParams(location.search).get("lang");
+        if (q && SUPPORTED.includes(q)) return q;
+        const s = localStorage.getItem(STORE_KEY);   // same-origin with the app: inherits the chosen language
+        if (s && SUPPORTED.includes(s)) return s;
+      } catch { /* storage may be blocked */ }
+      const n = (navigator.language || "en").slice(0, 2).toLowerCase();
+      return SUPPORTED.includes(n) ? n : "en";
+    }
+    let LANG = bootLang();
+    function T(k, p) {
+      let s = L[LANG] && L[LANG][k];
+      if (s == null) s = en[k];
+      if (s == null) s = k;
+      if (p) s = s.replace(/\{(\w+)\}/g, (m, kk) => (p[kk] != null ? String(p[kk]) : m));
+      return s;
+    }
+    function applyLang() {
+      const r = document.documentElement;
+      r.lang = LANG;
+      r.dir = RTL[LANG] ? "rtl" : "ltr";
+      for (const el of document.querySelectorAll("[data-cn]")) el.textContent = T(el.getAttribute("data-cn"));
+      for (const el of document.querySelectorAll("[data-cn-h]")) el.innerHTML = T(el.getAttribute("data-cn-h"));
+      document.title = T("meta.title");
+      const md = document.querySelector('meta[name="description"]');
+      if (md) md.setAttribute("content", T("meta.desc"));
+    }
+
+    // ---------- formatting helpers (locale-neutral: technical values stay as-is across all 7 languages) ----------
     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const $ = (id) => document.getElementById(id);
     function int(n) { return Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "—"; }
@@ -407,10 +824,10 @@
     function ago(ms) {
       if (!Number.isFinite(ms) || ms < 0) return "—";
       const s = Math.floor(ms / 1000);
-      if (s < 60) return s + "s ago";
-      if (s < 3600) return Math.floor(s / 60) + "m ago";
-      if (s < 86400) return Math.floor(s / 3600) + "h ago";
-      return Math.floor(s / 86400) + "d ago";
+      if (s < 60) return T("ago.s", { n: s });
+      if (s < 3600) return T("ago.m", { n: Math.floor(s / 60) });
+      if (s < 86400) return T("ago.h", { n: Math.floor(s / 3600) });
+      return T("ago.d", { n: Math.floor(s / 86400) });
     }
     function fmtTs(ms) {
       try { return new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC"; } catch { return "—"; }
@@ -431,9 +848,9 @@
 
     function gridAndAxis(lo, hi, yFmt) {
       let g = "";
-      const T = 4;
-      for (let i = 0; i <= T; i++) {
-        const val = lo + (hi - lo) * (i / T), yy = PT + PH - (i / T) * PH;
+      const STEPS = 4;
+      for (let i = 0; i <= STEPS; i++) {
+        const val = lo + (hi - lo) * (i / STEPS), yy = PT + PH - (i / STEPS) * PH;
         g += '<line class="grid" x1="' + PL + '" y1="' + yy.toFixed(1) + '" x2="' + (CW - PR) + '" y2="' + yy.toFixed(1) + '"/>';
         g += '<text class="axis" x="' + (PL - 7) + '" y="' + (yy + 3.2).toFixed(1) + '" text-anchor="end">' + esc(yFmt(val)) + '</text>';
       }
@@ -444,7 +861,7 @@
     function lineChart(ys, o) {
       o = o || {};
       const pts = ys.filter((v) => Number.isFinite(v));
-      if (pts.length < 2) return '<div class="chart-empty">not enough history yet</div>';
+      if (pts.length < 2) return '<div class="chart-empty">' + esc(T("chart.empty")) + "</div>";
       let lo = Math.min.apply(null, pts), hi = Math.max.apply(null, pts);
       if (o.zero) lo = Math.min(lo, 0);
       if (hi === lo) hi = lo + 1;
@@ -463,8 +880,8 @@
       let area = "";
       if (o.fill) area = '<path class="area" d="' + d + " L " + X(n - 1).toFixed(1) + " " + (PT + PH) + " L " + PL + " " + (PT + PH) + ' Z" fill="' + color + '"/>';
       const bands = o.bandsFor ? o.bandsFor(X, n, PT, PH) : "";
-      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + '</text>'
-        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + '</text>';
+      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + "</text>"
+        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + "</text>";
       return '<svg class="chart-svg" viewBox="0 0 ' + CW + " " + CH + '" role="img" aria-label="' + esc(o.aria || "time series") + '">'
         + bands + gridAndAxis(lo, hi, yFmt) + area
         + '<path class="line" d="' + d + '" stroke="' + color + '"/>' + xlab + "</svg>";
@@ -474,7 +891,7 @@
     function barChart(ys, o) {
       o = o || {};
       const pts = ys.filter((v) => Number.isFinite(v));
-      if (!pts.length) return '<div class="chart-empty">not enough history yet</div>';
+      if (!pts.length) return '<div class="chart-empty">' + esc(T("chart.empty")) + "</div>";
       const hi = Math.max.apply(null, pts) || 1, n = ys.length;
       const bw = Math.max(1, PW / n - (n > 120 ? 0 : 0.6));
       let bars = "";
@@ -483,8 +900,8 @@
         const h = (v / hi) * PH, x = PL + (i / n) * PW, y = PT + PH - h;
         bars += '<rect class="bar" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0.4, h).toFixed(1) + '"/>';
       }
-      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + '</text>'
-        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + '</text>';
+      const xlab = '<text class="axis" x="' + PL + '" y="' + (CH - 7) + '" text-anchor="start">' + esc(o.x0 || "") + "</text>"
+        + '<text class="axis" x="' + (CW - PR) + '" y="' + (CH - 7) + '" text-anchor="end">' + esc(o.x1 || "") + "</text>";
       return '<svg class="chart-svg" viewBox="0 0 ' + CW + " " + CH + '" role="img" aria-label="' + esc(o.aria || "bars") + '">'
         + gridAndAxis(0, hi, o.yFmt || compact) + bars + xlab + "</svg>";
     }
@@ -513,19 +930,35 @@
       return r.json();
     }
     function setTxt(id, v) { const el = $(id); if (el) el.textContent = v; }
-    function err(msg) { const e = $("err"); e.textContent = msg; e.classList.add("show"); $("live").classList.add("stale"); $("livetext").textContent = "stalled"; }
+    function err(msg) { const e = $("err"); e.textContent = msg; e.classList.add("show"); $("live").classList.add("stale"); $("livetext").textContent = T("live.stalled"); }
+
+    // Latest payloads are cached so a language flip re-renders every dynamic string from data —
+    // no refetch, no loading flicker; statics are covered by applyLang(), dynamics by repaint().
+    const C = { econ: null, hist: null, pred: null, proof: undefined };
+    function repaint() {
+      if (C.econ) renderHeadline(C.econ);
+      if (C.hist) renderSeries(C.hist);
+      if (C.pred) renderPredictions(C.pred);
+      if (C.proof !== undefined) renderProvenance(C.proof);
+    }
+    // The main site persists its switch to localStorage["murmur:lang"]; same-origin, this drawer follows live.
+    window.addEventListener("storage", (e) => {
+      if (e.key !== STORE_KEY) return;
+      const nl = norm(e.newValue);
+      if (nl && nl !== LANG) { LANG = nl; applyLang(); repaint(); }
+    });
 
     let econAt = 0, histAt = 0;
 
     function renderBadges(d) {
       const t = d.totals || {};
       const rows = [
-        ["chain", "arc mainnet · 5042"],
-        ["mode", d.mode || "—"],
-        ["asset", "USDC"],
-        ["protocol", "x402 v2"],
-        ["live agents", int(t.liveAgents)],
-        ["source", "public GET · no key"],
+        [T("bd.chain"), T("bd.chain.v")],
+        [T("bd.mode"), d.mode || "—"],
+        [T("bd.asset"), "USDC"],
+        [T("bd.protocol"), "x402 v2"],
+        [T("bd.agents"), int(t.liveAgents)],
+        [T("bd.source"), T("bd.source.v")],
       ];
       $("badges").innerHTML = rows.filter((b) => b[1]).map((b) => '<span class="badge">' + esc(b[0]) + " <b>" + esc(b[1]) + "</b></span>").join("");
     }
@@ -535,7 +968,7 @@
       renderBadges(d);
       const sr = t.successRate;
       setTxt("sr", Number.isFinite(sr) ? pct(sr) : "—");
-      setTxt("sr-sub", int(t.settleOk) + " mined / " + int(t.settleAttempts) + " attempts");
+      setTxt("sr-sub", T("dyn.srsub", { ok: int(t.settleOk), att: int(t.settleAttempts) }));
       setTxt("mined", int(t.settleOk));
       setTxt("fail", int(t.settleFail));
       setTxt("gross", int(t.count));
@@ -545,7 +978,7 @@
       setTxt("meanbal", Number.isFinite(t.meanBalanceUsdc) ? t.meanBalanceUsdc.toFixed(2) : "—");
       // settle latency (submit→finality, ms) — additive counters; null/0 before the first mined settle
       setTxt("lat-avg", fmtMs(t.settleMsAvg));
-      setTxt("lat-avg-sub", int(t.settleMsN) + " timed settles");
+      setTxt("lat-avg-sub", T("dyn.timed", { n: int(t.settleMsN) }));
       setTxt("lat-max", fmtMs(t.settleMsMax));
       setTxt("lat-last", fmtMs(t.settleMsLast));
       // net-pending gauges — in-flight folded pairs awaiting the next cron flush (instantaneous, not lifetime)
@@ -554,9 +987,9 @@
       setTxt("np-trades", int(npTrades));
       if (npPairs > 0) {
         setTxt("np-fold", (npTrades / npPairs).toFixed(2) + "×");
-        setTxt("np-fold-sub", int(npTrades) + " trades → " + int(npPairs) + " nets");
+        setTxt("np-fold-sub", T("dyn.npfoldsub", { t: int(npTrades), p: int(npPairs) }));
       } else {
-        setTxt("np-fold", "—"); setTxt("np-fold-sub", "buffer empty · all flushed");
+        setTxt("np-fold", "—"); setTxt("np-fold-sub", T("dyn.npempty"));
       }
       // success bar
       const ok = Number(t.settleOk) || 0, fail = Number(t.settleFail) || 0, tot = ok + fail;
@@ -570,15 +1003,12 @@
       if (gross > 0 && bcast > 0) {
         const fold = gross / bcast, avoided = 1 - bcast / gross;
         setTxt("fold", fold.toFixed(2) + "×");
-        setTxt("fold-sub", int(gross) + " trades → " + int(bcast) + " broadcasts");
+        setTxt("fold-sub", T("dyn.foldsub", { g: int(gross), b: int(bcast) }));
         setTxt("avoid", pct(avoided));
         $("nb-netted").style.width = Math.max(2, (bcast / gross) * 100).toFixed(1) + "%";
-        setTxt("nb-naive-v", int(gross) + " txs");
-        setTxt("nb-netted-v", int(bcast) + " txs");
-        $("net-note").innerHTML = "Without netting, <strong>" + int(gross) + "</strong> gross trades would each need their own on-chain transfer. "
-          + "Per-pair netting folded them into <strong>" + int(bcast) + "</strong> broadcasts (<strong>" + int(ok) + "</strong> mined) — "
-          + "<strong>" + pct(avoided) + "</strong> fewer on-chain transactions, so each tx's gas is amortised over ~" + fold.toFixed(2) + " trades instead of one. "
-          + "<em>This is the transaction-count reduction — the mechanism that amortises gas; murmur does not yet publish per-tx gas units.</em>";
+        setTxt("nb-naive-v", T("dyn.nbtxs", { n: int(gross) }));
+        setTxt("nb-netted-v", T("dyn.nbtxs", { n: int(bcast) }));
+        $("net-note").innerHTML = T("dyn.netnote", { gross: int(gross), bcast: int(bcast), ok: int(ok), pct: pct(avoided), fold: fold.toFixed(2) });
       } else {
         setTxt("fold", "—"); setTxt("avoid", "—");
       }
@@ -589,31 +1019,29 @@
       const rows = downsample(rowsAll, 360);
       const s = h.summary || {};
       if (!rows.length) {
-        $("series-note").innerHTML = '<span class="err show" style="display:inline">history unavailable (D1 not bound or empty).</span>';
+        $("series-note").innerHTML = '<span class="err show" style="display:inline">' + esc(T("s4.note.err")) + "</span>";
         return;
       }
       const x0 = fmtTs(rows[0].ts), x1 = fmtTs(rows[rows.length - 1].ts);
-      const winLbl = rows.length + " crons · " + x0.slice(0, 10) + " → " + x1.slice(0, 10);
-      $("series-note").innerHTML = "From the independent per-cron D1 archive (<code>/history</code>) — showing the most recent <b>"
-        + int(rowsAll.length) + "</b> crons. One row per cron, separate from the live Durable-Object state, so these curves are cross-checkable against the on-chain receipts.";
+      $("series-note").innerHTML = T("s4.note.live", { n: int(rowsAll.length) });
 
       // cumulative settlements
-      setTxt("sub-settle", "now " + int(s.settlements) + " · window +" + int(rows[rows.length - 1].settlements - rows[0].settlements));
+      setTxt("sub-settle", T("dyn.subsettle", { x: int(s.settlements), y: int(rows[rows.length - 1].settlements - rows[0].settlements) }));
       $("ch-settle").innerHTML = lineChart(rows.map((r) => r.settlements), { color: "var(--ok)", fill: true, zero: false, x0, x1, aria: "cumulative on-chain settlements" });
       // cumulative volume
-      setTxt("sub-vol", "now " + usdc(s.volumeUsdc));
+      setTxt("sub-vol", T("dyn.subvol", { x: usdc(s.volumeUsdc) }));
       $("ch-vol").innerHTML = lineChart(rows.map((r) => r.volumeUsdc), { color: "var(--accent)", fill: true, yFmt: (v) => compact(v), x0, x1, aria: "cumulative settled volume USDC" });
       // deals per cron (bars) — use the full (undownsampled) recent rows for honest per-cron bars
       const dealRows = rowsAll.slice(-360);
-      setTxt("sub-deals", "mean " + (dealRows.reduce((a, r) => a + (r.deals || 0), 0) / Math.max(1, dealRows.length)).toFixed(1) + " / cron");
+      setTxt("sub-deals", T("dyn.subdeals", { x: (dealRows.reduce((a, r) => a + (r.deals || 0), 0) / Math.max(1, dealRows.length)).toFixed(1) }));
       $("ch-deals").innerHTML = barChart(dealRows.map((r) => r.deals), { color: "var(--get)", zero: true, x0: fmtTs(dealRows[0].ts), x1: fmtTs(dealRows[dealRows.length - 1].ts), aria: "gross trades per cron" });
       // gini
-      setTxt("sub-gini", "now " + (Number.isFinite(rows[rows.length - 1].gini) ? rows[rows.length - 1].gini.toFixed(3) : "—"));
+      setTxt("sub-gini", T("dyn.subgini", { x: Number.isFinite(rows[rows.length - 1].gini) ? rows[rows.length - 1].gini.toFixed(3) : "—" }));
       $("ch-gini").innerHTML = lineChart(rows.map((r) => r.gini), { color: "var(--warn)", yFmt: (v) => v.toFixed(2), x0, x1, aria: "wealth gini over time" });
       // temperature with regime bands
       const regimes = rows.map((r) => r.regime);
       const lastRegime = regimes[regimes.length - 1] || "—";
-      setTxt("sub-temp", "regime now " + lastRegime + " · temp " + (Number.isFinite(rows[rows.length - 1].temperature) ? rows[rows.length - 1].temperature.toFixed(2) : "—"));
+      setTxt("sub-temp", T("dyn.subtemp", { r: lastRegime, t: Number.isFinite(rows[rows.length - 1].temperature) ? rows[rows.length - 1].temperature.toFixed(2) : "—" }));
       $("ch-temp").innerHTML = lineChart(rows.map((r) => r.temperature), {
         color: "var(--paid)", yFmt: (v) => v.toFixed(2), x0, x1, aria: "arc market temperature with regime bands",
         bandsFor: regimeBandsFor(regimes),
@@ -625,17 +1053,17 @@
       setTxt("window-sub", fmtTs(s.firstTs).slice(0, 16) + " → " + fmtTs(s.lastTs).slice(0, 16));
       setTxt("crons", int(s.ticks));
       setTxt("lasttick", "#" + int(s.lastTick));
-      setTxt("lasttick-sub", "archived " + ago(Date.now() - Number(s.lastTs)));
-      return winLbl;
+      setTxt("lasttick-sub", T("dyn.lastticksub", { x: ago(Date.now() - Number(s.lastTs)) }));
     }
 
     function renderProvenance(p) {
-      if (!p || !p.enabled) { $("chainhead").textContent = "chain head · (provenance disabled)"; return; }
+      if (!p) { $("chainhead").textContent = T("dyn.chain.offline"); return; }
+      if (!p.enabled) { $("chainhead").textContent = T("dyn.chain.disabled"); return; }
       const latest = Array.isArray(p.proofs) && p.proofs[0] ? p.proofs[0] : null;
-      let line = "chain head <b>" + esc(shortHash(p.chainHead)) + "</b> · last <b>" + int(p.count) + "</b> receipts served";
+      let line = T("dyn.chain.line", { h: esc(shortHash(p.chainHead)), c: int(p.count) });
       if (latest) {
         const rec = latest.receipt || {};
-        line += " · latest tick <b>#" + int(rec.tickIndex) + "</b> · commit <b>" + esc(shortHash(latest.commitTx)) + "</b>";
+        line += T("dyn.chain.line2", { t: int(rec.tickIndex), x: esc(shortHash(latest.commitTx)) });
       }
       $("chainhead").innerHTML = line;
     }
@@ -644,7 +1072,7 @@
     // refunds every stake as net-zero flows, so it is a resolution outcome, not a settlement-rail refund tx.
     function renderPredictions(p) {
       if (!p || !p.enabled) {
-        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", "prediction market disabled");
+        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", T("dyn.pred.disabled"));
         return;
       }
       const recent = Array.isArray(p.recent) ? p.recent : [];
@@ -653,44 +1081,46 @@
       setTxt("flat-committed", int(tt.committed));
       setTxt("flat-window", int(recent.length));
       if (!recent.length) {
-        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", "no resolved rounds yet");
+        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", T("dyn.pred.none"));
         return;
       }
       const flat = recent.filter((r) => r && r.outcome === "FLAT").length;
       const decisive = recent.length - flat;
       const rate = flat / recent.length;
       setTxt("flat-rate", pct(rate));
-      setTxt("flat-rate-sub", int(flat) + " FLAT of last " + int(recent.length) + " rounds");
+      setTxt("flat-rate-sub", T("dyn.pred.rate", { flat: int(flat), n: int(recent.length) }));
       $("fbar-flat").style.width = (rate * 100).toFixed(2) + "%";
       $("fbar-dec").style.width = ((1 - rate) * 100).toFixed(2) + "%";
       setTxt("fkey-flat", int(flat));
       setTxt("fkey-dec", int(decisive));
       const rounds = recent.map((r) => Number(r && r.round) || 0).filter((x) => x > 0);
-      const span = rounds.length ? "rounds #" + int(Math.min.apply(null, rounds)) + "–#" + int(Math.max.apply(null, rounds)) : "";
-      setTxt("flat-window-sub", (span ? span + " · " : "") + "windowed, not lifetime");
+      const span = rounds.length ? T("dyn.pred.span", { a: int(Math.min.apply(null, rounds)), b: int(Math.max.apply(null, rounds)) }) : "";
+      const wsub = T("dyn.pred.window", { span });
+      setTxt("flat-window-sub", span ? wsub : wsub.replace(/^[·.\s—–-]+/, ""));
     }
 
     // ---------- poll loop (pauses when the tab is hidden — be a good citizen) ----------
     async function refreshEcon() {
-      try { const d = await j("/economy?fields=light"); econAt = Date.now(); $("live").classList.remove("stale"); $("livetext").textContent = "live"; renderHeadline(d); }
-      catch (e) { if (!econAt) err("could not reach " + API + "/economy — " + e.message + ". The API may be unreachable from here."); }
+      try { const d = await j("/economy?fields=light"); C.econ = d; econAt = Date.now(); $("live").classList.remove("stale"); $("livetext").textContent = T("live.live"); renderHeadline(d); }
+      catch (e) { if (!econAt) err(T("err.reach", { api: API, msg: e.message })); }
     }
     async function refreshHist() {
-      try { const h = await j("/history?limit=" + HIST_LIMIT + "&order=desc"); histAt = Date.now(); renderSeries(h); }
+      try { const h = await j("/history?limit=" + HIST_LIMIT + "&order=desc"); C.hist = h; histAt = Date.now(); renderSeries(h); }
       catch (e) { /* history is best-effort; the headline still stands */ }
     }
     async function loadProvenance() {
-      try { renderProvenance(await j("/proofs")); } catch { $("chainhead").textContent = "chain head · (live anchor unavailable offline)"; }
+      try { const p = await j("/proofs"); C.proof = p; renderProvenance(p); }
+      catch { C.proof = null; renderProvenance(null); }
     }
     async function refreshPred() {
-      try { renderPredictions(await j("/predictions")); } catch { /* best-effort; prediction may be disabled */ }
+      try { const p = await j("/predictions"); C.pred = p; renderPredictions(p); } catch { /* best-effort; prediction may be disabled */ }
     }
     async function refreshAll() { await Promise.all([refreshEcon(), refreshHist(), refreshPred()]); }
 
     let t = 0;
     setInterval(() => {
       t++;
-      if (econAt) $("ago").textContent = "updated " + ago(Date.now() - econAt);
+      if (econAt) $("ago").textContent = T("live.updated", { x: ago(Date.now() - econAt) });
       if (document.hidden) return;
       if (t % ECON_EVERY === 0) refreshEcon();
       if (t % HIST_EVERY === 0) refreshHist();
@@ -699,6 +1129,8 @@
     $("refresh").addEventListener("click", () => { t = 0; refreshAll(); loadProvenance(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshEcon(); refreshPred(); if (t > HIST_EVERY) refreshHist(); } });
 
+    // Boot: translate the static DOM first (so headings never flash English in a non-EN locale), then load data.
+    applyLang();
     refreshAll();
     loadProvenance();
   </script>
