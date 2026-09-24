@@ -328,6 +328,17 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a lower-priority
 # var first, then re-add: LEX_ENABLED = "false" (rollback: byte-for-byte inert; semantics in src/config.ts).
 
+# ===== ㉔ THE RUMOR MILL (the tale that carries itself — src/rumor.ts) =====
+# A telling already in the chronicle becomes a TALE: ears lean in (RUMOR_AFOOT), the story bends in the
+# retelling until nobody agrees on what was first said (RUMOR_BENT), and at last it goes quiet (RUMOR_FADED).
+# The project's SECOND causal membrane: on a telling-day (every 16th tick) the flies that heard the tale are
+# read as whispering (GROOM) — or frozen mid-walk (HALT) when the tale is heard gravely. This is a read-out
+# override on religion's holy-rest line ONLY: no connectome, genome or manifest hash is touched, no money
+# moves, and the stimulus bus (whose two precedents stay dark-deployed OFF) is NOT entered.
+# NOTE: armed on CODE DEFAULTS (RM_ENABLED=true; the mill's bounds are exported constants by design) — the
+# 128 text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a lower-priority
+# var first, then re-add: RM_ENABLED = "false" (rollback: byte-for-byte inert; semantics in src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

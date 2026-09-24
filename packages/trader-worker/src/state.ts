@@ -71,6 +71,7 @@ import { CourtMembrane, type CourtFacts, type CourtSignals } from "./court.js";
 import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js";
 import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
+import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -127,6 +128,10 @@ const KEY_GUILDS = "guilds:v1";
 /** ㉓ The Lexicon (coinage desk, dead roll, counts) — its OWN key: a corrupt/absent blob restarts an
  *  empty desk, never ledger state. Bounded (≤ 20 held words + 8 dead), DO-safe. */
 const KEY_LEXICON = "lexicon:v1";
+/** ㉔ The Rumor Mill (the live tale, its cursor over the roll, counts) — its OWN key: a corrupt/absent
+ *  blob restarts a silent market (the boot round seeds the cursor, history is never re-told), never
+ *  ledger state. Bounded (one tale + three counters), DO-safe. */
+const KEY_RUMOR = "rumor:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -242,6 +247,8 @@ export class FlyStateDO {
   private guilds: GuildsMembrane | null = null;
   /** ㉓ The Lexicon membrane (coinage, spread, silence) — null while LEX_ENABLED=false (byte-for-byte inert). */
   private lexicon: LexiconMembrane | null = null;
+    /** ㉔ The Rumor Mill membrane (a tale afoot, its bend, its quiet, the telling-day echo) — null while RM_ENABLED=false (byte-for-byte inert). */
+    private rumor: RumorMill | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -575,6 +582,20 @@ export class FlyStateDO {
     this.lexicon = new LexiconMembrane({ enabled: true });
     if (stored) this.lexicon.restore(stored);
     return this.lexicon;
+  }
+
+  /**
+   * ㉔ Lazily load the Rumor Mill (null while RM_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts a silent market: the boot round seeds the cursor from the roll, so a
+   * restart never re-tells history. It can never poison the ledger.
+   */
+  private async ensureRumor(): Promise<RumorMill | null> {
+    if (!this.cfg.rumor.enabled) return null;
+    if (this.rumor) return this.rumor;
+    const stored = await this.state.storage.get<string>(KEY_RUMOR);
+    this.rumor = new RumorMill({ enabled: true });
+    if (stored) this.rumor.restore(stored);
+    return this.rumor;
   }
 
   /**
@@ -1243,6 +1264,7 @@ export class FlyStateDO {
     if (this.games) batch[KEY_GAMES] = this.games.serialize();
     if (this.guilds) batch[KEY_GUILDS] = this.guilds.serialize();
     if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
+        if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1664,6 +1686,9 @@ export class FlyStateDO {
       // ㉓ LEXICON: fold the desk's word edges ONLY while LEX is on. Off ⇒ no `lexicon` key ⇒ the
       // historian's three lexicon detectors never speak (byte-for-byte the pre-Lexicon build).
       const lexicon = this.cfg.lexicon.enabled ? this.lexicon?.signals() ?? null : null;
+            // ㉔ RUMOR MILL: fold the mill's tale edges ONLY while RM is on. Off ⇒ no `rumor` key ⇒ the
+            // historian's three rumor detectors never speak (byte-for-byte the pre-Rumor build).
+            const rumor = this.cfg.rumor.enabled ? this.rumor?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1763,6 +1788,7 @@ export class FlyStateDO {
         games,
         guilds,
         lexicon,
+        rumor,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2010,6 +2036,32 @@ export class FlyStateDO {
       lx.round(tick, facts);
     } catch (e) {
       console.warn("[DO] lexicon drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉔ THE RUMOR MILL — listen to the tellings the chronicle has ALREADY spoken: the roll's newest lines
+   * are the market's fresh news; the mill adopts ONE tale, counts its ears, lets it bend in the retelling
+   * and go quiet. The DRIVE here is pure read-out — the causal leg is apply() in the sub-tick loop (the
+   * religion contract: a read-out override on telling-days only), never money, never the stimulus bus.
+   * Runs after driveLexicon and BEFORE observeChronicle, so the mill only ever hears tellings already
+   * history (the dictionary's one-cron honesty, the same door). Best-effort: a market square can never
+   * break the live tick.
+   */
+  private async driveRumor(tick: number): Promise<void> {
+    const rm = await this.ensureRumor();
+    if (!rm) return;
+    try {
+      let maxSeq = 0;
+      for (const e of this.annals) if (e.seq > maxSeq) maxSeq = e.seq;
+      const facts: RumorFacts = {
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        news: this.annals.slice(-20).map((e) => ({ seq: e.seq, kind: e.kind as string, sev: e.severity, actors: e.actors })),
+        maxSeq,
+      };
+      rm.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] rumor drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2272,6 +2324,9 @@ export class FlyStateDO {
     // ⑪ RELIGION — the faith overlay: the SAME read-out line culture occupies, but it rewrites only the
     // devoted, and only on a holy day. Null while RELIGION_ENABLED=false ⇒ byte-for-byte today's behaviour.
     const religion = await this.ensureReligion();
+    // ㉔ THE RUMOR MILL — the tale membrane: the drive is pure read-out; its one causal leg is the
+    // telling-day override below, on religion's read-out line. Null while RM_ENABLED=false ⇒ byte-for-byte inert.
+    const rumorMill = await this.ensureRumor();
     // ⑧ THE COMMONS — apply last era's law to THIS cron's credit line before any sub-tick settles, so the
     // assembly's verdict is in force for the whole cron. ensureCommons() null (or a knob without a decree) ⇒
     // applyLaw(null,…) ⇒ base config, byte-for-byte. Convening the NEXT era's assembly is step 8 below.
@@ -2327,6 +2382,11 @@ export class FlyStateDO {
         if (st === 0) religion.ritual(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null, regime);
         religion.apply(snapshot.flies, swarm.getTickIndex());
       }
+      // 4a-rumor) ㉔ THE RUMOR MILL — the telling-day echo: on every RM_TELL_EVERYth tick the flies that
+      // have heard the live tale are READ as what hearing looks like (GROOM — the whispering that IS
+      // gossip in every market square; or HALT, the listening freeze, when the tale is heard gravely).
+      // The religion contract: read-out line only, rare by construction, inert on every other cron.
+      if (rumorMill && snapshot) rumorMill.apply(snapshot.flies, swarm.getTickIndex());
       // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
       //     of the neural layer — it never feeds back into the connectome.
       if (economy && snapshot && econBudget > 0) {
@@ -2487,6 +2547,9 @@ export class FlyStateDO {
     // ㉓ LEXICON rides after the guilds: it reads the annals roll the historian has ALREADY written (the
     // dictionary is compiled from tellings already history), before this cron's observeChronicle.
     await this.driveLexicon(swarm.getTickIndex());
+    // ㉔ RUMOR MILL rides after the lexicon: it hears the same already-history roll; its telling-day
+    // echo (the apply hook in the sub-tick loop) is the only causal leg — the drive itself is pure read-out.
+    await this.driveRumor(swarm.getTickIndex());
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2798,6 +2861,8 @@ export class FlyStateDO {
       if (guilds) (economy as { guilds?: unknown }).guilds = guilds;
       const lexicon = await this.lexiconReadout();
       if (lexicon) (economy as { lexicon?: unknown }).lexicon = lexicon;
+      const rumor = await this.rumorReadout();
+      if (rumor) (economy as { rumor?: unknown }).rumor = rumor;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2869,7 +2934,8 @@ export class FlyStateDO {
     const games = await this.gamesReadout();
     const guilds = await this.guildsReadout();
     const lexicon = await this.lexiconReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon) return json(snap);
+    const rumor = await this.rumorReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -2880,6 +2946,7 @@ export class FlyStateDO {
       ...(games ? { games } : null),
       ...(guilds ? { guilds } : null),
       ...(lexicon ? { lexicon } : null),
+      ...(rumor ? { rumor } : null),
     });
   }
 
@@ -3009,6 +3076,13 @@ export class FlyStateDO {
     const lx = await this.ensureLexicon();
     if (!lx) return null;
     return lx.signals();
+  }
+
+  /** ㉔ The rumor mill read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Rumor build). */
+  private async rumorReadout(): Promise<RumorSignals | null> {
+    const rm = await this.ensureRumor();
+    if (!rm) return null;
+    return rm.signals();
   }
 
   /**
@@ -4013,6 +4087,7 @@ export class FlyStateDO {
     this.games = null;     // ㉑ and the games: the stadium and its standing mark are forgotten with everything else
     this.guilds = null;    // ㉒ and the guilds: every seal, pact and monopoly is unspoken with everything else
     this.lexicon = null;   // ㉓ and the lexicon: every coined, spread and buried word is unremembered with everything else
+        this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -4033,6 +4108,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_GAMES);
     await this.state.storage.delete(KEY_GUILDS);
     await this.state.storage.delete(KEY_LEXICON);
+        await this.state.storage.delete(KEY_RUMOR);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

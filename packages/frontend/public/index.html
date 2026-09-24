@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=89" />
+  <link rel="stylesheet" href="./styles.css?v=90" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -152,6 +152,7 @@
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="games" hidden><span class="ct-ico">★</span><span class="ct-name" data-i18n="tab.games.name">The Games</span><span class="ct-sub" data-i18n="tab.games.sub">festivals, champions &amp; records</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="guilds" hidden><span class="ct-ico">⛨</span><span class="ct-name" data-i18n="tab.guilds.name">The Guildhall</span><span class="ct-sub" data-i18n="tab.guilds.sub">charters, pacts &amp; monopolies</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="lexicon" hidden><span class="ct-ico">❈</span><span class="ct-name" data-i18n="tab.lexicon.name">The Lexicon</span><span class="ct-sub" data-i18n="tab.lexicon.sub">coinages, spreads &amp; silences</span></button>
+      <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="rumor" hidden><span class="ct-ico">🪶</span><span class="ct-name" data-i18n="tab.rumor.name">The Rumor Mill</span><span class="ct-sub" data-i18n="tab.rumor.sub">tales afoot, bent &amp; quiet</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="tech"><span class="ct-ico">✵</span><span class="ct-name" data-i18n="tab.tech.name">The Ladder of Arts</span><span class="ct-sub" data-i18n="tab.tech.sub">inventions, customs &amp; forgotten arts</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="cities"><span class="ct-ico">♜</span><span class="ct-name" data-i18n="tab.cities.name">The Named Places</span><span class="ct-sub" data-i18n="tab.cities.sub">hamlets, towns &amp; the census</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="war" hidden><span class="ct-ico">⚑</span><span class="ct-name" data-i18n="tab.war.name">The War Coffer</span><span class="ct-sub" data-i18n="tab.war.sub">on-chain vaults, bouts &amp; the tax purse</span></button>
@@ -241,6 +242,16 @@
       <div class="chron-lexicon" id="chron-lexicon" hidden>
         <div class="lx-title"><span data-i18n="vol.lxTitle">the lexicon</span> <em data-i18n="vol.lxSub">· coinages, spreads &amp; silences</em></div>
         <div class="lx-body" id="lx-body"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="rumor">
+      <!-- ㉔ the rumor mill: the tale that carries itself — a telling takes wing, bends in the retelling,
+           goes quiet (a read-out of rumor.ts over the chronicle's own roll). THE SECOND CAUSAL MEMBRANE:
+           on a telling-day the hearers of the live tale are read as GROOM (whispering) or HALT (grave
+           tales) — religion's holy-rest contract, read-out line only, never money. -->
+      <div class="chron-rumor" id="chron-rumor" hidden>
+        <div class="rm-title"><span data-i18n="vol.rmTitle">the rumor mill</span> <em data-i18n="vol.rmSub">· tales afoot, bent &amp; quiet</em></div>
+        <div class="rm-body" id="rm-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="tech">
@@ -546,6 +557,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=103" type="module"></script>
+  <script src="./app.js?v=104" type="module"></script>
 </body>
 </html>

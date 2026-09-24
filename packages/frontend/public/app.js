@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=89";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=90";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -323,6 +323,7 @@ let econCourt = null;       // ⑳ the court read-out {indictment,trial,verdict,
 let econGames = null;       // ㉑ the games read-out {games,champion,record,lastGames,standing,pendingGames,counts} — era festivals, champions & records
 let econGuilds = null;      // ㉒ the guilds read-out {charter,pact,monopoly,roster,counts} — charters, pacts & monopolies of the trades
 let econLexicon = null;     // ㉓ the lexicon read-out {coinage,spread,dying,lexicon[],dead[],counts} — words the tellings made
+let econRumor = null;       // ㉔ the rumor mill read-out {afoot,bent,faded,active,counts,echo} — the tale that carries itself
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -1876,6 +1877,14 @@ function spawnChronFx(e) {
     if (e.kind === "WORD_SPREAD") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
     else chronFx.push({ kind: "law", t0: now, dur: 3000 });
     setBanner(T("banner.lexicon"), ct(e.kind, t), LAW_GOLD);
+  } else if (e.kind === "RUMOR_AFOOT" || e.kind === "RUMOR_BENT" || e.kind === "RUMOR_FADED") {
+    // ㉔ the rumor mill: a tale taking wing or going quiet ripples law-gold (the market square is a civic
+    // place); a tale that BENDS in the retelling washes the field in the warm holy tint — the distortion
+    // reads uncanny on purpose. Reuses existing fx, no new pass.
+    const t = e.tokens || {};
+    if (e.kind === "RUMOR_BENT") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
+    else chronFx.push({ kind: "law", t0: now, dur: 3000 });
+    setBanner(T("banner.rumor"), ct(e.kind, t), LAW_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -3363,6 +3372,7 @@ function applyEconomy(econ) {
   if (econ.games) { econGames = econ.games; renderGamesSection(); }
   if (econ.guilds) { econGuilds = econ.guilds; renderGuildSection(); }
   if (econ.lexicon) { econLexicon = econ.lexicon; renderLexSection(); }
+  if (econ.rumor) { econRumor = econ.rumor; renderRumorSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -4324,6 +4334,60 @@ function renderLexSection() {
   }
 }
 
+// ================= ㉔ the rumor mill section (a tale afoot, its bend, its quiet) =================
+// A plain-language read-out of rumor.ts: how many tales took wing, how many bent in the retelling, how
+// many went quiet — the LIVE tale (topic, ears, how it is heard now vs how it happened) and the shape of
+// the telling-day echo (which act hearers are read as, and what fraction of the swarm has heard).
+// THE SECOND CAUSAL MEMBRANE, shown honestly: the override is a read-out-line event on religion's holy-
+// rest contract — rare, bounded, never money. The whole volume (tab included) hides while /economy ships
+// no rumor key.
+function renderRumorSection() {
+  const host = $("chron-rumor");
+  const body = $("rm-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="rumor"]');
+  const u = econRumor;
+  if (!u || !u.counts) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+  const n = u.counts;
+  const head = document.createElement("div");
+  head.className = "rm-row rm-head";
+  head.textContent = T("rm.head", { afoot: n.afoot, bends: n.bends, faded: n.faded });
+  head.title = T("rm.headTitle");
+  body.appendChild(head);
+  const a = u.active;
+  if (a) {
+    const row = document.createElement("div");
+    row.className = "rm-row rm-live";
+    row.textContent = T("rm.active", { topic: a.topic, heard: a.heard, sev0: a.sev0, sevHeard: a.sevHeard });
+    body.appendChild(row);
+    if (a.bent) {
+      const bt = document.createElement("div");
+      bt.className = "rm-row rm-bent";
+      bt.textContent = T("rm.bent");
+      body.appendChild(bt);
+    }
+  } else {
+    const none = document.createElement("div");
+    none.className = "rm-row rm-none";
+    none.textContent = T("rm.none");
+    body.appendChild(none);
+  }
+  if (u.echo) {
+    const ec = document.createElement("div");
+    ec.className = "rm-row rm-echo";
+    ec.textContent = T("rm.echo", { act: u.echo.act, pct: Math.round((u.echo.ratio || 0) * 100) });
+    ec.title = T("rm.echoTitle");
+    body.appendChild(ec);
+  }
+}
+
 // Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
 function fmtMurCompact(n) {
   n = Number(n) || 0;
@@ -4535,6 +4599,7 @@ function openWallets() {
       if (e.games) { econGames = e.games; renderGamesSection(); }
       if (e.guilds) { econGuilds = e.guilds; renderGuildSection(); }
       if (e.lexicon) { econLexicon = e.lexicon; renderLexSection(); }
+  if (e.rumor) { econRumor = e.rumor; renderRumorSection(); }
   }).catch(() => {});
 }
 
@@ -5086,6 +5151,7 @@ const CHRON_ICONS = {
   GAMES: "⚑", CHAMPION: "★", RECORD: "✦",
   GUILD_CHARTER: "⛨", APPRENTICE_PACT: "✋", GUILD_MONOPOLY: "◈",
   COINAGE: "✍", WORD_SPREAD: "❈", WORD_DIES: "✒",
+  RUMOR_AFOOT: "🪶", RUMOR_BENT: "🌀", RUMOR_FADED: "🤫",
 };
 
 function renderChron() {
@@ -5279,13 +5345,16 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     COINAGE: "The lexicon grows — {word} enters as common tongue: {uses} tellings in living memory made it a word the chronicle must keep.",
     WORD_SPREAD: "A word on every tongue — {word} has doubled to {uses} tellings; the lexicographers can no longer pretend it is new.",
     WORD_DIES: "A word falls silent — {word} has gone unspoken for {gap} tellings; the lexicon marks it remembered, not living.",
+    RUMOR_AFOOT: "A tale takes wing — the {topic} of era {era} passes from fly to fly: {heard} ears already lean in.",
+    RUMOR_BENT: "The tale bends — told {heard} times over, the {topic} is now heard as {heardAs}; nobody agrees any more on what was first said.",
+    RUMOR_FADED: "The tale quiets — the {topic} is told no more; {heard} ears carried it while it lived.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -7025,6 +7094,7 @@ async function poll() {
     if (econ.games) { econGames = econ.games; renderGamesSection(); }
     if (econ.guilds) { econGuilds = econ.guilds; renderGuildSection(); }
     if (econ.lexicon) { econLexicon = econ.lexicon; renderLexSection(); }
+    if (econ.rumor) { econRumor = econ.rumor; renderRumorSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -7707,7 +7777,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderGuildSection(); renderLexSection(); renderBourseSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderGuildSection(); renderLexSection(); renderRumorSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

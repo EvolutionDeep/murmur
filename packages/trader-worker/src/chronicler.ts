@@ -147,7 +147,12 @@ export type ChronicleKind =
   //     a word whose tellings doubles has spread, a word unspoken for a long memory falls silent.
   | "COINAGE"
   | "WORD_SPREAD"
-  | "WORD_DIES";
+  | "WORD_DIES"
+  // ㉔ THE RUMOR MILL: the tale that carries itself (rumor.ts) — a telling takes wing, bends in the
+  //     retelling until nobody agrees on what was first said, and at last goes quiet.
+  | "RUMOR_AFOOT"
+  | "RUMOR_BENT"
+  | "RUMOR_FADED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -260,6 +265,9 @@ export interface ChronicleContext {
   /** ㉓ THE LEXICON read-out (lexicon.ts signals): this cron's coinage, spread and silence edges. Absent ⇒
    *  no COINAGE/WORD_SPREAD/WORD_DIES (LEX_ENABLED=false never folds these in). */
   lexicon?: ChronicleLexicon | null;
+  /** ㉔ THE RUMOR MILL read-out (rumor.ts signals): this cron's afoot, bend and quiet edges. Absent ⇒
+   *  no RUMOR_AFOOT/RUMOR_BENT/RUMOR_FADED (RM_ENABLED=false never folds these in). */
+  rumor?: ChronicleRumor | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -404,6 +412,23 @@ export interface ChronicleLexicon {
   lexicon: { word: string; uses: number; born: number }[];
   dead: string[];
   counts: { coinages: number; spreads: number; deaths: number };
+}
+
+/** ㉔ THE RUMOR MILL: one cron's tale edges (rumor.ts; edges over the annals roll already history — the
+ *  mill carries at most one active tale and fires each edge at most once per tale, so a non-null facet
+ *  IS news THIS cron and cannot replay). */
+export interface ChronicleRumor {
+  /** A new telling has gathered its first ears: the market noun, the ear-count, the era, the original mouths. */
+  afoot: { topic: string; heard: number; era: number; holders: number[] } | null;
+  /** The telling has bent past the halfway mark — heard graver or lighter than it happened. */
+  bent: { topic: string; heard: number; heardAs: string } | null;
+  /** The tale is told no more (displaced by graver news or outlived its life). */
+  faded: { topic: string; heard: number } | null;
+  /** The mill's standing tale for the drawer (never re-derived here). */
+  active: { topic: string; seq: number; sev0: number; sevHeard: number; heard: number; era: number; bent: boolean } | null;
+  counts: { afoot: number; bends: number; faded: number };
+  /** The live override's shape: the act hearers are read as on a telling-day, and the heard fraction. */
+  echo: { act: string; ratio: number } | null;
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -604,6 +629,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉓ LEXICON: the desk itself only speaks edges (one coinage per word ever, one per doubling, one burial),
   //     so these cooldowns are pure gravitas — a burial word especially should land slowly. Mirrored in CHRON_.
   COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240,
+  // ㉔ RUMOR MILL: the mill itself only speaks edges (one afoot per tale, one bend per tale, one quiet),
+  //     so these cooldowns are pure gravitas — a tale taking wing should feel spontaneous, its bending
+  //     rare, its quiet slow. Mirrored in CHRON_.
+  RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -740,6 +769,13 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   COINAGE: "The lexicon grows — {word} enters as common tongue: {uses} tellings in living memory made it a word the chronicle must keep.",
   WORD_SPREAD: "A word on every tongue — {word} has doubled to {uses} tellings; the lexicographers can no longer pretend it is new.",
   WORD_DIES: "A word falls silent — {word} has gone unspoken for {gap} tellings; the lexicon marks it remembered, not living.",
+  // ㉔ THE RUMOR MILL — the tale that carries itself. {topic} is the market noun the kind is talked as
+  //     (rumor.ts's own map), {heard} counts ears the mill has tallied, {heardAs} is the bend's direction
+  //     (graver/lighter). Every number is re-derivable by replaying the annals roll. Mirrored verbatim in
+  //     the frontend CHRON_.
+  RUMOR_AFOOT: "A tale takes wing — the {topic} of era {era} passes from fly to fly: {heard} ears already lean in.",
+  RUMOR_BENT: "The tale bends — told {heard} times over, the {topic} is now heard as {heardAs}; nobody agrees any more on what was first said.",
+  RUMOR_FADED: "The tale quiets — the {topic} is told no more; {heard} ears carried it while it lived.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1609,6 +1645,29 @@ export class Chronicler {
         const dd = lx.dying;
         out.push(await this.emit(ctx, "WORD_DIES", 3, [],
           { word: dd.word, gap: dd.gap }, { gap: dd.gap }));
+      }
+    }
+
+    // ㉔ The Rumor Mill: the tale that carries itself (rumor.ts signals, folded in ONLY while RM_ENABLED —
+    //     off ⇒ no `rumor` key ⇒ these three detectors never speak). Each facet is an edge the mill fires
+    //     at most once per tale, so a non-null facet is news this cron and cannot replay. The actors are
+    //     the ORIGINAL telling's own mouths — a tale is always told about someone.
+    const rm = ctx.rumor;
+    if (rm) {
+      if (rm.afoot && this.ready("RUMOR_AFOOT", ctx)) {
+        const af = rm.afoot;
+        out.push(await this.emit(ctx, "RUMOR_AFOOT", 2, af.holders,
+          { topic: af.topic, heard: af.heard, era: af.era }, { heard: af.heard, era: af.era }));
+      }
+      if (rm.bent && this.ready("RUMOR_BENT", ctx)) {
+        const bn = rm.bent;
+        out.push(await this.emit(ctx, "RUMOR_BENT", 3, [],
+          { topic: bn.topic, heard: bn.heard, heardAs: bn.heardAs }, { heard: bn.heard }));
+      }
+      if (rm.faded && this.ready("RUMOR_FADED", ctx)) {
+        const fd = rm.faded;
+        out.push(await this.emit(ctx, "RUMOR_FADED", 2, [],
+          { topic: fd.topic, heard: fd.heard }, { heard: fd.heard }));
       }
     }
 

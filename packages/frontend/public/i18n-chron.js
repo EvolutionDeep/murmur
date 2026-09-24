@@ -89,6 +89,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   COINAGE: "词库扩充 —— {word} 进入通语：活记忆里 {uses} 遍讲述，使它成为编年史必须留存的一个词。",
   WORD_SPREAD: "一词上口 —— {word} 已翻倍至 {uses} 遍讲述；编词人也再不能装作它新奇。",
   WORD_DIES: "一词沉寂 —— {word} 已 {gap} 遍讲述无人再提；词库把它标记为被记住，而非活着。",
+  RUMOR_AFOOT: "一事生翼 —— 第 {era} 纪元的 {topic} 从一只蜂传到下一只蜂：{heard} 只耳朵已经凑近。",
+  RUMOR_BENT: "故事弯了 —— 讲过 {heard} 遍之后，那 {topic} 被听成了 {heardAs}；再没有人说得清当初讲的是什么。",
+  RUMOR_FADED: "故事静了 —— 那 {topic} 不再被讲起；它活着时，有 {heard} 只耳朵抬过它。",
 };
 
 const fr = {
@@ -170,6 +173,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   COINAGE: "Le lexique croît — {word} entre dans la langue commune : {uses} récits en mémoire vivante en ont fait un mot que la chronique doit garder.",
   WORD_SPREAD: "Un mot à toutes les lèvres — {word} a doublé à {uses} récits ; les lexicographes ne peuvent plus feindre qu'il est nouveau.",
   WORD_DIES: "Un mot se tait — {word} n'a pas été dit depuis {gap} récits ; le lexique le marque retenu, non vivant.",
+  RUMOR_AFOOT: "Un récit prend l'aile — le {topic} de l'ère {era} passe de mouche en mouche : {heard} oreilles se penchent déjà.",
+  RUMOR_BENT: "Le récit se courbe — dit {heard} fois, le {topic} s'entend désormais en {heardAs} ; plus personne n'accorde sur ce qui fut dit d'abord.",
+  RUMOR_FADED: "Le récit s'apaise — le {topic} n'est plus conté ; {heard} oreilles l'ont porté tant qu'il vivait.",
 };
 
 const es = {
@@ -251,6 +257,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   COINAGE: "El léxico crece — {word} entra como lengua común: {uses} relatos en memoria viva lo hicieron una palabra que la crónica debe guardar.",
   WORD_SPREAD: "Una palabra en todas las lenguas — {word} ha doblado a {uses} relatos; los lexicógrafos ya no pueden fingir que es nueva.",
   WORD_DIES: "Una palabra enmudece — {word} lleva {gap} relatos sin ser dicha; el léxico la marca recordada, no viva.",
+  RUMOR_AFOOT: "Un relato toma alas — el {topic} de la era {era} pasa de mosca en mosca: {heard} orejas ya se inclinan.",
+  RUMOR_BENT: "El relato se dobla — dicho {heard} veces, el {topic} se oye ahora como {heardAs}; ya nadie concuerda en qué fue dicho primero.",
+  RUMOR_FADED: "El relato se aquieta — el {topic} ya no se cuenta; {heard} orejas lo cargaron mientras vivía.",
 };
 
 const ja = {
@@ -332,6 +341,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   COINAGE: "語彙は育つ —— {word}、共通語に加わった：生の記憶のうち {uses} 遍語られたことが、年代記の留めねばならぬ一語とした。",
   WORD_SPREAD: "どこにもその言葉 —— {word}、{uses} 遍に倍した；辞書編みはもはや新しさを装えない。",
   WORD_DIES: "一語、沈む —— {word}、{gap} 遍語られず；語彙帳はこれを、覚えられあれ生きてあらずと記す。",
+  RUMOR_AFOOT: "物語が翼を持つ —— 第{era}紀の{topic}が蜂から蜂へ渡る：すでに {heard} 枚の耳が傾いている。",
+  RUMOR_BENT: "物語が曲がる —— {heard} 遍語られたのち、{topic}は今{heardAs}に聞こえる；最初に何を言ったのか、もはや誰も知らない。",
+  RUMOR_FADED: "物語が静まる —— {topic}はもはや語られぬ；生きてるあいだ {heard} 枚の耳がそれを担いだ。",
 };
 
 const ko = {
@@ -413,6 +425,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   COINAGE: "어휘록이 자란다 — {word}, 공통 언어로 들어섰다: 살아 있는 기억 속 {uses}번 들려져, 연대기가 지켜야 할 말이 되었다.",
   WORD_SPREAD: "모든 입에 그 말 — {word}, {uses}번으로 두 배가 되었다; 사전 짜는 이들, 더는 새로움을 가장하지 못한다.",
   WORD_DIES: "말 하나가 잠긴다 — {word}, {gap}번 들려짐 없었으니; 어휘록, 기억될 뿐 살아 있지 아니함으로 적는다.",
+  RUMOR_AFOOT: "이야기가 날개를 편다 — 제{era} 시대의 {topic}, 벌레에서 벌레로 건네진다: 이미 {heard}개의 귀가 기울었다.",
+  RUMOR_BENT: "이야기가 굽는다 — {heard}번 들려진 뒤, {topic}은 이제 {heardAs}(으)로 들려진다; 처음 무슨 말이었는지 이제 아무도 모른다.",
+  RUMOR_FADED: "이야기가 잦아든다 — {topic}, 다시 들려지지 않으니; 살아 있는 동안 {heard}개의 귀가 이를 실어 날랐다.",
 };
 
 const ar = {
@@ -494,6 +509,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   COINAGE: "المعجم ينمو — {word} تدخل لسان العامّة: {uses} حكاية في الذاكرة الحيّة جعلتها كلمةً على الحوليات حفظها.",
   WORD_SPREAD: "لفظٌ على كل لسان — {word} تضاعفت إلى {uses} حكاية؛ فلم يعد بوسع واضعي المعجم أن يدّعوا أنها جديدة.",
   WORD_DIES: "كلمة تصمت — {word} لم تُحكَ منذ {gap} حكاية؛ والمعجم يوسمها بوسم المذكورة لا الحيّة.",
+  RUMOR_AFOOT: "حكاية تفرّد جناحها — {topic} الحقبةِ {era} يجول من ذبابة إلى ذبابة: {heard} أذناً قد أرهفت.",
+  RUMOR_BENT: "الحكاية تنحني — بعد {heard} حكايةٍ تُسمعُ {topic} الآن {heardAs}؛ لم يعد أحدٌ يتفق على ما قِيل أول مرة.",
+  RUMOR_FADED: "الحكاية تهدأ — {topic} لا يُحكى بعد الآن؛ {heard} أذنٍ حملته ما عاش.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

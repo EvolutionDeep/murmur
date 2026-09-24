@@ -250,6 +250,13 @@ export interface Env {
   //     no knobs (its thresholds are exported constants); only the master switch reads an env key.
   LEX_ENABLED?: string;                 // "true"/"false" (default TRUE)
 
+  // --- ㉔ THE RUMOR MILL: the tale that carries itself — afoot, bent, quiet (see src/rumor.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The mill has
+  //     no knobs (its bounds are exported constants); only the master switch reads an env key. This is the
+  //     SECOND causal membrane (after religion's holy rest): the telling-day hearer override lives on the
+  //     SAME read-out line, never on the stimulus bus — whose two precedents stay dark-deployed OFF.
+  RM_ENABLED?: string;                  // "true"/"false" (default TRUE)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -583,6 +590,9 @@ export interface RuntimeConfig {
   };
   lexicon: {
     enabled: boolean;         // the desk's thresholds are constants (LEX_COIN_AT etc.) — no knobs by design
+  };
+  rumor: {
+    enabled: boolean;         // the mill's bounds are constants (RM_HEARD_CAP etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -998,6 +1008,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     lexicon: {
       enabled: (env.LEX_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    rumor: {
+      enabled: (env.RM_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

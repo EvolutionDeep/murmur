@@ -6654,4 +6654,114 @@ Object.assign(ja, jaLex);
 Object.assign(ko, koLex);
 Object.assign(ar, arLex);
 
+// ㉔ THE RUMOR MILL drawer volume (rumor.ts read-out): tab + volume titles, the mill's roll (afoot, bent,
+// quiet), the LIVE tale row, its bend note, the quiet-square line and the telling-day echo row. The tale
+// topics themselves are canonical English (rumor.ts's closed topic map) and stay untranslated — the frame
+// is glossed, the gossip is not. Symmetric across all seven languages — keep the key set identical.
+const enRm = {
+  "vol.rmTitle": "the rumor mill",
+  "vol.rmSub": "· tales afoot, bent & quiet",
+  "tab.rumor.name": "The Rumor Mill",
+  "tab.rumor.sub": "tales afoot, bent & quiet",
+  "banner.rumor": "🪶 a tale takes wing",
+  "rm.head": "{afoot} tales took wing · {bends} bent in the retelling · {faded} gone quiet",
+  "rm.headTitle": "the mill's own book — afoot, bent and quiet are edges over tellings already history; on a telling-day its hearers are read as whispering, and no coin moves",
+  "rm.active": "“{topic}” · {heard} ears lean in — heard {sevHeard}, it happened {sev0}",
+  "rm.bent": "the telling has bent — nobody agrees any more on what was first said",
+  "rm.none": "no tale is going the rounds — the square is quiet",
+  "rm.echo": "telling-day echo: hearers are read as {act} · {pct}% of the swarm has heard",
+  "rm.echoTitle": "the override is religion's contract: the read-out line only, every 16th cron, never the connectome, never money",
+};
+const zhRm = {
+  "vol.rmTitle": "谣言坊",
+  "vol.rmSub": "· 流言正起、已弯、渐息",
+  "tab.rumor.name": "谣言坊",
+  "tab.rumor.sub": "流言正起、已弯、渐息",
+  "banner.rumor": "🪶 一事生翼",
+  "rm.head": "起谣 {afoot} 则 · 传弯 {bends} 则 · 平息 {faded} 则",
+  "rm.headTitle": "谣言坊自己的簿册——起、弯、息皆是对已成史文的再讲所数的边沿；讲谣之日，听者被读作耳语，而不动一币",
+  "rm.active": "「{topic}」· {heard} 只耳朵凑近——听成 {sevHeard} 分，原只 {sev0} 分",
+  "rm.bent": "讲述已弯——再没人说得清最初讲的是什么",
+  "rm.none": "尚无流言过市——广场一片安静",
+  "rm.echo": "讲谣之日的回声：听者被读作 {act} · 蜂群 {pct}% 已听闻",
+  "rm.echoTitle": "这次覆写循圣日的契约：只改读出线，每 16 次定时一讲，绝不碰连接组，绝不碰钱",
+};
+const frRm = {
+  "vol.rmTitle": "le moulin à rumeurs",
+  "vol.rmSub": "· récits en vol, courbés & tus",
+  "tab.rumor.name": "Le Moulin à Rumeurs",
+  "tab.rumor.sub": "récits en vol, courbés & tus",
+  "banner.rumor": "🪶 un récit prend son essor",
+  "rm.head": "{afoot} récits envolés · {bends} courbés à force d'être dits · {faded} tus",
+  "rm.headTitle": "le livre propre au moulin — envol, courbure et silence sont des lisières comptées sur des récits déjà passés ; au jour des récits, ses auditeurs sont lus comme murmurant, et aucune pièce ne bouge",
+  "rm.active": "« {topic} » · {heard} oreilles se penchent — entendu {sevHeard}, il s'est passé {sev0}",
+  "rm.bent": "le récit s'est courbé — plus personne ne s'accorde sur ce qui fut dit d'abord",
+  "rm.none": "nul récit ne court la place — la place est calme",
+  "rm.echo": "écho du jour des récits : les auditeurs sont lus comme {act} · {pct}% de l'essaim a entendu",
+  "rm.echoTitle": "l'override suit le contrat du jour sacré : la seule ligne de lecture, tous les 16 cron, jamais le connectome, jamais la monnaie",
+};
+const esRm = {
+  "vol.rmTitle": "el molino de rumores",
+  "vol.rmSub": "· relatos en vuelo, torcidos y quietos",
+  "tab.rumor.name": "El Molino de Rumores",
+  "tab.rumor.sub": "relatos en vuelo, torcidos & quietos",
+  "banner.rumor": "🪶 un relato echa a volar",
+  "rm.head": "{afoot} relatos echaron a volar · {bends} torcidos al contarse · {faded} callados",
+  "rm.headTitle": "el libro propio del molino — vuelo, torcedura y silencio son bordes contados sobre relatos ya historia; en día de cuentos, sus oidores se leen susurrando, y no se mueve ninguna moneda",
+  "rm.active": "«{topic}» · {heard} orejas se acercan — oído {sevHeard}, sucedió {sev0}",
+  "rm.bent": "el relato se ha torcido — nadie coincide ya en qué fue lo dicho primero",
+  "rm.none": "ningún relato recorre la plaza — la plaza está en calma",
+  "rm.echo": "eco del día de cuentos: los oidores se leen {act} · el {pct}% del enjambre ha oído",
+  "rm.echoTitle": "la sobreescritura sigue el contrato del día sagrado: solo la línea de lectura, cada 16 cron, nunca el conectoma, nunca el dinero",
+};
+const jaRm = {
+  "vol.rmTitle": "噂の挽臼",
+  "vol.rmSub": "· 物語は翔び、曲がり、静まる",
+  "tab.rumor.name": "噂の挽臼",
+  "tab.rumor.sub": "物語は翔び、曲がり、静まる",
+  "banner.rumor": "🪶 一話、翼を得る",
+  "rm.head": "翔び立った物語 {afoot} 話 · 語り曲がり {bends} 話 · 静まり {faded} 話",
+  "rm.headTitle": "挽臼自身の帳面——翔び、曲がり、静まりは、すでに史文となった語りを数えた縁辺；語りの日には聞き手はささやきとして読まれ、銭は動くことはない",
+  "rm.active": "「{topic}」· {heard} 耳が身を乗り出す——聞き様 {sevHeard}、起こり {sev0}",
+  "rm.bent": "語り曲がれり——最初に何を言ったか、もはや誰も知らぬ",
+  "rm.none": "巡る物語なし——広場は静かなり",
+  "rm.echo": "語りの日の残響：聞き手は {act} として読まれる——群れの {pct}% が既に聞いた",
+  "rm.echoTitle": "この上書きは聖日の契約に従う：読み出しの線だけ、16回のカドに一度、コネクトームにも銭にも触れぬ",
+};
+const koRm = {
+  "vol.rmTitle": "소문 방앗간",
+  "vol.rmSub": "· 떠도는 이야기, 굽은 이야기, 잦아든 이야기",
+  "tab.rumor.name": "소문 방앗간",
+  "tab.rumor.sub": "떠도는 이야기, 굽은 이야기, 잦아든 이야기",
+  "banner.rumor": "🪶 한 이야기가 날개를 단다",
+  "rm.head": "{afoot} 편 날개 달렸다 · {bends} 편 전하는 사이 굽었다 · {faded} 편 잦아들었다",
+  "rm.headTitle": "방앗간 자신의 장부 — 떠김, 굽음, 잦아듦은 이미 역사인 전승 위에 세는 모서리; 이야기하는 날에는 듣는 이들이 속삭임으로 읽히며, 엽전 하나는 흔들리지 않는다",
+  "rm.active": "'{topic}' · {heard} 개의 귀가 기울인다 — 들림 {sevHeard}, 일음 {sev0}",
+  "rm.bent": "전함이 굽었다 — 처음에 무엇을 말했는지 이제 아무도 모른다",
+  "rm.none": "돈는 이야기 없다 — 광장은 고요하다",
+  "rm.echo": "이야기하는 날의 메아리: 듣는 이 {act}(으)로 읽힘 · 무리의 {pct}% 이미 들었다",
+  "rm.echoTitle": "이 덮어쓰기는 성일의 계약이다: 읽기 줄만, 16번째 크론마다, 연결체도 돈도 건드리지 않는다",
+};
+const arRm = {
+  "vol.rmTitle": "طاحون الشائعات",
+  "vol.rmSub": "· حديثٌ محلّقٌ ثم محروفٌ ثم ساكن",
+  "tab.rumor.name": "طاحون الشائعات",
+  "tab.rumor.sub": "حديثٌ محلّقٌ ومحروفٌ وساكن",
+  "banner.rumor": "🪶 حديثٌ يطلّ له جناح",
+  "rm.head": "{afoot} حديثٌ حلّق · {bends} انحرف في الرواية · {faded} سكَن",
+  "rm.headTitle": "دفتر الطاحون نفسه — التحليق والانحراف والسكون حوافُّ تُعَدّ على رواياتٍ صارت تاريخًا؛ في يوم الرواية يُقرأ السامعون كأنهم يهمسون، ولا تتحرك عملةٌ واحدة",
+  "rm.active": "«{topic}» · {heard} أذنٍ تصغي — سُمِع {sevHeard}, وحدث {sev0}",
+  "rm.bent": "قد انحرفت الرواية — لا يوافق أحدٌ الآن على ما قِيل أول مرة",
+  "rm.none": "لا حديث يدور في الساحة — الساحة ساكنة",
+  "rm.echo": "صدى يوم الرواية: السامعون يُقرؤون {act} · {pct}% من السرب قد سمع",
+  "rm.echoTitle": "هذا التجاوز على ميثاق اليوم المقدس: سطرُ القراءة فقط، كل سادسة عشرة دورة، لا شبكة الوصلات ولا المال",
+};
+Object.assign(en, enRm);
+Object.assign(zh, zhRm);
+Object.assign(fr, frRm);
+Object.assign(es, esRm);
+Object.assign(ja, jaRm);
+Object.assign(ko, koRm);
+Object.assign(ar, arRm);
+
 export { en, zh, fr, es, ja, ko, ar };
