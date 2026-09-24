@@ -245,6 +245,11 @@ export interface Env {
   GUILD_QUORUM?: string;                // living hands a trade needs before its guild is chartered (default 8; clamped 3..100)
   GUILD_SHARE_P?: string;               // 0..1 — workforce share a rising guild must pass to claim a monopoly (default 0.5)
 
+  // --- ㉓ THE LEXICON: the words the telling makes — coinage, spread, silence (see src/lexicon.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The desk has
+  //     no knobs (its thresholds are exported constants); only the master switch reads an env key.
+  LEX_ENABLED?: string;                 // "true"/"false" (default TRUE)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -575,6 +580,9 @@ export interface RuntimeConfig {
     enabled: boolean;
     quorum: number;           // living hands before a trade wins its charter (default 8, clamped 3..100)
     shareP: number;           // rising workforce share for a monopoly (default 0.5)
+  };
+  lexicon: {
+    enabled: boolean;         // the desk's thresholds are constants (LEX_COIN_AT etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -987,6 +995,9 @@ export function loadConfig(env: Env): RuntimeConfig {
       enabled: (env.GUILD_ENABLED ?? "true").toLowerCase() !== "false",
       quorum: clampInt(Number(env.GUILD_QUORUM || "8"), 3, 100),
       shareP: clamp(Number(env.GUILD_SHARE_P || "0.5"), 0, 1),
+    },
+    lexicon: {
+      enabled: (env.LEX_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

@@ -70,6 +70,7 @@ import { BourseMeter, coinStimuli, sampleBourseActivity, type BourseSignals } fr
 import { CourtMembrane, type CourtFacts, type CourtSignals } from "./court.js";
 import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js";
+import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -123,6 +124,9 @@ const KEY_GAMES = "games:v1";
 /** ㉒ The Guilds (charter roll, share memory, counts) — its OWN key: a corrupt/absent blob restarts an
  *  empty guildhall, never ledger state. Bounded (≤ 4 seals + 4 shares), DO-safe. */
 const KEY_GUILDS = "guilds:v1";
+/** ㉓ The Lexicon (coinage desk, dead roll, counts) — its OWN key: a corrupt/absent blob restarts an
+ *  empty desk, never ledger state. Bounded (≤ 20 held words + 8 dead), DO-safe. */
+const KEY_LEXICON = "lexicon:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -236,6 +240,8 @@ export class FlyStateDO {
   private games: GamesMembrane | null = null;
   /** ㉒ The Guilds membrane (charters, pacts, monopoly) — null while GUILD_ENABLED=false (byte-for-byte inert). */
   private guilds: GuildsMembrane | null = null;
+  /** ㉓ The Lexicon membrane (coinage, spread, silence) — null while LEX_ENABLED=false (byte-for-byte inert). */
+  private lexicon: LexiconMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -554,6 +560,21 @@ export class FlyStateDO {
     this.guilds = new GuildsMembrane({ enabled: true, quorum: g.quorum, shareP: g.shareP });
     if (stored) this.guilds.restore(stored);
     return this.guilds;
+  }
+
+  /**
+   * ㉓ Lazily load the Lexicon membrane (null while LEX_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts with an empty desk; the dictionary rebuilds from the annals roll's own
+   * counts, so at worst a few words re-earn their entries (the roll never claims what it does not hold).
+   * It can never poison the ledger.
+   */
+  private async ensureLexicon(): Promise<LexiconMembrane | null> {
+    if (!this.cfg.lexicon.enabled) return null;
+    if (this.lexicon) return this.lexicon;
+    const stored = await this.state.storage.get<string>(KEY_LEXICON);
+    this.lexicon = new LexiconMembrane({ enabled: true });
+    if (stored) this.lexicon.restore(stored);
+    return this.lexicon;
   }
 
   /**
@@ -1221,6 +1242,7 @@ export class FlyStateDO {
     if (this.court) batch[KEY_COURT] = this.court.serialize();
     if (this.games) batch[KEY_GAMES] = this.games.serialize();
     if (this.guilds) batch[KEY_GUILDS] = this.guilds.serialize();
+    if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1639,6 +1661,9 @@ export class FlyStateDO {
       // ㉒ GUILDS: fold the guildhall's edge events ONLY while GUILD is on. Off ⇒ no `guilds` key ⇒ the
       // historian's three guild detectors never speak (byte-for-byte the pre-Guilds build).
       const guilds = this.cfg.guilds.enabled ? this.guilds?.signals() ?? null : null;
+      // ㉓ LEXICON: fold the desk's word edges ONLY while LEX is on. Off ⇒ no `lexicon` key ⇒ the
+      // historian's three lexicon detectors never speak (byte-for-byte the pre-Lexicon build).
+      const lexicon = this.cfg.lexicon.enabled ? this.lexicon?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1737,6 +1762,7 @@ export class FlyStateDO {
         court,
         games,
         guilds,
+        lexicon,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1951,6 +1977,39 @@ export class FlyStateDO {
       gld.round(tick, facts);
     } catch (e) {
       console.warn("[DO] guilds drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉓ THE LEXICON — compile the dictionary BACKWARDS out of the chronicle: scan the hot annals roll (the
+   * swarm's living memory of its own tellings) for per-kind counts and seq numbers; the desk coins words
+   * at LEX_COIN_AT tellings, marks doublings as spread, and buries words the silence has outlasted.
+   * PURE READ-OUT: no money moves, no chronicle line changes — naming only names what was already told.
+   * Runs after driveGuilds and BEFORE observeChronicle, so the roll it reads is the one already history:
+   * a word enters the lexicon after the telling that made it (a one-cron lag by design, not by accident).
+   * Best-effort: a lexicographer's desk can never break the live tick.
+   */
+  private async driveLexicon(tick: number): Promise<void> {
+    const lx = await this.ensureLexicon();
+    if (!lx) return;
+    try {
+      const uses: Record<string, number> = {};
+      const lastSeq: Record<string, number> = {};
+      let maxSeq = 0;
+      for (const e of this.annals) {
+        if (e.seq > maxSeq) maxSeq = e.seq;
+        uses[e.kind] = (uses[e.kind] ?? 0) + 1;
+        lastSeq[e.kind] = e.seq;
+      }
+      const facts: LexiconFacts = {
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        uses,
+        lastSeq,
+        maxSeq,
+      };
+      lx.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] lexicon drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2425,6 +2484,9 @@ export class FlyStateDO {
     // ㉒ GUILDS rides after the games: it reads the economy's own profession ledger across the living
     // roster, and its edge events fold into the SAME cron's historian context.
     await this.driveGuilds(swarm.getTickIndex(), snapshot);
+    // ㉓ LEXICON rides after the guilds: it reads the annals roll the historian has ALREADY written (the
+    // dictionary is compiled from tellings already history), before this cron's observeChronicle.
+    await this.driveLexicon(swarm.getTickIndex());
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2734,6 +2796,8 @@ export class FlyStateDO {
       if (games) (economy as { games?: unknown }).games = games;
       const guilds = await this.guildsReadout();
       if (guilds) (economy as { guilds?: unknown }).guilds = guilds;
+      const lexicon = await this.lexiconReadout();
+      if (lexicon) (economy as { lexicon?: unknown }).lexicon = lexicon;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2804,7 +2868,8 @@ export class FlyStateDO {
     const court = await this.courtReadout();
     const games = await this.gamesReadout();
     const guilds = await this.guildsReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds) return json(snap);
+    const lexicon = await this.lexiconReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -2814,6 +2879,7 @@ export class FlyStateDO {
       ...(court ? { court } : null),
       ...(games ? { games } : null),
       ...(guilds ? { guilds } : null),
+      ...(lexicon ? { lexicon } : null),
     });
   }
 
@@ -2936,6 +3002,13 @@ export class FlyStateDO {
     const gld = await this.ensureGuilds();
     if (!gld) return null;
     return gld.signals();
+  }
+
+  /** ㉓ The lexicon read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Lexicon build). */
+  private async lexiconReadout(): Promise<LexiconSignals | null> {
+    const lx = await this.ensureLexicon();
+    if (!lx) return null;
+    return lx.signals();
   }
 
   /**
@@ -3939,6 +4012,7 @@ export class FlyStateDO {
     this.court = null;     // ⑳ and the court: the docket and the outlaw roll are dust with everything else
     this.games = null;     // ㉑ and the games: the stadium and its standing mark are forgotten with everything else
     this.guilds = null;    // ㉒ and the guilds: every seal, pact and monopoly is unspoken with everything else
+    this.lexicon = null;   // ㉓ and the lexicon: every coined, spread and buried word is unremembered with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -3958,6 +4032,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_COURT);
     await this.state.storage.delete(KEY_GAMES);
     await this.state.storage.delete(KEY_GUILDS);
+    await this.state.storage.delete(KEY_LEXICON);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

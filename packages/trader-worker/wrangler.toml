@@ -320,6 +320,14 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # binding wall is spent, this layer ships no [vars] keys. To flip a knob, evict a lower-priority var first,
 # then re-add: GUILD_ENABLED / GUILD_QUORUM / GUILD_SHARE_P (semantics as parsed in src/config.ts).
 
+# ===== ㉓ THE LEXICON (the words the telling makes — src/lexicon.ts) =====
+# A pure read-out dictionary compiled BACKWARDS out of the chronicle itself: a kind told often enough in
+# the hot annals roll becomes a WORD, a word whose tellings double has spread, a word unspoken for a long
+# living memory falls silent. No money moves; chronicle text stays English-canonical + template-localised.
+# NOTE: armed on CODE DEFAULTS (LEX_ENABLED=true; thresholds are exported constants by design) — the 128
+# text-binding wall is spent, this layer ships no [vars] keys. To flip the switch, evict a lower-priority
+# var first, then re-add: LEX_ENABLED = "false" (rollback: byte-for-byte inert; semantics in src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

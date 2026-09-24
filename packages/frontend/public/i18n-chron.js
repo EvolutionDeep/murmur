@@ -86,6 +86,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   GUILD_CHARTER: "一行会获得特许 —— {role} 行会成立，{members} 位在世工匠已越过 {quorum} 人的法定人数；第 {era} 纪元为之盖印。",
   APPRENTICE_PACT: "一纸契约缔结 —— 果蝇 #{id} 在特许旗下操起 {role} 之业；行会现今计数 {members} 位工匠。",
   GUILD_MONOPOLY: "一行当独占市场 —— 劳动蜂群的百分之 {share} 今为 {role} 行会效劳；再无别家旗号招展得这般满。",
+  COINAGE: "词库扩充 —— {word} 进入通语：活记忆里 {uses} 遍讲述，使它成为编年史必须留存的一个词。",
+  WORD_SPREAD: "一词上口 —— {word} 已翻倍至 {uses} 遍讲述；编词人也再不能装作它新奇。",
+  WORD_DIES: "一词沉寂 —— {word} 已 {gap} 遍讲述无人再提；词库把它标记为被记住，而非活着。",
 };
 
 const fr = {
@@ -164,6 +167,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   GUILD_CHARTER: "Un métier gagne sa charte — la guilde {role} est fondée avec {members} mains vivantes, passé le quorum de {quorum} ; l'ère {era} appose son sceau.",
   APPRENTICE_PACT: "Un pacte est scellé — la mouche #{id} prend le métier {role} sous une bannière chartée ; la guilde compte désormais {members} mains.",
   GUILD_MONOPOLY: "Un métier tient le champ — {share} pour cent de l'essaim travailleur sert désormais la guilde {role} ; nulle bannière ne flotte plus pleine.",
+  COINAGE: "Le lexique croît — {word} entre dans la langue commune : {uses} récits en mémoire vivante en ont fait un mot que la chronique doit garder.",
+  WORD_SPREAD: "Un mot à toutes les lèvres — {word} a doublé à {uses} récits ; les lexicographes ne peuvent plus feindre qu'il est nouveau.",
+  WORD_DIES: "Un mot se tait — {word} n'a pas été dit depuis {gap} récits ; le lexique le marque retenu, non vivant.",
 };
 
 const es = {
@@ -242,6 +248,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   GUILD_CHARTER: "Un oficio gana su carta — el gremio de {role} se funda con {members} manos vivas, pasado el quórum de {quorum}; la era {era} estampa su sello.",
   APPRENTICE_PACT: "Un pacto se jura — la mosca #{id} toma el oficio {role} bajo una bandera con carta; el gremio cuenta ya {members} manos.",
   GUILD_MONOPOLY: "Un oficio tiene el campo — el {share} por ciento del enjambre trabajador sirve ya al gremio de {role}; ninguna otra bandera ondea tan llena.",
+  COINAGE: "El léxico crece — {word} entra como lengua común: {uses} relatos en memoria viva lo hicieron una palabra que la crónica debe guardar.",
+  WORD_SPREAD: "Una palabra en todas las lenguas — {word} ha doblado a {uses} relatos; los lexicógrafos ya no pueden fingir que es nueva.",
+  WORD_DIES: "Una palabra enmudece — {word} lleva {gap} relatos sin ser dicha; el léxico la marca recordada, no viva.",
 };
 
 const ja = {
@@ -320,6 +329,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   GUILD_CHARTER: "ある職業が特許を得た —— ギルド「{role}」設立、在世の職人 {members} 人が定足数 {quorum} 人を超えた；第 {era} 紀元がその印を押す。",
   APPRENTICE_PACT: "誓約が結ばれた —— ハエ #{id}、特許の旗の下に {role} の業につく；ギルドは今、職人 {members} 人。",
   GUILD_MONOPOLY: "一つの職業が場を占む —— 働く群蜂の {share} パーセントが今、ギルド「{role}」の旗の下に仕える；これほど満ちた旗は他にない。",
+  COINAGE: "語彙は育つ —— {word}、共通語に加わった：生の記憶のうち {uses} 遍語られたことが、年代記の留めねばならぬ一語とした。",
+  WORD_SPREAD: "どこにもその言葉 —— {word}、{uses} 遍に倍した；辞書編みはもはや新しさを装えない。",
+  WORD_DIES: "一語、沈む —— {word}、{gap} 遍語られず；語彙帳はこれを、覚えられあれ生きてあらずと記す。",
 };
 
 const ko = {
@@ -398,6 +410,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   GUILD_CHARTER: "한 업이 특허를 얻었다 — {role} 길드 세워지고, 목숨 있는 장인 {members}명이 정족수 {quorum}명을 넘었다; 제 {era} 시대가 도장을 찍는다.",
   APPRENTICE_PACT: "맹약이 맺어졌다 — 파리 #{id}, 특허를 얻은 깃발 아래 {role}의 업을 배다; 길드, 이제 손 {members}명.",
   GUILD_MONOPOLY: "한 업이 장을 지킨다 — 일하는 무리의 {share}퍼센트, 이제 {role} 길드의 깃발 아래 섬긴다; 이토록 온전한 깃발은 없다.",
+  COINAGE: "어휘록이 자란다 — {word}, 공통 언어로 들어섰다: 살아 있는 기억 속 {uses}번 들려져, 연대기가 지켜야 할 말이 되었다.",
+  WORD_SPREAD: "모든 입에 그 말 — {word}, {uses}번으로 두 배가 되었다; 사전 짜는 이들, 더는 새로움을 가장하지 못한다.",
+  WORD_DIES: "말 하나가 잠긴다 — {word}, {gap}번 들려짐 없었으니; 어휘록, 기억될 뿐 살아 있지 아니함으로 적는다.",
 };
 
 const ar = {
@@ -476,6 +491,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   GUILD_CHARTER: "فازت حرفة بميثاقها — تأسّست نقابة {role} بـ{members} يدًا حيّة بعد بلوغ نصاب {quorum}؛ والعصر {era} يطبع ختمه.",
   APPRENTICE_PACT: "عُقد عهد — الذبابة #{id} تمتهن {role} تحت راية موثّقة؛ والنقابة تعدّ الآن {members} يدًا.",
   GUILD_MONOPOLY: "حرفة تستحوذ على الميدان — {share} بالمائة من السرب العامل يخدم الآن راية نقابة {role}؛ لا راية ترفرف أوفى منها.",
+  COINAGE: "المعجم ينمو — {word} تدخل لسان العامّة: {uses} حكاية في الذاكرة الحيّة جعلتها كلمةً على الحوليات حفظها.",
+  WORD_SPREAD: "لفظٌ على كل لسان — {word} تضاعفت إلى {uses} حكاية؛ فلم يعد بوسع واضعي المعجم أن يدّعوا أنها جديدة.",
+  WORD_DIES: "كلمة تصمت — {word} لم تُحكَ منذ {gap} حكاية؛ والمعجم يوسمها بوسم المذكورة لا الحيّة.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

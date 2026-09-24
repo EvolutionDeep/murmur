@@ -142,7 +142,12 @@ export type ChronicleKind =
   //     chartered trade strikes a pact, and one guild rising past half the working swarm claims the field.
   | "GUILD_CHARTER"
   | "APPRENTICE_PACT"
-  | "GUILD_MONOPOLY";
+  | "GUILD_MONOPOLY"
+  // ㉓ THE LEXICON: the words the telling makes (lexicon.ts) — a kind told often enough becomes a word,
+  //     a word whose tellings doubles has spread, a word unspoken for a long memory falls silent.
+  | "COINAGE"
+  | "WORD_SPREAD"
+  | "WORD_DIES";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -252,6 +257,9 @@ export interface ChronicleContext {
   /** ㉒ THE GUILDS read-out (guilds.ts signals): this cron's charter, pact and monopoly edges. Absent ⇒
    *  no GUILD_CHARTER/APPRENTICE_PACT/GUILD_MONOPOLY (GUILD_ENABLED=false never folds these in). */
   guilds?: ChronicleGuilds | null;
+  /** ㉓ THE LEXICON read-out (lexicon.ts signals): this cron's coinage, spread and silence edges. Absent ⇒
+   *  no COINAGE/WORD_SPREAD/WORD_DIES (LEX_ENABLED=false never folds these in). */
+  lexicon?: ChronicleLexicon | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -380,6 +388,22 @@ export interface ChronicleGuilds {
   /** The guildhall's standing roster for the drawer (never re-derived here). */
   roster: { role: string; members: number; share: number }[];
   counts: { charters: number; pacts: number; monopolies: number };
+}
+
+/** ㉓ THE LEXICON: one cron's word edges (lexicon.ts; pure count-edges over the hot annals roll — the
+ *  membrane coins at most one word, doubles at most one, buries at most one per cron, so a non-null
+ *  facet IS news THIS cron and cannot replay). */
+export interface ChronicleLexicon {
+  /** A watched kind told LEX_COIN_AT times in living memory enters the tongue: the word, the tellings, the era. */
+  coinage: { word: string; uses: number; era: number } | null;
+  /** A held word whose tellings DOUBLED past its last mark: no longer new. */
+  spread: { word: string; uses: number } | null;
+  /** A held word unspoken for the dormancy gap — marked remembered, not living. */
+  dying: { word: string; gap: number } | null;
+  /** The desk's standing rows for the drawer (never re-derived here). */
+  lexicon: { word: string; uses: number; born: number }[];
+  dead: string[];
+  counts: { coinages: number; spreads: number; deaths: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -577,6 +601,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉒ GUILDS: the membrane itself only speaks crossings (one seal per trade ever, one pact per change,
   //     monopoly on the rising edge) — these cooldowns guard the gravitas of a proclamation. Mirrored in CHRON_.
   GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240,
+  // ㉓ LEXICON: the desk itself only speaks edges (one coinage per word ever, one per doubling, one burial),
+  //     so these cooldowns are pure gravitas — a burial word especially should land slowly. Mirrored in CHRON_.
+  COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -707,6 +734,12 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   GUILD_CHARTER: "A trade wins its charter — the guild of {role} is founded with {members} living hands past the quorum of {quorum}; the {era}th era sets its seal.",
   APPRENTICE_PACT: "A pact is struck — fly #{id} takes up {role} beneath a chartered banner; the guild now counts {members} hands.",
   GUILD_MONOPOLY: "One trade holds the field — {share} percent of the working swarm now serves the guild of {role}; no other banner flies so full.",
+  // ㉓ THE LEXICON — the words the telling makes. {word} is the coined noun itself (a canonical English
+  //     word from lexicon.ts's closed vocabulary), {uses}/{gap} are tellings counted over the hot annals
+  //     roll — every number re-derivable by replaying the roll. Mirrored verbatim in the frontend CHRON_.
+  COINAGE: "The lexicon grows — {word} enters as common tongue: {uses} tellings in living memory made it a word the chronicle must keep.",
+  WORD_SPREAD: "A word on every tongue — {word} has doubled to {uses} tellings; the lexicographers can no longer pretend it is new.",
+  WORD_DIES: "A word falls silent — {word} has gone unspoken for {gap} tellings; the lexicon marks it remembered, not living.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1554,6 +1587,28 @@ export class Chronicler {
         const mo = gld.monopoly;
         out.push(await this.emit(ctx, "GUILD_MONOPOLY", 3, [],
           { role: mo.role, share: mo.share }, { share: mo.share }));
+      }
+    }
+
+    // ㉓ The Lexicon: the words the telling makes (lexicon.ts signals, folded in ONLY while LEX_ENABLED —
+    //     off ⇒ no `lexicon` key ⇒ these three detectors never speak). Every facet is a pure count-edge
+    //     over the annals roll already history, so a non-null facet is news this cron and cannot replay.
+    const lx = ctx.lexicon;
+    if (lx) {
+      if (lx.coinage && this.ready("COINAGE", ctx)) {
+        const cn = lx.coinage;
+        out.push(await this.emit(ctx, "COINAGE", 2, [],
+          { word: cn.word, uses: cn.uses, era: cn.era }, { uses: cn.uses, era: cn.era }));
+      }
+      if (lx.spread && this.ready("WORD_SPREAD", ctx)) {
+        const sp = lx.spread;
+        out.push(await this.emit(ctx, "WORD_SPREAD", 2, [],
+          { word: sp.word, uses: sp.uses }, { uses: sp.uses }));
+      }
+      if (lx.dying && this.ready("WORD_DIES", ctx)) {
+        const dd = lx.dying;
+        out.push(await this.emit(ctx, "WORD_DIES", 3, [],
+          { word: dd.word, gap: dd.gap }, { gap: dd.gap }));
       }
     }
 

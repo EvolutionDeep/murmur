@@ -6558,4 +6558,100 @@ Object.assign(ja, jaGuilds);
 Object.assign(ko, koGuilds);
 Object.assign(ar, arGuilds);
 
+// ㉓ THE LEXICON drawer volume (lexicon.ts read-out): tab + volume titles, the desk's roll (coinages,
+// spreads, deaths), the living word rows and the dead roll. The words themselves are canonical English
+// (lexicon.ts's closed vocabulary) and stay untranslated — the dictionary glosses the frame, not the entry.
+// Symmetric across all seven languages — keep the key set identical when editing.
+const enLex = {
+  "vol.lxTitle": "the lexicon",
+  "vol.lxSub": "· coinages, spreads & silences",
+  "tab.lexicon.name": "The Lexicon",
+  "tab.lexicon.sub": "coinages, spreads & silences",
+  "banner.lexicon": "❈ the lexicon has grown",
+  "lx.head": "{coinages} words coined · {spreads} spread · {deaths} fallen silent",
+  "lx.headTitle": "the desk's own book — coinages, doublings and silences are counted over the chronicle's LIVING memory, and naming changes no line",
+  "lx.row": "“{word}” · told {uses} times since era {born}",
+  "lx.dead": "remembered, not living — {words}",
+  "lx.none": "no word has entered the tongue yet — the living roll is empty",
+};
+const zhLex = {
+  "vol.lxTitle": "词库",
+  "vol.lxSub": "· 铸词、流传与沉寂",
+  "tab.lexicon.name": "词库",
+  "tab.lexicon.sub": "铸词、流传与沉寂",
+  "banner.lexicon": "❈ 词库又添新词",
+  "lx.head": "已铸词 {coinages} 个 · 已流传 {spreads} 次 · 已沉寂 {deaths} 个",
+  "lx.headTitle": "词条台自己的簿册——铸词、翻倍与沉寂皆从编年史的活记忆中数出，命名不改一行史文",
+  "lx.row": "「{word}」· 自第 {born} 纪元以来已讲 {uses} 遍",
+  "lx.dead": "被记住，而非活着——{words}",
+  "lx.none": "尚无一词入口——活词簿还是空的",
+};
+const frLex = {
+  "vol.lxTitle": "le lexique",
+  "vol.lxSub": "· néologies, diffusions & silences",
+  "tab.lexicon.name": "Le Lexique",
+  "tab.lexicon.sub": "néologies, diffusions & silences",
+  "banner.lexicon": "❈ le lexique s'est agrandi",
+  "lx.head": "{coinages} mots frappés · {spreads} diffusés · {deaths} tombés au silence",
+  "lx.headTitle": "le livre propre au bureau — frappes, doubles et silences sont comptés sur la MÉMOIRE VIVANTE de la chronique, et nommer ne change aucune ligne",
+  "lx.row": "« {word} » · dit {uses} fois depuis l'ère {born}",
+  "lx.dead": "retenu, non vivant — {words}",
+  "lx.none": "aucun mot n'a encore rejoint la langue — le roule vivant est vide",
+};
+const esLex = {
+  "vol.lxTitle": "el léxico",
+  "vol.lxSub": "· acuñaciones, difusiones y silencios",
+  "tab.lexicon.name": "El Léxico",
+  "tab.lexicon.sub": "acuñaciones, difusiones y silencios",
+  "banner.lexicon": "❈ el léxico ha crecido",
+  "lx.head": "{coinages} palabras acuñadas · {spreads} difundidas · {deaths} enmudecidas",
+  "lx.headTitle": "el libro propio del escritorio — acuñaciones, duplicaciones y silencios se cuentan sobre la MEMORIA VIVA de la crónica, y nombrar no cambia ninguna línea",
+  "lx.row": "«{word}» · dicho {uses} veces desde la era {born}",
+  "lx.dead": "recordada, no viva — {words}",
+  "lx.none": "ninguna palabra ha entrado aún en la lengua — el rol vivo está vacío",
+};
+const jaLex = {
+  "vol.lxTitle": "ことばの帳",
+  "vol.lxSub": "· 造語、流行と沈黙",
+  "tab.lexicon.name": "ことばの帳",
+  "tab.lexicon.sub": "造語、流行と沈黙",
+  "banner.lexicon": "❈ ことばの帳はふえた",
+  "lx.head": "造語 {coinages} 語 · 流行 {spreads} 度 · 沈黙 {deaths} 語",
+  "lx.headTitle": "書机自身の帳面——造語、倍増と沈黙はすべて年代記の生の記憶から数えられ、名づけは一行も変えない",
+  "lx.row": "「{word}」· 第{born}紀以来 {uses} 回語られた",
+  "lx.dead": "覚えられているが、生きてはいない——{words}",
+  "lx.none": "まだ一語も口に入らず——生語の帳は空",
+};
+const koLex = {
+  "vol.lxTitle": "어휘록",
+  "vol.lxSub": "· 조어, 유행과 침묵",
+  "tab.lexicon.name": "어휘록",
+  "tab.lexicon.sub": "조어, 유행과 침묵",
+  "banner.lexicon": "❈ 어휘록이 늘었다",
+  "lx.head": "조어 {coinages} 개 · 유행 {spreads} 번 · 침묵 {deaths} 개",
+  "lx.headTitle": "사전 서안의 장부 자체 — 조어, 배증과 침묵은 모두 연대기의 살아 있는 기억에서 세며, 이름 붙임은 한 줄도 바꾸지 않는다",
+  "lx.row": "'{word}' · 제{born} 시대 이래 {uses} 번 들려",
+  "lx.dead": "기억될 뿐, 살아 있지 않으니 — {words}",
+  "lx.none": "아직 말 하나 입에 오르지 않았다 — 살아 있는 두루마리는 비어 있다",
+};
+const arLex = {
+  "vol.lxTitle": "المعجم",
+  "vol.lxSub": "· سكّ الكلمات وانتشارها وصمتها",
+  "tab.lexicon.name": "المعجم",
+  "tab.lexicon.sub": "سكّ الكلمات وانتشارها وصمتها",
+  "banner.lexicon": "❈ المعجم ينمو",
+  "lx.head": "{coinages} كلمة مسكوكة · {spreads} منتشرة · {deaths} صامتة",
+  "lx.headTitle": "دفتر المكتب نفسه — السكّ والتضاعف والصمت تُعدّ على الذاكرة الحيّة للحوليات، والتسمية لا تُغيّر سطرًا واحدًا",
+  "lx.row": "«{word}» · حُكِيَ {uses} مرة منذ الحقبة {born}",
+  "lx.dead": "مذكور لا حيّ — {words}",
+  "lx.none": "لم تدخل اللفظة اللسان بعد — اللفافة الحية فارغة",
+};
+Object.assign(en, enLex);
+Object.assign(zh, zhLex);
+Object.assign(fr, frLex);
+Object.assign(es, esLex);
+Object.assign(ja, jaLex);
+Object.assign(ko, koLex);
+Object.assign(ar, arLex);
+
 export { en, zh, fr, es, ja, ko, ar };
