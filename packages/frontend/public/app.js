@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=80";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=81";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -320,6 +320,7 @@ let econArchive = null;     // ⑰ archive read-out {records[], recorded, decode
 let econWorkshop = null;    // ⑱ workshop read-out {reinventions, reinvention} — knowledge rebirth
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
+let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
 const synthAgents = new Map();                        // flyId → { address, balance, paid, earned, deals, sales } (atomic strings)
 let synthVolume = 0, synthDeals = 0;
@@ -3979,8 +3980,27 @@ function setChronVol(vol) {
     t.setAttribute("aria-selected", on ? "true" : "false");
   }
   for (const v of document.querySelectorAll("#panel-chron .chron-vol")) v.classList.toggle("is-on", v.dataset.vol === vol);
+  // keep the back bar's title in lockstep with the open volume (also re-translated on language switches)
+  const tt = $("chron-back-title");
+  if (tt) { tt.setAttribute("data-i18n", "tab." + vol + ".name"); tt.textContent = T("tab." + vol + ".name"); }
   // the social graph owns a live force loop: run it ONLY while its volume is on stage, stop otherwise
-  if (vol === "graph") sgStart(); else sgStop();
+  if (vol === "graph" && chronMode === "volume") sgStart(); else sgStop();
+}
+
+/** Two-stage codex: picking a volume on the rail opens it as a full-height page of its own, so the
+    whole column belongs to the information instead of sharing it with the rail. */
+function openChronVol(vol) {
+  chronMode = "volume";
+  const d = $("panel-chron"); if (d) d.classList.add("chron-volmode");
+  const bb = $("chron-backbar"); if (bb) bb.hidden = false;
+  setChronVol(vol);
+}
+/** Back to the rail: the index lists every volume again and the page yields the column. */
+function closeChronVol() {
+  chronMode = "index";
+  const d = $("panel-chron"); if (d) d.classList.remove("chron-volmode");
+  const bb = $("chron-backbar"); if (bb) bb.hidden = true;
+  sgStop();   // the graph volume stays "is-on" underneath but hidden: never leave its loop spinning
 }
 
 // ================= ⑤ the social graph (force-directed node-link, lives in the chronicle drawer) =========
@@ -6885,7 +6905,8 @@ function bindUI() {
   const crc = $("chron-close"); if (crc) crc.addEventListener("click", closeChron);
   const cp = $("chron-prove"); if (cp) cp.addEventListener("click", proveChron);
     const ctabs = $("chron-tabs");
-    if (ctabs) ctabs.addEventListener("click", (e) => { const b = e.target.closest(".chron-tab"); if (b) setChronVol(b.dataset.vol); });
+    if (ctabs) ctabs.addEventListener("click", (e) => { const b = e.target.closest(".chron-tab"); if (b) openChronVol(b.dataset.vol); });
+    const cbk = $("chron-back"); if (cbk) cbk.addEventListener("click", closeChronVol);
   const pb = $("proofs-btn"); if (pb) pb.addEventListener("click", toggleProofs);
   const pc = $("proofs-close"); if (pc) pc.addEventListener("click", closeProofs);
   const lrb = $("laureate-btn"); if (lrb) lrb.addEventListener("click", toggleLaureate);
@@ -6964,7 +6985,7 @@ function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (chronOpen) closeChron(); else if (laureateOpen) closeLaureate(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
+    if (chronOpen) { if (chronMode === "volume") closeChronVol(); else closeChron(); } else if (laureateOpen) closeLaureate(); else if (proofsOpen) closeProofs(); else if (brainOpen) closeBrain(); else if (lineageOpen) closeLineage(); else if (pulseOpen) closePulse(); else if (arenaOpen) closeArena(); else if (predictOpen) closePredict(); else if (historyOpen) closeHistory(); else if (walletsOpen) closeWallets(); else deselect();
   });
 }
 

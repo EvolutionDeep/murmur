@@ -935,6 +935,25 @@ body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-event
 .chron-tab.is-on .ct-ico, .chron-tab.is-on .ct-name { color: var(--accent); }
 .chron-vol { display: none; }
 .chron-vol.is-on { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* --- two-stage codex: the rail is the index; a picked volume owns the whole column ---
+   Index mode hides every volume body so the list of volumes breathes across the full column;
+   volume mode hides the rail and tops the page with a back bar, so the information itself gets
+   the entire drawer height instead of a strip under ten stacked tabs. */
+#panel-chron:not(.chron-volmode) .chron-vol { display: none; }
+#panel-chron:not(.chron-volmode) .chron-tabs { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+#panel-chron.chron-volmode .chron-tabs { display: none; }
+.chron-backbar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; flex: none; }
+.chron-backbar[hidden] { display: none; }
+.chron-back {
+  min-width: 40px; min-height: 40px; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--hair); border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.05); color: var(--ink);
+  font-size: 16px; line-height: 1; cursor: pointer;
+  transition: background 0.18s;
+}
+.chron-back:hover { background: rgba(var(--accent-rgb), 0.12); }
+.chron-back-title { font-family: var(--display); font-style: italic; font-weight: 600; font-size: 15px; color: var(--accent); }
 /* each volume now owns the whole drawer body, so drop the old shared-drawer height caps */
 .panel-chron .chron-vol .wallets-social { max-height: none; }
 /* --- ⑤ the social graph: a force-directed node-link that fills its volume --- */
