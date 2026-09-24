@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=83" />
+  <link rel="stylesheet" href="./styles.css?v=84" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -147,6 +147,7 @@
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="tech"><span class="ct-ico">✵</span><span class="ct-name" data-i18n="tab.tech.name">The Ladder of Arts</span><span class="ct-sub" data-i18n="tab.tech.sub">inventions, customs &amp; forgotten arts</span></button>
       <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="cities"><span class="ct-ico">♜</span><span class="ct-name" data-i18n="tab.cities.name">The Named Places</span><span class="ct-sub" data-i18n="tab.cities.sub">hamlets, towns &amp; the census</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="war" hidden><span class="ct-ico">⚑</span><span class="ct-name" data-i18n="tab.war.name">The War Coffer</span><span class="ct-sub" data-i18n="tab.war.sub">on-chain vaults, bouts &amp; the tax purse</span></button>
+<button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="bourse" hidden><span class="ct-ico">¤</span><span class="ct-name" data-i18n="tab.bourse.name">The Bourse</span><span class="ct-sub" data-i18n="tab.bourse.sub">the project coin's tape, felt by the swarm</span></button>
 <button class="chron-tab" type="button" role="tab" aria-selected="false" data-vol="graph"><span class="ct-ico">◉</span><span class="ct-name" data-i18n="tab.graph.name">The Social Graph</span><span class="ct-sub" data-i18n="tab.graph.sub">the whole society, drawn at once</span></button>
     </nav>
     <section class="chron-vol is-on" data-vol="annals">
@@ -242,6 +243,17 @@
         <div class="war-body" id="war-wars"></div>
         <div class="war-subhead" id="war-vaults-head" hidden><span data-i18n="vol.warVaults">vaults on the coffer</span></div>
         <div class="war-body" id="war-vaults"></div>
+      </div>
+    </section>
+    <section class="chron-vol" data-vol="bourse">
+      <!-- ⑲ the bourse: the project coin's live tape on Arc, read for laypeople — how hot it runs, the
+           cumulative 2% tax bled to the treasury, whale stirs & silences, and HOW that climate reaches the
+           swarm (the same four visitor channels, hard-capped). A pure read-out of /bourse — the worker holds
+           no token key, signs nothing and moves no money. Gated on `enabled`, so the tab stays hidden while
+           BOURSE_ENABLED=false. -->
+      <div class="chron-bourse" id="chron-bourse" hidden>
+        <div class="bou-title"><span data-i18n="vol.bourseTitle">the bourse</span> <em data-i18n="vol.bourseSub">· MURMUR's live tape on Arc</em></div>
+        <div class="bou-body" id="bou-body"></div>
       </div>
     </section>
     <section class="chron-vol" data-vol="graph">
@@ -476,6 +488,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=96" type="module"></script>
+  <script src="./app.js?v=97" type="module"></script>
 </body>
 </html>

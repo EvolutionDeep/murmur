@@ -658,6 +658,31 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wrk-row.wrk-head { color: var(--ink); }
 .wrk-row.wrk-event { color: #3f5a4a; }
 
+/* ⑲ the bourse (the project coin's tape, felt + narrated) — a layperson read-out of /bourse: fever gauge,
+   treasury-pulse bar, whale/silence lamps, and the plain-language bridge to the four felt channels. */
+.chron-bourse { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 0 var(--pad); padding: 10px 0 12px; }
+.bou-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.bou-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.bou-body { display: flex; flex-direction: column; gap: 7px; margin-top: 9px; }
+.bou-row { font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--ink); white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.bou-gauge { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 8px; }
+.bou-lab { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.bou-track { position: relative; display: block; height: 7px; border-radius: 4px; background: rgba(26, 26, 24, 0.10); overflow: hidden; }
+.bou-fill { position: absolute; inset: 0 auto 0 0; display: block; width: 0; border-radius: 4px; background: var(--muted); transition: width 0.5s ease; }
+.bou-val { font-size: 10px; color: var(--ink); white-space: nowrap; }
+.bou-fever .bou-fill { background: linear-gradient(90deg, #c08a3c, #c05e3c); }
+.bou-tithe .bou-fill { background: linear-gradient(90deg, #7a6a3a, #3f5a4a); }
+.bou-tape { color: #6a4a3f; }
+.bou-whale { color: var(--muted); }
+.bou-whale.is-on { color: #9c3b2e; font-weight: 600; }
+.bou-silence { color: var(--muted); }
+.bou-silence.is-on { color: #4a4a6a; }
+.bou-subhead { margin-top: 4px; padding-top: 7px; border-top: 1px solid var(--hair); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.bou-feel { font-family: var(--display); font-size: 12px; line-height: 1.45; color: var(--ink); }
+.bou-legend { font-size: 9.5px; line-height: 1.5; color: var(--muted); }
+.bou-meta { font-size: 9.5px; color: var(--muted); }
+[dir="rtl"] .bou-fill { inset: 0 0 0 auto; }
+
 /* ⑥ institutions (wallets drawer): the tape of marks + the state of credit — a read-out of the market block */
 .wallets-market { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
 .wmk-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
@@ -1701,6 +1726,8 @@ html[dir="rtl"] .chron-era-regime,
 html[dir="rtl"] .chron-btn .chron-label,
 html[dir="rtl"] .dist-legend li,
 html[dir="rtl"] .epitaph-head,
-html[dir="rtl"] .ep-line {
+html[dir="rtl"] .ep-line,
+html[dir="rtl"] .bou-title,
+html[dir="rtl"] .bou-row {
   direction: rtl; text-align: right;
 }

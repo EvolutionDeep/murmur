@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=82";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=83";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -318,6 +318,7 @@ let econCities = null;      // ⑭ settlement read-out {settlements[], urbanPop,
 let econApprentice = null;  // ⑯ apprenticeship read-out {keepers[], skilled, topCraft, lineages, schools[], transmission, surpass, school, craftLost} — who remembers what
 let econArchive = null;     // ⑰ archive read-out {records[], recorded, decodes, recording, decode, archiveBurned} — what's been carved in stone
 let econWorkshop = null;    // ⑱ workshop read-out {reinventions, reinvention} — knowledge rebirth
+let econBourse = null;      // ⑲ the bourse read-out from /bourse {climate, signals, lastBlock, stimulus, …} — the project coin's tape, felt + narrated
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -3692,6 +3693,103 @@ function renderWorkshopSection() {
   }
 }
 
+// Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
+function fmtMurCompact(n) {
+  n = Number(n) || 0;
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return a >= 10 ? String(Math.round(n)) : n.toFixed(1);
+}
+
+// ================= ⑲ the bourse section (the project coin's tape, felt + narrated) =================
+// A plain-language read-out of GET /bourse for laypeople: how hot the MURMUR tape runs, the cumulative 2%
+// argus tax that has bled to the treasury, whale stirs and long silences — and, crucially, HOW that climate
+// reaches the swarm (the SAME four visitor channels, hard-capped at TOKEN_STIMULUS_MAX). Pure read-out: it
+// moves no money, holds no key and reflects no decision. Hidden while BOURSE_ENABLED=false (the tab is gated
+// too, so the codex rail never strands on an empty volume).
+function renderBourseSection() {
+  const host = $("chron-bourse");
+  const body = $("bou-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="bourse"]');
+  const b = econBourse;
+  if (!b || !b.enabled) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+
+  const sig = b.signals || {};
+  const cli = b.climate || {};
+  const fever = clamp(Number(cli.feverLevel) || 0);
+  const txs = Number(sig.txs) || 0;
+  const vol = Number(sig.volumeMurmur) || 0;
+  const baseVol = Number(sig.baselineVolumeMurmur) || 0;
+  const mult = baseVol > 0 ? vol / baseVol : (vol > 0 ? 1 : 0);
+  const tax = Number(sig.taxTotalMurmur) || 0;
+  const milestone = Number(b.titheMilestoneMurmur) || 0;
+  const whaleN = Number(sig.whaleTotal) || 0;
+  const whaleExcess = (cli.whaleExcess == null) ? null : clamp(Number(cli.whaleExcess) || 0);
+  const whaleThr = Number(b.whaleThresholdMurmur) || 0;
+  const quiet = Number(cli.quietCrons) || 0;
+  const cap = Number(b.maxIntensity) || 0;
+
+  const gauge = (labelText, frac, valueText, cls, titleText) => {
+    const row = document.createElement("div");
+    row.className = "bou-row bou-gauge " + cls;
+    if (titleText) row.title = titleText;
+    const lab = document.createElement("span"); lab.className = "bou-lab"; lab.textContent = labelText;
+    const track = document.createElement("span"); track.className = "bou-track";
+    const fill = document.createElement("i"); fill.className = "bou-fill";
+    fill.style.width = (clamp(frac) * 100).toFixed(1) + "%";
+    track.appendChild(fill);
+    const val = document.createElement("span"); val.className = "bou-val"; val.textContent = valueText;
+    row.appendChild(lab); row.appendChild(track); row.appendChild(val);
+    return row;
+  };
+  const line = (cls, text, titleText) => {
+    const row = document.createElement("div");
+    row.className = "bou-row " + cls;
+    row.textContent = text;
+    if (titleText) row.title = titleText;
+    return row;
+  };
+
+  // 1) fever gauge — how hot the tape runs against its own learned norm.
+  const st = fever >= 0.75 ? T("bourse.state.hot") : fever >= 0.55 ? T("bourse.state.warm") : fever >= 0.3 ? T("bourse.state.steady") : T("bourse.state.cool");
+  body.appendChild(gauge(T("bourse.fever"), fever, `${st} · ${Math.round(fever * 100)}%`, "bou-fever", T("bourse.feverTitle")));
+  // 2) the tape this last cron.
+  body.appendChild(line("bou-tape", T("bourse.tape", { txs: txs, vol: fmtMurCompact(vol), mult: mult.toFixed(1) }), T("bourse.tapeTitle")));
+  // 3) treasury pulse — cumulative 2% tax, bar fills toward the next spoken milestone.
+  const taxFrac = milestone > 0 ? (tax % milestone) / milestone : 0;
+  body.appendChild(gauge(T("bourse.tithe"), taxFrac, T("bourse.titheVal", { tax: fmtMurCompact(tax) }), "bou-tithe", T("bourse.titheTitle", { milestone: fmtMurCompact(milestone) })));
+  // 4) whale — did a single stroke cross the whale line this cron?
+  if (whaleExcess != null && whaleExcess > 0) body.appendChild(line("bou-whale is-on", T("bourse.whaleNow", { thr: fmtMurCompact(whaleThr) }), T("bourse.whaleTitle")));
+  else body.appendChild(line("bou-whale", T("bourse.whaleNone", { thr: fmtMurCompact(whaleThr), n: whaleN }), T("bourse.whaleTitle")));
+  // 5) silence — how many crons since a single transfer.
+  body.appendChild(line(quiet > 0 ? "bou-silence is-on" : "bou-silence", quiet > 0 ? T("bourse.silence", { crons: quiet }) : T("bourse.silenceNone"), T("bourse.silenceTitle")));
+  // 6) what the swarm feels — the plain-language bridge to the four channels.
+  body.appendChild(line("bou-subhead", T("bourse.feelHead")));
+  let feelKey;
+  if (!b.stimulus) feelKey = "bourse.feelOff";
+  else if (fever >= 0.55) feelKey = "bourse.feelFood";
+  else if (whaleExcess != null && whaleExcess > 0) feelKey = "bourse.feelThreat";
+  else if (cli.titheCrossed) feelKey = "bourse.feelLight";
+  else if (quiet >= 45) feelKey = "bourse.feelDark";
+  else feelKey = "bourse.feelCalm";
+  body.appendChild(line("bou-feel", T(feelKey), T("bourse.feelTitle", { cap: cap })));
+  body.appendChild(line("bou-legend", T("bourse.legend", { cap: cap })));
+  // 7) meta — chain, block, feeling switch.
+  const tok = b.token ? (String(b.token).slice(0, 6) + "…" + String(b.token).slice(-4)) : "";
+  const stim = b.stimulus ? T("bourse.stimOn", { cap: cap }) : T("bourse.stimOff");
+  body.appendChild(line("bou-meta", T("bourse.meta", { chain: b.chainId, block: (Number(b.lastBlock) || 0).toLocaleString(), stim: stim }), T("bourse.metaTitle", { token: tok })));
+}
+
 // ================= ⑨ the war coffer section (in the chronicle panel) =================
 // The on-chain WarCoffer: which houses hold a real-USDC vault, the live + just-closed bouts (winner derived
 // inside the contract, cross-checked independently here), and the extra tax purse. A pure read-out of /war —
@@ -4274,6 +4372,16 @@ async function pollWar() {
     if (r && r.enabled) { econWar = r; renderWarSection(); }
     else { econWar = null; renderWarSection(); }
   } catch { econWar = null; renderWarSection(); }
+}
+
+// Poll /bourse — the project coin's live tape (fever, cumulative tax flow, whales, silences). Gated
+// client-side on `enabled`, so while BOURSE_ENABLED=false it renders nothing and costs one cheap fetch.
+async function pollBourse() {
+  try {
+    const r = await getJSON("/bourse", 6000);
+    if (r && r.enabled) { econBourse = r; renderBourseSection(); }
+    else { econBourse = null; renderBourseSection(); }
+  } catch { econBourse = null; renderBourseSection(); }
 }
 
 function chronTimeAgo(ts) {
@@ -6898,7 +7006,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();
@@ -7640,6 +7748,8 @@ function boot() {
   setInterval(pollChron, CHRON_POLL_MS);      // chronicle advances on threshold events; 25s keeps it fresh
   pollWar();                                  // seed the on-chain war coffer section (inert while WAR off)
   setInterval(pollWar, CHRON_POLL_MS);        // coffer vaults/bouts/purse refresh on the same slow cadence
+  pollBourse();                               // seed the bourse panel (inert while BOURSE off)
+  setInterval(pollBourse, CHRON_POLL_MS);     // the coin tape refreshes on the same slow cadence
   requestAnimationFrame(loop);
 }
 boot();
