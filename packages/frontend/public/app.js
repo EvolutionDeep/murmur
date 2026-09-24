@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=86";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=87";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -320,6 +320,7 @@ let econArchive = null;     // ⑰ archive read-out {records[], recorded, decode
 let econWorkshop = null;    // ⑱ workshop read-out {reinventions, reinvention} — knowledge rebirth
 let econBourse = null;      // ⑲ the bourse read-out from /bourse {climate, signals, lastBlock, stimulus, …} — the project coin's tape, felt + narrated
 let econCourt = null;       // ⑳ the court read-out {indictment,trial,verdict,exile,amnesty,outlaws,openCases,counts} — verdicts, exile & amnesty
+let econGames = null;       // ㉑ the games read-out {games,champion,record,lastGames,standing,pendingGames,counts} — era festivals, champions & records
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -1852,6 +1853,13 @@ function spawnChronFx(e) {
     const t = e.tokens || {};
     if (e.kind === "EXILE" || e.kind === "AMNESTY") chronFx.push({ kind: "law", t0: now, dur: 3000 });
     setBanner(T("banner.court"), ct(e.kind, t), e.kind === "EXILE" ? CRACK_RED : LAW_GOLD);
+  } else if (e.kind === "GAMES" || e.kind === "CHAMPION" || e.kind === "RECORD") {
+    // ㉑ the games: an opening washes the field in festival warmth (the holy-day wash again); a crowning or
+    // a fallen record ripples law-gold from the coffer. Reuses existing fx — no new canvas pass, no new render branch.
+    const t = e.tokens || {};
+    if (e.kind === "GAMES") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
+    else chronFx.push({ kind: "law", t0: now, dur: 3000 });
+    setBanner(T("banner.games"), ct(e.kind, t), LAW_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -3336,6 +3344,7 @@ function applyEconomy(econ) {
   if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
   if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
   if (econ.court) { econCourt = econ.court; renderCourtSection(); }
+  if (econ.games) { econGames = econ.games; renderGamesSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -4149,6 +4158,58 @@ function renderCourtSection() {
   }
 }
 
+// ================= ㉑ the games section (festivals, champions, records) =================
+// A plain-language stadium read-out of games.ts: how many festivals the era bell has proclaimed, the last
+// one's programme, and the champion whose lifetime dealings hold the standing mark. PURE READ-OUT — the
+// games move no money; the stadium keeps only its own bounded roll. The volume (tab included) hides while
+// /economy ships no games key.
+const GM_EVENTS = ["the long sprint", "the wing-clap derby", "the nectar haul", "the aggregation drill", "the homing race", "the odour chase"];
+function gmEventName(ev) {
+  const i = GM_EVENTS.indexOf(ev);
+  return i >= 0 ? T("gm.ev." + i) : ev;
+}
+function renderGamesSection() {
+  const host = $("chron-games");
+  const body = $("gm-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="games"]');
+  const g = econGames;
+  if (!g || !g.counts) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+  const n = g.counts;
+  const head = document.createElement("div");
+  head.className = "gm-row gm-head";
+  head.textContent = T("gm.head", { games: n.games, crowns: n.crowns, records: n.records });
+  head.title = T("gm.headTitle");
+  body.appendChild(head);
+  const lg = g.lastGames;
+  if (lg) {
+    const last = document.createElement("div");
+    last.className = "gm-row gm-last";
+    last.textContent = T(g.pendingGames ? "gm.ongoing" : "gm.last", { era: lg.era, event: gmEventName(lg.event), venue: lg.venue });
+    body.appendChild(last);
+  }
+  const st = g.standing;
+  if (st) {
+    const row = document.createElement("div");
+    row.className = "gm-row gm-stand";
+    row.textContent = T("gm.stand", { id: st.id, deals: st.deals, era: st.era });
+    body.appendChild(row);
+  }
+  if (!lg && !st) {
+    const none = document.createElement("div");
+    none.className = "gm-row gm-none";
+    none.textContent = T("gm.none");
+    body.appendChild(none);
+  }
+}
+
 // Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
 function fmtMurCompact(n) {
   n = Number(n) || 0;
@@ -4357,6 +4418,7 @@ function openWallets() {
   if (e.archive) { econArchive = e.archive; renderArchiveSection(); }
   if (e.workshop) { econWorkshop = e.workshop; renderWorkshopSection(); }
       if (e.court) { econCourt = e.court; renderCourtSection(); }
+      if (e.games) { econGames = e.games; renderGamesSection(); }
   }).catch(() => {});
 }
 
@@ -4905,6 +4967,7 @@ const CHRON_ICONS = {
   RECORDING: "✒", DECODE: "◉", ARCHIVE_BURNED: "▲", REINVENTION: "⚒",
   COIN_FEVER: "¤", WHALE_MOVE: "〰", TITHE: "◇", COIN_SILENCE: "◌",
   INDICTMENT: "§", TRIAL: "⚖", VERDICT: "☰", EXILE: "➤", AMNESTY: "✹",
+  GAMES: "⚑", CHAMPION: "★", RECORD: "✦",
 };
 
 function renderChron() {
@@ -5089,13 +5152,16 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     VERDICT: "The jury speaks — fly #{id}, tried for {crime}: {finding} by {votes} of {jurors} votes.",
     EXILE: "Exile — convicted of {crime}, fly #{id} is cast beyond the commons' protection until a new era's mercy.",
     AMNESTY: "Amnesty — the new era pardons the outlaw roll; {outlaws} names struck from the court's book.",
+    GAMES: "The {era}th games open at the house of {venue} — the programme is {event}; the swarm pauses its ledgers for the stadium.",
+    CHAMPION: "A champion is crowned — fly #{id} wins {event}; {house} raises its sigil over the stadium.",
+    RECORD: "The record falls — fly #{id} posts {deals} lifetime dealings past the old mark of {prev}; the games now keep their own history.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -6832,6 +6898,7 @@ async function poll() {
     if (econ.archive) { econArchive = econ.archive; renderArchiveSection(); }
     if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
     if (econ.court) { econCourt = econ.court; renderCourtSection(); }
+    if (econ.games) { econGames = econ.games; renderGamesSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -7514,7 +7581,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderBourseSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

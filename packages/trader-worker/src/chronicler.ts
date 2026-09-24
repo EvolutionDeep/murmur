@@ -134,7 +134,10 @@ export type ChronicleKind =
   | "TRIAL"
   | "VERDICT"
   | "EXILE"
-  | "AMNESTY";
+  | "AMNESTY"
+  | "GAMES"
+  | "CHAMPION"
+  | "RECORD";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -238,6 +241,9 @@ export interface ChronicleContext {
   /** ⑳ THE COURT read-out (court.ts signals): this cron's docket edge events. Absent ⇒ no
    *  INDICTMENT/TRIAL/VERDICT/EXILE/AMNESTY (COURTS_ENABLED=false never folds these in). */
   court?: ChronicleCourt | null;
+  /** ㉑ THE GAMES read-out (games.ts signals): this cron's festival edge events. Absent ⇒ no
+   *  GAMES/CHAMPION/RECORD (GAMES_ENABLED=false never folds these in). */
+  games?: ChronicleGames | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -336,6 +342,22 @@ export interface ChronicleCourt {
   outlaws: { id: number; crime: string; since: number }[];
   openCases: number;
   counts: { indicted: number; convicted: number; cleared: number; exiles: number; amnesties: number };
+}
+
+/** ㉑ THE GAMES: one cron's festival edge events (games.ts; the membrane resets its pending each round and
+ *  spends each era's bell once, so a non-null facet IS news THIS cron and cannot replay). */
+export interface ChronicleGames {
+  /** A new era proclaimed the games: the era, the day's event, the presiding house ("the commons" if none). */
+  games: { era: number; event: string; venue: string } | null;
+  /** A champion crowned from the living field by the era's own hash draw. */
+  champion: { id: number; event: string; house: string | null } | null;
+  /** The crowned fly's lifetime dealings passed the standing mark (prev = the mark that fell). */
+  record: { id: number; deals: number; prev: number } | null;
+  /** The stadium's standing truth for the drawer (never re-derived here). */
+  lastGames: { era: number; event: string; venue: string } | null;
+  standing: { id: number; deals: number; era: number } | null;
+  pendingGames: boolean;
+  counts: { games: number; crowns: number; records: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -527,6 +549,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     per cron; exile rides a verdict, amnesty rings at most once per era). These cooldowns only guard
   //     against a stuttering roll of the same kind — gravitas kept: an exile and an amnesty are rare words.
   INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200,
+  // ㉑ GAMES: the membrane rings its own era bell (≤ one opening and one crowning per era, spent once);
+  //     these cooldowns only guard the gravitas — a festival proclamation should not stutter.
+  GAMES: 100, CHAMPION: 100, RECORD: 200,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -645,6 +670,12 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   VERDICT: "The jury speaks — fly #{id}, tried for {crime}: {finding} by {votes} of {jurors} votes.",
   EXILE: "Exile — convicted of {crime}, fly #{id} is cast beyond the commons' protection until a new era's mercy.",
   AMNESTY: "Amnesty — the new era pardons the outlaw roll; {outlaws} names struck from the court's book.",
+  // ㉑ THE GAMES — the era bell's festivals. {event} is the day's drawn race, {venue}/{house} the presiding
+  //     house ("the commons"/"no house" when the dynasty names none); {deals}/{prev} are the champion's and
+  //     the fallen mark's OWN lifetime settlements — every number re-derivable from the ledgers. Mirrored in CHRON_.
+  GAMES: "The {era}th games open at the house of {venue} — the programme is {event}; the swarm pauses its ledgers for the stadium.",
+  CHAMPION: "A champion is crowned — fly #{id} wins {event}; {house} raises its sigil over the stadium.",
+  RECORD: "The record falls — fly #{id} posts {deals} lifetime dealings past the old mark of {prev}; the games now keep their own history.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1447,6 +1478,28 @@ export class Chronicler {
         s.lastAmnestyEra = s.era;
         out.push(await this.emit(ctx, "AMNESTY", 2, [],
           { outlaws: crt.amnesty.outlaws }, { outlaws: crt.amnesty.outlaws }));
+      }
+    }
+
+    // ㉑ The Games: the era bell's festivals (games.ts signals, folded in ONLY while GAMES_ENABLED — off ⇒
+    //     no `games` key ⇒ these three detectors never speak). The membrane spends each era's bell itself
+    //     (seen-eras roll) and resets its pending every round, so every non-null facet is news this cron.
+    const gms = ctx.games;
+    if (gms) {
+      if (gms.games && this.ready("GAMES", ctx)) {
+        const g = gms.games;
+        out.push(await this.emit(ctx, "GAMES", 2, [],
+          { era: g.era, event: g.event, venue: g.venue }, { era: g.era }));
+      }
+      if (gms.champion && this.ready("CHAMPION", ctx)) {
+        const c = gms.champion;
+        out.push(await this.emit(ctx, "CHAMPION", 3, [c.id],
+          { id: c.id, event: c.event, house: c.house ?? "no house" }, { id: c.id }));
+      }
+      if (gms.record && this.ready("RECORD", ctx)) {
+        const r = gms.record;
+        out.push(await this.emit(ctx, "RECORD", 3, [r.id],
+          { id: r.id, deals: r.deals, prev: r.prev }, { id: r.id, deals: r.deals, prev: r.prev }));
       }
     }
 

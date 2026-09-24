@@ -6318,4 +6318,148 @@ Object.assign(ja, jaCourt);
 Object.assign(ko, koCourt);
 Object.assign(ar, arCourt);
 
+// ㉑ THE GAMES drawer volume (games.ts read-out): tab + volume titles, the stadium's book (festivals proclaimed,
+// the last programme, the standing mark) and the six event names on the drawn programme. Symmetric across all
+// seven languages — keep the key set identical when editing.
+const enGames = {
+  "vol.gmTitle": "the games",
+  "vol.gmSub": "· festivals, champions & records",
+  "tab.games.name": "The Games",
+  "tab.games.sub": "festivals, champions & records",
+  "banner.games": "★ the games are proclaimed",
+  "gm.head": "{games} festivals proclaimed · {crowns} champions crowned · {records} records fallen",
+  "gm.headTitle": "the stadium's own book — each era's bell drew the opening, the champion and the mark by hash, and no crown moves any money",
+  "gm.last": "the {era}th games at the house of {venue}: {event}",
+  "gm.ongoing": "the {era}th games are on at the house of {venue}: {event} — the field is deciding",
+  "gm.stand": "standing mark — fly #{id}: {deals} lifetime dealings (era {era})",
+  "gm.none": "no festival proclaimed yet — the era bell is still silent",
+  "gm.ev.0": "the long sprint",
+  "gm.ev.1": "the wing-clap derby",
+  "gm.ev.2": "the nectar haul",
+  "gm.ev.3": "the aggregation drill",
+  "gm.ev.4": "the homing race",
+  "gm.ev.5": "the odour chase",
+};
+const zhGames = {
+  "vol.gmTitle": "竞技会",
+  "vol.gmSub": "· 赛会、冠军与纪录",
+  "tab.games.name": "竞技会",
+  "tab.games.sub": "赛会、冠军与纪录",
+  "banner.games": "★ 竞技会揭幕",
+  "gm.head": "已办赛会 {games} 届 · 加冕冠军 {crowns} 位 · 打破纪录 {records} 次",
+  "gm.headTitle": "运动场自己的账簿——新时代的钟声以哈希抽定开幕、冠军与纪录，任何加冕都不动一分钱",
+  "gm.last": "第 {era} 届竞技会于 {venue} 家族揭幕：{event}",
+  "gm.ongoing": "第 {era} 届竞技会正在 {venue} 家族进行：{event}——场上正在决胜负",
+  "gm.stand": "现行纪录——果蝇 #{id}：终身成交 {deals} 笔（第 {era} 纪）",
+  "gm.none": "尚未宣告任何赛会——时代之钟仍寂静",
+  "gm.ev.0": "长距离竞飞",
+  "gm.ev.1": "振翅德比",
+  "gm.ev.2": "负蜜搬运",
+  "gm.ev.3": "聚群操演",
+  "gm.ev.4": "归巢竞速",
+  "gm.ev.5": "循味追踪",
+};
+const frGames = {
+  "vol.gmTitle": "les jeux",
+  "vol.gmSub": "· fêtes, champions & records",
+  "tab.games.name": "Les Jeux",
+  "tab.games.sub": "fêtes, champions & records",
+  "banner.games": "★ les jeux sont proclamés",
+  "gm.head": "{games} fêtes proclamées · {crowns} champions couronnés · {records} records battus",
+  "gm.headTitle": "le livre propre au stade — chaque cloche d'ère a tiré au sort l'ouverture, le champion et la marque par hash, et aucune couronne ne déplace d'argent",
+  "gm.last": "les {era}es jeux à la maison {venue} : {event}",
+  "gm.ongoing": "les {era}es jeux se tiennent à la maison {venue} : {event} — le champ décide",
+  "gm.stand": "record en vigueur — mouche #{id} : {deals} échanges à vie (ère {era})",
+  "gm.none": "aucune fête proclamée — la cloche des ères est encore muette",
+  "gm.ev.0": "le long sprint",
+  "gm.ev.1": "le derby des battements",
+  "gm.ev.2": "la portée de nectar",
+  "gm.ev.3": "la manœuvre d'agrégation",
+  "gm.ev.4": "la course du retour",
+  "gm.ev.5": "la piste à l'odorat",
+};
+const esGames = {
+  "vol.gmTitle": "los juegos",
+  "vol.gmSub": "· fiestas, campeones y récords",
+  "tab.games.name": "Los Juegos",
+  "tab.games.sub": "fiestas, campeones y récords",
+  "banner.games": "★ se proclaman los juegos",
+  "gm.head": "{games} fiestas proclamadas · {crowns} campeones coronados · {records} récords rotos",
+  "gm.headTitle": "el libro propio del estadio — cada campana de era sorteó apertura, campeón y marca por hash, y ninguna corona mueve dinero",
+  "gm.last": "los {era}ésimos juegos en la casa {venue}: {event}",
+  "gm.ongoing": "los {era}ésimos juegos siguen en la casa {venue}: {event} — el campo decide",
+  "gm.stand": "récord vigente — mosca #{id}: {deals} tratos de por vida (era {era})",
+  "gm.none": "ninguna fiesta proclamada aún — la campana de las eras calla",
+  "gm.ev.0": "la larga carrera",
+  "gm.ev.1": "el derby del aleteo",
+  "gm.ev.2": "la carga de néctar",
+  "gm.ev.3": "la maniobra de agregación",
+  "gm.ev.4": "la carrera de regreso",
+  "gm.ev.5": "la persecución de olor",
+};
+const jaGames = {
+  "vol.gmTitle": "大競技会",
+  "vol.gmSub": "· 祭典、優勝者と記録",
+  "tab.games.name": "大競技会",
+  "tab.games.sub": "祭典、優勝者と記録",
+  "banner.games": "★ 大競技会の触れが出た",
+  "gm.head": "開催 {games} 回 · 優勝者 {crowns} 名 · 記録更新 {records} 回",
+  "gm.headTitle": "スタジアム自身の帳簿——時代の鐘ごとに開幕も優勝者も記録もハッシュの抽選で、いかなる戴冠も資金を動かさない",
+  "gm.last": "第{era}回大競技会、{venue}家の元で：{event}",
+  "gm.ongoing": "第{era}回大競技会、{venue}家の元で進行中：{event}——今、勝負が決せられている",
+  "gm.stand": "現行記録——ハエ #{id}：生涯取引 {deals} 件（第{era}紀）",
+  "gm.none": "まだ祭りの触れなし——時代の鐘は沈黙",
+  "gm.ev.0": "長距離走",
+  "gm.ev.1": "羽音ダービー",
+  "gm.ev.2": "蜜運び",
+  "gm.ev.3": "群聚訓練",
+  "gm.ev.4": "帰巣競走",
+  "gm.ev.5": "匂い追跡",
+};
+const koGames = {
+  "vol.gmTitle": "경기 대회",
+  "vol.gmSub": "· 축제, 우승자와 기록",
+  "tab.games.name": "경기 대회",
+  "tab.games.sub": "축제, 우승자와 기록",
+  "banner.games": "★ 경기 대회가 선포되다",
+  "gm.head": "선포된 대회 {games}회 · 왕관 쓴 우승자 {crowns}명 · 깨진 기록 {records}회",
+  "gm.headTitle": "경기장 자신의 장부 — 각 시대의 종소리가 개막·우승자·기록을 해시로 뽑으며, 어떤 관도 돈을 움직이지 않는다",
+  "gm.last": "{venue} 가문의 제 {era}차 대회: {event}",
+  "gm.ongoing": "{venue} 가문의 제 {era}차 대회 진행 중: {event} — 운동장이 결정을 내리는 중",
+  "gm.stand": "현행 기록 — 파리 #{id}: 평생 거래 {deals}건 ({era}시대)",
+  "gm.none": "아직 선포된 대회 없음 — 시대의 종은 아직 고요하다",
+  "gm.ev.0": "장거리 달리기",
+  "gm.ev.1": "날개짓 더비",
+  "gm.ev.2": "꿀 나르기",
+  "gm.ev.3": "집합 훈련",
+  "gm.ev.4": "귀소 경주",
+  "gm.ev.5": "냄새 추적",
+};
+const arGames = {
+  "vol.gmTitle": "الألعاب",
+  "vol.gmSub": "· مهرجانات وأبطال وأرقام قياسية",
+  "tab.games.name": "الألعاب",
+  "tab.games.sub": "مهرجانات وأبطال وأرقام",
+  "banner.games": "★ نُودِيَ بالألعاب",
+  "gm.head": "{games} مهرجانًا مُعلَنًا · {crowns} بطلًا تُوِّجوا · {records} أرقام حُطِّمت",
+  "gm.headTitle": "سِجلّ الملعب نفسه — كل عصر تقرع ناقته فتنتخب الافتتاح والبطل والرقم بالهاش، ولا يحرك أي تتويج مالًا",
+  "gm.last": "الألعاب {era} في دار {venue}: {event}",
+  "gm.ongoing": "الألعاب {era} قائمة في دار {venue}: {event} — الميادين تُقرّ القرار",
+  "gm.stand": "الرقم القائم — الذبابة #{id}: {deals} صفقة مدى الحياة (العصر {era})",
+  "gm.none": "لم يُعلن عن أي مهرجان بعد — ناقوس العصور صامت",
+  "gm.ev.0": "العدو الطويل",
+  "gm.ev.1": "دربي رفرفة الأجنحة",
+  "gm.ev.2": "حمولة الرحيق",
+  "gm.ev.3": "تمرين التجمهر",
+  "gm.ev.4": "سباق العودة",
+  "gm.ev.5": "تتبع الرائحة",
+};
+Object.assign(en, enGames);
+Object.assign(zh, zhGames);
+Object.assign(fr, frGames);
+Object.assign(es, esGames);
+Object.assign(ja, jaGames);
+Object.assign(ko, koGames);
+Object.assign(ar, arGames);
+
 export { en, zh, fr, es, ja, ko, ar };

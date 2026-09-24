@@ -234,6 +234,10 @@ export interface Env {
   COURT_FILE_PCT?: string;              // 0..1 — per eligible matter per cron, P the court opens a case (default 0.25)
   COURT_JURY_SIZE?: string;             // seated citizen jurors (default 5; clamped 3..9)
 
+  // --- ㉑ GAMES: the era bell's festivals — opening, champion, record (see src/games.ts) ---
+  GAMES_ENABLED?: string;               // "true"/"false" (default TRUE)
+  GAMES_OPEN_PCT?: string;              // 0..1 — per new era, P the games are proclaimed (default 0.6)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -555,6 +559,10 @@ export interface RuntimeConfig {
     enabled: boolean;
     fileP: number;            // per eligible matter per cron, P a case is filed (default 0.25)
     jurySize: number;         // seated citizen jurors (default 5, clamped 3..9)
+  };
+  games: {
+    enabled: boolean;
+    openP: number;            // per new era, P the festival is proclaimed (default 0.6)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -958,6 +966,10 @@ export function loadConfig(env: Env): RuntimeConfig {
       enabled: (env.COURTS_ENABLED ?? "true").toLowerCase() !== "false",
       fileP: clamp(Number(env.COURT_FILE_PCT || "0.25"), 0, 1),
       jurySize: clampInt(Number(env.COURT_JURY_SIZE || "5"), 3, 9),
+    },
+    games: {
+      enabled: (env.GAMES_ENABLED ?? "true").toLowerCase() !== "false",
+      openP: clamp(Number(env.GAMES_OPEN_PCT || "0.6"), 0, 1),
     },
 
     socialStimulus: {

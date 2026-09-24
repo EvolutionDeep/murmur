@@ -68,6 +68,7 @@ import { ArchiveMembrane, type ArchiveSignals } from "./archive.js";
 import { WorkshopMembrane, type WorkshopSignals } from "./workshop.js";
 import { BourseMeter, coinStimuli, sampleBourseActivity, type BourseSignals } from "./bourse.js";
 import { CourtMembrane, type CourtFacts, type CourtSignals } from "./court.js";
+import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -115,6 +116,9 @@ const KEY_WORKSHOP = "workshop:v1";
 /** ⑳ The Court (live docket, outlaw roll, counts) — its OWN key: a corrupt/absent blob restarts an
  *  empty docket, never ledger state. Bounded (≤ 8 cases / 16 outlaws / 64 matter keys), DO-safe. */
 const KEY_COURT = "court:v1";
+/** ㉑ The Games (festival roll, standing record, counts) — its OWN key: a corrupt/absent blob restarts an
+ *  empty stadium, never ledger state. Bounded (≤ 16 festival eras), DO-safe. */
+const KEY_GAMES = "games:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -224,6 +228,8 @@ export class FlyStateDO {
   private workshop: WorkshopMembrane | null = null;
   /** ⑳ The Court (verdicts, exile, amnesty) — null while COURTS_ENABLED=false (byte-for-byte inert). */
   private court: CourtMembrane | null = null;
+  /** ㉑ The Games membrane (era bell, champion, record) — null while GAMES_ENABLED=false (byte-for-byte inert). */
+  private games: GamesMembrane | null = null;
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -513,6 +519,20 @@ export class FlyStateDO {
     this.court = new CourtMembrane({ enabled: true, fileP: c.fileP, jurySize: c.jurySize });
     if (stored) this.court.restore(stored);
     return this.court;
+  }
+
+  /**
+   * ㉑ Lazily load the Games membrane (null while GAMES_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts with an empty stadium; it can never poison the ledger.
+   */
+  private async ensureGames(): Promise<GamesMembrane | null> {
+    if (!this.cfg.games.enabled) return null;
+    if (this.games) return this.games;
+    const stored = await this.state.storage.get<string>(KEY_GAMES);
+    const g = this.cfg.games;
+    this.games = new GamesMembrane({ enabled: true, openP: g.openP });
+    if (stored) this.games.restore(stored);
+    return this.games;
   }
 
   /**
@@ -1178,6 +1198,7 @@ export class FlyStateDO {
     if (this.apprentice) batch[KEY_APPRENTICE] = this.apprentice.serialize();
     if (this.archive) batch[KEY_ARCHIVE] = this.archive.serialize();
     if (this.court) batch[KEY_COURT] = this.court.serialize();
+    if (this.games) batch[KEY_GAMES] = this.games.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1590,6 +1611,9 @@ export class FlyStateDO {
       // ⑳ COURT: fold the docket's edge events ONLY while COURT is on. Off ⇒ no `court` key ⇒ the
       // historian's five court detectors never speak (byte-for-byte the pre-court build).
       const court = this.cfg.court.enabled ? this.court?.signals() ?? null : null;
+      // ㉑ GAMES: fold the festival's edge events ONLY while GAMES is on. Off ⇒ no `games` key ⇒ the
+      // historian's three games detectors never speak (byte-for-byte the pre-Games build).
+      const games = this.cfg.games.enabled ? this.games?.signals() ?? null : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1686,6 +1710,7 @@ export class FlyStateDO {
         workshop,
         bourse,
         court,
+        games,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -1846,6 +1871,35 @@ export class FlyStateDO {
       crt.round(tick, facts);
     } catch (e) {
       console.warn("[DO] court drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉑ THE GAMES — ring the era bell: a new age may proclaim the festival, and a set span later the living
+   * field crowns its own champion by the era's hash, the stadium's mark measured in the champion's OWN
+   * lifetime settlements. PURE READ-OUT: every fact is borrowed from the dynasty signals, the historian's
+   * era counter, the economy ledger's deal counts and the snapshot's living ids; the games write only their
+   * OWN bounded roll — no money moves by any crown. Best-effort: a festival can never break the live tick.
+   */
+  private async driveGames(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    const gms = await this.ensureGames();
+    if (!gms || !snapshot) return;
+    try {
+      const dyn = this.economy?.dynastySignals() ?? null;
+      const agents = this.lastEconomy?.agents ?? [];
+      const facts: GamesFacts = {
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        livingIds: snapshot.flies.map((f) => f.id),
+        venueHouse: dyn?.dominance?.name ?? null,
+        dealsOf: (id) => {
+          const a = agents.find((x) => x.id === id);
+          return a ? (a.deals ?? 0) + (a.sales ?? 0) : 0;
+        },
+        houseOf: (id) => this.economy?.houseOf(id)?.name ?? null,
+      };
+      gms.round(tick, facts);
+    } catch (e) {
+      console.warn("[DO] games drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2314,6 +2368,9 @@ export class FlyStateDO {
     // ⑳ COURT rides after the workshop: it reads the social ledger facts + the historian's era, and its
     // edge events fold into the SAME cron's historian context (driveCourt must precede observeChronicle).
     await this.driveCourt(swarm.getTickIndex(), snapshot);
+    // ㉑ GAMES rides after the court: it reads the era bell + the dynasty's dominant house + the ledger's
+    // own deal counts, and its edge events fold into the SAME cron's historian context.
+    await this.driveGames(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -2619,6 +2676,8 @@ export class FlyStateDO {
       if (workshop) (economy as { workshop?: unknown }).workshop = workshop;
       const court = await this.courtReadout();
       if (court) (economy as { court?: unknown }).court = court;
+      const games = await this.gamesReadout();
+      if (games) (economy as { games?: unknown }).games = games;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -2687,7 +2746,8 @@ export class FlyStateDO {
     const archive = await this.archiveReadout();
     const workshop = await this.workshopReadout();
     const court = await this.courtReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court) return json(snap);
+    const games = await this.gamesReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games) return json(snap);
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -2695,6 +2755,7 @@ export class FlyStateDO {
       ...(archive ? { archive } : null),
       ...(workshop ? { workshop } : null),
       ...(court ? { court } : null),
+      ...(games ? { games } : null),
     });
   }
 
@@ -2803,6 +2864,13 @@ export class FlyStateDO {
     const crt = await this.ensureCourt();
     if (!crt) return null;
     return crt.signals();
+  }
+
+  /** ㉑ The games read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Games build). */
+  private async gamesReadout(): Promise<GamesSignals | null> {
+    const gms = await this.ensureGames();
+    if (!gms) return null;
+    return gms.signals();
   }
 
   /**
@@ -3804,6 +3872,7 @@ export class FlyStateDO {
         this.apprentice = null;  // ⑯ and the educations: every personal art is unwitnessed with everything else
     this.archive = null;     // ⑰ and the archive: every record is burned with everything else
     this.court = null;     // ⑳ and the court: the docket and the outlaw roll are dust with everything else
+    this.games = null;     // ㉑ and the games: the stadium and its standing mark are forgotten with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
@@ -3821,6 +3890,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_ARCHIVE);
     await this.state.storage.delete(KEY_WORKSHOP);
     await this.state.storage.delete(KEY_COURT);
+    await this.state.storage.delete(KEY_GAMES);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

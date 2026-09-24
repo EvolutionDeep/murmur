@@ -303,6 +303,15 @@ COURTS_ENABLED = "true"                        # master switch — ARMED: the co
 COURT_FILE_PCT = "0.25"                        # per eligible matter per cron, P the court opens a case
 COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 3..9)
 
+# ===== ㉑ THE GAMES (era-heralded festivals — src/games.ts) =====
+# A pure read-out stadium: each new era may proclaim the games by its own hash draw; a span later the living
+# field crowns a champion (lowest era-hash wins) and the stadium keeps one standing mark, measured in the
+# champion's OWN lifetime settlements. No money moves.
+# NOTE: armed on CODE DEFAULTS (GAMES_ENABLED=true, GAMES_OPEN_PCT=0.6) — the Cloudflare 128 text-binding
+# wall is nearly spent (126 vars live), so this layer ships no [vars] keys. To flip a knob, evict a lower-
+# priority var first, then re-add: GAMES_ENABLED = "false"  # master switch (rollback: byte-for-byte inert)
+#                                                  # GAMES_OPEN_PCT = "0.6"  # per new era, P the games are proclaimed
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

@@ -80,6 +80,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   VERDICT: "陪审团宣判 —— 果蝇 #{id}，因{crime}受审：{jurors} 票中 {votes} 票判定{finding}；编年史记下此刻。",
   EXILE: "流放 —— 果蝇 #{id} 因{crime}获罪，被逐出公地庇护，待新纪元之仁慈方可召回。",
   AMNESTY: "大赦 —— 新纪元赦免流放册；{outlaws} 个名字从法庭卷册中勾销。",
+  GAMES: "第 {era} 届竞技会于 {venue} 家族门前揭幕——今日赛目为 {event}；蜂群暂置账簿，共赴运动场。",
+  CHAMPION: "冠军加冕 —— 果蝇 #{id} 赢得 {event}；{house} 的徽记高悬运动场上空。",
+  RECORD: "纪录易手 —— 果蝇 #{id} 以终身成交 {deals} 笔超过旧标 {prev} 笔；竞技会自此保有它自己的历史。",
 };
 
 const fr = {
@@ -152,6 +155,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   VERDICT: "Le jury parle — la mouche #{id}, jugée pour {crime} : {finding} par {votes} voix sur {jurors}.",
   EXILE: "Bannissement — convaincue de {crime}, la mouche #{id} est rejetée hors de la protection du commun, jusqu'à la miséricorde d'un nouvel âge.",
   AMNESTY: "Amnistie — le nouvel âge pardonne le rôle des bannis ; {outlaws} noms rayés du livre du tribunal.",
+  GAMES: "Les {era}es jeux s'ouvrent à la maison {venue} — au programme : {event} ; l'essaim suspend ses registres pour le stade.",
+  CHAMPION: "Un champion est couronné — la mouche #{id} gagne {event} ; {house} dresse son sigil au-dessus du stade.",
+  RECORD: "Le record tombe — la mouche #{id} inscrit {deals} échanges à vie contre l'ancienne marque de {prev} ; les jeux gardent désormais leur propre histoire.",
 };
 
 const es = {
@@ -224,6 +230,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   VERDICT: "El jurado habla — la mosca #{id}, juzgada por {crime}: {finding} por {votes} de {jurors} votos.",
   EXILE: "Destierro — condenada por {crime}, la mosca #{id} queda fuera de la protección del común hasta la misericordia de una nueva era.",
   AMNESTY: "Amnistía — la nueva era perdona el rol de desterrados; {outlaws} nombres tachados del libro de la corte.",
+  GAMES: "Los {era}ésimos juegos abren en la casa {venue} — el programa es {event}; el enjambre pausa sus libros por el estadio.",
+  CHAMPION: "Se corona un campeón — la mosca #{id} gana {event}; {house} levanta su sello sobre el estadio.",
+  RECORD: "Cae el récord — la mosca #{id} anota {deals} tratos de por vida contra la antigua marca de {prev}; los juegos ya guardan su propia historia.",
 };
 
 const ja = {
@@ -296,6 +305,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   VERDICT: "陪審、告ぐ —— ハエ #{id}、{crime} の審理：{jurors} 票中 {votes} 票をもって{finding}；編年史、この刻を記す。",
   EXILE: "追放 —— {crime} の有罪にて、ハエ #{id}、コモンズの保護の外へ逐われる；新紀元の慈悲あるまで。",
   AMNESTY: "大赦 —— 新紀元、追放名簿を赦す；{outlaws} 名、法廷の書より消える。",
+  GAMES: "第{era}回大競技会、{venue}家の元で開催——本日の種目は{event}；蜂群、帳簿を置き、スタジアムへ集う。",
+  CHAMPION: "戴冠 —— ハエ #{id}、{event}を制す；{house}、紋章をスタジアムに掲ぐ。",
+  RECORD: "記録破り —— ハエ #{id}、生涯取引 {deals} 件をもって旧記録 {prev} 件を上回る；大競技会、ついに己の歴史を刻む。",
 };
 
 const ko = {
@@ -368,6 +380,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   VERDICT: "배심이 말하다 — 파리 #{id}, {crime} 심판: {jurors}표 중 {votes}표로 {finding}; 연대기가 이 시각을 기록하다.",
   EXILE: "추방 — {crime}로 유죄, 파리 #{id}는 컴먼스의 보호 밖으로 쫓겨나니, 새 시대의 자비까지.",
   AMNESTY: "사면 — 새 시대가 추방 명부를 사면하니, {outlaws}개의 이름이 법정의 책에서 지워지다.",
+  GAMES: "{venue} 가문의 제 {era}차 경기 대회 개막 — 오늘의 종목: {event}; 무리가 장부를 내려놓고 경기장에 모이다.",
+  CHAMPION: "우승자 왕관 쓰다 — 파리 #{id}, {event}에서 이기다; {house}, 경기장 위에 문장을 들다.",
+  RECORD: "기록 깨지다 — 파리 #{id}, 평생 거래 {deals}건으로 옛 기록 {prev}건을 넘다; 경기 대회, 이제 자신의 역사를 지니다.",
 };
 
 const ar = {
@@ -440,6 +455,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   VERDICT: "المحلَّفون ينطقون — الذبابة #{id}، محاكَمة بـ{crime}: {finding} بـ{votes} من {jurors} أصواتًا.",
   EXILE: "نفي — بعد الإدانة بـ{crime} تُطرد الذبابة #{id} خارج حماية المشاع حتى رحمة عصرٍ جديد.",
   AMNESTY: "عفو — العصر الجديد يعفو عن سجل المنفيين؛ {outlaws} أسماء تُشطب من كتاب المحكمة.",
+  GAMES: "الألعاب {era} تفتح أبوابها في دار {venue} — البرنامج: {event}؛ السرب يوقف دفاتره من أجل الملعب.",
+  CHAMPION: "تتويج بطل — الذبابة #{id} تفوز بـ{event}؛ {house} ترفع شعارها فوق الملعب.",
+  RECORD: "سقوط الرقم — الذبابة #{id} تسجل {deals} صفقة مدى الحياة متجاوزة الرقم القديم {prev}؛ الألعاب صارت تحفظ تاريخها بنفسها.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
