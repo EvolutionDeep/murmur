@@ -6462,4 +6462,100 @@ Object.assign(ja, jaGames);
 Object.assign(ko, koGames);
 Object.assign(ar, arGames);
 
+// ㉒ THE GUILDS drawer volume (guilds.ts read-out): tab + volume titles, the guildhall's roll (seals, pacts,
+// monopolies), the live roster rows and the field-holder line. Trade names come from the shared GLOSS.role
+// table in i18n.js. Symmetric across all seven languages — keep the key set identical when editing.
+const enGuilds = {
+  "vol.gdTitle": "the guildhall",
+  "vol.gdSub": "· charters, pacts & monopolies",
+  "tab.guilds.name": "The Guildhall",
+  "tab.guilds.sub": "charters, pacts & monopolies",
+  "banner.guilds": "⛨ the guilds are chartered",
+  "gd.head": "{charters} charters sealed · {pacts} pacts struck · {monopolies} monopolies proclaimed",
+  "gd.headTitle": "the guildhall's own roll — seals, pacts and monopolies are edges read off the economy's OWN profession ledger, and no charter moves any money",
+  "gd.row": "{role}: {members} hands · {share}% of the works",
+  "gd.holds": "{role} holds the field — {share}% of the working swarm serves under its banner",
+  "gd.none": "no trade has won its charter yet — the guildhall roll is empty",
+};
+const zhGuilds = {
+  "vol.gdTitle": "行会",
+  "vol.gdSub": "· 特许、契约与垄断",
+  "tab.guilds.name": "行会",
+  "tab.guilds.sub": "特许、契约与垄断",
+  "banner.guilds": "⛨ 行会特许成立",
+  "gd.head": "已封特许 {charters} 份 · 已结契约 {pacts} 份 · 已宣垄断 {monopolies} 次",
+  "gd.headTitle": "行会自己的账簿——特许、契约与垄断皆从经济自身的职业账簿读出的边缘，任何特许都不动一分钱",
+  "gd.row": "{role}：{members} 位工匠 · 占行当 {share}%",
+  "gd.holds": "{role} 独占行当——{share}% 的劳动群蜂在其旗下做工",
+  "gd.none": "尚无行业获得特许——行会账簿仍是空的",
+};
+const frGuilds = {
+  "vol.gdTitle": "la halle des métiers",
+  "vol.gdSub": "· chartes, pactes & monopoles",
+  "tab.guilds.name": "La Halle des Métiers",
+  "tab.guilds.sub": "chartes, pactes & monopoles",
+  "banner.guilds": "⛨ les guildes sont chartées",
+  "gd.head": "{charters} chartes scellées · {pacts} pactes conclus · {monopolies} monopoles proclamés",
+  "gd.headTitle": "le registre propre à la halle — sceaux, pactes et monopoles sont des seuils lus sur le PROPRE registre des métiers de l'économie, et aucune charte ne déplace d'argent",
+  "gd.row": "{role} : {members} mains · {share}% des travaux",
+  "gd.holds": "{role} tient le champ — {share}% de l'essaim travailleur sert sous sa bannière",
+  "gd.none": "aucun métier n'a encore gagné sa charte — le registre de la halle est vide",
+};
+Object.assign(en, enGuilds);
+Object.assign(zh, zhGuilds);
+Object.assign(fr, frGuilds);
+
+const esGuilds = {
+  "vol.gdTitle": "el gremio",
+  "vol.gdSub": "· cartas, pactos y monopolios",
+  "tab.guilds.name": "El Gremio",
+  "tab.guilds.sub": "cartas, pactos y monopolios",
+  "banner.guilds": "⛨ los gremios reciben su carta",
+  "gd.head": "{charters} cartas selladas · {pacts} pactos jurados · {monopolies} monopolios proclamados",
+  "gd.headTitle": "el libro propio del gremio — sellos, pactos y monopolios son bordes leídos del PROPIO libro de oficios de la economía, y ninguna carta mueve dinero",
+  "gd.row": "{role}: {members} manos · {share}% de los oficios",
+  "gd.holds": "{role} tiene el campo — el {share}% del enjambre trabajador sirve bajo su bandera",
+  "gd.none": "ningún oficio ha ganado aún su carta — el libro del gremio está vacío",
+};
+const jaGuilds = {
+  "vol.gdTitle": "ギルド会館",
+  "vol.gdSub": "· 特許、誓約と独占",
+  "tab.guilds.name": "ギルド会館",
+  "tab.guilds.sub": "特許、誓約と独占",
+  "banner.guilds": "⛨ ギルド特許が発効した",
+  "gd.head": "封印した特許 {charters} 件 · 結んだ誓約 {pacts} 件 · 宣言した独占 {monopolies} 回",
+  "gd.headTitle": "ギルド会館自身の帳簿——特許・誓約・独占はいずれも経済自身の職業台帳から読み取った縁であり、いかなる特許も金を動かさない",
+  "gd.row": "{role}：{members} 人 · 行当の {share}%",
+  "gd.holds": "{role} が行当を占める——労働群蜂の {share}% がその旗の下で働く",
+  "gd.none": "まだ特許を得た職はない——ギルド帳簿は空である",
+};
+const koGuilds = {
+  "vol.gdTitle": "길드 회관",
+  "vol.gdSub": "· 특허, 맹약과 독점",
+  "tab.guilds.name": "길드 회관",
+  "tab.guilds.sub": "특허, 맹약과 독점",
+  "banner.guilds": "⛨ 길드 특허가 맺어졌다",
+  "gd.head": "봉인한 특허 {charters} 건 · 맺은 맹약 {pacts} 건 · 선포한 독점 {monopolies}회",
+  "gd.headTitle": "길드 회관 자신의 장부——특허·맹약·독점은 모두 경제 고유의 직업 장부에서 읽은 모서리이며, 어떤 특허도 돈을 옮기지 않는다",
+  "gd.row": "{role}: 손 {members}명 · 업의 {share}%",
+  "gd.holds": "{role}이 업을 지킨다——일하는 무리의 {share}%가 그 깃발 아래 섬긴다",
+  "gd.none": "아직 특허를 얻은 직업이 없다——길드 장부는 비어 있다",
+};
+const arGuilds = {
+  "vol.gdTitle": "دار النقابات",
+  "vol.gdSub": "· مواثيق وعهود واحتكارات",
+  "tab.guilds.name": "دار النقابات",
+  "tab.guilds.sub": "مواثيق وعهود واحتكارات",
+  "banner.guilds": "⛨ مُنحت العهود للنقابات",
+  "gd.head": "{charters} ميثاقًا مختومًا · {pacts} عهدًا معقودًا · {monopolies} احتكارًا مُعلنًا",
+  "gd.headTitle": "سِجلّ دار النقابات نفسه — الأختام والعهود والاحتكارات حوافُّ تُقرأ من سجلّ المهن الاقتصادي نفسه، ولا يحرك أي ميثاق مالًا",
+  "gd.row": "{role}: {members} يدًا · {share}% من الأشغال",
+  "gd.holds": "{role} يسيطر على الميدان — {share}% من السرب العامل يخدم تحت رايته",
+  "gd.none": "لم تفز أي حرفة بميثاقها بعد — سجلّ النقابات فارغ",
+};
+Object.assign(es, esGuilds);
+Object.assign(ja, jaGuilds);
+Object.assign(ko, koGuilds);
+Object.assign(ar, arGuilds);
+
 export { en, zh, fr, es, ja, ko, ar };

@@ -312,6 +312,14 @@ COURT_JURY_SIZE = "5"                          # seated citizen jurors (clamped 
 # priority var first, then re-add: GAMES_ENABLED = "false"  # master switch (rollback: byte-for-byte inert)
 #                                                  # GAMES_OPEN_PCT = "0.6"  # per new era, P the games are proclaimed
 
+# ===== ㉒ THE GUILDS (chartered trades — src/guilds.ts) =====
+# A pure read-out guildhall over the economy's own sticky professions: a trade whose living hands pass the
+# quorum wins a charter, a fly taking up a chartered trade strikes a pact, and one guild RISING past half
+# the working swarm claims a monopoly. No money moves; no price tilts by any seal.
+# NOTE: armed on CODE DEFAULTS (GUILD_ENABLED=true, GUILD_QUORUM=8, GUILD_SHARE_P=0.5) — the 128 text-
+# binding wall is spent, this layer ships no [vars] keys. To flip a knob, evict a lower-priority var first,
+# then re-add: GUILD_ENABLED / GUILD_QUORUM / GUILD_SHARE_P (semantics as parsed in src/config.ts).
+
 # ===== ⑲ THE BOURSE (the project coin's tape, felt + narrated — src/bourse.ts) =====
 # A READ-ONLY membrane over the MURMUR token's Transfer logs on Arc: each cron folds every new transfer
 # into an EWMA baseline (unique-tx counted, so one airdrop tx with 100 legs reads as ONE event), separates

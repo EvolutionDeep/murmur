@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=87";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=88";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -321,6 +321,7 @@ let econWorkshop = null;    // ⑱ workshop read-out {reinventions, reinvention}
 let econBourse = null;      // ⑲ the bourse read-out from /bourse {climate, signals, lastBlock, stimulus, …} — the project coin's tape, felt + narrated
 let econCourt = null;       // ⑳ the court read-out {indictment,trial,verdict,exile,amnesty,outlaws,openCases,counts} — verdicts, exile & amnesty
 let econGames = null;       // ㉑ the games read-out {games,champion,record,lastGames,standing,pendingGames,counts} — era festivals, champions & records
+let econGuilds = null;      // ㉒ the guilds read-out {charter,pact,monopoly,roster,counts} — charters, pacts & monopolies of the trades
 let walletsOpen = false;                              // right-side "all agent wallets" drawer
 let chronOpen = false;                                // full-height chronicle drawer (bottom-right button)
 let chronMode = "index";                              // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
@@ -1860,6 +1861,13 @@ function spawnChronFx(e) {
     if (e.kind === "GAMES") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
     else chronFx.push({ kind: "law", t0: now, dur: 3000 });
     setBanner(T("banner.games"), ct(e.kind, t), LAW_GOLD);
+  } else if (e.kind === "GUILD_CHARTER" || e.kind === "APPRENTICE_PACT" || e.kind === "GUILD_MONOPOLY") {
+    // ㉒ the guilds: a charter or a pact ripples law-gold (a seal is a civic act); a monopoly rolls the
+    // warm holy wash over the field — one trade shading the whole works. Reuses existing fx, no new pass.
+    const t = e.tokens || {};
+    if (e.kind === "GUILD_MONOPOLY") chronFx.push({ kind: "holy", t0: now, dur: 3600 });
+    else chronFx.push({ kind: "law", t0: now, dur: 3000 });
+    setBanner(T("banner.guilds"), ct(e.kind, t), LAW_GOLD);
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
@@ -3345,6 +3353,7 @@ function applyEconomy(econ) {
   if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
   if (econ.court) { econCourt = econ.court; renderCourtSection(); }
   if (econ.games) { econGames = econ.games; renderGamesSection(); }
+  if (econ.guilds) { econGuilds = econ.guilds; renderGuildSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   if (selectedId != null) {
     const bal = econBalances.get(selectedId);
@@ -4210,6 +4219,56 @@ function renderGamesSection() {
   }
 }
 
+// ================= ㉒ the guilds section (charters, pacts, monopolies) =================
+// A plain-language guildhall read-out of guilds.ts: how many seals, pacts and monopolies the roll has
+// witnessed, and the living strength of each of the four trades (hands and share of the works). PURE
+// READ-OUT — no charter moves money and no seal tilts a price; the roster is the profession ledger,
+// counted socially. The whole volume (tab included) hides while /economy ships no guilds key.
+function gdRoleName(role) {
+  return gl("role", role);   // the shared profession glossary (i18n.js GLOSS.role)
+}
+function renderGuildSection() {
+  const host = $("chron-guilds");
+  const body = $("gd-body");
+  if (!host || !body) return;
+  const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="guilds"]');
+  const u = econGuilds;
+  if (!u || !u.counts) {
+    host.hidden = true;
+    if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
+    return;
+  }
+  if (tab) tab.hidden = false;
+  host.hidden = false;
+  body.textContent = "";
+  const n = u.counts;
+  const head = document.createElement("div");
+  head.className = "gd-row gd-head";
+  head.textContent = T("gd.head", { charters: n.charters, pacts: n.pacts, monopolies: n.monopolies });
+  head.title = T("gd.headTitle");
+  body.appendChild(head);
+  const rows = (u.roster || []).filter((r) => r.members > 0);
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "gd-row gd-trade";
+    row.textContent = T("gd.row", { role: gdRoleName(r.role), members: r.members, share: Math.round((r.share || 0) * 100) });
+    body.appendChild(row);
+  }
+  const mono = (u.roster || []).find((r) => r.share >= 0.5);
+  if (mono) {
+    const row = document.createElement("div");
+    row.className = "gd-row gd-monopoly";
+    row.textContent = T("gd.holds", { role: gdRoleName(mono.role), share: Math.round(mono.share * 100) });
+    body.appendChild(row);
+  }
+  if (!rows.length) {
+    const none = document.createElement("div");
+    none.className = "gd-row gd-none";
+    none.textContent = T("gd.none");
+    body.appendChild(none);
+  }
+}
+
 // Compact whole-MURMUR formatter for the bourse panel — layperson-friendly (5.10M, not 5104666.83).
 function fmtMurCompact(n) {
   n = Number(n) || 0;
@@ -4419,6 +4478,7 @@ function openWallets() {
   if (e.workshop) { econWorkshop = e.workshop; renderWorkshopSection(); }
       if (e.court) { econCourt = e.court; renderCourtSection(); }
       if (e.games) { econGames = e.games; renderGamesSection(); }
+      if (e.guilds) { econGuilds = e.guilds; renderGuildSection(); }
   }).catch(() => {});
 }
 
@@ -4968,6 +5028,7 @@ const CHRON_ICONS = {
   COIN_FEVER: "¤", WHALE_MOVE: "〰", TITHE: "◇", COIN_SILENCE: "◌",
   INDICTMENT: "§", TRIAL: "⚖", VERDICT: "☰", EXILE: "➤", AMNESTY: "✹",
   GAMES: "⚑", CHAMPION: "★", RECORD: "✦",
+  GUILD_CHARTER: "⛨", APPRENTICE_PACT: "✋", GUILD_MONOPOLY: "◈",
 };
 
 function renderChron() {
@@ -5155,13 +5216,16 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     GAMES: "The {era}th games open at the house of {venue} — the programme is {event}; the swarm pauses its ledgers for the stadium.",
     CHAMPION: "A champion is crowned — fly #{id} wins {event}; {house} raises its sigil over the stadium.",
     RECORD: "The record falls — fly #{id} posts {deals} lifetime dealings past the old mark of {prev}; the games now keep their own history.",
+    GUILD_CHARTER: "A trade wins its charter — the guild of {role} is founded with {members} living hands past the quorum of {quorum}; the {era}th era sets its seal.",
+    APPRENTICE_PACT: "A pact is struck — fly #{id} takes up {role} beneath a chartered banner; the guild now counts {members} hands.",
+    GUILD_MONOPOLY: "One trade holds the field — {share} percent of the working swarm now serves the guild of {role}; no other banner flies so full.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -6899,6 +6963,7 @@ async function poll() {
     if (econ.workshop) { econWorkshop = econ.workshop; renderWorkshopSection(); }
     if (econ.court) { econCourt = econ.court; renderCourtSection(); }
     if (econ.games) { econGames = econ.games; renderGamesSection(); }
+    if (econ.guilds) { econGuilds = econ.guilds; renderGuildSection(); }
     }).catch(() => {});
     // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
     if (showTerritory && !walletsOpen) pollRoster();
@@ -7581,7 +7646,7 @@ function rerenderAll() {
     if (selectedGrave) showEpitaph(selectedGrave);   // an open epitaph re-localises in the new language
     if (walletsOpen) { renderWallets(); renderMarketSection(); }
     if (historyOpen) renderHistory();
-    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderBourseSection(); renderSocialSection(); }
+    if (chronOpen) { renderChron(); if (chronVerifyState) renderChronVerdict(); renderDynastySection(); renderCultureSection(); renderReligionSection(); renderCommonsSection(); renderTechSection(); renderCitiesSection(); renderApprenticeSection(); renderArchiveSection(); renderWorkshopSection(); renderCourtSection(); renderGamesSection(); renderGuildSection(); renderBourseSection(); renderSocialSection(); }
     // The remaining drawers rebuild themselves from cached data — repaint only, no refetch (a refetch would
     // flash the "loading…" skeleton and drop any in-flight verify state the user was looking at).
     if (proofsOpen) renderProofs();

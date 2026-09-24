@@ -238,6 +238,13 @@ export interface Env {
   GAMES_ENABLED?: string;               // "true"/"false" (default TRUE)
   GAMES_OPEN_PCT?: string;              // 0..1 — per new era, P the games are proclaimed (default 0.6)
 
+  // --- ㉒ GUILDS: the chartered trades — charter, pact, monopoly (see src/guilds.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). To flip
+  //     a knob live, evict a lower-priority var first; the env keys below are read the moment they exist.
+  GUILD_ENABLED?: string;               // "true"/"false" (default TRUE)
+  GUILD_QUORUM?: string;                // living hands a trade needs before its guild is chartered (default 8; clamped 3..100)
+  GUILD_SHARE_P?: string;               // 0..1 — workforce share a rising guild must pass to claim a monopoly (default 0.5)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -563,6 +570,11 @@ export interface RuntimeConfig {
   games: {
     enabled: boolean;
     openP: number;            // per new era, P the festival is proclaimed (default 0.6)
+  };
+  guilds: {
+    enabled: boolean;
+    quorum: number;           // living hands before a trade wins its charter (default 8, clamped 3..100)
+    shareP: number;           // rising workforce share for a monopoly (default 0.5)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -970,6 +982,11 @@ export function loadConfig(env: Env): RuntimeConfig {
     games: {
       enabled: (env.GAMES_ENABLED ?? "true").toLowerCase() !== "false",
       openP: clamp(Number(env.GAMES_OPEN_PCT || "0.6"), 0, 1),
+    },
+    guilds: {
+      enabled: (env.GUILD_ENABLED ?? "true").toLowerCase() !== "false",
+      quorum: clampInt(Number(env.GUILD_QUORUM || "8"), 3, 100),
+      shareP: clamp(Number(env.GUILD_SHARE_P || "0.5"), 0, 1),
     },
 
     socialStimulus: {

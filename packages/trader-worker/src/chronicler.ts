@@ -137,7 +137,12 @@ export type ChronicleKind =
   | "AMNESTY"
   | "GAMES"
   | "CHAMPION"
-  | "RECORD";
+  | "RECORD"
+  // ㉒ GUILDS: the chartered trades (guilds.ts) — a trade past quorum wins its seal, a fly taking up a
+  //     chartered trade strikes a pact, and one guild rising past half the working swarm claims the field.
+  | "GUILD_CHARTER"
+  | "APPRENTICE_PACT"
+  | "GUILD_MONOPOLY";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -244,6 +249,9 @@ export interface ChronicleContext {
   /** ㉑ THE GAMES read-out (games.ts signals): this cron's festival edge events. Absent ⇒ no
    *  GAMES/CHAMPION/RECORD (GAMES_ENABLED=false never folds these in). */
   games?: ChronicleGames | null;
+  /** ㉒ THE GUILDS read-out (guilds.ts signals): this cron's charter, pact and monopoly edges. Absent ⇒
+   *  no GUILD_CHARTER/APPRENTICE_PACT/GUILD_MONOPOLY (GUILD_ENABLED=false never folds these in). */
+  guilds?: ChronicleGuilds | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -358,6 +366,20 @@ export interface ChronicleGames {
   standing: { id: number; deals: number; era: number } | null;
   pendingGames: boolean;
   counts: { games: number; crowns: number; records: number };
+}
+
+/** ㉒ THE GUILDS: one cron's guild edge events (guilds.ts; the membrane adopts its first round silently
+ *  and speaks only crossings after that, so a non-null facet IS news THIS cron and cannot replay). */
+export interface ChronicleGuilds {
+  /** A trade passed quorum and won its seal: the roll, the hands, the quorum, the sealing era. */
+  charter: { role: string; members: number; quorum: number; era: number } | null;
+  /** A fly took up a chartered trade: the signatory, the trade, the guild's headcount now. */
+  pact: { id: number; role: string; members: number } | null;
+  /** A chartered guild's share of the working swarm ROSE past the mark (whole percents). */
+  monopoly: { role: string; share: number } | null;
+  /** The guildhall's standing roster for the drawer (never re-derived here). */
+  roster: { role: string; members: number; share: number }[];
+  counts: { charters: number; pacts: number; monopolies: number };
 }
 
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
@@ -552,6 +574,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉑ GAMES: the membrane rings its own era bell (≤ one opening and one crowning per era, spent once);
   //     these cooldowns only guard the gravitas — a festival proclamation should not stutter.
   GAMES: 100, CHAMPION: 100, RECORD: 200,
+  // ㉒ GUILDS: the membrane itself only speaks crossings (one seal per trade ever, one pact per change,
+  //     monopoly on the rising edge) — these cooldowns guard the gravitas of a proclamation. Mirrored in CHRON_.
+  GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -676,6 +701,12 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
   GAMES: "The {era}th games open at the house of {venue} — the programme is {event}; the swarm pauses its ledgers for the stadium.",
   CHAMPION: "A champion is crowned — fly #{id} wins {event}; {house} raises its sigil over the stadium.",
   RECORD: "The record falls — fly #{id} posts {deals} lifetime dealings past the old mark of {prev}; the games now keep their own history.",
+  // ㉒ THE GUILDS — the chartered trades. {role} is the economy's own profession name (forager/mooder/
+  //     trader/brooder), {members}/{quorum} and {share} are live headcounts of the working swarm —
+  //     every number re-derivable from the profession ledger. Mirrored verbatim in the frontend CHRON_.
+  GUILD_CHARTER: "A trade wins its charter — the guild of {role} is founded with {members} living hands past the quorum of {quorum}; the {era}th era sets its seal.",
+  APPRENTICE_PACT: "A pact is struck — fly #{id} takes up {role} beneath a chartered banner; the guild now counts {members} hands.",
+  GUILD_MONOPOLY: "One trade holds the field — {share} percent of the working swarm now serves the guild of {role}; no other banner flies so full.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1500,6 +1531,29 @@ export class Chronicler {
         const r = gms.record;
         out.push(await this.emit(ctx, "RECORD", 3, [r.id],
           { id: r.id, deals: r.deals, prev: r.prev }, { id: r.id, deals: r.deals, prev: r.prev }));
+      }
+    }
+
+    // ㉒ The Guilds: the chartered trades (guilds.ts signals, folded in ONLY while GUILD_ENABLED — off ⇒
+    //     no `guilds` key ⇒ these three detectors never speak). The membrane adopts its first round
+    //     silently and speaks only crossings after that, so every non-null facet is news this cron.
+    const gld = ctx.guilds;
+    if (gld) {
+      if (gld.charter && this.ready("GUILD_CHARTER", ctx)) {
+        const ch = gld.charter;
+        out.push(await this.emit(ctx, "GUILD_CHARTER", 2, [],
+          { role: ch.role, members: ch.members, quorum: ch.quorum, era: ch.era },
+          { members: ch.members, quorum: ch.quorum, era: ch.era }));
+      }
+      if (gld.pact && this.ready("APPRENTICE_PACT", ctx)) {
+        const pc = gld.pact;
+        out.push(await this.emit(ctx, "APPRENTICE_PACT", 2, [pc.id],
+          { id: pc.id, role: pc.role, members: pc.members }, { id: pc.id, members: pc.members }));
+      }
+      if (gld.monopoly && this.ready("GUILD_MONOPOLY", ctx)) {
+        const mo = gld.monopoly;
+        out.push(await this.emit(ctx, "GUILD_MONOPOLY", 3, [],
+          { role: mo.role, share: mo.share }, { share: mo.share }));
       }
     }
 

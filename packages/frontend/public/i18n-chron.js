@@ -83,6 +83,9 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   GAMES: "第 {era} 届竞技会于 {venue} 家族门前揭幕——今日赛目为 {event}；蜂群暂置账簿，共赴运动场。",
   CHAMPION: "冠军加冕 —— 果蝇 #{id} 赢得 {event}；{house} 的徽记高悬运动场上空。",
   RECORD: "纪录易手 —— 果蝇 #{id} 以终身成交 {deals} 笔超过旧标 {prev} 笔；竞技会自此保有它自己的历史。",
+  GUILD_CHARTER: "一行会获得特许 —— {role} 行会成立，{members} 位在世工匠已越过 {quorum} 人的法定人数；第 {era} 纪元为之盖印。",
+  APPRENTICE_PACT: "一纸契约缔结 —— 果蝇 #{id} 在特许旗下操起 {role} 之业；行会现今计数 {members} 位工匠。",
+  GUILD_MONOPOLY: "一行当独占市场 —— 劳动蜂群的百分之 {share} 今为 {role} 行会效劳；再无别家旗号招展得这般满。",
 };
 
 const fr = {
@@ -158,6 +161,9 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   GAMES: "Les {era}es jeux s'ouvrent à la maison {venue} — au programme : {event} ; l'essaim suspend ses registres pour le stade.",
   CHAMPION: "Un champion est couronné — la mouche #{id} gagne {event} ; {house} dresse son sigil au-dessus du stade.",
   RECORD: "Le record tombe — la mouche #{id} inscrit {deals} échanges à vie contre l'ancienne marque de {prev} ; les jeux gardent désormais leur propre histoire.",
+  GUILD_CHARTER: "Un métier gagne sa charte — la guilde {role} est fondée avec {members} mains vivantes, passé le quorum de {quorum} ; l'ère {era} appose son sceau.",
+  APPRENTICE_PACT: "Un pacte est scellé — la mouche #{id} prend le métier {role} sous une bannière chartée ; la guilde compte désormais {members} mains.",
+  GUILD_MONOPOLY: "Un métier tient le champ — {share} pour cent de l'essaim travailleur sert désormais la guilde {role} ; nulle bannière ne flotte plus pleine.",
 };
 
 const es = {
@@ -233,6 +239,9 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   GAMES: "Los {era}ésimos juegos abren en la casa {venue} — el programa es {event}; el enjambre pausa sus libros por el estadio.",
   CHAMPION: "Se corona un campeón — la mosca #{id} gana {event}; {house} levanta su sello sobre el estadio.",
   RECORD: "Cae el récord — la mosca #{id} anota {deals} tratos de por vida contra la antigua marca de {prev}; los juegos ya guardan su propia historia.",
+  GUILD_CHARTER: "Un oficio gana su carta — el gremio de {role} se funda con {members} manos vivas, pasado el quórum de {quorum}; la era {era} estampa su sello.",
+  APPRENTICE_PACT: "Un pacto se jura — la mosca #{id} toma el oficio {role} bajo una bandera con carta; el gremio cuenta ya {members} manos.",
+  GUILD_MONOPOLY: "Un oficio tiene el campo — el {share} por ciento del enjambre trabajador sirve ya al gremio de {role}; ninguna otra bandera ondea tan llena.",
 };
 
 const ja = {
@@ -308,6 +317,9 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   GAMES: "第{era}回大競技会、{venue}家の元で開催——本日の種目は{event}；蜂群、帳簿を置き、スタジアムへ集う。",
   CHAMPION: "戴冠 —— ハエ #{id}、{event}を制す；{house}、紋章をスタジアムに掲ぐ。",
   RECORD: "記録破り —— ハエ #{id}、生涯取引 {deals} 件をもって旧記録 {prev} 件を上回る；大競技会、ついに己の歴史を刻む。",
+  GUILD_CHARTER: "ある職業が特許を得た —— ギルド「{role}」設立、在世の職人 {members} 人が定足数 {quorum} 人を超えた；第 {era} 紀元がその印を押す。",
+  APPRENTICE_PACT: "誓約が結ばれた —— ハエ #{id}、特許の旗の下に {role} の業につく；ギルドは今、職人 {members} 人。",
+  GUILD_MONOPOLY: "一つの職業が場を占む —— 働く群蜂の {share} パーセントが今、ギルド「{role}」の旗の下に仕える；これほど満ちた旗は他にない。",
 };
 
 const ko = {
@@ -383,6 +395,9 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   GAMES: "{venue} 가문의 제 {era}차 경기 대회 개막 — 오늘의 종목: {event}; 무리가 장부를 내려놓고 경기장에 모이다.",
   CHAMPION: "우승자 왕관 쓰다 — 파리 #{id}, {event}에서 이기다; {house}, 경기장 위에 문장을 들다.",
   RECORD: "기록 깨지다 — 파리 #{id}, 평생 거래 {deals}건으로 옛 기록 {prev}건을 넘다; 경기 대회, 이제 자신의 역사를 지니다.",
+  GUILD_CHARTER: "한 업이 특허를 얻었다 — {role} 길드 세워지고, 목숨 있는 장인 {members}명이 정족수 {quorum}명을 넘었다; 제 {era} 시대가 도장을 찍는다.",
+  APPRENTICE_PACT: "맹약이 맺어졌다 — 파리 #{id}, 특허를 얻은 깃발 아래 {role}의 업을 배다; 길드, 이제 손 {members}명.",
+  GUILD_MONOPOLY: "한 업이 장을 지킨다 — 일하는 무리의 {share}퍼센트, 이제 {role} 길드의 깃발 아래 섬긴다; 이토록 온전한 깃발은 없다.",
 };
 
 const ar = {
@@ -458,6 +473,9 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   GAMES: "الألعاب {era} تفتح أبوابها في دار {venue} — البرنامج: {event}؛ السرب يوقف دفاتره من أجل الملعب.",
   CHAMPION: "تتويج بطل — الذبابة #{id} تفوز بـ{event}؛ {house} ترفع شعارها فوق الملعب.",
   RECORD: "سقوط الرقم — الذبابة #{id} تسجل {deals} صفقة مدى الحياة متجاوزة الرقم القديم {prev}؛ الألعاب صارت تحفظ تاريخها بنفسها.",
+  GUILD_CHARTER: "فازت حرفة بميثاقها — تأسّست نقابة {role} بـ{members} يدًا حيّة بعد بلوغ نصاب {quorum}؛ والعصر {era} يطبع ختمه.",
+  APPRENTICE_PACT: "عُقد عهد — الذبابة #{id} تمتهن {role} تحت راية موثّقة؛ والنقابة تعدّ الآن {members} يدًا.",
+  GUILD_MONOPOLY: "حرفة تستحوذ على الميدان — {share} بالمائة من السرب العامل يخدم الآن راية نقابة {role}؛ لا راية ترفرف أوفى منها.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
