@@ -92,6 +92,12 @@ const ECON_TOTALS = {
     treasuryOutAtomic: { type: "string", description: "Total paid out from the funding treasury (integer string)." },
     richestId: { type: "integer" },
     poorestId: { type: "integer" },
+    settleMsAvg: { type: ["integer", "null"], description: "Mean submit→finality latency (ms) of successful on-chain net settlements, or null before any timed success." },
+    settleMsMax: { type: "integer", description: "Slowest successful settle latency (ms)." },
+    settleMsLast: { type: "integer", description: "Most recent successful settle latency (ms)." },
+    settleMsN: { type: "integer", description: "Number of timed successful settlements (the sample size behind settleMsAvg)." },
+    netPending: { type: "integer", description: "Live gauge: pair-nets currently folded and awaiting broadcast (drains each cron)." },
+    netPendingTrades: { type: "integer", description: "Live gauge: gross trades folded into the pending nets awaiting broadcast." },
   },
 } as const;
 

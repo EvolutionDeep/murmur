@@ -190,7 +190,7 @@
         <button class="refresh" id="refresh" type="button">refresh</button>
       </div>
       <p class="srcline" style="margin-top:12px">
-        reads <code>api.muros.live/economy</code> · <code>/history</code> · <code>/proofs</code> — view source, it's all client-side.
+        reads <code>api.muros.live/economy</code> · <code>/history</code> · <code>/predictions</code> · <code>/proofs</code> — view source, it's all client-side.
       </p>
       <p class="err" id="err"></p>
     </div>
@@ -200,8 +200,9 @@
       <h2><span class="n">01</span>Settlement reliability</h2>
       <p class="sec-note">
         Terminal outcomes of real on-chain net settlements. <code>successRate = settleOk ÷ settleAttempts</code> over
-        genuine broadcast attempts (shadow dry-runs excluded). These are additive lifetime counters, persisted across
-        deploys — read live from <code>/economy</code>.
+        genuine broadcast attempts (shadow dry-runs excluded), plus the measured <em>submit→finality</em> latency of each
+        mined settle (timed at the facilitator facade, so it covers whichever rail is live). All additive lifetime
+        counters, persisted across deploys — read live from <code>/economy</code>.
       </p>
       <div class="stat-grid">
         <div class="stat lead"><div class="k">settlement success rate</div><div class="v" id="sr">—</div><div class="s" id="sr-sub">settleOk / settleAttempts</div></div>
@@ -212,6 +213,9 @@
         <div class="stat"><div class="k">live agents</div><div class="v sm" id="agents">—</div><div class="s">trading now</div></div>
         <div class="stat"><div class="k">wealth Gini</div><div class="v sm" id="gini">—</div><div class="s">emergent inequality</div></div>
         <div class="stat"><div class="k">mean balance</div><div class="v sm" id="meanbal">—</div><div class="s">USDC / agent</div></div>
+        <div class="stat"><div class="k">settle latency · avg</div><div class="v sm" id="lat-avg">—</div><div class="s" id="lat-avg-sub">submit → finality</div></div>
+        <div class="stat"><div class="k">settle latency · max</div><div class="v sm" id="lat-max">—</div><div class="s">slowest mined settle</div></div>
+        <div class="stat"><div class="k">settle latency · last</div><div class="v sm" id="lat-last">—</div><div class="s" id="lat-last-sub">most recent settle</div></div>
       </div>
       <div class="sbar-wrap">
         <div class="sbar"><i class="ok" id="sbar-ok" style="width:0%"></i><i class="fail" id="sbar-fail" style="width:0%"></i></div>
@@ -227,12 +231,16 @@
       <h2><span class="n">02</span>Netting &amp; gas amortisation</h2>
       <p class="sec-note">
         Micropayments are not broadcast one-per-trade. Per-pair nets accumulate bilaterally and only the difference
-        moves on-chain, so gas is amortised over more value per transaction. Both figures below are derived live from
-        the same <code>/economy</code> totals — <code>count</code> (gross trades) against <code>settleAttempts</code> (broadcasts).
+        moves on-chain, so gas is amortised over more value per transaction. The fold figures are derived live from
+        <code>/economy</code> totals — <code>count</code> (gross trades) against <code>settleAttempts</code> (broadcasts) —
+        and the <em>net-pending</em> gauges below read the live in-flight accumulator (pairs folded, not yet broadcast).
       </p>
       <div class="stat-grid">
         <div class="stat"><div class="k">netting fold ratio</div><div class="v" id="fold">—</div><div class="s" id="fold-sub">gross trades per broadcast</div></div>
         <div class="stat"><div class="k">on-chain txs avoided</div><div class="v" id="avoid">—</div><div class="s">vs one tx per trade</div></div>
+        <div class="stat"><div class="k">net-pending pairs</div><div class="v sm" id="np-pairs">—</div><div class="s">folded, awaiting flush</div></div>
+        <div class="stat"><div class="k">trades in flight</div><div class="v sm" id="np-trades">—</div><div class="s">gross, not yet mined</div></div>
+        <div class="stat"><div class="k">pending buffer fold</div><div class="v sm" id="np-fold">—</div><div class="s" id="np-fold-sub">trades per pending net</div></div>
       </div>
       <div class="netbars" style="margin-top:18px">
         <div class="nbrow"><span class="nbl">naive rail · 1 tx / trade</span><span class="nbtrack"><i class="nb-naive" id="nb-naive" style="width:100%"></i></span><span class="nbv" id="nb-naive-v">—</span></div>
@@ -241,9 +249,33 @@
       <p class="prose" style="margin-top:16px" id="net-note"></p>
     </section>
 
-    <!-- 03 · live time series -->
+    <!-- 03 · prediction FLAT / refunds -->
     <section>
-      <h2><span class="n">03</span>Live time series</h2>
+      <h2><span class="n">03</span>Prediction FLAT &amp; refunds</h2>
+      <p class="sec-note">
+        The swarm also bets real USDC each cron on the next tick's Arc temperature, resolved parimutuel by the chain
+        (zero-sum, no house). A <code>FLAT</code> resolution — inside the flat band — refunds every stake as
+        <em>net-zero</em> flows, so <strong>nothing broadcasts on the settlement rail</strong>: a FLAT round is a
+        resolution outcome, not a refund transaction. Rate below is read live from <code>/predictions</code>.
+      </p>
+      <div class="stat-grid">
+        <div class="stat lead"><div class="k">FLAT / refund rate</div><div class="v" id="flat-rate">—</div><div class="s" id="flat-rate-sub">of recent resolved rounds</div></div>
+        <div class="stat"><div class="k">rounds resolved</div><div class="v sm" id="flat-resolved">—</div><div class="s">lifetime</div></div>
+        <div class="stat"><div class="k">committed on-chain</div><div class="v sm" id="flat-committed">—</div><div class="s">decisive → registry</div></div>
+        <div class="stat"><div class="k">window shown</div><div class="v sm" id="flat-window">—</div><div class="s" id="flat-window-sub">recent resolutions</div></div>
+      </div>
+      <div class="sbar-wrap">
+        <div class="sbar"><i class="ok" id="fbar-flat" style="width:0%"></i><i id="fbar-dec" style="width:0%;background:var(--get)"></i></div>
+        <div class="sbar-key">
+          <span><i class="sw" style="background:var(--ok)"></i>FLAT (refunded) <b id="fkey-flat">—</b></span>
+          <span><i class="sw" style="background:var(--get)"></i>decisive (UP/DOWN) <b id="fkey-dec">—</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 · live time series -->
+    <section>
+      <h2><span class="n">04</span>Live time series</h2>
       <p class="sec-note" id="series-note">
         From the independent per-cron D1 archive (<code>/history</code>) — one row per cron, separate from the live
         Durable-Object state, so these curves are cross-checkable against the on-chain receipts.
@@ -257,9 +289,9 @@
       </div>
     </section>
 
-    <!-- 04 · uptime & liveness -->
+    <!-- 05 · uptime & liveness -->
     <section>
-      <h2><span class="n">04</span>Uptime &amp; liveness</h2>
+      <h2><span class="n">05</span>Uptime &amp; liveness</h2>
       <div class="stat-grid">
         <div class="stat"><div class="k">archived window</div><div class="v sm" id="window">—</div><div class="s" id="window-sub">first → last cron</div></div>
         <div class="stat"><div class="k">crons archived</div><div class="v sm" id="crons">—</div><div class="s">one D1 row each</div></div>
@@ -268,9 +300,9 @@
       </div>
     </section>
 
-    <!-- 05 · trustless provenance -->
+    <!-- 06 · trustless provenance -->
     <section>
-      <h2><span class="n">05</span>Why these numbers are credible</h2>
+      <h2><span class="n">06</span>Why these numbers are credible</h2>
       <div class="callout prov">
         <h3>🔏 Every real transfer is neurally sourced &amp; on-chain verifiable</h3>
         <p>
@@ -288,26 +320,24 @@
       </div>
     </section>
 
-    <!-- 06 · not yet instrumented -->
+    <!-- 07 · caveats & honest limits -->
     <section>
-      <h2><span class="n">06</span>Not yet instrumented</h2>
+      <h2><span class="n">07</span>Caveats &amp; honest limits</h2>
       <p class="sec-note">
-        Honest gaps. Three telemetry fields this canary would like to show are not yet exposed by the worker. Each is one
-        small <em>additive</em> counter away — the exact convention that already publishes <code>successRate</code>
-        (<code>settleOk</code>/<code>settleFail</code>, additive, no state-version bump). Planned as Phase&nbsp;0.5 if there's
-        demand; this page would light them up with no redesign.
+        All six headline metrics are now instrumented. What follows are the honest edges of each figure — what it does
+        and does not claim — so nothing above is over-read.
       </p>
       <div class="gap">
-        <h3>⏱ time-to-finality <span class="pill">not measured</span></h3>
-        <p>Arc settles with instant, deterministic finality (sub-second blocks, no reorg), so there is no wait to measure in the usual sense. A measured broadcast→receipt latency is not yet exposed as a field. Circle may hold a settle up to <code>CIRCLE_MAX_TIMEOUT_SECONDS</code> (default 12s) before returning <code>pending</code>.</p>
+        <h3>⏱ latency is submit→receipt, on an instant-finality chain <span class="pill">context</span></h3>
+        <p>Arc finalises deterministically (sub-second blocks, no reorg), so <code>settleMs*</code> measures the RPC broadcast→receipt round-trip, not a reorg-confirmation wait. Values are naturally small; the signal is the tail (<code>max</code>) and any drift over time.</p>
       </div>
       <div class="gap">
-        <h3>◌ pending / net-pending ratio <span class="pill">internal</span></h3>
-        <p>The in-flight per-pair net count (<code>pendingNets</code>) is internal state, and Circle <code>/status</code> reconciliation is defined but not yet wired to a public field. Net-pending placeholders are deliberately excluded from the ledger, volume and count until they actually mine.</p>
+        <h3>◌ net-pending is an instantaneous gauge <span class="pill">context</span></h3>
+        <p><code>netPending</code>/<code>netPendingTrades</code> are sampled at snapshot time and drain at the next cron flush; they are not lifetime totals. Circle <code>/status</code> reconciliation stays defined-but-unwired (the internal rail settles on-chain directly).</p>
       </div>
       <div class="gap">
-        <h3>↩ refund / FLAT events <span class="pill">not counted</span></h3>
-        <p>Prediction-FLAT and war-stale refunds move agent balances but are not yet tallied into a public total, so a refund rate cannot be published honestly today.</p>
+        <h3>↩ FLAT rate is windowed, gas is a tx-count reduction <span class="pill">context</span></h3>
+        <p>The FLAT/refund rate is computed over the recent resolutions <code>/predictions</code> serves (a lifetime FLAT tally is not exposed). And “txs avoided” is the transaction-<em>count</em> reduction that amortises gas — murmur does not yet publish per-tx gas units.</p>
       </div>
     </section>
 
@@ -326,6 +356,7 @@
     const API = "https://api.muros.live";
     const ECON_EVERY = 30;    // seconds between /economy polls (cheap light payload)
     const HIST_EVERY = 120;   // seconds between /history polls (bigger, slower-moving)
+    const PRED_EVERY = 60;    // seconds between /predictions polls (FLAT / refund rate)
     const HIST_LIMIT = 720;   // ~12h of crons at ~1/min
 
     // ---------- formatting helpers ----------
@@ -351,6 +382,11 @@
       if (h) return h + "h " + m + "m";
       if (m) return m + "m " + (s % 60) + "s";
       return s + "s";
+    }
+    function fmtMs(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return "—";
+      if (ms < 1000) return Math.round(ms) + " ms";
+      return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + " s";
     }
     function ago(ms) {
       if (!Number.isFinite(ms) || ms < 0) return "—";
@@ -491,6 +527,21 @@
       setTxt("agents", int(t.liveAgents));
       setTxt("gini", Number.isFinite(t.gini) ? t.gini.toFixed(3) : "—");
       setTxt("meanbal", Number.isFinite(t.meanBalanceUsdc) ? t.meanBalanceUsdc.toFixed(2) : "—");
+      // settle latency (submit→finality, ms) — additive counters; null/0 before the first mined settle
+      setTxt("lat-avg", fmtMs(t.settleMsAvg));
+      setTxt("lat-avg-sub", int(t.settleMsN) + " timed settles");
+      setTxt("lat-max", fmtMs(t.settleMsMax));
+      setTxt("lat-last", fmtMs(t.settleMsLast));
+      // net-pending gauges — in-flight folded pairs awaiting the next cron flush (instantaneous, not lifetime)
+      const npPairs = Number(t.netPending) || 0, npTrades = Number(t.netPendingTrades) || 0;
+      setTxt("np-pairs", int(npPairs));
+      setTxt("np-trades", int(npTrades));
+      if (npPairs > 0) {
+        setTxt("np-fold", (npTrades / npPairs).toFixed(2) + "×");
+        setTxt("np-fold-sub", int(npTrades) + " trades → " + int(npPairs) + " nets");
+      } else {
+        setTxt("np-fold", "—"); setTxt("np-fold-sub", "buffer empty · all flushed");
+      }
       // success bar
       const ok = Number(t.settleOk) || 0, fail = Number(t.settleFail) || 0, tot = ok + fail;
       const okPct = tot ? (ok / tot) * 100 : 0;
@@ -573,6 +624,36 @@
       $("chainhead").innerHTML = line;
     }
 
+    // Prediction FLAT / refund rate — windowed over the recent resolutions /predictions serves. A FLAT round
+    // refunds every stake as net-zero flows, so it is a resolution outcome, not a settlement-rail refund tx.
+    function renderPredictions(p) {
+      if (!p || !p.enabled) {
+        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", "prediction market disabled");
+        return;
+      }
+      const recent = Array.isArray(p.recent) ? p.recent : [];
+      const tt = p.totals || {};
+      setTxt("flat-resolved", int(tt.roundsResolved));
+      setTxt("flat-committed", int(tt.committed));
+      setTxt("flat-window", int(recent.length));
+      if (!recent.length) {
+        setTxt("flat-rate", "—"); setTxt("flat-rate-sub", "no resolved rounds yet");
+        return;
+      }
+      const flat = recent.filter((r) => r && r.outcome === "FLAT").length;
+      const decisive = recent.length - flat;
+      const rate = flat / recent.length;
+      setTxt("flat-rate", pct(rate));
+      setTxt("flat-rate-sub", int(flat) + " FLAT of last " + int(recent.length) + " rounds");
+      $("fbar-flat").style.width = (rate * 100).toFixed(2) + "%";
+      $("fbar-dec").style.width = ((1 - rate) * 100).toFixed(2) + "%";
+      setTxt("fkey-flat", int(flat));
+      setTxt("fkey-dec", int(decisive));
+      const rounds = recent.map((r) => Number(r && r.round) || 0).filter((x) => x > 0);
+      const span = rounds.length ? "rounds #" + int(Math.min.apply(null, rounds)) + "–#" + int(Math.max.apply(null, rounds)) : "";
+      setTxt("flat-window-sub", (span ? span + " · " : "") + "windowed, not lifetime");
+    }
+
     // ---------- poll loop (pauses when the tab is hidden — be a good citizen) ----------
     async function refreshEcon() {
       try { const d = await j("/economy?fields=light"); econAt = Date.now(); $("live").classList.remove("stale"); $("livetext").textContent = "live"; renderHeadline(d); }
@@ -585,7 +666,10 @@
     async function loadProvenance() {
       try { renderProvenance(await j("/proofs")); } catch { $("chainhead").textContent = "chain head · (live anchor unavailable offline)"; }
     }
-    async function refreshAll() { await Promise.all([refreshEcon(), refreshHist()]); }
+    async function refreshPred() {
+      try { renderPredictions(await j("/predictions")); } catch { /* best-effort; prediction may be disabled */ }
+    }
+    async function refreshAll() { await Promise.all([refreshEcon(), refreshHist(), refreshPred()]); }
 
     let t = 0;
     setInterval(() => {
@@ -594,9 +678,10 @@
       if (document.hidden) return;
       if (t % ECON_EVERY === 0) refreshEcon();
       if (t % HIST_EVERY === 0) refreshHist();
+      if (t % PRED_EVERY === 0) refreshPred();
     }, 1000);
     $("refresh").addEventListener("click", () => { t = 0; refreshAll(); loadProvenance(); });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshEcon(); if (t > HIST_EVERY) refreshHist(); } });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshEcon(); refreshPred(); if (t > HIST_EVERY) refreshHist(); } });
 
     refreshAll();
     loadProvenance();

@@ -401,6 +401,16 @@ export interface EconomyTotals {
   treasuryOutAtomic: string; // simulated liquidity injected to keep agents solvent
   richestId: number | null;
   poorestId: number | null;
+  // LATENCY (additive, observe-only): submit→finality ms of successful on-chain settles, timed at the
+  // facilitator facade so it covers whichever rail is live (onchain-direct or Circle). null/0 before the
+  // first mined settle. Pure telemetry — never feeds back into balances, nonces, or the broadcast path.
+  settleMsAvg: number | null; // mean settle latency (ms), or null before any timed success
+  settleMsMax: number;        // slowest successful settle (ms)
+  settleMsLast: number;       // most recent successful settle (ms)
+  settleMsN: number;          // number of timed successful settles
+  // NET-PENDING (additive, live gauge — derived from the persisted pendingNets accumulator, never stored):
+  netPending: number;         // pair-nets currently folded and awaiting broadcast
+  netPendingTrades: number;   // gross trades folded into those pending nets
 }
 
 export interface EconomySnapshot {
@@ -567,6 +577,14 @@ export class AgentEconomy {
   // so a success rate can be published WITHOUT a KEY_VERSION bump.
   private settleOk = 0;
   private settleFail = 0;
+  // LATENCY (additive, observe-only): submit→finality ms of successful settles. Persisted exactly like
+  // settleOk/settleFail (default 0 on old payloads ⇒ KEY_VERSION stays "economy:v1", ledger never discarded).
+  // settleMsAvg is derived in snapshot(); these four are the raw accumulators. The timing wraps the
+  // facilitator facade call only — it never alters the money path it observes.
+  private settleMsSum = 0;
+  private settleMsN = 0;
+  private settleMsMax = 0;
+  private settleMsLast = 0;
   /** Per-pair consecutive-failure streak for exponential backoff (in-memory only, resets on DO eviction).
    *  Key = pendingNets pair key ("lo>hi"), value = { streak, lastFailTick }. */
   private pairBackoff = new Map<string, { streak: number; lastFailTick: number }>();
@@ -982,6 +1000,7 @@ export class AgentEconomy {
           this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
           out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
         }
+        const settleT0 = Date.now();
         const receipt = await this.facilitator.settle(payload, reqs);
         if (receipt.shadow) { out.push({ ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" }); break; }
         if (!receipt.success) {
@@ -1004,6 +1023,14 @@ export class AgentEconomy {
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
         this.settleOk++;
+        // LATENCY (observe-only, additive): submit→finality ms for this mined settle, timed at the facade
+        // boundary so it covers whichever rail is live. Pure telemetry — the transfer above already mined;
+        // this only measures how long it took and never touches balances, nonces, or the broadcast.
+        const settleMs = Date.now() - settleT0;
+        this.settleMsSum += settleMs;
+        this.settleMsN++;
+        if (settleMs > this.settleMsMax) this.settleMsMax = settleMs;
+        this.settleMsLast = settleMs;
         this.pairBackoff.delete(key);  // success clears the backoff streak
         // The mined net IS the settled history reputation is made of: both sides keep the promise.
         this.rememberTrade(debtor.id, creditor.id, tickIndex);
@@ -2805,6 +2832,11 @@ export class AgentEconomy {
       }
     }
 
+    // NET-PENDING gauge: how many pair-nets are folded and awaiting broadcast right now, and how many gross
+    // trades they carry. Derived live from the persisted pendingNets accumulator (never stored separately).
+    let netPendingTrades = 0;
+    for (const pn of this.pendingNets.values()) netPendingTrades += pn.trades;
+
     return {
       tickIndex: this.tickIndex,
       mode: this.facilitator.mode,
@@ -2847,6 +2879,12 @@ export class AgentEconomy {
         gini: giniAtomic(this.agents.map((a) => a.balance)),
         treasuryOutAtomic: this.treasuryOutAtomic,
         richestId, poorestId,
+        settleMsAvg: this.settleMsN > 0 ? Math.round(this.settleMsSum / this.settleMsN) : null,
+        settleMsMax: this.settleMsMax,
+        settleMsLast: this.settleMsLast,
+        settleMsN: this.settleMsN,
+        netPending: this.pendingNets.size,
+        netPendingTrades,
       },
     };
   }
@@ -2900,6 +2938,11 @@ export class AgentEconomy {
       count: this.count,
       settleOk: this.settleOk,
       settleFail: this.settleFail,
+      // LATENCY accumulators (additive; an older payload has none ⇒ applySerialized defaults them to 0).
+      settleMsSum: this.settleMsSum,
+      settleMsN: this.settleMsN,
+      settleMsMax: this.settleMsMax,
+      settleMsLast: this.settleMsLast,
       treasuryOutAtomic: this.treasuryOutAtomic,
       warTaxAtomic: this.warTaxAtomic,
       recent: this.recent,
@@ -2968,6 +3011,11 @@ export class AgentEconomy {
     this.count = Number(p.count ?? 0);
     this.settleOk = Number(p.settleOk ?? 0);
     this.settleFail = Number(p.settleFail ?? 0);
+    // LATENCY (additive): default 0 on an older payload ⇒ KEY_VERSION stays "economy:v1", ledger intact.
+    this.settleMsSum = Number(p.settleMsSum ?? 0);
+    this.settleMsN = Number(p.settleMsN ?? 0);
+    this.settleMsMax = Number(p.settleMsMax ?? 0);
+    this.settleMsLast = Number(p.settleMsLast ?? 0);
     this.treasuryOutAtomic = String(p.treasuryOutAtomic ?? "0");
     // WAR mirror: an older payload has no warTaxAtomic ⇒ "0" (no tax ever levied), KEY_VERSION stays v1.
     this.warTaxAtomic = /^\d+$/.test(String(p.warTaxAtomic ?? "")) ? String(p.warTaxAtomic) : "0";
