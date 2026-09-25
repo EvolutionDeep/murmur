@@ -29,7 +29,7 @@
     "viem": "^2.21.45"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241112.0",
+    "@cloudflare/workers-types": "^5.20260921.1",
     "solc": "^0.8.37",
     "typescript": "^5.6.3",
     "wrangler": "^4.133.0"
