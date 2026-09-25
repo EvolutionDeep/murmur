@@ -402,6 +402,7 @@ let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (
 let terrPol = null;                                    // last built province list — the screen-space map key reads it
 let civOff = null, civOffCtx = null, civKey = "";      // ⑭㉖ baked civilization layer (settlements/works/road): repaint on signature change, blit per frame
 let civLayout = null;                                  // last built civ layout {nodes,works,road} — the live anim/seats read it
+let uncOff = null, uncKey = "";                        // baked unclaimed continents (world-space static ⇒ repaint on resize only, blit per frame)
 let territorySeizureSig = "";                            // a stable signature of which zones changed hands in war — folded into terrKey so a conquest repaints the dominion map
 
 // ================= canvas field =================
@@ -479,6 +480,21 @@ function makeHaloSprite() {
   return s;
 }
 
+// Pre-rendered gilt crown-glow sprite: one cached radial is far cheaper than a fresh
+// createRadialGradient for every capital every frame (the drawCrown halo).
+let crownGlowSprite = null;
+function makeCrownGlow() {
+  const s = document.createElement("canvas");
+  s.width = s.height = 64;
+  const c = s.getContext("2d");
+  const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, rgba(GILT_HI, 0.34));
+  g.addColorStop(1, rgba(GILT_HI, 0));
+  c.fillStyle = g;
+  c.fillRect(0, 0, 64, 64);
+  return s;
+}
+
 function resize() {
   VW = window.innerWidth; VH = window.innerHeight;
   DPR = Math.min(1.5, window.devicePixelRatio || 1);   // capped: full-bleed canvas fill is the main per-frame cost
@@ -494,6 +510,7 @@ function resize() {
   mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
   parchOff = null; parchKey = "";   // parchment re-tiles at the new size (the gilt frame draws direct each frame)
   terrOff = null; terrKey = "";     // the cached territory map must re-render at the new field size
+  uncOff = null; uncKey = "";       // the unclaimed continents bake is world-space ⇒ must re-bake at the new field size
   layoutWorldMap();                  // the atlas world-rect is derived from the field size
   clampCam();                        // the world/viewport relationship moved — pull the camera back in bounds
   rebuildGraveField();           // the headstone band is laid out in field coordinates → re-place on resize
@@ -2704,7 +2721,9 @@ function renderSettlements(g, nodes) {
     g.save();
     g.textAlign = "center"; g.textBaseline = "middle";
     g.font = "700 " + Math.round(rank === "CITY" ? 13 : rank === "TOWN" ? 11 : 10) + "px Fraunces, Cinzel, Georgia, serif";
-    g.shadowColor = rgba([250, 246, 238], 0.9); g.shadowBlur = 4;
+    g.lineJoin = "round"; g.miterLimit = 2;
+    g.strokeStyle = rgba([250, 246, 238], 0.85); g.lineWidth = 3.4;
+    g.strokeText(label, nd.x, nd.y - spread - 18);   // a painted stroke halo (cheaper than shadowBlur)
     g.fillStyle = rgba(mix(nd.color, INK, 0.6), 0.95);
     g.fillText(label, nd.x, nd.y - spread - 18);
     g.restore();
@@ -3004,9 +3023,7 @@ function drawCivAnim(now, q) {
 function drawCrown(x, y, color, now) {
   const cy = y + Math.sin(now * 0.0016 + x * 0.01) * 1.6;
   ctx.save();
-  const gr = ctx.createRadialGradient(x, cy, 0, x, cy, 15);
-  gr.addColorStop(0, rgba(GILT_HI, 0.34)); gr.addColorStop(1, rgba(GILT_HI, 0));
-  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, cy, 15, 0, TAU); ctx.fill();
+  if (crownGlowSprite) ctx.drawImage(crownGlowSprite, x - 15, cy - 15, 30, 30);   // pre-baked radial halo
   ctx.fillStyle = rgba(GILT, 0.96);
   ctx.beginPath();
   ctx.moveTo(x - 7, cy + 3); ctx.lineTo(x - 7, cy - 1); ctx.lineTo(x - 3.5, cy + 1.5); ctx.lineTo(x, cy - 5);
@@ -3256,28 +3273,41 @@ function paintTerritoryMap(g, pol) {
 }
 
 /** The UNCLAIMED lands: every other continent / isle of the world atlas wears the same pastel-block template as
- *  the home provinces (neutral tint + brown border) plus an English "UNCLAIMED TERRITORY" cartouche. Drawn LIVE
- *  in WORLD space each frame — these landmasses sit OUTSIDE the viewport-sized territory offscreen, so baking
- *  them into that cache would clip them away entirely. */
-function renderUnclaimed() {
-  ctx.lineJoin = "round";
+ *  the home provinces (neutral tint + brown border) plus an English "UNCLAIMED TERRITORY" cartouche. The polygons
+ *  and labels are STATIC in world space, so the whole read is baked into a world-sized offscreen (uncOff) at the
+ *  field's current size; each frame is a single drawImage — no per-frame polygon fill, stroke or fillText. */
+function bakeUnc() {
+  const w = Math.round(MAP.w), h = Math.round(MAP.h);
+  if (!uncOff) uncOff = document.createElement("canvas");
+  if (uncOff.width !== w || uncOff.height !== h) { uncOff.width = w; uncOff.height = h; }
+  const g = uncOff.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+  g.lineJoin = "round";
   for (const u of UNCLAIMED) {
-    ctx.beginPath();
-    for (let i = 0; i < u.poly.length; i++) { const w = mw(u.poly[i]); i ? ctx.lineTo(w.x, w.y) : ctx.moveTo(w.x, w.y); }
-    ctx.closePath();
-    ctx.fillStyle = rgba([214, 206, 186], 0.42); ctx.fill();
-    ctx.strokeStyle = rgba([120, 96, 70], 0.45); ctx.lineWidth = 1.4; ctx.stroke();
+    g.beginPath();
+    for (let i = 0; i < u.poly.length; i++) { const p = mw(u.poly[i]); i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); }
+    g.closePath();
+    g.fillStyle = rgba([214, 206, 186], 0.42); g.fill();
+    g.strokeStyle = rgba([120, 96, 70], 0.45); g.lineWidth = 1.4; g.stroke();
     if (u.label) {
       const c = mw(u.label);
-      ctx.save();
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      try { ctx.letterSpacing = "2px"; } catch { /* older engines */ }
-      ctx.shadowColor = rgba([250, 246, 238], 0.85); ctx.shadowBlur = 4;
-      ctx.font = "600 12px Cinzel, Fraunces, Georgia, serif"; ctx.fillStyle = rgba([92, 74, 56], 0.72);
-      ctx.fillText("UNCLAIMED TERRITORY", c.x, c.y);
-      ctx.restore();
+      g.save();
+      g.textAlign = "center"; g.textBaseline = "middle";
+      try { g.letterSpacing = "2px"; } catch { /* older engines */ }
+      g.font = "600 12px Cinzel, Fraunces, Georgia, serif";
+      g.lineJoin = "round"; g.miterLimit = 2;
+      g.strokeStyle = rgba([250, 246, 238], 0.85); g.lineWidth = 3.4;
+      g.strokeText("UNCLAIMED TERRITORY", c.x, c.y);   // a painted stroke halo (cheaper than shadowBlur)
+      g.fillStyle = rgba([92, 74, 56], 0.72);
+      g.fillText("UNCLAIMED TERRITORY", c.x, c.y);
+      g.restore();
     }
   }
+  uncKey = VW + "x" + VH + "@" + DPR;
+}
+function renderUnclaimed() {
+  if (!uncOff || uncKey !== VW + "x" + VH + "@" + DPR) bakeUnc();
+  ctx.drawImage(uncOff, 0, 0);
 }
 
 /** The map key, pinned to the RIGHT EDGE of the SCREEN (screen space, so it never zooms or pans with the map):
@@ -3768,10 +3798,11 @@ function loop(now) {
     frameMsAvg = lerp(frameMsAvg, ms, 0.06);
     if (now - lastQualityAt > 1000) {
       lastQualityAt = now;
-      // tighter thresholds: degrade at >20ms (was >30ms), upgrade at <15ms (was <19ms)
-      // this makes quality=0 the stable state on most laptops, keeping the swarm smooth
-      if (frameMsAvg > 20 && quality > 0) quality--;
-      else if (frameMsAvg < 15 && quality < 2) quality++;
+      // widen the hysteresis band so a machine idling around 18-19ms (after the shadowBlur/unclaimed/crown
+      // hotspot fixes) can climb to quality=1 (simplified fly anatomy + halos + motes) instead of being stuck
+      // at quality=0 blobs. Degrade only on genuine struggle (>24ms), upgrade when comfortably under 17ms.
+      if (frameMsAvg > 24 && quality > 0) quality--;
+      else if (frameMsAvg < 17 && quality < 2) quality++;
     }
     tempSmoothed = lerp(tempSmoothed, tempTarget, 0.02 * dt);
     cohSmoothed = lerp(cohSmoothed, cohTarget, 0.03 * dt);
@@ -9222,6 +9253,7 @@ function boot() {
   // resolve the reader's language first (persisted > browser > en) so the very first paints are localized
   setLang(getLang(), { rerender: false });
   haloSprite = makeHaloSprite();
+  crownGlowSprite = makeCrownGlow();
   resize();
   bindUI();
   populateLangSelect();
