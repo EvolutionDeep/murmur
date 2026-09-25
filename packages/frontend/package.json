@@ -9,6 +9,6 @@
     "deploy": "wrangler pages deploy public --project-name=murmur --branch=main"
   },
   "devDependencies": {
-    "wrangler": "^4.133.0"
+    "wrangler": "^4.136.0"
   }
 }
