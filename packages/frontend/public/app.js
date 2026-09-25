@@ -409,7 +409,7 @@ let territorySeizureSig = "";                            // a stable signature o
 
 // ================= canvas field =================
 const canvas = $("field");
-const ctx = canvas.getContext("2d");
+let ctx = null;   // lazy: created only when the 2D fallback path runs (Three.js owns the canvas otherwise)
 let VW = 0, VH = 0, DPR = 1;
 
 // ================= camera: the whole field is one zoomable/pannable map =================
@@ -504,10 +504,7 @@ function resize() {
   canvas.height = Math.round(VH * DPR);
   canvas.style.width = VW + "px";
   canvas.style.height = VH + "px";
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  // repaint the paper solid so the trail buffer has a clean base
-  ctx.fillStyle = rgb(paletteAt(tempSmoothed).paper);
-  ctx.fillRect(0, 0, VW, VH);
+  if (ctx) { ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = rgb(paletteAt(tempSmoothed).paper); ctx.fillRect(0, 0, VW, VH); }
   cachedRect = null;             // canvas box changed — drop the cached rect
   mindOff = null; mindSize = 0;  // the swarm-mind aura sprite must be rebuilt at the new field size
   parchOff = null; parchKey = "";   // parchment re-tiles at the new size (the gilt frame draws direct each frame)
@@ -3638,7 +3635,8 @@ function render(pal, now) {
     threeScene.render();
     return;
   }
-  // ── fallback: original Canvas 2D render (below, only if Three.js failed to init) ──
+  // ── 2D fallback: lazily create the 2D context (only if Three.js failed to init) ──
+  if (!ctx) ctx = canvas.getContext("2d");
   ctx.fillStyle = "rgb(238, 232, 219)"; ctx.fillRect(0, 0, VW, VH);
   ctx.save(); applyCam();     // ---- WORLD space: the atlas, its provinces, the swarm and ambient life move as one ----
   if (TEX.ground.ready) {
