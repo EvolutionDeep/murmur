@@ -2585,7 +2585,7 @@ function zoneAnchor(z) {
  *  (kind:era:age-bucket) and the road's two names — so routine ±1 pop jitter never forces a heavy repaint, but a
  *  founding, a rank step, a conquest, a new work or its weathering does. */
 function civSignature(C) {
-  let s = VW + "x" + VH + "@" + DPR;
+  let s = VW + "x" + VH + "@" + DPR + ":q" + (quality >= 2 ? 2 : quality) + ":c" + Math.round(((chronMeta && chronMeta.civLevel) || 50) / 25);
   for (const st of C.settlements) s += "|" + st.zone + ":" + st.rank + ":" + Math.min(14, st.pop | 0) + ":" + (st.houseName || "");
   const W = econWorks;
   if (W && Array.isArray(W.active)) for (const w of W.active) {
@@ -2725,6 +2725,29 @@ function renderTradeRoads(g, road) {
 /** Recompute the civilization layout and bake its static structure into civOff. Settlements take their zone's
  *  force-field anchor; each is flagged a capital when it sits in a house's HOME zone (and seized when that ground
  *  is now held by another house). The road threads the two greatest; the standing works anchor beside the first. */
+/** Strip farmland fanned around each CITY — the founding step from foraging to farming, drawn as ploughed furrow
+ *  plots just outside the wall, their number growing with the civilization's level. Static ⇒ baked (quality ≥ 2). */
+function renderFarmland(g, nodes, civLvl) {
+  const plots = 3 + Math.round(clamp(civLvl / 100, 0, 1) * 4);   // 3..7 strips as fortune grows
+  const cropA = [126, 146, 82], cropB = [178, 158, 92];          // green shoot / ripe gold
+  for (const nd of nodes) {
+    if (nd.s.rank !== "CITY") continue;
+    const R = nd.r * 1.12 + 8;
+    for (let i = 0; i < plots; i++) {
+      const a = Math.PI * (0.18 + 0.64 * (i / Math.max(1, plots - 1))) + Math.PI * 0.5;   // a fan on the lower arc
+      const px = nd.x + Math.cos(a) * R, py = nd.y + Math.sin(a) * R * 0.62;
+      g.save();
+      g.translate(px, py); g.rotate(a - Math.PI / 2);
+      const w = 15, h = 9;
+      g.fillStyle = rgba(i % 2 ? cropB : cropA, 0.42);
+      g.fillRect(-w / 2, -h / 2, w, h);
+      g.strokeStyle = rgba(mix(INK, [70, 52, 30], 0.4), 0.35); g.lineWidth = 0.7;
+      for (let f = 1; f < 4; f++) { const yy = -h / 2 + (h * f / 4); g.beginPath(); g.moveTo(-w / 2, yy); g.lineTo(w / 2, yy); g.stroke(); }
+      g.restore();
+    }
+  }
+}
+
 function rebuildCiv(C) {
   if (!civOff) { civOff = document.createElement("canvas"); civOffCtx = civOff.getContext("2d"); }
   const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
@@ -2757,6 +2780,7 @@ function rebuildCiv(C) {
   }
   renderTradeRoads(g, road);       // the road sinks under the towns it connects
   renderSettlements(g, nodes);
+  if (quality >= 2) renderFarmland(g, nodes, (chronMeta && chronMeta.civLevel) || 50);   // ⑥ the fields beside each city
   const works = [];                // the standing public works, anchored beside the greatest city (or the coffer)
   const W = econWorks;
   if (W && Array.isArray(W.active) && W.active.length) {
@@ -2779,6 +2803,7 @@ function rebuildCiv(C) {
  *  threading the trade road (warm gold — trade, unlike the torch-red march). All time-driven, cheap, capped. */
 function drawCivAnim(now, q) {
   if (!civLayout) return;
+  const cg = civGrade();   // the age's fortune modulates every fire & glow below
   ctx.save();
   for (const nd of civLayout.nodes) {
     const st = nd.s;
@@ -2792,15 +2817,15 @@ function drawCivAnim(now, q) {
           ctx.beginPath(); ctx.arc(sx, nd.y - 16 - life * 26, 1.4 + life * 4.5, 0, TAU); ctx.fill();
         }
       }
-    } else {   // a campfire at the settlement's heart
+    } else {   // a campfire at the settlement's heart — burning bright in fortune, low in a dark age
       const fx = nd.x, fy = nd.y + 1, fl = flick(now, (fnv1a(st.name) % 100) / 10, 0.02, 0.7, 1.2);
       const gr = ctx.createRadialGradient(fx, fy, 0, fx, fy, 11 * fl);
-      gr.addColorStop(0, rgba(FIRE_HOT, 0.3)); gr.addColorStop(0.5, rgba(FIRE_MID, 0.14)); gr.addColorStop(1, rgba(FIRE_LO, 0));
+      gr.addColorStop(0, rgba(FIRE_HOT, clamp(0.3 * cg.light, 0, 1))); gr.addColorStop(0.5, rgba(FIRE_MID, clamp(0.14 * cg.light, 0, 1))); gr.addColorStop(1, rgba(FIRE_LO, 0));
       ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(fx, fy, 11 * fl, 0, TAU); ctx.fill();
-      ctx.fillStyle = rgba(FIRE_MID, 0.85);
+      ctx.fillStyle = rgba(FIRE_MID, clamp(0.85 * cg.light, 0, 1));
       ctx.beginPath(); ctx.moveTo(fx - 2, fy); ctx.quadraticCurveTo(fx - 0.8, fy - 5 * fl, fx, fy - 8 * fl);
       ctx.quadraticCurveTo(fx + 0.8, fy - 5 * fl, fx + 2, fy); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = rgba(FIRE_HOT, 0.9);
+      ctx.fillStyle = rgba(FIRE_HOT, clamp(0.9 * cg.light, 0, 1));
       ctx.beginPath(); ctx.moveTo(fx - 1, fy); ctx.quadraticCurveTo(fx, fy - 3 * fl, fx + 1, fy); ctx.closePath(); ctx.fill();
     }
   }
@@ -2811,6 +2836,12 @@ function drawCivAnim(now, q) {
       gr.addColorStop(0, rgba(GILT_HI, 0.22 * (1 - wk.age / 0.3) * (0.6 + 0.4 * pulse)));
       gr.addColorStop(1, rgba(GILT_HI, 0));
       ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(wk.x, wk.y - 16, 26, 0, TAU); ctx.fill();
+    } else if (wk.kind === "monument" && cg.golden) {   // a golden age keeps its monument shining
+      const pulse = 0.5 + 0.5 * Math.sin(now * 0.0016);
+      const gr = ctx.createRadialGradient(wk.x, wk.y - 24, 0, wk.x, wk.y - 24, 34);
+      gr.addColorStop(0, rgba(GILT_HI, 0.16 * (0.6 + 0.4 * pulse)));
+      gr.addColorStop(1, rgba(GILT_HI, 0));
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(wk.x, wk.y - 24, 34, 0, TAU); ctx.fill();
     }
   }
   const road = civLayout.road;   // the golden caravan threading the trade road (goods in transit)
@@ -2876,6 +2907,23 @@ function renderCivilization(now) {
   if (q >= 1) { drawCivAnim(now, q); drawCivSeats(now, q); }
 }
 
+/** The civilization's fortune as a light grade, read off chronMeta.civLevel (0..100): a golden age gilds the whole
+ *  field from its heart outward and burns every hearth bright; a dark age drains it cold from the edges in and lets
+ *  the fires sink low; ascendant/declining cross-fade gently between. Continuous in civLevel so an age never pops. */
+function civGrade() {
+  const raw = chronMeta ? chronMeta.civLevel : null;
+  const lvl = clamp((raw == null ? 50 : raw) / 100, 0, 1);
+  const wash = mix([104, 122, 148], [255, 210, 128], lvl);      // cold ruin → gilded age
+  const alpha = 0.045 + 0.075 * Math.abs(lvl - 0.5) * 2;        // strongest at the extremes, neutral mid-fortune
+  return {
+    wash, alpha,
+    centerA: alpha * (0.4 + 1.2 * lvl),                          // golden glows from the heart …
+    edgeA: alpha * (1.6 - 1.2 * lvl),                            // … dark ages close in from the edges
+    light: 0.62 + 0.76 * lvl,                                    // hearth/fire brightness multiplier
+    golden: lvl >= 0.75,
+  };
+}
+
 /** A cinematic golden-hour grade laid over the whole field: warm sunlit sky up top, cool shadow below, a slow
  *  warm↔cool breathe cross-faded with the market temperature, and a strong corner vignette for the diorama depth. */
 function renderDayNight(pal, now) {
@@ -2903,6 +2951,12 @@ function renderDayNight(pal, now) {
     const r = g.createRadialGradient(VW / 2, VH * 0.46, Math.min(VW, VH) * 0.42, VW / 2, VH / 2, Math.max(VW, VH) * 0.75);
     r.addColorStop(0, rgba([0, 0, 0], 0)); r.addColorStop(1, rgba([96, 74, 52], 0.14));
     g.fillStyle = r; g.fillRect(0, 0, VW, VH);
+    // the civilization's fortune over the land (⑫ civLevel): one extra radial fill inside the SAME 250ms bake, so
+    // the field itself reads gilded in a golden age and cold-drained in a dark age at zero added per-frame cost.
+    const cg = civGrade();
+    const fg = g.createRadialGradient(VW / 2, VH * 0.46, Math.min(VW, VH) * 0.12, VW / 2, VH / 2, Math.max(VW, VH) * 0.78);
+    fg.addColorStop(0, rgba(cg.wash, cg.centerA)); fg.addColorStop(1, rgba(cg.wash, cg.edgeA));
+    g.fillStyle = fg; g.fillRect(0, 0, VW, VH);
   }
   ctx.drawImage(dnOff, 0, 0, VW, VH);
 }
