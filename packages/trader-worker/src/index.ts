@@ -26,8 +26,8 @@ function corsHeaders(origin: string) {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     // X-PAYMENT carries the browser-signed x402 payload for the paid /signal/pulse product.
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-PAYMENT",
-    // Let the browser read the x402 settlement result + the 402 requirements.
-    "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION",
+    // Let the browser read the x402 settlement result + the 402 requirements + the free-replay marker.
+    "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION, X-PAYMENT-REPLAYED",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -76,6 +76,9 @@ export default {
             "GET  /leaderboard  (trustless per-agent PnL ranking + paid-signal revenue)",
             "GET  /signal/pulse (x402 paywall: 402 → pay USDC → the machine-readable Arc-activity signal)",
             "GET  /signal/requirements (the x402 payment requirements a browser signs to buy the signal)",
+            "GET  /http/signal/pulse/GET (x402 v2 discovery: the same requirements in the v2/CAIP-2 wire shape + Bazaar schema extension)",
+            "GET  /x402/verify?tx=0x… (trustless: decode the EIP-3009 authorization ANY mined tx executed — payer/payee/value/nonce/gas; neural echo when it's one of ours)",
+            "GET  /pulse/refunds (⑥ refund-rail state: enabled switch + bounded refund ledger; dark-deployed, switch off by default)",
             "GET  /predictions  (on-chain prediction market: live book + parimutuel odds + hit-rate leaderboard)",
             "GET  /predictions/verify?round=N (recompute a round's receipt hash + read its on-chain registry commitment)",
             "GET  /manifest      (the swarm's brain manifest + its sha256 identity — trustless 'prove the brain': real connectomes, no LLM)",

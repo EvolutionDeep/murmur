@@ -170,6 +170,14 @@ CIRCLE_MAX_TIMEOUT_SECONDS = "12"           # seconds Circle may wait for termin
 # signed by the payTo key murmur already holds. Mixing Bearer + seller-proof on one request is a 400.
 
 
+# ===== Arc Pulse refund rail (DARK DEPLOY — intentionally NO var set here) =====
+# The refund code path ships disabled: PULSE_REFUNDS is read from env but deliberately NOT defined as a var
+# (128-bindings wall: new switches live as code defaults + this comment block only). To arm it later:
+#   (1) prove the rail keyless via `POST /pulse/refund-shadow` (eth_call only,
+#   broadcasts nothing); (2) only then add `PULSE_REFUNDS = "true"` here and redeploy. Absent ⇒ byte-for-byte
+#   today's behavior: a failed pulse build 502s and no wallet logic runs. Ledger: `GET /pulse/refunds`.
+
+
 # ===== Prediction market (ONCHAIN — neural-staked temperature bets) =====
 # Each cron the swarm stakes real USDC on whether next tick's market temperature rises or falls; the
 # following cron resolves it parimutuel (winners split the losers' pool, strictly zero-sum) and folds the

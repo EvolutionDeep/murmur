@@ -99,6 +99,13 @@ export interface Env {
   SIGNAL_MAX_USDC?: string;             // hard ceiling on a single purchase, USDC (default 0.25)
   SIGNAL_PAYTO?: string;                // revenue address (0x…40); default = the facilitator relay/gas wallet
 
+  // --- Arc Pulse refund rail (DARK DEPLOY: the code ships, the switch stays off in production) ---
+  //     When enabled, a pulse purchase whose signal build throws AFTER payment settled gets a seller-funded
+  //     EIP-3009 refund leg back to the buyer, recorded in a bounded on-DO ledger (GET /pulse/refunds).
+  //     Default FALSE ⇒ behavior is byte-for-byte today's: the 502 stands and no refund wallet logic runs.
+  //     NEVER set as a wrangler var in prod until the operator shadow-proves the rail (POST /pulse/refund-shadow).
+  PULSE_REFUNDS?: string;               // "true" to arm the refund rail (anything else, incl. absent ⇒ off)
+
   // --- On-chain prediction market: agents stake real USDC on the NEXT tick's temperature direction ---
   //     Resolved by the freshly-sampled Arc temperature; payouts are parimutuel and settle through the
   //     SAME netting + EIP-3009 + registry rails as neural trades (no separate money path). ALL of it is
@@ -430,6 +437,11 @@ export interface RuntimeConfig {
     maxUsdc: number;
     /** Revenue address, or null to fall back to the facilitator relay wallet at request time. */
     payTo: string | null;
+  };
+
+  // Arc Pulse refund rail (dark-deploy; see Env.PULSE_REFUNDS). Off by default — nothing runs when off.
+  refunds: {
+    enabled: boolean;
   };
 
   // On-chain prediction market (agents stake USDC on the next tick's temperature direction)
@@ -827,6 +839,11 @@ export function loadConfig(env: Env): RuntimeConfig {
       priceUsdc: clamp(Number(env.SIGNAL_PRICE_USDC ?? "0.01"), 0.000001, 1000),
       maxUsdc: clamp(Number(env.SIGNAL_MAX_USDC ?? "0.25"), 0.000001, 100_000),
       payTo: (env.SIGNAL_PAYTO ?? "").trim() || null,
+    },
+
+    refunds: {
+      // Dark deploy: absent/empty/typo ⇒ OFF, the refund code path never executes.
+      enabled: (env.PULSE_REFUNDS ?? "").trim().toLowerCase() === "true",
     },
 
     predict: {

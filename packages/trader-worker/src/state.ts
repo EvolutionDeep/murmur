@@ -88,7 +88,7 @@ import {
   planWar, cursorAfterWarOpen, housePower, stakeOf, taxLevy, feudPairs, winnerOf, pairKey,
   WIN_ATTACKER, WIN_NONE, type WarCursor,
 } from "./war.js";
-import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo, type WarInfo } from "./x402.js";
+import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, X402_V2_VERSION, toV2PaymentRequirements, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo, type WarInfo } from "./x402.js";
 import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -155,6 +155,7 @@ const KEY_COMMONS = "commons:v1";
  *  forgets the poems, never ledger state. Bounded (≤ POEMS_CAP entries), DO-safe. */
 const KEY_POET = "poet:v1";
 const KEY_PULSE = "pulse:v1";
+const KEY_REFUNDS = "refunds:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
 const KEY_WAR = "war:v1";
@@ -193,6 +194,16 @@ interface PulseSales {
   lastTx: string | null;  // most recent settlement tx hash
   lastBuyer: string | null;
   lastTs: number | null;
+}
+
+/** ⑥ Arc Pulse auto-refund ledger (bounded ring ≤64; dark-deployed, only written when PULSE_REFUNDS="true"). */
+interface RefundRecord {
+  tx: string;            // the settled purchase tx being refunded
+  from: string;          // buyer receiving the refund leg
+  valueAtomic: string;   // refund amount (the buyer's own signed value)
+  reason: string;        // the signal-build failure that triggered the refund
+  status: string;        // refunded:<txHash> | failed:<reason> | skipped
+  ts: number;
 }
 
 /** Worker-side cursor for the on-chain human arena: which rounds it has opened/resolved as resolver. */
@@ -2307,6 +2318,10 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/manifest/replay") return await this.getManifestReplay();
       if (req.method === "GET" && path === "/signal/pulse") return await this.getSignalPulse(req);
       if (req.method === "GET" && path === "/signal/requirements") return await this.getSignalRequirements();
+      if (req.method === "GET" && path === "/http/signal/pulse/GET") return await this.getPulseDiscovery();
+      if (req.method === "GET" && path === "/x402/verify") return await this.getX402Verify(url);
+      if (req.method === "GET" && path === "/pulse/refunds") return await this.getPulseRefunds();
+      if (req.method === "POST" && path === "/pulse/refund-shadow") return this.adminGate(req) ?? (await this.postRefundShadow(req));
       if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
       if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
@@ -3071,6 +3086,10 @@ export class FlyStateDO {
   private async getEconomy(url: URL) {
     const economy = await this.ensureEconomy();
     const snap = economy.snapshot();
+    // ③ Settlement-rail telemetry (circle/relay counts, breaker, gas) — a pure since-boot read of the
+    // facilitator. Simulator ⇒ null ⇒ key absent ⇒ /economy byte-for-byte today's. Carried in light mode
+    // too, so the canary's rails panel reads it on the same ~3KB poll payload.
+    const facilitator = economy.facilitatorStats;
     // LIGHT MODE: `?fields=light` returns only totals + top-10 agents by balance — a compact poll
     // payload (~3KB vs ~58KB) for the frontend canvas heartbeat. Full response when param absent.
     if (url.searchParams.get("fields") === "light") {
@@ -3080,6 +3099,7 @@ export class FlyStateDO {
       const light: Record<string, unknown> = { mode: snap.mode, network: snap.network, totals: snap.totals, agents };
       const raw = snap as unknown as Record<string, unknown>;
       if ("market" in raw) light.market = raw.market;
+      if (facilitator) light.facilitator = facilitator;
       return json(light);
     }
     // ⑤ CULTURE folded into the same read-out the wallets drawer already draws — a pure read of the
@@ -3108,7 +3128,9 @@ export class FlyStateDO {
     const treaty = await this.treatyReadout();
     const works = await this.worksReadout();
     const guardians = await this.guardiansReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians) return json(snap);
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians) {
+      return json(facilitator ? { ...snap, facilitator } : snap);
+    }
     return json({
       ...snap,
       ...(culture ? { culture } : null), ...(religion ? { religion } : null), ...(commons ? { commons } : null),
@@ -3123,6 +3145,7 @@ export class FlyStateDO {
       ...(treaty ? { treaty } : null),
       ...(works ? { works } : null),
       ...(guardians ? { guardians } : null),
+      ...(facilitator ? { facilitator } : null),
     });
   }
 
@@ -3723,29 +3746,44 @@ export class FlyStateDO {
     const settlement = await economy.settleExternal(reqs, payload);
     if (!settlement.success) return paymentRequired(reqs, settlement.invalidReason ?? "settlement failed");
 
-    const signal = await this.buildPulseSignal();
-    await this.recordPulseSale(settlement, payload);
-    return new Response(
-      JSON.stringify({
-        paid: true,
-        product: "arc-pulse",
-        signal,
-        settlement: {
-          txHash: settlement.txHash,
-          simulated: !!settlement.simulated,
-          shadow: !!settlement.shadow,
-          network: settlement.network,
+    // ⑤ Free re-read: the SAME authorization nonce already settled ⇒ settleExternal converged the replay
+    // onto the original txHash (no second charge, no second broadcast). Serve the signal again, but do NOT
+    // double-count the sale — the revenue ledger counts paid reads, and this one was already counted.
+    const replayed = !!settlement.replayed;
+
+    try {
+      const signal = await this.buildPulseSignal();
+      if (!replayed) await this.recordPulseSale(settlement, payload);
+      return new Response(
+        JSON.stringify({
+          paid: true,
+          product: "arc-pulse",
+          signal,
+          settlement: {
+            txHash: settlement.txHash,
+            simulated: !!settlement.simulated,
+            shadow: !!settlement.shadow,
+            network: settlement.network,
+            ...(replayed ? { replayed: true } : null),
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "X-PAYMENT-RESPONSE": b64json(settlement),
+            ...(replayed ? { "X-PAYMENT-REPLAYED": "true" } : null),
+            "Cache-Control": "no-store",
+          },
         },
-      }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "X-PAYMENT-RESPONSE": b64json(settlement),
-          "Cache-Control": "no-store",
-        },
-      },
-    );
+      );
+    } catch (e) {
+      // ⑥ Refund rail (DARK DEPLOY): PULSE_REFUNDS off ⇒ rethrow EXACTLY as today (outer catch → 500).
+      // Armed ⇒ a buyer who paid but got no product gets a seller-funded refund leg + a ledger entry.
+      if (!this.cfg.refunds.enabled) throw e;
+      await this.tryRefundPulse(settlement, payload, e);
+      return jsonError("service_unavailable", `signal build failed after settlement: ${(e as Error).message}`, 502);
+    }
   }
 
   /** Best-effort revenue telemetry for the paid signal (persisted; never blocks serving the product). */
@@ -3762,6 +3800,112 @@ export class FlyStateDO {
       await this.state.storage.put(KEY_PULSE, cur);
     } catch {
       /* telemetry only */
+    }
+  }
+
+  /**
+   * x402 v2 discovery for the Arc Pulse resource (①, Bazaar-facing): an unauthenticated GET revealing the
+   * exact v2 PaymentRequirements a facilitator/agent/indexer should accept — CAIP-2 network, eip3009
+   * transfer method, and the bazaar extension describing the input/output schemas. Pure boundary
+   * translation of the existing v1 requirements (toV2PaymentRequirements); the buy flow itself still
+   * speaks v1 over X-PAYMENT unchanged, byte-for-byte.
+   */
+  private async getPulseDiscovery(): Promise<Response> {
+    if (!this.cfg.signal.enabled) return json({ enabled: false });
+    const economy = await this.ensureEconomy();
+    const { reqs } = await this.signalRequirements(economy);
+    if (!reqs) return json({ enabled: false, reason: "no payee configured (set SIGNAL_PAYTO or run onchain)" });
+    const v2 = toV2PaymentRequirements(reqs, this.cfg.chainId, this.cfg.economy.usdcEip712Version);
+    return json({ x402Version: X402_V2_VERSION, accepts: [v2], latest: v2 });
+  }
+
+  /**
+   * Trustless verification of ANY x402 settlement tx (④): decode the EIP-3009 authorization the chain
+   * actually executed — payer, payee, value, nonce, finality, gas — with no operator in the loop and no
+   * reliance on our records. When the tx happens to be one of OUR internal neural settlements, the
+   * receipt proof is layered on as a neural echo; when it isn't (an external Arc Pulse buyer, anyone's
+   * transfer), the on-chain decode stands alone. Requires the onchain facilitator (RPC read).
+   */
+  private async getX402Verify(url: URL): Promise<Response> {
+    const tx = (url.searchParams.get("tx") ?? "").trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) return jsonError("bad_request", "tx must be a 0x…64 hash", 400);
+    const economy = await this.ensureEconomy();
+    const proof = await economy.authorizationProofOf(tx);
+    if (!proof) {
+      return json({ found: false, txHash: tx, reason: "not a transferWithAuthorization, tx not visible yet, or no onchain facilitator wired" });
+    }
+    // Neural provenance echo (best-effort): is this tx one of our published neural receipts?
+    let neural: { receiptHash: string; match: boolean } | null = null;
+    const internal = economy.proofForTx(tx);
+    if (internal) {
+      const onchainNonce = await economy.onchainNonceOf(tx);
+      neural = { receiptHash: internal.receiptHash, match: onchainNonce != null && onchainNonce === internal.receiptHash };
+    }
+    return json({ found: true, ...proof, neural });
+  }
+
+  /**
+   * The refund ledger (⑥, dark deploy): recent refund attempts, bounded ring, read-only. `enabled` is
+   * the switch as-is — the public can see whether the rail is armed before we ever say so.
+   */
+  private async getPulseRefunds(): Promise<Response> {
+    const ledger = (await this.state.storage.get<RefundRecord[]>(KEY_REFUNDS)) ?? [];
+    return json({ enabled: this.cfg.refunds.enabled, ledger });
+  }
+
+  /**
+   * Operator shadow-proof of the refund rail (⑥): eth_call the EXACT refund transfer from the pulse
+   * wallet WITHOUT broadcasting anything — works even while PULSE_REFUNDS is off, so the operator can
+   * validate the whole key/domain/gas path before arming it. Admin-gated like the other POSTs.
+   */
+  private async postRefundShadow(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => null)) as { to?: string; valueUsdc?: number } | null;
+    const to = (body?.to ?? "").trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to)) return jsonError("bad_request", "to (0x…40) required", 400);
+    const valueUsdc = Number(body?.valueUsdc ?? 0);
+    if (!Number.isFinite(valueUsdc) || valueUsdc <= 0 || valueUsdc > 100) {
+      return jsonError("bad_request", "valueUsdc must be in (0, 100]", 400);
+    }
+    const economy = await this.ensureEconomy();
+    const res = await economy.refundBuyer({
+      to, valueAtomic: usdcToAtomic(valueUsdc), network: arcNetworkTag(this.cfg.isTestnet), shadow: true,
+    });
+    if (!res) return jsonError("service_unavailable", "refund rail needs the onchain facilitator", 503);
+    return json({ shadow: true, ...res });
+  }
+
+  /**
+   * The automatic refund leg when a PAID pulse build fails (⑥). Best-effort: it never replaces the
+   * buyer-facing 502, and it records into a bounded ring so the operator can reconcile. The refund is
+   * bounded to the buyer's own signed value (exact-amount return), carries a random nonce (a refund is
+   * NOT a neural settlement — no receipt provenance), and funds come from OUR side only.
+   */
+  private async tryRefundPulse(settlement: SettleResponse, payload: PaymentPayload, err: unknown): Promise<void> {
+    let status = "skipped";
+    try {
+      const buyer = payload?.payload?.authorization?.from ?? "";
+      const value = payload?.payload?.authorization?.value ?? "0";
+      if (!buyer || !/^\d+$/.test(String(value)) || BigInt(value) <= 0n) throw new Error("unrefundable payload shape");
+      const economy = await this.ensureEconomy();
+      const res = await economy.refundBuyer({ to: buyer, valueAtomic: String(value), network: settlement.network, shadow: false });
+      if (!res) throw new Error("no onchain facilitator");
+      status = res.success ? `refunded:${res.txHash}` : `failed:${res.invalidReason ?? "?"}`;
+    } catch {
+      status = "failed:internal";
+    }
+    try {
+      const cur = (await this.state.storage.get<RefundRecord[]>(KEY_REFUNDS)) ?? [];
+      cur.unshift({
+        tx: settlement.txHash,
+        from: payload?.payload?.authorization?.from ?? "",
+        valueAtomic: payload?.payload?.authorization?.value ?? "0",
+        reason: err instanceof Error ? err.message : String(err),
+        status,
+        ts: Date.now(),
+      });
+      await this.state.storage.put(KEY_REFUNDS, cur.slice(0, 64));
+    } catch {
+      /* ledger is best-effort; the 502 above already told the truth */
     }
   }
 

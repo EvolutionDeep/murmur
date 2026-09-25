@@ -28,6 +28,7 @@
 //   9. server → 200 OK + PAYMENT-RESPONSE header (b64 SettlementResponse)
 
 import {
+  decodeFunctionData,
   erc20Abi,
   encodeFunctionData,
   parseAbi,
@@ -52,6 +53,12 @@ import {
 
 /** Protocol version we speak. The reference `exact` scheme ships at version 1. */
 export const X402_VERSION = 1;
+
+/**
+ * The v2 protocol version Circle's /settle and the x402 Bazaar discovery layer speak. We translate at
+ * the boundary (see toV2PaymentRequirements) — the internal wire shapes stay v1, byte-for-byte unchanged.
+ */
+export const X402_V2_VERSION = 2;
 
 /** The first (and only) x402 scheme we implement: transfer an exact amount. */
 export const SCHEME_EXACT = "exact" as const;
@@ -407,6 +414,59 @@ export interface SettleResponse {
   shadow?: boolean;
   /** Why a settlement failed (cap hit, insufficient balance, revert, …). Diagnostics only. */
   invalidReason?: string;
+  /** True when the SAME authorization nonce already settled — the cached original result is returned. */
+  replayed?: boolean;
+  /** Which rail executed this settlement (relay = self-broadcast, circle = hosted facilitator). */
+  backend?: "circle" | "relay";
+}
+
+/**
+ * Settlement-rail telemetry, honest "since boot" scope (counters reset on DO eviction; the on-chain
+ * ledger stays the financial truth). Read-only observability for /economy + the canary rails panel.
+ */
+export interface FacilitatorStats {
+  mode: "onchain";
+  /** Which rails this facilitator can currently drive. */
+  rails: "circle+relay" | "relay-only";
+  breaker: "closed" | "open";
+  breakerOpenings: number;
+  circleOk: number;
+  /** Circle failures that were infrastructure-class (pending / transport / 5xx) — these feed the breaker. */
+  circleInfraFail: number;
+  /** Circle compliance-screen rejects — respected, never retried, never trip the breaker. */
+  circleReject: number;
+  circleSkippedWhileOpen: number;
+  circleFallbackOk: number;
+  relayOk: number;
+  relayFail: number;
+  /** Replays converged onto their original txHash by the settled-nonce ring (free re-read). */
+  replayHits: number;
+  gasWeiTotal: string;
+  /** wei(18) → USDC atomic(6) magnitude estimate of the gas spend — display only. */
+  gasUsdcAtomicEstimate: string;
+  trackedNonces: number;
+  bootTs: number;
+}
+
+/**
+ * A trustless read-out of the EIP-3009 authorization a mined tx executed, decoded straight off-chain.
+ * One curl to /x402/verify?tx= lets anyone confirm who paid whom, how much, and whether it mined.
+ */
+export interface AuthorizationProof {
+  txHash: string;
+  /** The broadcast account (relay wallet or Circle signer) — not necessarily the payer. */
+  txFrom: string;
+  contract: string;
+  payer: string;
+  payee: string;
+  valueAtomic: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: string;
+  blockNumber: number | null;
+  status: "success" | "reverted" | "pending";
+  gasUsed: string | null;
+  gasPriceWei: string | null;
 }
 
 /**
@@ -420,6 +480,12 @@ export interface Facilitator {
   readonly asset: string;
   verify(payload: PaymentPayload, reqs: PaymentRequirements): Promise<VerifyResponse>;
   settle(payload: PaymentPayload, reqs: PaymentRequirements): Promise<SettleResponse>;
+  /** Rail telemetry since boot (onchain facilitator only); absent on the keyless simulator. */
+  statsReadout?(): FacilitatorStats;
+  /** Decode ANY mined tx's EIP-3009 authorization straight off-chain (onchain only). */
+  authorizationProofOf?(txHash: string): Promise<AuthorizationProof | null>;
+  /** Seller-funded refund leg (onchain only; inert unless explicitly called — PULSE_REFUNDS). */
+  refundBuyer?(a: { to: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse>;
 }
 
 // ============================== small helpers ==============================
@@ -547,6 +613,184 @@ export function pseudoTxHash(from: string, to: string, value: string, nonce: str
     out += ((s1 ^ s2) >>> 0).toString(16).padStart(8, "0");
   }
   return "0x" + out.slice(0, 64);
+}
+
+// ============================== v2 discovery + Bazaar ==============================
+
+/** The x402 v2 wire shape a discovery client (or the Bazaar indexer) reads. Circle routes by the CAIP-2 network. */
+export interface V2PaymentRequirements {
+  scheme: typeof SCHEME_EXACT;
+  /** CAIP-2 (eip155:5042 on Arc mainnet) — v2 speaks CAIP-2 where v1 used the short tag. */
+  network: string;
+  maxAmountRequired: string;
+  resource: string;
+  description: string;
+  mimeType: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  asset: string;
+  extra: { name: string; version: string; assetTransferMethod: string };
+  extensions?: Record<string, unknown>;
+}
+
+/**
+ * The Bazaar discovery extension for the Arc Pulse route. A Bazaar-capable facilitator catalogs the
+ * resource from its settle-time requirements; publishing it on the discovery endpoint too means any
+ * indexer (or agent) reading /http/signal/pulse/GET sees exactly what a facilitator would.
+ */
+export const PULSE_BAZAAR_EXTENSION: Record<string, unknown> = {
+  discoverable: true,
+  inputSchema: {
+    queryParams: {},
+    headers: {
+      "X-PAYMENT": {
+        type: "string",
+        description: "base64-encoded x402 PaymentPayload carrying the buyer-signed EIP-3009 transferWithAuthorization",
+        required: true,
+      },
+    },
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      paid: { type: "boolean" },
+      product: { type: "string" },
+      signal: {
+        type: "object",
+        properties: {
+          temperature: { type: "number", description: "Arc whole-chain activity temperature, 0..1" },
+          regime: { type: "string", enum: ["HOT", "CALM", "COLD"] },
+          read: { type: "string", description: "plain-language trader-readable interpretation" },
+          tickIndex: { type: "number", description: "the swarm clock the read was taken at" },
+        },
+      },
+    },
+  },
+};
+
+/** Translate a v1 PaymentRequirements into the v2 wire shape (pure; the buyer signature never moves). */
+export function toV2PaymentRequirements(
+  reqs: PaymentRequirements,
+  chainId: number,
+  domainVersion: string = ARC_USDC_EIP712_VERSION,
+): V2PaymentRequirements {
+  return {
+    scheme: SCHEME_EXACT,
+    network: `eip155:${chainId}`,
+    maxAmountRequired: reqs.maxAmountRequired,
+    resource: reqs.resource,
+    description: reqs.description,
+    mimeType: reqs.mimeType,
+    payTo: reqs.payTo,
+    maxTimeoutSeconds: reqs.maxTimeoutSeconds,
+    asset: reqs.asset,
+    extra: { name: "USDC", version: domainVersion, assetTransferMethod: "eip3009" },
+    extensions: { bazaar: PULSE_BAZAAR_EXTENSION },
+  };
+}
+
+// ============================== replay ring + circle breaker ==============================
+
+/**
+ * A bounded FIFO of recently SETTLED authorization nonces → their mined txHash. EIP-3009 nonces are
+ * single-use on-chain, so a replay of a settled payload can only ever revert — burning gas/screening to
+ * learn what we already know. The ring lets settleExternal converge a replay onto the ORIGINAL result
+ * for free (x402's payment-identifier semantics, served server-side). Memory-only BY DESIGN: an eviction
+ * worst-case falls back to today's on-chain duplicate-nonce revert — never a double payment.
+ */
+export class NonceRing {
+  private map = new Map<string, string>();
+  constructor(private readonly cap = 512) {}
+  seen(nonce: string): string | null {
+    return this.map.get(nonce.toLowerCase()) ?? null;
+  }
+  remember(nonce: string, txHash: string): void {
+    const k = nonce.toLowerCase();
+    if (this.map.has(k)) this.map.delete(k); // refresh: re-insert moves it to the newest end
+    this.map.set(k, txHash);
+    while (this.map.size > this.cap) {
+      const oldest = this.map.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+  get size(): number {
+    return this.map.size;
+  }
+}
+
+/**
+ * A tiny circuit breaker around the Circle relayer. After `threshold` consecutive INFRASTRUCTURE
+ * failures (pending / transport / 5xx — NOT compliance rejects) it opens for `openMs`: callers skip
+ * Circle and self-broadcast meanwhile. Arc's EIP-3009 nonce is single-use, so a skipped-but-pending
+ * Circle attempt can never double-pay: the self-broadcast simply reverts on a consumed nonce.
+ */
+export class CircleBreaker {
+  private streak = 0;
+  private openUntil = 0;
+  private _openings = 0;
+  constructor(
+    private readonly threshold = 3,
+    private readonly openMs = 600_000,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+  get state(): "closed" | "open" {
+    return this.openUntil > this.now() ? "open" : "closed";
+  }
+  get openings(): number {
+    return this._openings;
+  }
+  allow(): boolean {
+    return this.state === "closed";
+  }
+  recordFailure(): void {
+    this.streak++;
+    if (this.streak >= this.threshold && this.openUntil <= this.now()) {
+      this.openUntil = this.now() + this.openMs;
+      this._openings++;
+    }
+  }
+  recordSuccess(): void {
+    this.streak = 0;
+    this.openUntil = 0;
+  }
+}
+
+/**
+ * Decode a mined tx's calldata back into the EIP-3009 authorization it executed (or null when the tx
+ * is not a transferWithAuthorization). Pure — the same decode that makes /proofs/verify trustless, now
+ * usable for ANY settlement (including external Arc Pulse buys our receipts never covered).
+ */
+export function decodeEip3009Calldata(input: Hex): {
+  from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string;
+} | null {
+  try {
+    const d = decodeFunctionData({ abi: fiatTokenV2Abi, data: input });
+    if (d.functionName !== "transferWithAuthorization") return null;
+    const a = d.args as readonly [Address, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
+    return {
+      from: a[0], to: a[1], value: a[2].toString(),
+      validAfter: a[3].toString(), validBefore: a[4].toString(), nonce: a[5],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The timing fields of a SELLER-funded refund authorization (the reverse leg of an Arc Pulse sale).
+ * Gas is paid by the seller wallet, validity is short (default 1h), and the nonce is random — a refund
+ * is not a neural settlement, so it deliberately carries no receipt-hash provenance. `nonce` injectable
+ * for deterministic tests.
+ */
+export function makeRefundAuth(a: {
+  from: Address; to: Address; value: bigint; nowSec: number; validSec?: number; nonce?: Hex;
+}): { validAfter: bigint; validBefore: bigint; nonce: Hex } {
+  if (a.nonce) return { validAfter: 0n, validBefore: BigInt(a.nowSec + (a.validSec ?? 3600)), nonce: a.nonce };
+  const buf = crypto.getRandomValues(new Uint8Array(32));
+  let nonce = "0x";
+  for (const b of buf) nonce += b.toString(16).padStart(2, "0");
+  return { validAfter: 0n, validBefore: BigInt(a.nowSec + (a.validSec ?? 3600)), nonce: nonce as Hex };
 }
 
 // ============================== facilitators ==============================
@@ -696,6 +940,17 @@ export class OnChainFacilitator implements Facilitator {
   private readonly o: OnChainFacilitatorOpts;
   private readonly domainName: string;
   private readonly domainVersion: string;
+  // ── Settlement-rail resilience (②) + observability (③). All IN-MEMORY "since boot": the on-chain
+  // ledger stays authoritative, these only describe which rail carried each hop. NonceRing/CircleBreaker
+  // are pure + unit-tested; a DO eviction resets them harmlessly (worst case: a replay re-discovers its
+  // consumed nonce on-chain, which reverts — never a double payment).
+  private readonly settledNonces = new NonceRing(512);
+  private readonly circleBreaker = new CircleBreaker(3, 600_000);
+  private readonly bootTs = Date.now();
+  private readonly st = {
+    circleOk: 0, circleInfraFail: 0, circleReject: 0, circleSkipped: 0, circleFallbackOk: 0,
+    relayOk: 0, relayFail: 0, replayHits: 0, gasWeiTotal: 0n,
+  };
 
   constructor(o: OnChainFacilitatorOpts) {
     this.o = o;
@@ -778,8 +1033,14 @@ export class OnChainFacilitator implements Facilitator {
       }
 
       // Circle Facilitator Service (scope "all"): delegate the USDC broadcast to Circle's relayer, which
-      // screens both parties and pays the settlement gas. Our wallet is untouched for this transfer.
-      if (this.o.circle && this.o.circle.scope === "all") return this.settleViaCircle(signature, auth, reqs);
+      // screens both parties and pays the settlement gas. Our wallet is untouched for this transfer. A
+      // degraded Circle (pending/transport/5xx) trips the breaker and falls through to relay below.
+      let circleTriedAndFell = false;
+      if (this.o.circle && this.o.circle.scope === "all") {
+        const gated = await this.circleGate(signature, auth, reqs);
+        if (gated) return gated;
+        circleTriedAndFell = true;
+      }
 
       // Broadcast. writeContract runs eth_estimateGas first — an implicit shadow-verify that throws if
       // the transfer would revert (bad signature / domain / reused nonce), so nothing is sent on a
@@ -797,10 +1058,17 @@ export class OnChainFacilitator implements Facilitator {
         confirmations: this.o.confirmations ?? 1,
         timeout: RECEIPT_TIMEOUT_MS,
       });
-      return { success: receipt.status === "success", network: net, txHash: hash, simulated: false };
+      const ok = receipt.status === "success";
+      if (ok) {
+        this.st.relayOk++;
+        this.st.gasWeiTotal += receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
+        if (circleTriedAndFell) this.st.circleFallbackOk++;
+      } else this.st.relayFail++;
+      return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
     } catch (err) {
       // A cron tick must never crash on one bad deal. If a throw happens after broadcast the tx MAY have
       // mined; we report failure and rely on the next deal's authoritative balance read to stay honest.
+      this.st.relayFail++;
       const msg = err instanceof Error ? err.message : String(err);
       return fail(`onchain settle error: ${msg}`);
     }
@@ -833,6 +1101,17 @@ export class OnChainFacilitator implements Facilitator {
       const v = checkPaymentInvariants(payload, reqs);
       if (!v.valid) return fail(v.invalidReason ?? "invalid payload");
       const auth = payload.payload.authorization;
+
+      // Replay convergence (x402 payment-identifier semantics, served server-side): a payload whose
+      // nonce ALREADY settled here gets the original txHash back for free — no gas, no Circle screen,
+      // no double payment (the contract would only ever revert it). This is also Arc Pulse's "re-fetch
+      // the read you already bought": the same paid payload re-serves the product inside its window.
+      const cached = this.settledNonces.seen(toNonce32(auth.nonce));
+      if (cached) {
+        this.st.replayHits++;
+        return { success: true, network: net, txHash: cached, simulated: false, replayed: true };
+      }
+
       const signature = (payload.payload.signature ?? "") as Hex;
       if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return fail("malformed signature");
 
@@ -870,7 +1149,16 @@ export class OnChainFacilitator implements Facilitator {
 
       // Circle Facilitator Service (scope "external" or "all"): an OUTSIDE wallet signed this with its own
       // key; hand the authorization to Circle's relayer to screen + broadcast + pay gas (we never relay it).
-      if (this.o.circle) return this.settleViaCircle(signature, auth, reqs);
+      // A degraded Circle falls through to the relay broadcast below (single-use nonce ⇒ no double-pay).
+      let circleTriedAndFell = false;
+      if (this.o.circle) {
+        const gated = await this.circleGate(signature, auth, reqs);
+        if (gated) {
+          if (gated.success) this.settledNonces.remember(toNonce32(auth.nonce), gated.txHash);
+          return gated;
+        }
+        circleTriedAndFell = true;
+      }
 
       const hash = await this.o.wallet.writeContract({
         address: this.o.asset,
@@ -882,11 +1170,58 @@ export class OnChainFacilitator implements Facilitator {
       const receipt = await this.o.publicClient.waitForTransactionReceipt({
         hash, confirmations: this.o.confirmations ?? 1, timeout: RECEIPT_TIMEOUT_MS,
       });
-      return { success: receipt.status === "success", network: net, txHash: hash, simulated: false };
+      const ok = receipt.status === "success";
+      if (ok) {
+        this.st.relayOk++;
+        this.st.gasWeiTotal += receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
+        if (circleTriedAndFell) this.st.circleFallbackOk++;
+        this.settledNonces.remember(toNonce32(auth.nonce), hash);
+      } else this.st.relayFail++;
+      return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
     } catch (err) {
+      this.st.relayFail++;
       const msg = err instanceof Error ? err.message : String(err);
       return fail(`external settle error: ${msg}`);
     }
+  }
+
+  /**
+   * Circle-first relay gate shared by settle()/settleExternal(). Returns Circle's result when it is
+   * terminal — success OR a compliance/screening reject (we HONOR those and never re-attempt them
+   * ourselves) — and NULL only on infrastructure degradation (pending / transport / 5xx), letting the
+   * caller fall through to its own broadcast. Arc's single-use EIP-3009 nonce makes the fallthrough
+   * double-spend-proof: if a "pending" Circle attempt later mines, the relay broadcast reverts.
+   */
+  private async circleGate(
+    signature: Hex,
+    auth: PaymentAuthorization,
+    reqs: PaymentRequirements,
+  ): Promise<SettleResponse | null> {
+    if (!this.o.circle) return null;
+    if (!this.circleBreaker.allow()) {
+      this.st.circleSkipped++;
+      return null;
+    }
+    const r = await this.settleViaCircle(signature, auth, reqs);
+    if (r.success) {
+      this.circleBreaker.recordSuccess();
+      this.st.circleOk++;
+      return { ...r, backend: "circle" };
+    }
+    if (OnChainFacilitator.isInfraFail(r.invalidReason)) {
+      this.st.circleInfraFail++;
+      this.circleBreaker.recordFailure();
+      console.warn("[x402] circle degraded, falling back to relay broadcast:", r.invalidReason);
+      return null;
+    }
+    this.st.circleReject++;
+    return { ...r, backend: "circle" };
+  }
+
+  /** Infra (retryable on the other rail) vs compliance (terminal): only infra failures trip the breaker. */
+  private static isInfraFail(reason: string | undefined): boolean {
+    const s = (reason ?? "").toLowerCase();
+    return s.includes("settlement_pending") || s.includes("circle settle error") || /circle http 5\d\d/.test(s);
   }
 
   /**
@@ -981,6 +1316,128 @@ export class OnChainFacilitator implements Facilitator {
    */
   get relayAddress(): string {
     return this.o.wallet.account.address;
+  }
+
+  /**
+   * Rail telemetry since this isolate booted. "since boot" is honest labelling: counters reset on a DO
+   * eviction, while the lifetime financial truth stays where it always was — the on-chain ledger and
+   * /economy totals. Pure read-out; adds nothing to any settle path.
+   */
+  statsReadout(): FacilitatorStats {
+    return {
+      mode: "onchain",
+      rails: this.o.circle ? "circle+relay" : "relay-only",
+      breaker: this.circleBreaker.state,
+      breakerOpenings: this.circleBreaker.openings,
+      circleOk: this.st.circleOk,
+      circleInfraFail: this.st.circleInfraFail,
+      circleReject: this.st.circleReject,
+      circleSkippedWhileOpen: this.st.circleSkipped,
+      circleFallbackOk: this.st.circleFallbackOk,
+      relayOk: this.st.relayOk,
+      relayFail: this.st.relayFail,
+      replayHits: this.st.replayHits,
+      gasWeiTotal: this.st.gasWeiTotal.toString(),
+      gasUsdcAtomicEstimate: (this.st.gasWeiTotal / 1_000_000_000_000n).toString(), // wei(18) → USDC atomic(6)
+      trackedNonces: this.settledNonces.size,
+      bootTs: this.bootTs,
+    };
+  }
+
+  /**
+   * Read ANY mined tx straight off Arc and decode the EIP-3009 authorization it executed — payer, payee,
+   * value, nonce, finality, gas. This is what lets a third party verify an Arc Pulse purchase (which
+   * carries no internal neural receipt) with one curl; /x402/verify layers the neural-receipt proof on
+   * top when the tx IS one of ours. Null when the tx is missing or isn't a transferWithAuthorization.
+   */
+  async authorizationProofOf(txHash: string): Promise<AuthorizationProof | null> {
+    try {
+      const tx = await this.o.publicClient.getTransaction({ hash: txHash as Hex });
+      const dec = decodeEip3009Calldata(tx.input as Hex);
+      if (!dec) return null;
+      let status: "success" | "reverted" | "pending" = "pending";
+      let gasUsed: string | null = null;
+      let gasPriceWei: string | null = null;
+      try {
+        const r = await this.o.publicClient.getTransactionReceipt({ hash: txHash as Hex });
+        status = r.status === "success" ? "success" : "reverted";
+        gasUsed = r.gasUsed.toString();
+        gasPriceWei = (r.effectiveGasPrice ?? 0n).toString();
+      } catch { /* still pending — status stays "pending" */ }
+      return {
+        txHash,
+        txFrom: tx.from,
+        contract: tx.to ?? this.o.asset,
+        payer: dec.from,
+        payee: dec.to,
+        valueAtomic: dec.value,
+        validAfter: dec.validAfter,
+        validBefore: dec.validBefore,
+        nonce: dec.nonce,
+        blockNumber: tx.blockNumber != null ? Number(tx.blockNumber) : null,
+        status,
+        gasUsed,
+        gasPriceWei,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * SELLER-funded refund leg: a transferWithAuthorization FROM our payTo wallet BACK to the buyer,
+   * signed by the key we already hold. Inert unless explicitly invoked (PULSE_REFUNDS defaults OFF) —
+   * shadow:true eth_calls the EXACT transfer and broadcasts nothing, so an operator can prove the rail
+   * works end-to-end before a single wei moves. The nonce is random on purpose: a refund is not a
+   * neural settlement and carries no receipt-hash provenance.
+   */
+  async refundBuyer(a: { to: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse> {
+    const net = a.network;
+    const fail = (invalidReason: string): SettleResponse =>
+      ({ success: false, network: net, txHash: "0x", invalidReason });
+    try {
+      const from = this.o.wallet.account.address as Address;
+      if (from.toLowerCase() === a.to.toLowerCase()) return fail("refund payer equals payee");
+      if (!/^\d+$/.test(a.valueAtomic) || BigInt(a.valueAtomic) <= 0n) return fail("refund value must be a positive integer");
+      const value = BigInt(a.valueAtomic);
+
+      // The refund wallet is our OWN purse: read its live balance before signing anything.
+      const bal = await this.o.publicClient.readContract({
+        address: this.o.asset, abi: erc20Abi, functionName: "balanceOf", args: [from],
+      });
+      if (bal < value) return fail(`refund wallet insufficient USDC: have ${bal}, need ${value}`);
+
+      const { validAfter, validBefore, nonce } = makeRefundAuth({
+        from, to: a.to as Address, value, nowSec: Math.floor(Date.now() / 1000),
+      });
+      const signature = await this.o.wallet.account.signTypedData({
+        domain: this.eip3009Domain(),
+        types: EIP3009_TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: { from, to: a.to as Address, value, validAfter, validBefore, nonce },
+      });
+      const { r, s, v } = parseSignature(signature);
+      const args: [Address, Address, bigint, bigint, bigint, Hex, number, Hex, Hex] =
+        [from, a.to as Address, value, validAfter, validBefore, nonce, Number(v), r, s];
+
+      if (a.shadow || this.o.shadowOnly) {
+        const data = encodeFunctionData({ abi: fiatTokenV2Abi, functionName: "transferWithAuthorization", args });
+        await this.o.publicClient.call({ account: from, to: this.o.asset, data });
+        return { success: true, network: net, txHash: "0x", simulated: false, shadow: true };
+      }
+      const hash = await this.o.wallet.writeContract({
+        address: this.o.asset, abi: fiatTokenV2Abi, functionName: "transferWithAuthorization", args,
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: RECEIPT_TIMEOUT_MS,
+      });
+      const ok = receipt.status === "success";
+      if (ok) this.st.gasWeiTotal += receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
+      return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
+    } catch (err) {
+      return fail(`refund error: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /**

@@ -1257,6 +1257,82 @@ export const OPENAPI_SPEC = {
         },
       },
     },
+    "/http/signal/pulse/GET": {
+      get: {
+        tags: ["signal"],
+        operationId: "getPulseDiscovery",
+        summary: "x402 v2 discovery for the paid pulse resource (Bazaar-facing)",
+        description: "Free, unauthenticated. The same PaymentRequirements `/signal/pulse` accepts, translated to the x402 v2 wire shape (CAIP-2 network eip155:5042, extra{name,version,assetTransferMethod:eip3009}) plus the Bazaar schema extension describing the resource inputs/outputs. Indexers and agents catalog from here; the buy flow itself still speaks v1 over X-PAYMENT.",
+        ...ok(
+          obj({
+            x402Version: { type: "integer", example: 2 },
+            accepts: { type: "array", items: { type: "object", additionalProperties: true }, description: "The v2 requirements this resource currently accepts (one entry today)." },
+            latest: { type: "object", additionalProperties: true, description: "The v2 requirements a fresh buyer should use." },
+          }, ["x402Version", "accepts"]),
+          "v2 discovery document (or { enabled: false } when the product is off / no payee).",
+        ).response,
+      },
+    },
+    "/x402/verify": {
+      get: {
+        tags: ["signal", "provenance"],
+        operationId: "getX402Verify",
+        summary: "Trustless decode of ANY mined x402 settlement tx",
+        description: "Free + keyless. Reads the tx off Arc and decodes the EIP-3009 authorization it actually executed (payer/payee/value/validAfter/validBefore/nonce + finality + gas) — no murmur record required, so external Arc Pulse purchases verify too. When the tx happens to be one of our internal neural settlements, a `neural` echo (receiptHash match) is layered on top.",
+        parameters: [
+          { name: "tx", in: "query", required: true, schema: { type: "string", pattern: "^0x[0-9a-fA-F]{64}$" }, description: "The settlement tx hash to verify.", example: "0x…" },
+        ],
+        ...ok(
+          obj({
+            found: { type: "boolean", description: "false ⇒ not a transferWithAuthorization (or not visible yet); body carries the reason." },
+            txHash: { type: "string" },
+            txFrom: { type: "string", description: "The broadcast account (relay wallet or Circle signer) — not necessarily the payer." },
+            contract: { type: "string", description: "The USDC contract the transfer executed against." },
+            payer: { type: "string" },
+            payee: { type: "string" },
+            valueAtomic: { type: "string", description: "Exact integer USDC (6-dec) the authorization moved." },
+            validAfter: { type: "string" },
+            validBefore: { type: "string" },
+            nonce: { type: "string", description: "The single-use EIP-3009 nonce as mined." },
+            blockNumber: { type: ["integer", "null"] },
+            status: { type: "string", enum: ["success", "reverted", "pending"] },
+            gasUsed: { type: ["string", "null"] },
+            gasPriceWei: { type: ["string", "null"] },
+            neural: { type: ["object", "null"], additionalProperties: true, description: "{ receiptHash, match } when the tx is one of our published neural receipts; null otherwise." },
+            reason: { type: "string", description: "Only on found:false." },
+          }, ["found", "txHash"]),
+          "On-chain authorization proof.",
+        ).response,
+      },
+    },
+    "/pulse/refunds": {
+      get: {
+        tags: ["signal"],
+        operationId: "getPulseRefunds",
+        summary: "Arc Pulse refund-rail state (dark-deployed)",
+        description: "Free + read-only. `enabled` is the honest switch as-configured (PULSE_REFUNDS; default false ⇒ the auto-refund path never runs). `ledger` is a bounded ring (≤64) of refund attempts — paid-but-failed pulse purchases with their refund status — so buyers can see the rail exists before it is ever armed.",
+        ...ok(
+          obj({
+            enabled: { type: "boolean" },
+            ledger: {
+              type: "array",
+              items: obj(
+                {
+                  tx: { type: "string", description: "The settled purchase tx being refunded." },
+                  from: { type: "string", description: "The buyer receiving the refund leg." },
+                  valueAtomic: { type: "string" },
+                  reason: { type: "string", description: "The signal-build failure that triggered the refund." },
+                  status: { type: "string", description: "refunded:<txHash> | failed:<reason> | skipped." },
+                  ts: { type: "integer" },
+                },
+                ["tx", "from", "valueAtomic", "status", "ts"],
+              ),
+            },
+          }, ["enabled", "ledger"]),
+          "Refund rail state.",
+        ).response,
+      },
+    },
     "/community/feed": {
       get: {
         tags: ["community"],

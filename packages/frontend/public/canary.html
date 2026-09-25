@@ -264,6 +264,19 @@
         <div class="nbrow"><span class="nbl" data-cn="nb.netted">murmur · per-pair nets</span><span class="nbtrack"><i class="nb-netted" id="nb-netted" style="width:0%"></i></span><span class="nbv" id="nb-netted-v">—</span></div>
       </div>
       <p class="prose" style="margin-top:16px" id="net-note"></p>
+      <h3 style="margin-top:28px" data-cn="s2.rails.h">Settlement rails · since boot</h3>
+      <p class="sec-note" data-cn-h="s2.rails.note">
+        Every USDC move can take one of two rails: <code>circle</code> (Circle's hosted relayer screens both parties and pays the gas) or <code>relay</code> (murmur's own wallet broadcasts). A streak of infrastructure-class failures opens a breaker that routes around Circle; a settled nonce seen twice converges onto its original tx — the <em>free re-read</em>, never a second charge. The refund rail is <strong>dark-deployed</strong>: the code ships, the switch is off. All counters reset when the isolate restarts (‘since boot’); the chain stays the lifetime truth.
+      </p>
+      <div class="stat-grid">
+        <div class="stat"><div class="k" data-cn="st.rl.rails">rails</div><div class="v sm" id="rl-rails">—</div><div class="s" id="rl-rails-sub" data-cn="st.rl.rails.sub">hosted relayer + own wallet</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.breaker">circle breaker</div><div class="v sm" id="rl-breaker">—</div><div class="s" id="rl-breaker-sub">—</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.circle">via circle</div><div class="v sm" id="rl-circle">—</div><div class="s" id="rl-circle-sub" data-cn="st.rl.circle.sub">gas paid by the relayer</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.relay">self-broadcast</div><div class="v sm" id="rl-relay">—</div><div class="s" id="rl-relay-sub">—</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.replay">free re-reads</div><div class="v sm" id="rl-replay">—</div><div class="s" data-cn="st.rl.replay.sub">same nonce · never charged twice</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.gas">relay gas spent</div><div class="v sm" id="rl-gas">—</div><div class="s" data-cn="st.rl.gas.sub">USDC estimate since boot</div></div>
+        <div class="stat"><div class="k" data-cn="st.rl.refund">refund rail</div><div class="v sm" id="rl-refund">—</div><div class="s" id="rl-refund-sub" data-cn="st.rl.refund.sub">GET /pulse/refunds</div></div>
+      </div>
     </section>
 
     <!-- 03 · prediction FLAT / refunds -->
@@ -424,6 +437,7 @@
       "s6.p": "Each on-chain net settlement sets its EIP-3009 <code>nonce</code> to the <code>sha256</code> of a receipt bundling the frozen buyer/seller neural read-outs that caused it, hash-chained via <code>prevChain</code> and committed on Arc (every proof carries its <code>commitTx</code>). A receipt invented after the fact could never hash to a mined nonce — so the trades behind every figure above are provably decided by connectomes, not a human or an LLM.",
       "s6.getline": "GET <b>/proofs</b> → the chain (last 64 served) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; or verify in-browser at <a href=\"/\">muros.live</a> → neural proofs.",
       "s7.title": "Caveats & honest limits", "s7.note": "All six headline metrics are now instrumented. What follows are the honest edges of each figure — what it does and does not claim — so nothing above is over-read.",
+      "s2.rails.h": "Settlement rails · since boot", "s2.rails.note": "Every USDC move can take one of two rails: <code>circle</code> (Circle's hosted relayer screens both parties and pays the gas) or <code>relay</code> (murmur's own wallet broadcasts). A streak of infrastructure-class failures opens a breaker that routes around Circle; a settled nonce seen twice converges onto its original tx — the <em>free re-read</em>, never a second charge. The refund rail is <strong>dark-deployed</strong>: the code ships, the switch is off. All counters reset when the isolate restarts (‘since boot’); the chain stays the lifetime truth.", "st.rl.rails": "rails", "st.rl.rails.sub": "hosted relayer + own wallet", "st.rl.breaker": "circle breaker", "st.rl.circle": "via circle", "st.rl.circle.sub": "gas paid by the relayer", "st.rl.relay": "self-broadcast", "st.rl.relay.sub": "gas paid by murmur", "st.rl.replay": "free re-reads", "st.rl.replay.sub": "same nonce · never charged twice", "st.rl.gas": "relay gas spent", "st.rl.gas.sub": "USDC estimate since boot", "st.rl.refund": "refund rail", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "armed", "rl.dark": "dark (off)", "dyn.rl.none": "no facilitator read-out (simulated mode)",
       "gap1.h3": "⏱ latency is submit→receipt, on an instant-finality chain", "gap1.p": "Arc finalises deterministically (sub-second blocks, no reorg), so <code>settleMs*</code> measures the RPC broadcast→receipt round-trip, not a reorg-confirmation wait. Values are naturally small; the signal is the tail (<code>max</code>) and any drift over time.",
       "gap2.h3": "◌ net-pending is an instantaneous gauge", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> are sampled at snapshot time and drain at the next cron flush; they are not lifetime totals. Circle <code>/status</code> reconciliation stays defined-but-unwired (the internal rail settles on-chain directly).",
       "gap3.h3": "↩ FLAT rate is windowed, gas is a tx-count reduction", "gap3.p": "The FLAT/refund rate is computed over the recent resolutions <code>/predictions</code> serves (a lifetime FLAT tally is not exposed). And “txs avoided” is the transaction-<em>count</em> reduction that amortises gas — murmur does not yet publish per-tx gas units.",
@@ -477,6 +491,7 @@
       "s6.p": "每笔链上净额结算都把自己的 EIP-3009 <code>nonce</code> 设为一张收据的 <code>sha256</code>，该收据封装了促成这笔结算的、已冻结的买/卖方神经读出，并经 <code>prevChain</code> 串成哈希链承诺到 Arc 上（每个证明都带有其 <code>commitTx</code>）。事后伪造的收据永远无法哈希成某个已上链的 nonce——所以上方每个数字背后的交易，可证明是由连接组决定的，而非人或大语言模型。",
       "s6.getline": "GET <b>/proofs</b> → 哈希链（最多提供最近 64 条）· chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; 或在浏览器端于 <a href=\"/\">muros.live</a> → 神经证明 中验证。",
       "s7.title": "注意事项与诚实的边界", "s7.note": "六项核心指标现均已埋点。以下是每个数字诚实的边界——它声称了什么、又没声称什么——好让上文不被过度解读。",
+      "s2.rails.h": "结算轨道 · 自启动起", "s2.rails.note": "每笔 USDC 转移可走两条轨道之一：<code>circle</code>（Circle 托管中继器做双方筛查并付 gas）或 <code>relay</code>（murmur 自己的钱包广播）。基础设施类失败连开会触发熔断、绕行 Circle；已结算的 nonce 再次出现会收敛回原 tx——即<em>免费重读</em>，绝不二次收费。退款轨道是<strong>暗部署</strong>：代码已上线，开关处于关闭。所有计数器随隔离实例重启清零（“自启动起”）；链上账本永远是全生命周期的事实。", "st.rl.rails": "轨道", "st.rl.rails.sub": "托管中继 + 自有钱包", "st.rl.breaker": "circle 熔断器", "st.rl.circle": "经 circle", "st.rl.circle.sub": "gas 由中继器代付", "st.rl.relay": "自行广播", "st.rl.relay.sub": "gas 由 murmur 支付", "st.rl.replay": "免费重读", "st.rl.replay.sub": "同一 nonce · 绝不二次收费", "st.rl.gas": "中继 gas 支出", "st.rl.gas.sub": "自启动以来的 USDC 估算", "st.rl.refund": "退款轨道", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "已武装", "rl.dark": "暗置（关）", "dyn.rl.none": "无 facilitator 读出（模拟模式）",
       "gap1.h3": "⏱ 延迟是提交→回执，且在即时终局的链上", "gap1.p": "Arc 确定性终局（亚秒区块、无重组），因此 <code>settleMs*</code> 度量的是 RPC 广播→回执的往返，而非重组确认等待。数值天然偏小；信号在于尾部（<code>max</code>）以及随时间的漂移。",
       "gap2.h3": "◌ 待净额是瞬时表", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> 在快照时刻采样，并在下一个 cron 冲刷时排空；它们不是生命周期总量。Circle 的 <code>/status</code> 对账保持“已定义但未接线”（内部轨道直接链上结算）。",
       "gap3.h3": "↩ FLAT 率是窗口化的，gas 是交易计数的减少", "gap3.p": "FLAT/退款率基于 <code>/predictions</code> 所提供的最近判定计算（未暴露生命周期的 FLAT 总计）。而“省下的交易”是摊销 gas 的交易<em>计数</em>减少——murmur 尚未公布每笔交易的 gas 用量。",
@@ -531,6 +546,7 @@
       "s6.p": "Chaque règlement net on-chain fixe son <code>nonce</code> EIP-3009 au <code>sha256</code> d'un reçu regroupant les lectures neuronales gelées de l'acheteur/vendeur qui l'ont causé, chaînées par <code>prevChain</code> et engagées sur Arc (chaque preuve porte son <code>commitTx</code>). Un reçu inventé après coup ne pourrait jamais hasher vers un nonce miné — ainsi les échanges derrière chaque chiffre ci-dessus sont prouvés décidés par des connectomes, ni par un humain ni par un LLM.",
       "s6.getline": "GET <b>/proofs</b> → la chaîne (64 derniers servis) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; ou vérifiez dans le navigateur sur <a href=\"/\">muros.live</a> → preuves neuronales.",
       "s7.title": "Réserves et limites honnêtes", "s7.note": "Les six indicateurs phares sont désormais instrumentés. Ce qui suit sont les bords honnêtes de chaque chiffre — ce qu'il affirme et n'affirme pas — pour que rien ci-dessus ne soit surinterprété.",
+      "s2.rails.h": "Rails de règlement · depuis le démarrage", "s2.rails.note": "Chaque transfert USDC peut emprunter deux rails : <code>circle</code> (le relayer hébergé par Circle filtre les deux parties et paie le gas) ou <code>relay</code> (le propre portefeuille de murmur diffuse). Une série d'échecs d'infrastructure ouvre un disjoncteur qui contourne Circle ; un nonce déjà réglé et revu converge vers sa tx d'origine — la <em>relecture gratuite</em>, jamais un second débit. Le rail de remboursement est <strong>déployé en silence</strong> : le code est là, l'interrupteur éteint. Tous les compteurs repartent à zéro au redémarrage de l'isolate (« depuis le démarrage ») ; la chaîne reste la vérité à vie.", "st.rl.rails": "rails", "st.rl.rails.sub": "relayer hébergé + portefeuille propre", "st.rl.breaker": "disjoncteur circle", "st.rl.circle": "via circle", "st.rl.circle.sub": "gas payé par le relayer", "st.rl.relay": "auto-diffusion", "st.rl.relay.sub": "gas payé par murmur", "st.rl.replay": "relectures gratuites", "st.rl.replay.sub": "même nonce · jamais double facture", "st.rl.gas": "gas dépensé", "st.rl.gas.sub": "estimation USDC depuis le démarrage", "st.rl.refund": "rail de remboursement", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "armé", "rl.dark": "discret (off)", "dyn.rl.none": "aucune lecture du facilitator (mode simulé)",
       "gap1.h3": "⏱ la latence est soumission→reçu, sur une chaîne à finalité instantanée", "gap1.p": "Arc finalise de manière déterministe (blocs sub-seconde, pas de réorganisation), donc <code>settleMs*</code> mesure l'aller-retour diffusion RPC→reçu, pas une attente de confirmation de réorganisation. Les valeurs sont naturellement petites ; le signal est la queue (<code>max</code>) et toute dérive dans le temps.",
       "gap2.h3": "◌ l'en attente de compensation est une jauge instantanée", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> sont échantillonnés au moment du instantané et se vident à la purge du cron suivant ; ce ne sont pas des totaux à vie. La réconciliation <code>/status</code> de Circle reste définie mais non branchée (le rail interne règle directement on-chain).",
       "gap3.h3": "↩ le taux FLAT est fenêtré, le gas est une réduction du nombre de tx", "gap3.p": "Le taux FLAT/remboursement est calculé sur les résolutions récentes servies par <code>/predictions</code> (un total FLAT à vie n'est pas exposé). Et « tx évitées » est la réduction du <em>nombre</em> de transactions qui amortit le gas — murmur ne publie pas encore le gas par transaction.",
@@ -584,6 +600,7 @@
       "s6.p": "Cada liquidación neta en cadena fija su <code>nonce</code> EIP-3009 al <code>sha256</code> de un recibo que agrupa las lecturas neuronales congeladas de comprador/vendedor que la causaron, encadenado por <code>prevChain</code> y comprometido en Arc (cada prueba lleva su <code>commitTx</code>). Un recibo inventado a posteriori jamás podría hashear a un nonce minado — así que las operaciones detrás de cada cifra de arriba están probadamente decididas por conectomas, ni por un humano ni por un LLM.",
       "s6.getline": "GET <b>/proofs</b> → la cadena (últimos 64 servidos) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; o verifica en el navegador en <a href=\"/\">muros.live</a> → pruebas neuronales.",
       "s7.title": "Advertencias y límites honestos", "s7.note": "Las seis métricas principales ya están instrumentadas. Lo que sigue son los bordes honestos de cada cifra — qué afirma y qué no — para que nada de arriba se sobreinterprete.",
+      "s2.rails.h": "Rieles de liquidación · desde el arranque", "s2.rails.note": "Cada movimiento de USDC puede tomar uno de dos rieles: <code>circle</code> (el relayer alojado por Circle criba a ambas partes y paga el gas) o <code>relay</code> (el monedero propio de murmur difunde). Una racha de fallos de infraestructura abre un interruptor que rodea Circle; un nonce ya liquidado que reaparece converge en su tx original — la <em>relectura gratuita</em>, nunca un segundo cargo. El riel de reembolsos está <strong>desplegado en silencio</strong>: el código existe, el interruptor apagado. Todos los contadores se reinician al resurgir el aislamiento («desde el arranque»); la cadena sigue siendo la verdad de por vida.", "st.rl.rails": "rieles", "st.rl.rails.sub": "relayer alojado + monedero propio", "st.rl.breaker": "interruptor circle", "st.rl.circle": "vía circle", "st.rl.circle.sub": "gas pagado por el relayer", "st.rl.relay": "auto-difusión", "st.rl.relay.sub": "gas pagado por murmur", "st.rl.replay": "relecturas gratis", "st.rl.replay.sub": "mismo nonce · nunca doble cargo", "st.rl.gas": "gas gastado", "st.rl.gas.sub": "estimación USDC desde el arranque", "st.rl.refund": "riel de reembolsos", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "armado", "rl.dark": "oscuro (off)", "dyn.rl.none": "sin lectura del facilitator (modo simulado)",
       "gap1.h3": "⏱ la latencia es envío→recibo, en una cadena de finalidad instantánea", "gap1.p": "Arc finaliza de forma determinista (bloques sub-segundo, sin reorg), así que <code>settleMs*</code> mide el viaje de difusión RPC→recibo, no una espera de confirmación de reorg. Los valores son naturalmente pequeños; la señal está en la cola (<code>max</code>) y cualquier deriva en el tiempo.",
       "gap2.h3": "◌ el en-espera-de-neteo es un indicador instantáneo", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> se muestrean en el momento de la instantánea y se vacían en el próximo vaciado de cron; no son totales de por vida. La conciliación <code>/status</code> de Circle queda definida pero sin conectar (el riel interno liquida directamente en cadena).",
       "gap3.h3": "↩ la tasa FLAT es por ventana, el gas es una reducción de conteo de tx", "gap3.p": "La tasa FLAT/reembolso se calcula sobre las resoluciones recientes que sirve <code>/predictions</code> (no se expone un recuento FLAT de por vida). Y «txs evitadas» es la reducción del <em>conteo</em> de transacciones que amortiza el gas — murmur aún no publica unidades de gas por transacción.",
@@ -638,6 +655,7 @@
       "s6.p": "各オンチェーン純決済は、その EIP-3009 <code>nonce</code> を、生じさせた買い手/売り手の凍結済み神経読み出しを束ねた受領書の <code>sha256</code> に設定し、<code>prevChain</code> でハッシュ連鎖し Arc 上に確定します（すべての証明が <code>commitTx</code> を帯ぶ）。後から捏造した受領書は、記録済み nonce にハッシュ一致できません——ゆえに上の各数値の背後の取引は、人間でも LLM でもなく、確実にコネクトームにより決定されています。",
       "s6.getline": "GET <b>/proofs</b> → 連鎖（直近 64 件提供）・chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; またはブラウザ上で <a href=\"/\">muros.live</a> → 神経証明 で検証。",
       "s7.title": "留意点と誠実な限界", "s7.note": "6 つの主要指標はすべて計装済み。以下は各数値の誠実な境界——何が言えて何が言えないか——を示し、上を読み過ぎぬようにします。",
+      "s2.rails.h": "決済レール · 起動以来", "s2.rails.note": "すべての USDC 移動は 2 つのレールのいずれかを進みます：<code>circle</code>（Circle のホスティング中継者が両者を審査し gas も負担）または <code>relay</code>（murmur 自身のウォレットがブロードキャスト）。インフラ系の連続失敗はブレーカーを開いて Circle を迂回；決済済み nonce の再提出は元の tx に収束——それが<em>無料再読み</em>で、二重課金はありません。返金レールは<strong>暗デプロイ</strong>：コードはあり、スイッチはオフ。全カウンターはアイソレートの再起動でリセット（「起動以来」）；生涯の真実は常にチェーン上に。", "st.rl.rails": "レール", "st.rl.rails.sub": "ホスト中継 + 自前ウォレット", "st.rl.breaker": "circle ブレーカー", "st.rl.circle": "circle 経由", "st.rl.circle.sub": "gas は中継者負担", "st.rl.relay": "自己ブロードキャスト", "st.rl.relay.sub": "gas は murmur 負担", "st.rl.replay": "無料再読み", "st.rl.replay.sub": "同一 nonce · 二重課金なし", "st.rl.gas": "リレー gas 支出", "st.rl.gas.sub": "起動以来の USDC 推定", "st.rl.refund": "返金レール", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "武装", "rl.dark": "暗置（off）", "dyn.rl.none": "facilitator 読み出しなし（シミュレートモード）",
       "gap1.h3": "⏱ 遅延は送信→受領で、即時アルティメシーのチェーン上", "gap1.p": "Arc は決定論的にアルティメシー（サブ秒ブロック・再編成なし）するため、<code>settleMs*</code> は RPC ブロードキャスト→受領の往復を計測し、再編成確認待ちではありません。値は小さく、信号は尾部（<code>max</code>）と時間による drift にあります。",
       "gap2.h3": "◌ 保留ネットは瞬間的なゲージ", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> はスナップショット時点で採取され、次の cron フラッシュで排空します。累計値ではありません。Circle の <code>/status</code> 照合は定義済みだが未配線のまま（内部レールは直接オンチェーン決済）。",
       "gap3.h3": "↩ FLAT 率はウィンドウ化、ガスは tx 数の削減", "gap3.p": "FLAT/返金率は <code>/predictions</code> が提供する直近裁定で計算（累計 FLAT 集計は非公開）。「回避した tx」はガスを償却する取引<em>数</em>の削減で、murmur は取引あたりのガス量をまだ公開していません。",
@@ -691,6 +709,7 @@
       "s6.p": "각 온체인 순정산은 자신의 EIP-3009 <code>nonce</code>를, 이를 유발한 매수/매도자의 냉동된 신경 읽기를 묶은 영수증의 <code>sha256</code>으로 설정하고, <code>prevChain</code>로 해시 연결되어 Arc에 커밋됩니다(모든 증거가 <code>commitTx</code>를 가짐). 사후 날조한 영수증은 절대 마이닝된 nonce로 해시될 수 없습니다 — 따라서 위 각 수치 뒤의 거래는 사람도 LLM도 아닌, 증명적으로 커넥톰에 의해 결정되었습니다.",
       "s6.getline": "GET <b>/proofs</b> → 체인(최근 64 제공)·chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; 또는 브라우저에서 <a href=\"/\">muros.live</a> → 신경 증거 로 검증.",
       "s7.title": "주의사항과 정직한 한계", "s7.note": "여섯 핵심 지표는 모두 계측되었습니다. 다음은 각 수치의 정직한 경계 — 무엇을 주장하고 주장하지 않는가 — 로, 위 내용을 과독하지 않도록 합니다.",
+      "s2.rails.h": "정산 레일 · 부팅 이후", "s2.rails.note": "모든 USDC 이동은 두 레일 중 하나를 택합니다: <code>circle</code>(Circle 호스팅 릴레이어가 양쪽을 심사하고 gas 지불) 또는 <code>relay</code>(murmur 지갑이 직접 브로드캐스트). 인프라성 연쇄 실패는 회로를 열어 Circle를 우회; 이미 정산된 nonce 재제출은 원본 tx로 수렴 — 이것이 <em>무료 재읽기</em>이며 이중 과금은 없습니다. 환불 레일은 <strong>다크 배포</strong>: 코드는 있고 스위치는 꺼져 있습니다. 모든 카운터는 아이솔레이트 재시작 시 리셋(«부팅 이후»); 평생의 진실은 항상 체인에.", "st.rl.rails": "레일", "st.rl.rails.sub": "호스팅 릴레이 + 자체 지갑", "st.rl.breaker": "circle 회로차단기", "st.rl.circle": "circle 경유", "st.rl.circle.sub": "gas는 릴레이어 부담", "st.rl.relay": "자체 브로드캐스트", "st.rl.relay.sub": "gas는 murmur 부담", "st.rl.replay": "무료 재읽기", "st.rl.replay.sub": "동일 nonce · 이중 과금 없음", "st.rl.gas": "릴레이 gas 지출", "st.rl.gas.sub": "부팅 이후 USDC 추정", "st.rl.refund": "환불 레일", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "무장", "rl.dark": "암치(off)", "dyn.rl.none": "facilitator 읽기 없음(시뮬레이션 모드)",
       "gap1.h3": "⏱ 지연은 전송→영수증, 즉시 최종성 체인 위에서", "gap1.p": "Arc는 결정적으로 최종(서브초 블록·리오그 없음)되므로, <code>settleMs*</code>는 RPC 브로드캐스트→영수증 왕복을 측정하지 리오그 확인 대기가 아닙니다. 값은 자연히 작고, 신호는 꼬리(<code>max</code>)와 시간 따른 표류에 있습니다.",
       "gap2.h3": "◌ 대기 순금액은 순간 게이지", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code>는 스냅샷 시점에 샘플링되어 다음 cron 플러시 때 비워집니다. 수량 총계가 아닙니다. Circle의 <code>/status</code> 조정은 정의됨·미배선으로 남습니다(내부 레일은 직접 온체인 정산).",
       "gap3.h3": "↩ FLAT율은 창 기준, 가스는 tx 수 감소", "gap3.p": "FLAT/환불율은 <code>/predictions</code>가 제공하는 최근 결정으로 계산(누적 FLAT 총계 미노출). 그리고 \"절약한 tx\"는 가스를 상각하는 트랜잭션 <em>수</em> 감소로, murmur는 아직 거래당 가스 단위를 공개하지 않습니다.",
@@ -744,6 +763,7 @@
       "s6.p": "كل تسوية صافية على السلسلة تضبط <code>nonce</code> خاصتها في EIP-3009 ليكون <code>sha256</code> إيصالٍ يجمع القراءات العصبية المجمَّدة للمشتري والبائع التي سبّبتْها، مربوطًا بسلسلة تجزئة عبر <code>prevChain</code> ومُلْتَزًا به على Arc (كل إثبات يحمل <code>commitTx</code> الخاص به). إيصالٌ مخترَع بعد الحدث لا يمكن أبدًا أن يتجزأ إلى nonce مثبت — لذا الصفقات خلف كل رقم أعلاه مُثبَت أنها حُسمت بشبكات توصيل عصبية، لا ببشر أو بنماذج لغوية.",
       "s6.getline": "GET <b>/proofs</b> → السلسلة (آخر 64 تُقدَّم) · chainHead &nbsp;·&nbsp; GET <b>/proofs/verify?tx=0x…</b> → { selfConsistent, match, registry } &nbsp;·&nbsp; أو تحقق في المتصفح على <a href=\"/\">muros.live</a> → الإثباتات العصبية.",
       "s7.title": "تحفظات وحدود صريحة", "s7.note": "كل المؤشرات الستة الرئيسية أصبحت مقيسةً. ما يلي هو الصريح في كل رقم — ماذا يدّعي وماذا لا يدّعي — حتى لا يُقرأ ما فوق أكثر مما يحتمل.",
+      "s2.rails.h": "سكك التسوية · منذ الإقلاع", "s2.rails.note": "كل حركة USDC تسلك أحد سكين: <code>circle</code> (وسيط Circle المستضاف يفحص الطرفين ويدفع الغاز) أو <code>relay</code> (محفظة murmur تبث بنفسها). سلسلة إخفاقات بنوية تفتح قاطعًا يتجاوز Circle؛ وnonce سبق تسويته يعود ليُقرأ فيُجمَع على معاملته الأصلية — وهي <em>إعادة قراءة مجانية</em> لا دفع ثانٍ. سكة الاسترداد <strong>منشورة في الظل</strong>: الكود موجود والمفتاح مطفأ. كل العدادات تُصفَّر عند إعادة تشغيل العزل («منذ الإقلاع»)؛ السلسلة تبقى حقيقة العمر.", "st.rl.rails": "السكك", "st.rl.rails.sub": "وسيط مستضاف + محفظة ذاتية", "st.rl.breaker": "قاطع circle", "st.rl.circle": "عبر circle", "st.rl.circle.sub": "الغاز يدفعه الوسيط", "st.rl.relay": "بث ذاتي", "st.rl.relay.sub": "الغاز يدفعه murmur", "st.rl.replay": "إعادة قراءة مجانية", "st.rl.replay.sub": "الـnonce نفسه · لا دفع مزدوج", "st.rl.gas": "غاز مُنفق", "st.rl.gas.sub": "تقدير USDC منذ الإقلاع", "st.rl.refund": "سكة الاسترداد", "st.rl.refund.sub": "GET /pulse/refunds", "rl.armed": "مُفعَّل", "rl.dark": "مُظلم (off)", "dyn.rl.none": "لا قراءة facilitator (وضع المحاكاة)",
       "gap1.h3": "⏱ الزمن من إرسال إلى إيصال، وعلى سلسلة نهائية فورية", "gap1.p": "تحسم Arc نهائيًا بشكل حتمي (كتل دون الثانية، لا إعادة تنظيم)، لذا يقيس <code>settleMs*</code> رحلة RPC من البث إلى الإيصال، لا انتظار تأكيد إعادة التنظيم. القيم صغيرة بالطبع؛ والإشارة في الذيل (<code>max</code>) وأي انحراف عبر الزمن.",
       "gap2.h3": "◌ الصافي المعلّق مؤشر لحظي", "gap2.p": "<code>netPending</code>/<code>netPendingTrades</code> تُؤخَذ عند لحظة اللقطة وتفرغ عند تفريغ الدورة التالية؛ ليست مجاميع دائمة. مطابقة Circle عبر <code>/status</code> تبقى معرفةً وغير موصولة (السكة الداخلية تسوّي على السلسلة مباشرة).",
       "gap3.h3": "↩ معدل FLAT نافذي، والغاز انخفاض في عدد المعاملات", "gap3.p": "يُحسب معدل FLAT/الاسترداد على أحدث عمليات الحسم التي تقدمها <code>/predictions</code> (لا يُعرض مجموع FLAT التراكمي). و«المعاملات الموفَّرة» هو انخفاض <em>عدد</em> المعاملات الذي يبديّد الغاز — murmur لا ينشر بعد وحدات الغاز لكل معاملة.",
@@ -934,12 +954,13 @@
 
     // Latest payloads are cached so a language flip re-renders every dynamic string from data —
     // no refetch, no loading flicker; statics are covered by applyLang(), dynamics by repaint().
-    const C = { econ: null, hist: null, pred: null, proof: undefined };
+    const C = { econ: null, hist: null, pred: null, proof: undefined, refund: undefined };
     function repaint() {
       if (C.econ) renderHeadline(C.econ);
       if (C.hist) renderSeries(C.hist);
       if (C.pred) renderPredictions(C.pred);
       if (C.proof !== undefined) renderProvenance(C.proof);
+      if (C.refund !== undefined) renderRefund(C.refund);
     }
     // The main site persists its switch to localStorage["murmur:lang"]; same-origin, this drawer follows live.
     window.addEventListener("storage", (e) => {
@@ -1012,6 +1033,33 @@
       } else {
         setTxt("fold", "—"); setTxt("avoid", "—");
       }
+      // settlement rails (facilitator telemetry since boot; absent key ⇒ simulated / no read-out)
+      renderRails(d.facilitator);
+    }
+
+    // ---------- settlement rails (③): which rail carried each hop, since this isolate booted ----------
+    function renderRails(f) {
+      if (!f) {
+        setTxt("rl-rails", "—"); setTxt("rl-rails-sub", T("dyn.rl.none"));
+        setTxt("rl-breaker", "—"); setTxt("rl-breaker-sub", "—");
+        setTxt("rl-circle", "—"); setTxt("rl-relay", "—"); setTxt("rl-relay-sub", "—");
+        setTxt("rl-replay", "—"); setTxt("rl-gas", "—");
+        return;
+      }
+      setTxt("rl-rails", f.rails === "circle+relay" ? "circle + relay" : "relay only");
+      setTxt("rl-rails-sub", T("st.rl.rails.sub"));
+      setTxt("rl-breaker", f.breaker);
+      setTxt("rl-breaker-sub", "openings " + int(f.breakerOpenings) + " · infra-fail " + int(f.circleInfraFail) + " · reject " + int(f.circleReject) + " · skip " + int(f.circleSkippedWhileOpen) + " · fallback " + int(f.circleFallbackOk));
+      setTxt("rl-circle", int(f.circleOk));
+      setTxt("rl-relay", int(f.relayOk));
+      setTxt("rl-relay-sub", "fail " + int(f.relayFail) + " · tracked nonces " + int(f.trackedNonces));
+      setTxt("rl-replay", int(f.replayHits));
+      const gasU = (Number(f.gasUsdcAtomicEstimate) || 0) / 1e6;
+      setTxt("rl-gas", gasU > 0 ? gasU.toFixed(6) : "0");
+    }
+    function renderRefund(r) {
+      setTxt("rl-refund", r && r.enabled ? T("rl.armed") : T("rl.dark"));
+      setTxt("rl-refund-sub", "ledger " + int(r && Array.isArray(r.ledger) ? r.ledger.length : 0) + " · GET /pulse/refunds");
     }
 
     function renderSeries(h) {
@@ -1115,6 +1163,9 @@
     async function refreshPred() {
       try { const p = await j("/predictions"); C.pred = p; renderPredictions(p); } catch { /* best-effort; prediction may be disabled */ }
     }
+    async function loadRefunds() {
+      try { C.refund = await j("/pulse/refunds"); renderRefund(C.refund); } catch { /* best-effort; the rail is dark-deployed */ }
+    }
     async function refreshAll() { await Promise.all([refreshEcon(), refreshHist(), refreshPred()]); }
 
     let t = 0;
@@ -1126,13 +1177,14 @@
       if (t % HIST_EVERY === 0) refreshHist();
       if (t % PRED_EVERY === 0) refreshPred();
     }, 1000);
-    $("refresh").addEventListener("click", () => { t = 0; refreshAll(); loadProvenance(); });
+    $("refresh").addEventListener("click", () => { t = 0; refreshAll(); loadProvenance(); loadRefunds(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshEcon(); refreshPred(); if (t > HIST_EVERY) refreshHist(); } });
 
     // Boot: translate the static DOM first (so headings never flash English in a non-EN locale), then load data.
     applyLang();
     refreshAll();
     loadProvenance();
+    loadRefunds();
   </script>
 </body>
 </html>

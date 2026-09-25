@@ -45,6 +45,7 @@ import {
   usdcToAtomic,
   atomicToUsdc,
   type Facilitator,
+  type FacilitatorStats,
   type PaymentRequirements,
   type PaymentPayload,
   type SettleResponse,
@@ -3358,6 +3359,39 @@ export class AgentEconomy {
   relayAddress(): string | null {
     const f = this.facilitator as { relayAddress?: string };
     return typeof f.relayAddress === "string" ? f.relayAddress : null;
+  }
+
+  /**
+   * Settlement-rail telemetry since boot (circle/relay counts, breaker state, gas spend). The keyless
+   * simulator has no read-out ⇒ null, so /economy stays byte-identical in simulated mode. Observe-only.
+   */
+  get facilitatorStats(): FacilitatorStats | null {
+    const f = this.facilitator as { statsReadout?: () => FacilitatorStats };
+    return typeof f.statsReadout === "function" ? f.statsReadout() : null;
+  }
+
+  /**
+   * Decode ANY mined Arc tx's EIP-3009 authorization trustlessly (powers /x402/verify). Null when the
+   * facilitator can't do it (simulator) or the tx isn't a transferWithAuthorization.
+   */
+  async authorizationProofOf(txHash: string): Promise<import("./x402.js").AuthorizationProof | null> {
+    const f = this.facilitator as {
+      authorizationProofOf?: (t: string) => Promise<import("./x402.js").AuthorizationProof | null>;
+    };
+    if (typeof f.authorizationProofOf !== "function") return null;
+    return f.authorizationProofOf(txHash);
+  }
+
+  /**
+   * Seller-funded refund leg (PULSE_REFUNDS dark-deploy rail; inert unless a caller explicitly invokes).
+   * Null when unwired (simulator) — callers treat null as "refunds not available", never as a failure.
+   */
+  async refundBuyer(a: { to: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse | null> {
+    const f = this.facilitator as {
+      refundBuyer?: (x: { to: string; valueAtomic: string; network: string; shadow?: boolean }) => Promise<SettleResponse>;
+    };
+    if (typeof f.refundBuyer !== "function") return null;
+    return f.refundBuyer(a);
   }
 
   // ---------- human-vs-swarm prediction arena (on-chain, MURMUR-denominated, non-custodial) ----------

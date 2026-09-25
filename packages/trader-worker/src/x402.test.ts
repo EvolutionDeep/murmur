@@ -10,17 +10,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Hex } from "viem";
+import { encodeFunctionData, type Address, type Hex } from "viem";
 
 import {
   ARC_USDC,
+  ARC_USDC_EIP712_VERSION,
   EIP3009_TYPES,
   SCHEME_EXACT,
   X402_VERSION,
+  X402_V2_VERSION,
+  decodeEip3009Calldata,
   eip3009Message,
+  fiatTokenV2Abi,
+  makeRefundAuth,
   pseudoTxHash,
   recoverAuthorizationSigner,
+  toV2PaymentRequirements,
   usdcToAtomic,
+  CircleBreaker,
+  NonceRing,
   type PaymentAuthorization,
   type PaymentPayload,
   type PaymentRequirements,
@@ -161,4 +169,116 @@ test("leaderboard ranks agents by realized USDC flow (earned − paid), descendi
     const net = row.earnedUsdc - row.paidUsdc;
     assert.ok(Math.abs(net - row.netUsdc) < 1e-9, `net == earned − paid for agent ${row.id}`);
   }
+});
+
+// ---------- x402 v2 discovery + Bazaar (①) ----------
+
+test("toV2PaymentRequirements translates at the boundary: CAIP-2 network + eip3009 extra + bazaar extension", () => {
+  const v1 = reqs(0.01);
+  const v2 = toV2PaymentRequirements(v1, 5042);
+  assert.equal(v2.scheme, SCHEME_EXACT);
+  assert.equal(v2.network, "eip155:5042", "v2 speaks CAIP-2 where v1 used the short tag");
+  assert.equal(v2.maxAmountRequired, v1.maxAmountRequired, "the price never moves in translation");
+  assert.equal(v2.payTo, v1.payTo);
+  assert.equal(v2.resource, v1.resource);
+  assert.equal(v2.asset, v1.asset);
+  assert.equal(v2.extra.assetTransferMethod, "eip3009");
+  assert.equal(v2.extra.name, "USDC");
+  assert.equal(v2.extra.version, ARC_USDC_EIP712_VERSION);
+  const bazaar = v2.extensions?.bazaar as { discoverable: boolean };
+  assert.equal(bazaar.discoverable, true, "the pulse resource advertises itself to Bazaar indexers");
+});
+
+// ---------- settled-nonce ring (②/⑤) ----------
+
+test("NonceRing converges seen nonces, refreshes on re-remember, and evicts oldest past cap", () => {
+  const ring = new NonceRing(3);
+  assert.equal(ring.seen("0xaa"), null, "empty ring has never seen anything");
+  ring.remember("0xAA", "0xtx-a");
+  ring.remember("0xbb", "0xtx-b");
+  ring.remember("0xcc", "0xtx-c");
+  assert.equal(ring.seen("0xaa"), "0xtx-a", "lookup is case-insensitive (nonces lower-case on the rail)");
+  ring.remember("0xaa", "0xtx-a");            // refresh: a re-settled nonce moves to newest
+  ring.remember("0xdd", "0xtx-d");            // cap 3 exceeded ⇒ oldest (0xbb) evicted
+  assert.equal(ring.size, 3);
+  assert.equal(ring.seen("0xbb"), null, "the LEAST recently used nonce is the one evicted");
+  assert.equal(ring.seen("0xaa"), "0xtx-a", "a refreshed nonce survives eviction");
+  assert.equal(ring.seen("0xdd"), "0xtx-d");
+});
+
+// ---------- Circle breaker (②) ----------
+
+test("CircleBreaker opens after N consecutive infra failures, recovers when the window passes", () => {
+  let now = 1_000_000;
+  const br = new CircleBreaker(3, 600_000, () => now);
+  assert.equal(br.state, "closed");
+  assert.ok(br.allow());
+  br.recordFailure();
+  br.recordFailure();
+  br.recordSuccess();                          // a success between failures resets the streak
+  br.recordFailure();
+  br.recordFailure();
+  assert.equal(br.state, "closed", "2+2 failures split by a success never trip the breaker");
+  br.recordFailure();
+  br.recordFailure();
+  br.recordFailure();
+  assert.equal(br.state, "open", "three consecutive failures trip it");
+  assert.ok(!br.allow());
+  assert.equal(br.openings, 1);
+  now += 600_001;                              // window passes ⇒ half-open resolves to closed
+  assert.equal(br.state, "closed");
+  assert.ok(br.allow());
+  br.recordSuccess();
+  assert.equal(br.openings, 1, "a success never adds an opening");
+});
+
+// ---------- trustless tx decode (④) ----------
+
+test("decodeEip3009Calldata round-trips a mined transferWithAuthorization and rejects everything else", () => {
+  const from = `0x${"11".repeat(20)}` as Address;
+  const to = `0x${"22".repeat(20)}` as Address;
+  const nonce = `0x${"cd".repeat(32)}` as Hex;
+  const data = encodeFunctionData({
+    abi: fiatTokenV2Abi,
+    functionName: "transferWithAuthorization",
+    args: [from, to, 10_000n, 0n, 1_893_456_000n, nonce, 27, `0x${"aa".repeat(32)}`, `0x${"bb".repeat(32)}`],
+  });
+  const dec = decodeEip3009Calldata(data);
+  assert.ok(dec, "the authorization decodes back out of the calldata");
+  assert.equal(dec.from, from);
+  assert.equal(dec.to, to);
+  assert.equal(dec.value, "10000");
+  assert.equal(dec.validAfter, "0");
+  assert.equal(dec.validBefore, "1893456000");
+  assert.equal(dec.nonce, nonce);
+  const notAuth = encodeFunctionData({
+    abi: [{ type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ type: "address" }, { type: "uint256" }], outputs: [{ type: "bool" }] }],
+    functionName: "approve",
+    args: [to, 1n],
+  });
+  assert.equal(decodeEip3009Calldata(notAuth), null, "an approve() tx is NOT an authorization");
+  assert.equal(decodeEip3009Calldata("0xdeadbeef"), null, "garbage calldata decodes to null, never throws");
+});
+
+// ---------- refund auth (⑥, dark-deployed rail) ----------
+
+test("makeRefundAuth is deterministic with an injected nonce and random (neural-free) without one", () => {
+  const fixed = `0x${"ee".repeat(32)}` as Hex;
+  const a = makeRefundAuth({
+    from: `0x${"11".repeat(20)}` as `0x${string}`, to: `0x${"22".repeat(20)}` as `0x${string}`,
+    value: 5n, nowSec: 1_700_000_000, nonce: fixed,
+  });
+  assert.equal(a.validAfter, 0n, "a refund is valid immediately");
+  assert.equal(a.validBefore, 1_700_003_600n, "default refund lifetime is one hour");
+  assert.equal(a.nonce, fixed, "an injected nonce passes through untouched (deterministic tests)");
+  const r1 = makeRefundAuth({
+    from: `0x${"11".repeat(20)}` as `0x${string}`, to: `0x${"22".repeat(20)}` as `0x${string}`,
+    value: 5n, nowSec: 1_700_000_000,
+  });
+  const r2 = makeRefundAuth({
+    from: `0x${"11".repeat(20)}` as `0x${string}`, to: `0x${"22".repeat(20)}` as `0x${string}`,
+    value: 5n, nowSec: 1_700_000_000,
+  });
+  assert.match(String(r1.nonce), /^0x[0-9a-f]{64}$/, "a random refund nonce is full bytes32");
+  assert.notEqual(r1.nonce, r2.nonce, "two refunds never share a nonce (and carry no receipt semantics)");
 });
