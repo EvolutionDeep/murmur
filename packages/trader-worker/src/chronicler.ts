@@ -729,14 +729,14 @@ const ERA_MIN_AGE = 8;
 const ERA_MAX_AGE_CRONS = 60;
 
 // ⑫ ACCELERATED AGES — the historian's OWN fast calendar, measured in crons and decoupled from the slow
-// regime-driven era. A "generation" turns over every GEN_CRONS crons (~15 min at 1 cron/min), and on each
+// regime-driven era. A "generation" turns over every GEN_CRONS crons (~7 min at 1 cron/min), and on each
 // turn the historian RECKONS the swarm's civilizational fortune (`civLevel`, 0..100) up or down from the real
 // prosperity signals already in the context (a volume trend, equity, growth, a live feud/run, a shock age).
 // Crossing a band lights a Golden/Dark/Renaissance age; a boom-time growth sparks a Great Migration. These are
 // landscape DETECTOR thresholds (they shape WHEN a line is written, never its text), so — exactly like the
 // culture/institution ones above — they are NOT folded into chroniclerRulesHash; only the templates + cooldowns
 // these kinds add rotate the genome.
-const GEN_CRONS = 15;        // crons per swarm-generation (~15 min): the fast civilizational heartbeat
+const GEN_CRONS = 7;         // crons per swarm-generation (~7 min): the fast civilizational heartbeat
 const CIV_START = 40;        // a mid-history seed for a fresh/restore'd historian
 const CIV_MAX = 100;
 const CIV_GOLDEN = 75;       // fortune swelling to ≥ this dawns a GOLDEN_AGE

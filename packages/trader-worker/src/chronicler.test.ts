@@ -715,7 +715,7 @@ test("a commons history passes in-browser-style verifyChain end to end", async (
 
 // ============================================================================================
 // ⑫ ACCELERATED AGES — the historian's OWN fast civilizational clock. It runs on crons (one observe
-// = one cron) and turns a "generation" every GEN_CRONS=15, fully decoupled from the slow ~hourly era.
+// = one cron) and turns a "generation" every GEN_CRONS=7, fully decoupled from the slow ~hourly era.
 // We advance `tick` well past every AGE cooldown (max 400) so the phase edges are gated ONLY by the
 // generation cadence, not by anti-stutter timers — letting the tests assert the reckoning itself.
 // ============================================================================================
@@ -735,11 +735,11 @@ test("⑫ a GENERATION turns over every GEN_CRONS crons, decoupled from the slow
   // so the era itself never turns, proving the fast clock is independent of the era clock.
   const all = await run(c, ageCrons(46, () => ({ regime: "COLD", temperature: 0.3 })));
   const gens = all.filter((e) => e.kind === "GENERATION");
-  // genStartCron primes at cron 1; turns at cron 16/31/46 → three generations.
-  assert.equal(gens.length, 3, `expected 3 GENERATION lines in 46 crons, got ${gens.length}`);
-  assert.deepEqual(gens.map((e) => Number(e.tokens.gen)), [1, 2, 3]);
-  assert.equal(c.eraInfo().era, 1, "the era clock must NOT have turned while three generations passed");
-  assert.equal(c.eraInfo().generation, 3);
+  // genStartCron primes at cron 1; turns at cron 8/15/22/29/36/43 → six generations.
+  assert.equal(gens.length, 6, `expected 6 GENERATION lines in 46 crons, got ${gens.length}`);
+  assert.deepEqual(gens.map((e) => Number(e.tokens.gen)), [1, 2, 3, 4, 5, 6]);
+  assert.equal(c.eraInfo().era, 1, "the era clock must NOT have turned while six generations passed");
+  assert.equal(c.eraInfo().generation, 6);
 });
 
 test("⑫ civLevel stays bounded within 0..100 under an infinite boom", async () => {
