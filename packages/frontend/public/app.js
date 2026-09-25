@@ -2992,21 +2992,35 @@ function drawFly(f, acc, alpha, now) {
   // A fly the eye is actually ON (selected, hovered, or zoomed in on) keeps its full anatomy even when
   // the adaptive tier has shed it for the swarm: one articulated body is cheap, and the individual the
   // reader is studying must never collapse to a comma-blob.
+  // LOD (Level of Detail): full anatomy is expensive (~20-30 canvas ops per fly). At swarm scale
+  // (cam.z≈1.0), the leg/antenna/proboscis details are invisible, so we only draw full anatomy when:
+  //   - the fly is inspected (selected/hovered/zoomed>=1.5), OR
+  //   - quality=2 AND zoom>=0.9× (high-end machine, almost always at default zoom), OR
+  //   - quality=1 AND zoom>=1.4× (moderately zoomed in, details become visible)
+  // Otherwise, a simplified ellipse + wing blur preserves the color/size encoding at 1/10th the cost.
   const inspected = f.id === selectedId || f.id === hoverId || cam.z >= 1.5;
   ctx.save();
   ctx.translate(f.x, f.y); ctx.rotate(f.heading);
-  if (quality >= 1 || inspected) drawFlyAnatomy(f, size, flap, alpha, body, acc, fap, now, inspected);
+  if (inspected || (quality >= 2 && cam.z >= 0.9) || (quality >= 1 && cam.z >= 1.4)) drawFlyAnatomy(f, size, flap, alpha, body, acc, fap, now, inspected);
   else {
+    // simplified fly: body ellipse + wing blur, preserving wealth color/size encoding
+    // a subtle wing blur (two faint arcs) suggests motion without the full anatomy cost
     const wspread = 0.5 + flap * 0.9;
-    ctx.strokeStyle = rgba(acc, (0.1 + f.wing * 0.22) * alpha);
-    ctx.lineWidth = 0.7;
+    ctx.strokeStyle = rgba(acc, (0.08 + f.wing * 0.18) * alpha);
+    ctx.lineWidth = 0.6;
     for (const s of [-1, 1]) {
       ctx.beginPath();
-      ctx.ellipse(-size * 0.3, s * size * 0.5, size * 1.5, size * 0.6, s * wspread, 0, TAU);
+      ctx.ellipse(-size * 0.25, s * size * 0.45, size * 1.4, size * 0.55, s * wspread, 0, TAU);
       ctx.stroke();
     }
-    ctx.fillStyle = rgba(body, (0.5 + f.aro * 0.45) * alpha);
-    ctx.beginPath(); ctx.ellipse(0, 0, size * 1.5, size * 0.82, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = rgba(body, (0.55 + f.aro * 0.4) * alpha);
+    ctx.beginPath(); ctx.ellipse(0, 0, size * 1.4, size * 0.78, 0, 0, TAU); ctx.fill();
+    // a faint dorsal stripe so the body reads as three-dimensional even at low LOD
+    if (quality >= 1) {
+      ctx.strokeStyle = rgba(mix(body, [0, 0, 0], 0.3), 0.15 * alpha);
+      ctx.lineWidth = 0.4;
+      ctx.beginPath(); ctx.moveTo(-size * 0.8, 0); ctx.lineTo(size * 0.8, 0); ctx.stroke();
+    }
   }
   ctx.restore();
 
@@ -3260,8 +3274,10 @@ function loop(now) {
     frameMsAvg = lerp(frameMsAvg, ms, 0.06);
     if (now - lastQualityAt > 1000) {
       lastQualityAt = now;
-      if (frameMsAvg > 30 && quality > 0) quality--;
-      else if (frameMsAvg < 19 && quality < 2) quality++;
+      // tighter thresholds: degrade at >20ms (was >30ms), upgrade at <15ms (was <19ms)
+      // this makes quality=0 the stable state on most laptops, keeping the swarm smooth
+      if (frameMsAvg > 20 && quality > 0) quality--;
+      else if (frameMsAvg < 15 && quality < 2) quality++;
     }
     tempSmoothed = lerp(tempSmoothed, tempTarget, 0.02 * dt);
     cohSmoothed = lerp(cohSmoothed, cohTarget, 0.03 * dt);
