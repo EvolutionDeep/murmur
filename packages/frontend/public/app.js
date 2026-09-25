@@ -34,6 +34,8 @@
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
 import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=96";
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -515,6 +517,7 @@ function resize() {
   clampCam();                        // the world/viewport relationship moved — pull the camera back in bounds
   rebuildGraveField();           // the headstone band is laid out in field coordinates → re-place on resize
   initMotes();
+  if (threeScene) threeScene.resize(VW, VH);
 }
 window.addEventListener("resize", resize);
 
@@ -3336,15 +3339,306 @@ function drawTerritoryLegend(g, pol) {
   g.restore();
 }
 
+// ================= THREE.JS 3D SCENE =================
+// Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
+// - Procedural terrain from CONTINENT data (parchment toon shader)
+// - InstancedMesh flies (3D boids from updateSim positions)
+// - Settlement groups (3D mudbrick buildings)
+// - River TubeGeometry with animated water shader
+// - Fog + lighting for atmosphere
+
+class ThreeScene {
+  constructor() {
+    this.scene = null;
+    this.camera = null;
+    this.renderer = null;
+    this.controls = null;
+    this.terrain = null;
+    this.ocean = null;
+    this.flyMesh = null;
+    this.settlementGroup = new THREE.Group();
+    this.settlementSig = "";
+    this.rivers = [];
+    this.clock = new THREE.Clock();
+    this._dummy = new THREE.Object3D();
+    this._color = new THREE.Color();
+    this._init();
+  }
+
+  _init() {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0xf2eee6);
+    this.scene.fog = new THREE.FogExp2(0xf2eee6, 0.006);
+
+    const aspect = VW / VH;
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+    this.camera.position.set(0, 70, 55);
+    this.camera.lookAt(0, 0, 0);
+
+    this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('field'), antialias: true, alpha: true });
+    this.renderer.setSize(VW, VH);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setClearColor(0x000000, 0);
+
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+    this.controls.maxPolarAngle = Math.PI / 2.2;
+    this.controls.minDistance = 15;
+    this.controls.maxDistance = 180;
+    this.controls.target.set(0, 0, 0);
+
+    // Warm parchment lighting
+    this.scene.add(new THREE.AmbientLight(0xfff4e6, 0.55));
+    const sun = new THREE.DirectionalLight(0xffe8c8, 0.85);
+    sun.position.set(50, 80, 30);
+    this.scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xc8d8ff, 0.2);
+    fill.position.set(-40, 30, -50);
+    this.scene.add(fill);
+
+    this._buildOcean();
+    this._buildTerrain();
+    this._buildFlies();
+    this._buildRivers();
+    this.scene.add(this.settlementGroup);
+  }
+
+  // ---- ocean: a flat translucent plane beneath the terrain ----
+  _buildOcean() {
+    const geo = new THREE.PlaneGeometry(200, 200);
+    const mat = new THREE.MeshToonMaterial({ color: 0x8ab4c8, transparent: true, opacity: 0.45 });
+    this.ocean = new THREE.Mesh(geo, mat);
+    this.ocean.rotation.x = -Math.PI / 2;
+    this.ocean.position.y = -0.3;
+    this.scene.add(this.ocean);
+  }
+
+  // ---- terrain: PlaneGeometry + vertex displacement + height-based vertex colors ----
+  _buildTerrain() {
+    const size = 100, segs = 128;
+    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+
+    // Value noise (deterministic, smooth)
+    const noise = (x, z) => {
+      const ix = Math.floor(x), iz = Math.floor(z);
+      const fx = x - ix, fz = z - iz;
+      const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+      const h = (a, b) => Math.sin(a * 12.9898 + b * 78.233) * 43758.5453 % 1;
+      const n00 = h(ix, iz), n10 = h(ix + 1, iz), n01 = h(ix, iz + 1), n11 = h(ix + 1, iz + 1);
+      return (n00 + (n10 - n00) * sx) + ((n01 + (n11 - n01) * sx) - (n00 + (n10 - n00) * sx)) * sz;
+    };
+
+    // Multi-octave noise for richer terrain
+    const fbm = (x, z) => {
+      let v = 0, amp = 1, freq = 1;
+      for (let o = 0; o < 4; o++) { v += noise(x * freq, z * freq) * amp; amp *= 0.5; freq *= 2.1; }
+      return v / 1.875; // normalise
+    };
+
+    // Continent mask (ray-casting point-in-polygon)
+    const inContinent = (px, pz) => {
+      const nx = (px + size / 2) / size, nz = (pz + size / 2) / size;
+      if (nx < 0.14 || nx > 0.76 || nz < 0.09 || nz > 0.91) return 0;
+      let inside = false;
+      for (let i = 0, j = CONTINENT.length - 1; i < CONTINENT.length; j = i++) {
+        const xi = CONTINENT[i][0], zi = CONTINENT[i][1];
+        const xj = CONTINENT[j][0], zj = CONTINENT[j][1];
+        if ((zi > nz) !== (zj > nz) && nx < (xj - xi) * (nz - zi) / (zj - zi) + xi) inside = !inside;
+      }
+      return inside ? 1 : 0;
+    };
+
+    // Displace vertices + compute vertex colors
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    // Toon height bands: cream → ochre → terracotta → deep brown
+    const bands = [
+      [0.95, 0.94, 0.90],  // h=0  parchment cream
+      [0.79, 0.60, 0.25],  // h=0.3 ochre
+      [0.69, 0.38, 0.24],  // h=0.6 terracotta
+      [0.35, 0.25, 0.19],  // h=1  deep brown
+    ];
+    const sampleBand = (h) => {
+      h = Math.max(0, Math.min(1, h));
+      const idx = h * (bands.length - 1);
+      const lo = Math.floor(idx), hi = Math.min(bands.length - 1, lo + 1);
+      const t = idx - lo;
+      return [bands[lo][0] + (bands[hi][0] - bands[lo][0]) * t,
+              bands[lo][1] + (bands[hi][1] - bands[lo][1]) * t,
+              bands[lo][2] + (bands[hi][2] - bands[lo][2]) * t];
+    };
+
+    const maxH = 10;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getY(i);
+      const mask = inContinent(x, z);
+      const n = fbm(x * 0.06 + 3.7, z * 0.06 + 1.2);
+      const h = mask * n * maxH;
+      pos.setZ(i, h);
+      const c = sampleBand(mask ? n * 0.85 + 0.15 : 0.05);
+      colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    const mat = new THREE.MeshToonMaterial({ vertexColors: true });
+    this.terrain = new THREE.Mesh(geo, mat);
+    this.terrain.rotation.x = -Math.PI / 2;
+    this.scene.add(this.terrain);
+  }
+
+  // ---- flies: InstancedMesh (1 draw call for the whole swarm) ----
+  _buildFlies() {
+    // Ellipsoid body (stretched sphere)
+    const geo = new THREE.SphereGeometry(0.35, 8, 6);
+    geo.scale(1.6, 0.8, 0.8); // elongate along local X (heading direction)
+    const mat = new THREE.MeshToonMaterial({ color: 0xffffff });
+    this.flyMesh = new THREE.InstancedMesh(geo, mat, 120);
+    this.flyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.flyMesh.count = 0;
+    this.scene.add(this.flyMesh);
+  }
+
+  // ---- rivers: two TubeGeometry rivers matching the existing sine-curve formula ----
+  _buildRivers() {
+    const riverMat = new THREE.MeshPhongMaterial({
+      color: 0x6898b0, transparent: true, opacity: 0.6, shininess: 120
+    });
+    for (let r = 0; r < 2; r++) {
+      const pts = [];
+      // Match existing drawRivers: yb at VH*0.34 / VH*0.66, mapped to 3D z
+      const zb = (r === 0 ? 0.34 : 0.66) * 100 - 50; // map to [-50,50]
+      const amp = 7, ampSm = 2;
+      for (let i = 0; i <= 44; i++) {
+        const t = i / 44;
+        const x = (t - 0.5) * 100;
+        const z = zb + Math.sin(t * 5 + r) * amp + Math.sin(t * 13) * ampSm;
+        pts.push(new THREE.Vector3(x, 0.6, z));
+      }
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const tubeGeo = new THREE.TubeGeometry(curve, 44, 1.2, 8, false);
+      const river = new THREE.Mesh(tubeGeo, riverMat);
+      this.scene.add(river);
+      this.rivers.push(river);
+    }
+  }
+
+  // ---- settlements: dynamically built from econCities data (rebuilt when signature changes) ----
+  _rebuildSettlements(econCities) {
+    while (this.settlementGroup.children.length) this.settlementGroup.remove(this.settlementGroup.children[0]);
+    if (!econCities || !Array.isArray(econCities.settlements) || !econCities.settlements.length) return;
+    // Signature to detect changes
+    let sig = "";
+    for (const s of econCities.settlements) sig += s.zone + ":" + s.rank + ":" + (s.houseName || "") + ",";
+    if (sig === this.settlementSig) return;
+    this.settlementSig = sig;
+
+    const mudCol = new THREE.Color(0xc6aa80);   // MUD
+    const mudHi = new THREE.Color(0xe4cea6);    // MUD_HI
+    const terraCol = new THREE.Color(0xb0603c);  // TERRA
+
+    for (const s of econCities.settlements) {
+      const g = new THREE.Group();
+      // Map zone to 3D coords (same mapping as flies)
+      const za = zoneAnchor(s.zone);
+      const wx = (za.x / VW - 0.5) * 100;
+      const wz = (za.y / VH - 0.5) * 100;
+      g.position.set(wx, 0, wz);
+
+      // Building count by rank
+      const nBuildings = s.rank === "CITY" ? 16 : s.rank === "TOWN" ? 8 : 3;
+      const maxH = s.rank === "CITY" ? 5 : s.rank === "TOWN" ? 3 : 1.8;
+      const spread = s.rank === "CITY" ? 4 : s.rank === "TOWN" ? 2.5 : 1.5;
+
+      for (let b = 0; b < nBuildings; b++) {
+        const bw = 0.5 + Math.random() * 0.8;
+        const bh = 0.8 + Math.random() * maxH;
+        const bd = 0.5 + Math.random() * 0.8;
+        const bGeo = new THREE.BoxGeometry(bw, bh, bd);
+        const bMat = new THREE.MeshToonMaterial({ color: Math.random() > 0.3 ? mudCol : mudHi });
+        const bMesh = new THREE.Mesh(bGeo, bMat);
+        bMesh.position.set((Math.random() - 0.5) * spread, bh / 2, (Math.random() - 0.5) * spread);
+        g.add(bMesh);
+      }
+
+      // CITY gets a wall ring + corner towers
+      if (s.rank === "CITY") {
+        const wallGeo = new THREE.TorusGeometry(spread * 0.8, 0.25, 6, 24);
+        const wallMat = new THREE.MeshToonMaterial({ color: terraCol });
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.rotation.x = -Math.PI / 2;
+        wall.position.y = 0.5;
+        g.add(wall);
+        for (let t = 0; t < 4; t++) {
+          const tGeo = new THREE.CylinderGeometry(0.3, 0.4, 3, 6);
+          const tMesh = new THREE.Mesh(tGeo, new THREE.MeshToonMaterial({ color: terraCol }));
+          const angle = (t / 4) * Math.PI * 2;
+          tMesh.position.set(Math.cos(angle) * spread * 0.8, 1.5, Math.sin(angle) * spread * 0.8);
+          g.add(tMesh);
+        }
+      }
+
+      this.settlementGroup.add(g);
+    }
+  }
+
+  update(sim, econCities, now) {
+    // Update fly positions from sim data
+    const flies = [...sim.values()].filter(f => !f.dying);
+    const d = this._dummy, c = this._color;
+
+    for (let i = 0; i < flies.length && i < 120; i++) {
+      const f = flies[i];
+      const x = (f.x / VW - 0.5) * 100;
+      const z = (f.y / VH - 0.5) * 100;
+      const y = 2.5; // fly altitude
+
+      d.position.set(x, y, z);
+      d.rotation.set(0, -(f.heading || 0), 0);
+      const balN = f.balN != null ? f.balN : 0.5;
+      const sz = 0.6 + balN * 0.6;
+      d.scale.set(sz, sz, sz);
+      d.updateMatrix();
+      this.flyMesh.setMatrixAt(i, d.matrix);
+
+      // Wealth colour: reuse WEALTH_RAMP logic (slate → sage → amber → gold)
+      const wc = wealthColorAt(balN);
+      c.setRGB(wc[0] / 255, wc[1] / 255, wc[2] / 255);
+      this.flyMesh.setColorAt(i, c);
+    }
+    this.flyMesh.count = Math.min(flies.length, 120);
+    this.flyMesh.instanceMatrix.needsUpdate = true;
+    if (this.flyMesh.instanceColor) this.flyMesh.instanceColor.needsUpdate = true;
+
+    // Rebuild settlements when econCities data changes
+    this._rebuildSettlements(econCities);
+
+    this.controls.update();
+  }
+
+  render() {
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  resize(w, h) {
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h);
+  }
+}
+
+// Global ThreeScene instance (initialized after DOM is ready)
+let threeScene = null;
+
 function render(pal, now) {
-  // OPAQUE full clear every frame. The old translucent "trail wash" let previous frames linger and
-  // fade slowly, smearing moving flies AND every glyph/label into ghosts that read as stutter.
-  // Crisp clear removes all ghosting with no quality loss (motion feel stays via the per-fly ink
-  // trail stroke), and an opaque fill is cheaper than an alpha-blended wash.
-  // The parchment atlas is world-mapped and the camera clamps to the atlas bounds, so the sea/land always covers
-  // the viewport at every zoom; a parchment-cream screen base sits underneath (the 30% show-through + fallback).
-  // A parchment-cream base fills the SCREEN first: the atlas is laid over it at 70% opacity so the map sits
-  // BACK and the flies stay the protagonists (and it doubles as the missing-texture fallback — no void).
+  // 3D scene mode: Three.js owns the canvas, DOM panels float above
+  if (threeScene) {
+    threeScene.update(sim, econCities, now);
+    threeScene.render();
+    return;
+  }
+  // ── fallback: original Canvas 2D render (below, only if Three.js failed to init) ──
   ctx.fillStyle = "rgb(238, 232, 219)"; ctx.fillRect(0, 0, VW, VH);
   ctx.save(); applyCam();     // ---- WORLD space: the atlas, its provinces, the swarm and ambient life move as one ----
   if (TEX.ground.ready) {
@@ -5825,10 +6119,12 @@ async function pollChron() {
       // the chronicle made visible: hand every entry newer than the last-shown seq to the canvas FX
       if (chronSeenSeq > 0) for (const e of chronRows) { if ((e.seq || 0) <= chronSeenSeq) break; spawnChronFx(e); }
       renderChron();
+      renderChronTicker();
       if (chronVerifyState) renderChronVerdict();
     } else {
       chronEnabled = false;
       renderChron();
+      renderChronTicker();
     }
   } catch { /* best-effort: the chronicle is a nicety, never block the scene */ }
 }
@@ -5976,6 +6272,33 @@ function renderChron() {
 
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+// ================= chronicle ticker: the persistent bottom bar with auto-scrolling annals =================
+// Reads chronRows (already desc by seq) and renders the latest 10 entries as a horizontally scrolling ribbon.
+// The track is duplicated for a seamless CSS infinite scroll. Click opens the chronicle drawer.
+function renderChronTicker() {
+  const track = document.getElementById("chron-ticker-track");
+  const ticker = document.getElementById("chron-ticker");
+  if (!track || !ticker) return;
+  if (!chronEnabled || !chronRows.length) { ticker.hidden = true; return; }
+  ticker.hidden = false;
+  // Take the 10 most recent entries (chronRows is newest-first)
+  const items = chronRows.slice(0, 10);
+  const roman = (n) => {
+    if (!n || n <= 0) return String(n || "");
+    const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+    let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
+  };
+  const html = items.map((e) => {
+    const icon = CHRON_ICONS[e.kind] || "✦";
+    const era = e.era ? roman(e.era) : "";
+    const text = escapeHtml(e.text || "");
+    const time = e.ts ? chronTimeAgo(e.ts) : "";
+    return `<span class="chron-ticker-item"><span class="tick-icon">${icon}</span><span class="tick-era">era ${era}</span><span class="tick-text">${text}</span><span class="tick-time">${time}</span></span>`;
+  }).join("");
+  // Duplicate the items for seamless CSS infinite scroll
+  track.innerHTML = `<span class="chron-ticker-inner">${html}${html}</span>`;
 }
 
 // ================= prove the chronicle is NOT an LLM (browser-side re-derivation) ==================
@@ -8562,6 +8885,7 @@ function bindUI() {
   const hc = $("hist-close"); if (hc) hc.addEventListener("click", closeHistory);
   const crb = $("chron-btn"); if (crb) crb.addEventListener("click", toggleChron);
   const crc = $("chron-close"); if (crc) crc.addEventListener("click", closeChron);
+  const ctk = $("chron-ticker"); if (ctk) ctk.addEventListener("click", () => { if (!chronOpen) openChron(); });
   const cnb = $("canary-btn"); if (cnb) cnb.addEventListener("click", toggleCanary);
   const cnc = $("canary-close"); if (cnc) cnc.addEventListener("click", closeCanary);
   const cp = $("chron-prove"); if (cp) cp.addEventListener("click", proveChron);
@@ -9254,6 +9578,7 @@ function boot() {
   setLang(getLang(), { rerender: false });
   haloSprite = makeHaloSprite();
   crownGlowSprite = makeCrownGlow();
+  try { threeScene = new ThreeScene(); } catch (e) { console.warn("[murmur] Three.js init failed, falling back to 2D:", e); }
   resize();
   bindUI();
   populateLangSelect();

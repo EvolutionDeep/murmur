@@ -1894,3 +1894,48 @@ html[dir="rtl"] .wk-title,
 html[dir="rtl"] .wk-row {
   direction: rtl; text-align: right;
 }
+
+/* ============ chronicle ticker: a persistent bottom bar with auto-scrolling annals ============ */
+.chron-ticker {
+  position: fixed; z-index: 10; left: 0; right: 0; bottom: 0;
+  height: 44px; display: flex; align-items: center; gap: 8px;
+  background: rgba(242, 238, 230, 0.92);
+  border-top: 1px solid rgba(176, 138, 54, 0.25);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  font-family: var(--display); color: var(--ink);
+  overflow: hidden; cursor: pointer;
+  transition: opacity 0.4s;
+}
+.chron-ticker:empty, .chron-ticker[hidden] { display: none; }
+.chron-ticker-label {
+  flex-shrink: 0; padding: 0 6px 0 12px;
+  font-size: 14px; color: #b08a36; opacity: 0.8;
+}
+.chron-ticker-track {
+  flex: 1; overflow: hidden; white-space: nowrap; position: relative;
+  mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 92%, transparent 100%);
+}
+.chron-ticker-inner {
+  display: inline-flex; gap: 28px; animation: ticker-scroll 60s linear infinite;
+  padding: 0 8px;
+}
+.chron-ticker-item {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 11px; letter-spacing: 0.04em; color: var(--ink); opacity: 0.78;
+}
+.chron-ticker-item .tick-icon { font-size: 10px; opacity: 0.6; }
+.chron-ticker-item .tick-era {
+  font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #b08a36; opacity: 0.7; padding: 1px 4px;
+  border: 1px solid rgba(176, 138, 54, 0.3); border-radius: 2px;
+}
+.chron-ticker-item .tick-text { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.chron-ticker-item .tick-time { font-size: 9px; color: var(--muted); opacity: 0.55; }
+.chron-ticker:hover .chron-ticker-inner { animation-play-state: paused; }
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+/* hide the old hint line when ticker is present */
+.chron-ticker ~ .hint-select { display: none; }
