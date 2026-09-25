@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@fly/fly-brain": "*",
-    "viem": "^2.21.45"
+    "viem": "^2.56.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241112.0",
