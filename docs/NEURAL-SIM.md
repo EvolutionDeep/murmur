@@ -6,7 +6,7 @@ deterministic spiking-network library the Worker drives. Everything a fly "decid
 ```
 src/
   lif.ts            the Leaky Integrate-and-Fire network + spike-frequency adaptation (SFA)
-  connectome.ts     buildConnectome(): the wiring grown from a seed (1,080 n default · 10,800 n in production)
+  connectome.ts     buildConnectome(): the wiring grown from a seed (1,080 n default · 30,800 n species spec · live genome-sized ~10,800)
   fly-brain.ts      FlyBrain: inject → advance → read motor; snapshot; serialize/deserialize
   motor-decoder.ts  motor firing rates → drives → behaviour (decoded relative to the population)
   stimuli.ts        market pulse + visitor stimulus → sensory-channel currents
@@ -15,11 +15,13 @@ src/
 
 ---
 
-## The connectome (1,080 neurons default · 10,800 in production)
+## The connectome (1,080 neurons default · 30,800 species spec · ~10,800 live)
 
 `buildConnectome(opts)` grows a fruit-fly-shaped network deterministically from a seed. Defaults (overridable via
 `BRAIN_N_*` / `BRAIN_DENSITY` vars) produce exactly **1,080 neurons**; the production `wrangler.toml` scales every
-layer 10× (`1800/4000/4000/400/120`) to **10,800 neurons**:
+layer ~28× (`5200/11400/11400/1100/340`) to the **30,800-neuron** species/genesis spec committed on-chain (a live
+bred fly's brain is grown from its own genome instead — ~10,800 neurons today), dropping `BRAIN_DENSITY` to `0.0007` so fan-in —
+and thus the synapse count — stays linear in layer size (~404k synapses/fly) instead of exploding quadratically:
 
 | Layer | Count | Role |
 |---|---|---|
@@ -48,10 +50,12 @@ temporarily raises its threshold.
 **Why SFA is load-bearing.** The inter-layer competition is winner-take-all. Without SFA the network **hard-latches**:
 one motor leg pins at maximum rate, its antagonist goes silent, and the fly never flips — the swarm freezes. SFA
 (tuned `adaptIncrement = 0.05`) lets the winner tire so the population keeps oscillating. `FlyBrain.serialize()`
-writes **version 3** archives to mark brains saved under the tuned SFA; `deserialize()` deliberately **discards the
-electrical state of pre-v3 archives** (v1 pre-SFA, v2 latched under a too-weak 0.03 SFA) and wakes them fresh while
-keeping the simulation clock — SFA then prevents re-latching. The connectome is rebuilt from the seed, so identity
-is preserved.
+writes **version 4** archives — a compact base64 pack of the six per-neuron float32 arrays (lossless, ~2.9× smaller
+than spelling every float out in decimal, and what keeps a 30,800-neuron brain's ~963 KB archive under the Durable
+Object 2 MB single-value cap); `deserialize()` reads both v4 and the legacy **version 3** text archives. It
+deliberately **discards the electrical state of pre-v3 archives** (v1 pre-SFA, v2 latched under a too-weak 0.03 SFA)
+and wakes them fresh while keeping the simulation clock — SFA then prevents re-latching. The connectome is rebuilt
+from the seed, so identity is preserved.
 
 This is also why the **economy is a one-directional read-out** of the neural layer: money never feeds back into the
 connectome, so it cannot re-destabilise the WTA dynamics.

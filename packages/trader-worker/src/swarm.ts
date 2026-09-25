@@ -23,7 +23,7 @@ import {
   type StimulusEvent,
 } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
-import { shardOf } from "./config.js";
+import { fliesPerShard, shardOf } from "./config.js";
 import type { Regime } from "./market.js";
 import {
   Population,
@@ -50,6 +50,7 @@ export const KEY_POPULATION = "population:v3";   // LocalSwarm: the whole single
 export const KEY_COORDINATOR = "coordinator:v1"; // ShardedSwarm: the {tickIndex, vitality} counter (brains live in shards)
 export const KEY_ROSTER = "coordinatorRoster:v1"; // ShardedSwarm: hatched offspring (id + seed + genome) beyond the config-derived genesis roster — NOT derivable from config, so persisted
 export const KEY_RETIRED = "coordinatorRetired:v1"; // ShardedSwarm: tombstoned ids (retired dead flies), so a cold boot rebuilds the genesis roster WITHOUT resurrecting them
+export const KEY_LAYOUT = "coordinatorLayout:v1"; // ShardedSwarm: the flies/shard signature the persisted brains were last seeded under — a clamp/shard change that REMAPS id→shard triggers a one-time offspring re-seed (see migrateLayoutIfNeeded) instead of orphaning live brains
 
 /** The full neural read-out of one fly, for GET /snapshot (the generative inspector view). */
 export interface FlyNeuralSnapshot {
@@ -257,6 +258,13 @@ export class ShardedSwarm implements SwarmBackend {
   private vitality = 0.5;
   /** Last decoded behaviour per fly, so /flies/:id can show it without a shard round-trip. */
   private lastBehavior = new Map<number, FlyBehavior>();
+  /** True while a layout re-seed landed only PART of the offspring (e.g. one shard's /hatch timed out). load()'s
+   *  migrateLayoutIfNeeded records KEY_LAYOUT only on a FULL re-seed, so its "retry next cold boot" would fire on
+   *  the next load() — but this coordinator DO is kept warm by the frontend's per-second polling and may NEVER
+   *  evict, so load() never re-runs and the un-landed offspring stays a ghost forever. persist() runs on every
+   *  committing cron WITH `storage` in hand, so it re-drives the (idempotent) migration until it completes and
+   *  clears this flag — a warm-DO retry path that needs no eviction. */
+  private migrationPending = false;
 
   constructor(private cfg: RuntimeConfig, private env: Env) {
     const ns = env.FLY_SHARD;
@@ -315,6 +323,14 @@ export class ShardedSwarm implements SwarmBackend {
       }
     }
     swarm.rebuildRosterFromState();
+    // ONE-TIME LAYOUT MIGRATION: a fly id's owning shard is floor(id / fliesPerShard(cap, shardCount)), so a
+    // change to flies/shard (e.g. the SHARD_COUNT clamp fix 64→100 taking cap 100 from 2 flies/shard to 1)
+    // REMAPS every id to a different isolate. Persisted brains do NOT follow (each shard is its own DO
+    // storage), so without this the live offspring in `bred` would wake as ghosts — roster-present, brain
+    // absent (reduceReadOuts then feeds them zero drives). Genesis ids self-heal (a shard rebuilds them from
+    // the config seed), but offspring genomes live ONLY in KEY_ROSTER, so re-ship them to their new shards via
+    // the idempotent /hatch. Guarded by the stored signature, so it fires only on an actual flies/shard change.
+    await swarm.migrateLayoutIfNeeded(storage);
     return swarm;
   }
 
@@ -334,6 +350,100 @@ export class ShardedSwarm implements SwarmBackend {
     }
     roster.sort((a, b) => a.id - b.id);
     this.roster = roster;
+  }
+
+  /**
+   * The current shard-layout signature. `per` (flies/shard) is the ONLY value that decides an id's owning
+   * shard — shardOf = floor(id / per) — so it alone identifies the mapping the persisted brains were seeded
+   * under. shardCount/cap ride along purely for a readable log/diagnostic.
+   */
+  private layoutSignature(): { per: number; shardCount: number; cap: number } {
+    return {
+      per: fliesPerShard(this.cfg.maxLivePopulation, this.cfg.shardCount),
+      shardCount: this.cfg.shardCount,
+      cap: this.cfg.maxLivePopulation,
+    };
+  }
+
+  /**
+   * One-time re-seed when the shard layout changed under the persisted brains (called from load()). If the
+   * stored signature's `per` differs from the current one (or nothing is stored yet — the first run of this
+   * code on a live deployment), re-ship every live offspring's genome to the shard that owns its id NOW, then
+   * record the layout so it never re-runs. Genesis ids are deliberately NOT re-seeded: each shard rebuilds
+   * them deterministically from the config seed on its next /advance. Non-fatal by construction — the layout
+   * is recorded ONLY when every offspring re-seed confirmed, so a partial failure retries on the next cold
+   * boot (and /hatch idempotency makes a retry touch only the offspring that didn't land).
+   */
+  private async migrateLayoutIfNeeded(storage: DurableObjectStorage): Promise<void> {
+    const now = this.layoutSignature();
+    let stored: { per?: number } | undefined;
+    try {
+      stored = await storage.get<{ per?: number }>(KEY_LAYOUT);
+    } catch (e) {
+      console.warn("[swarm] layout read failed (treating layout as changed):", (e as Error).message);
+    }
+    if (stored && Number(stored.per) === now.per) return;   // same flies/shard ⇒ same id→shard map ⇒ nothing to do
+    // No offspring brains to orphan: record nothing. (hatchLiveFly always ships a new genome to the shard
+    // derived from the CURRENT config, so a future hatch lands correctly without a stored baseline.)
+    if (this.bred.length === 0) return;
+    const t0 = Date.now();
+    let ok = 0;
+    try {
+      ok = await this.reseedOffspring();
+    } catch (e) {
+      console.error("[swarm] layout re-seed threw (offspring stay ghosts until the next cold boot):", (e as Error).message);
+    }
+    if (ok === this.bred.length) {
+      await storage.put(KEY_LAYOUT, now);
+      this.migrationPending = false;
+      console.log(
+        `[swarm] layout migration complete: flies/shard ${stored?.per ?? "none"}→${now.per}, ` +
+          `re-seeded ${ok}/${this.bred.length} offspring in ${Date.now() - t0}ms`,
+      );
+    } else {
+      // Flag it so persist() re-drives the re-seed on the next committing cron — the coordinator may never evict
+      // (the frontend polls it every second), so a cold-boot-only retry could strand the missing offspring forever.
+      this.migrationPending = true;
+      console.error(
+        `[swarm] layout migration INCOMPLETE: re-seeded ${ok}/${this.bred.length} offspring; ` +
+          `NOT recording layout, will retry on the next cron persist (/hatch is idempotent)`,
+      );
+    }
+  }
+
+  /**
+   * Re-ship every live offspring's genome to the shard that owns its id under the CURRENT layout, via the
+   * idempotent /hatch (a shard that already hosts the id returns already:true — a no-op). Fired in parallel:
+   * the runtime QUEUES subrequests beyond the 6th (the same proven pattern as step()'s fan-out), each bounded
+   * by SHARD_IO_TIMEOUT_MS and each failure isolated, so one wedged shard can't abort the rest. Returns how
+   * many confirmed (ok or already), which migrateLayoutIfNeeded compares against bred.length.
+   */
+  private async reseedOffspring(): Promise<number> {
+    const results = await Promise.all(
+      this.bred.map(async (b) => {
+        const stub = this.stubs[shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, b.id)];
+        if (!stub) return false;
+        try {
+          const r = await stub.fetch(
+            new Request("https://shard.internal/hatch", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: b.id, genome: b.genome }),
+              signal: AbortSignal.timeout(SHARD_IO_TIMEOUT_MS),
+            }),
+          );
+          if (!r.ok) {
+            console.warn(`[swarm] re-seed #${b.id} rejected: HTTP ${r.status}`);
+            return false;
+          }
+          return true;
+        } catch (e) {
+          console.warn(`[swarm] re-seed #${b.id} failed (will retry next boot):`, (e as Error).message);
+          return false;
+        }
+      }),
+    );
+    return results.filter(Boolean).length;
   }
 
   size(): number { return this.roster.length; }
@@ -502,6 +612,12 @@ export class ShardedSwarm implements SwarmBackend {
   }
 
   async persist(storage: DurableObjectStorage): Promise<void> {
+    // Warm-DO retry for a PARTIAL layout migration (see migrationPending): a coordinator kept hot by the
+    // frontend's polling never evicts, so load()'s migrateLayoutIfNeeded — and its "retry next cold boot" —
+    // would never re-run, stranding any offspring whose /hatch timed out as a permanent ghost. persist() runs
+    // every committing cron with `storage`, so re-drive the idempotent migration here until it fully lands and
+    // clears the flag; once KEY_LAYOUT is recorded the re-seed short-circuits and this is a no-op.
+    if (this.migrationPending) await this.migrateLayoutIfNeeded(storage);
     // Brains already persisted inside the shards on the commit sub-tick; the counter AND the hatched-offspring
     // roster (not derivable from config) live here, alongside the retired-id tombstone.
     await storage.put(KEY_COORDINATOR, { tickIndex: this.tickIndex, vitality: this.vitality });

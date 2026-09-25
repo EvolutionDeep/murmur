@@ -2,7 +2,7 @@
   "name": "@fly/fly-brain",
   "version": "0.1.0",
   "private": true,
-  "description": "Deterministic LIF connectome (1,080 neurons by default; scaled to 10,800 in production via BRAIN_N_*), motor decoder and market stimuli for the murmur fly agents — pure TypeScript, with no native or WASM dependency.",
+  "description": "Deterministic LIF connectome (1,080 neurons by default; production sizes the species spec to 30,800 via BRAIN_N_*, while each live bred fly is genome-sized ~10,800), motor decoder and market stimuli for the murmur fly agents — pure TypeScript, with no native or WASM dependency.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",

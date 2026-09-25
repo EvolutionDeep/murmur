@@ -419,9 +419,9 @@ export const OPENAPI_SPEC = {
   info: {
     title: "murmur public API",
     version: "1.0.0",
-    summary: "Read-only JSON API into a live, autonomous economy of fruit-fly nervous systems (24 genesis, breeding toward 48) settling real USDC on Arc.",
+    summary: "Read-only JSON API into a live, autonomous economy of fruit-fly nervous systems (24 genesis, breeding toward 100) settling real USDC on Arc.",
     description: [
-      "**murmur** is a population of spiking LIF connectomes (~10,800 neurons each) — 24 founders, breeding live toward a 48 cap — grown deterministically from a real",
+      "**murmur** is a population of spiking LIF connectomes (~30,800 neurons each) — 24 founders, breeding live toward a 100 cap — grown deterministically from a real",
       "Drosophila brain architecture. Each fly is an autonomous economic agent: its neural drives decide what to buy and from",
       "whom, and agents settle with each other in **real USDC on Arc mainnet** over **x402 / EIP-3009**. There is **no LLM**",
       "anywhere in the loop.",
@@ -1157,7 +1157,7 @@ export const OPENAPI_SPEC = {
         tags: ["swarm"],
         operationId: "getSnapshot",
         summary: "Full neural state of one fly (large)",
-        description: "The complete per-neuron arrays for one fly: firing rates, membrane potentials, last-step spikes, neuron kinds/channels, the decoded motor channels, and the fly's agent wallet. ~600 KB in production (10,800 neurons) — fetch sparingly.",
+        description: "The complete per-neuron arrays for one fly: firing rates, membrane potentials, last-step spikes, neuron kinds/channels, the decoded motor channels, and the fly's agent wallet. ~1.7 MB in production (30,800 neurons) — fetch sparingly.",
         parameters: [{ name: "flyId", in: "query", required: true, schema: { type: "integer", minimum: 0, maximum: 23 }, description: "The 0-based fly index.", example: 0 }],
         ...ok(
           obj({

@@ -201,6 +201,44 @@ export class LifNetwork {
     };
   }
 
+  /**
+   * Compact binary form: the six per-neuron Float32 arrays packed back-to-back into ONE base64
+   * string. The runtime state is already Float32Array, so this is LOSSLESS — it merely stops the
+   * JSON text form from spelling every float out in decimal (~2.9x larger). At 10,800 neurons the
+   * text archive is ~0.72 MB/fly; at 30,800 it would be ~2.1 MB and breach the Durable Object
+   * 2 MB single-value wall, while the compact form stays at ~1.0 MB.
+   */
+  toCompact(): { t: number; step: number; b64: string } {
+    const n = this.N;
+    const buf = new ArrayBuffer(6 * n * 4);
+    const f32 = new Float32Array(buf);
+    f32.set(this.V, 0);
+    f32.set(this.lastSpikeT, n);
+    f32.set(this.Isyn, 2 * n);
+    f32.set(this.Iext, 3 * n);
+    f32.set(this.firingRate, 4 * n);
+    f32.set(this.adaptation, 5 * n);
+    return { t: this.t, step: this.step, b64: u8ToB64(new Uint8Array(buf)) };
+  }
+
+  /** Restore from the compact form. Returns false (leaving state untouched) when the packed
+   *  length does not match this network's N — a differently-sized connectome must wake fresh. */
+  fromCompact(obj: { t: number; step: number; b64: string }): boolean {
+    const u8 = b64ToU8(obj.b64);
+    if (u8.length !== 6 * this.N * 4) return false;
+    const f32 = new Float32Array(u8.buffer, u8.byteOffset, 6 * this.N);
+    const n = this.N;
+    this.t = obj.t;
+    this.step = obj.step;
+    this.V.set(f32.subarray(0, n));
+    this.lastSpikeT.set(f32.subarray(n, 2 * n));
+    this.Isyn.set(f32.subarray(2 * n, 3 * n));
+    this.Iext.set(f32.subarray(3 * n, 4 * n));
+    this.firingRate.set(f32.subarray(4 * n, 5 * n));
+    this.adaptation.set(f32.subarray(5 * n, 6 * n));
+    return true;
+  }
+
   /** Restore from JSON (neuron/synapse structure must match) */
   fromJSON(obj: any): void {
     this.t = obj.t;
@@ -214,4 +252,23 @@ export class LifNetwork {
     // preserved and fatigue rebuilds naturally within the first cron.
     if (obj.adaptation) this.adaptation.set(obj.adaptation);
   }
+}
+
+// ---- base64 <-> bytes (btoa/atob exist in Workers, browsers and Node 16+; chunked to stay
+//      clear of call-stack limits on the ~1 MB archives a 30k-neuron brain produces) ----
+function u8ToB64(u8: Uint8Array): string {
+  let s = "";
+  const CH = 4096;
+  for (let i = 0; i < u8.length; i += CH) {
+    const end = Math.min(i + CH, u8.length);
+    for (let k = i; k < end; k++) s += String.fromCharCode(u8[k]);
+  }
+  return btoa(s);
+}
+
+function b64ToU8(b64: string): Uint8Array {
+  const s = atob(b64);
+  const u8 = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+  return u8;
 }

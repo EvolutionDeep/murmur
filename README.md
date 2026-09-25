@@ -22,9 +22,10 @@
 
 > **murmur** reads whole-chain activity on **Arc**, reduces it to a single **market temperature**, and lets a
 > population of **fruit-fly nervous systems** react — collectively and one fly at a time. The swarm founders at
-> **24 flies** and **breeds live** (lineage, houses, graves) toward a 48 cap. Each fly is also an
-> **autonomous economic agent**: its **10,800-neuron** **Leaky Integrate-and-Fire (LIF)** connectome (production
-> sizing; the library default is 1,080) decides *what to
+> **24 flies** and **breeds live** (lineage, houses, graves) toward a 100 cap. Each fly is also an
+> **autonomous economic agent**: its **Leaky Integrate-and-Fire (LIF)** connectome — the species spec is committed
+> on-chain at **30,800 neurons**, and each live brain is grown from its own genome (so individuals vary, ~10,800
+> today; the library default is 1,080) — decides *what to
 > buy* and *from whom*, and the agents settle with each other in **real USDC on Arc mainnet** over the **x402**
 > payment protocol — every settlement a genuine **EIP-3009** transfer you can verify on the Arc explorer.
 >
@@ -60,7 +61,7 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
 | Feature | Description |
 |---|---|
 | **Market temperature** | Samples recent Arc blocks, reduces tx/gas throughput against a self-calibrating EWMA baseline, and maps the ratio through a logistic curve to a `HOT / CALM / COLD` regime — no token, no price feed. |
-| **Neural population** | 24 founding flies, each an independent **10,800-neuron** LIF connectome grown from its own seed (its *temperament*). Flies **breed, age and die**: offspring inherit a mutated/crossed genome, form **houses** (dynasties), and the roster is capped at 48 living — the population is a lineage, not a fixed cast. |
+| **Neural population** | 24 founding flies, each an independent LIF connectome grown from its own seed (its *temperament*) — the on-chain species spec is **30,800 neurons**, and each live fly's brain is genome-sized, so individuals vary (~10,800 today). Flies **breed, age and die**: offspring inherit a mutated/crossed genome, form **houses** (dynasties), and the roster is capped at 100 living — the population is a lineage, not a fixed cast. |
 | **Two-layer behaviour** | The temperature sets the collective regime; each fly's own wiring decides how strongly it expresses that regime and whether it breaks rank. Decoded *relative to its peers* every tick. |
 | **Agent economy (x402)** | Each fly is an economic agent with its own USDC micro-wallet. Neural drives become an economic intent (which good, how strongly, which peer), and buyer/seller run a faithful x402 `exact` flow that settles in **real USDC**. |
 | **Live on-chain settlement** | Production runs the **`OnChainFacilitator`**: real **EIP-3009** `transferWithAuthorization` against Arc's USDC precompile, signed by each buyer's HD-derived key. Every settlement yields a real tx hash, verifiable on the Arc explorer. A keyless `SimulatedFacilitator` remains for local dev — same economy code, zero changes. |
@@ -85,7 +86,7 @@ before a single wei went out; it is now **off**, so transfers really broadcast.
         │                                                                │
         │   ┌──────────────── Durable Object: FlyStateDO ─────────────┐ │
         │   │  MarketMeter   ▶ temperature + regime (EWMA baseline)    │ │
-        │   │  Population    ▶ founders 24 · breeds to 48 (LIF 10,800 n)   │ │
+        │   │  Population    ▶ founders 24 · breeds to 100 (LIF 30,800 n)  │ │
         │   │                  sensory encode ▶ spike ▶ motor decode   │ │
         │   │                  ▶ drives + behaviour (peer-relative)    │ │
         │   │  AgentEconomy  ▶ drives → intent → x402 "exact" flow     │ │
@@ -166,7 +167,7 @@ npm test          # connectome · LIF · motor decoder · economy
 
 | Suite | What it pins down |
 |---|---|
-| `connectome.test.ts` | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** sizing (production overrides `BRAIN_N_*` to 10,800): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the appetitive gustatory→proboscis reflex, and **deterministic-per-seed / distinct-across-seeds** wiring. |
+| `connectome.test.ts` | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** sizing (production overrides `BRAIN_N_*` to 30,800): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the appetitive gustatory→proboscis reflex, and **deterministic-per-seed / distinct-across-seeds** wiring. |
 | `lif.test.ts` | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
 | `motor-decoder.test.ts` | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime state selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
 | `economy.test.ts` | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, **simulated money conservation**, the solvency floor, full determinism, and the per-agent wallet roster. |
@@ -261,11 +262,11 @@ secret transparently falls back to the keyless `simulated` facilitator (see the 
 | `MARKET_EWMA_ALPHA` | `0.08` | Baseline smoothing (slow ⇒ tracks the regime, not spikes) |
 | `MARKET_GAIN` | `3.0` | Logistic sharpness, activity ratio → temperature |
 | `REGIME_HOT` / `REGIME_COLD` | `0.66` / `0.33` | Temperature thresholds for `HOT` / `COLD` |
-| `POPULATION_SIZE` | `24` | Founding flies (1–256); live breeding (`EVOLUTION_*`) grows the roster toward `EVOLUTION_MAX_LIVE_POPULATION` (48) |
+| `POPULATION_SIZE` | `24` | Founding flies (1–256); live breeding (`EVOLUTION_*`) grows the roster toward `EVOLUTION_MAX_LIVE_POPULATION` (100) |
 | `POPULATION_SEED_BASE` | `42` | Base seed; fly *i* uses `base + i·7919` |
 | `TICKS_PER_CRON` | `6` | Simulation sub-ticks per cron |
 | `SIM_STEPS_PER_TICK` | `500` | LIF integration steps per sub-tick |
-| `BRAIN_N_SENSORY` / `_INTER_L1` / `_INTER_L2` / `_MODULATORY` / `_MOTOR_PER_CHANNEL` | `1800/4000/4000/400/120` | Connectome sizing ⇒ **10,800 neurons** live (omit ⇒ the 1,080 library default) |
+| `BRAIN_N_SENSORY` / `_INTER_L1` / `_INTER_L2` / `_MODULATORY` / `_MOTOR_PER_CHANNEL` | `5200/11400/11400/1100/340` | Connectome sizing ⇒ the **30,800-neuron** species/genesis spec committed on-chain (omit ⇒ the 1,080 library default); live bred flies are genome-sized, ~10,800 today |
 | `STIMULUS_COOLDOWN_SEC` | `30` | One stimulus injection per visitor per N seconds |
 | `ECONOMY_ENABLED` | `true` | Agent economy on/off |
 | `ECONOMY_INITIAL_BALANCE` | `6` | Display-mirror float per agent; onchain the spendable balance is what the operator actually funded |
@@ -311,7 +312,7 @@ See [**docs/DEPLOYMENT.md**](./docs/DEPLOYMENT.md) for secrets, custom domains a
 - **Edge**: Cloudflare Workers + Durable Objects (SQLite storage) + Pages · wrangler 4.x
 - **Chain**: Arc mainnet (Chain ID 5042) — reads whole-chain activity for temperature, **writes** real EIP-3009 USDC transfers · viem ^2.21
 - **Payments**: x402 `exact` scheme · **real USDC** (Arc precompile `0x3600…0000`, 6 decimals) · EIP-3009 `transferWithAuthorization`
-- **Neural core**: TypeScript LIF spiking network (**10,800 neurons** in production via `BRAIN_N_*`; 1,080 default), deterministic and dependency-free
+- **Neural core**: TypeScript LIF spiking network (species spec **30,800 neurons** via `BRAIN_N_*`, committed on-chain; live flies genome-sized, ~10,800 today; 1,080 library default), deterministic and dependency-free
 - **Frontend**: vanilla JS + Canvas 2D (no framework, no build step)
 
 ---

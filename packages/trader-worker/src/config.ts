@@ -739,29 +739,34 @@ export function loadConfig(env: Env): RuntimeConfig {
   );
 
   // Live-population growth ceiling (>= populationSize). ALSO the STABLE basis for shard slices, so the
-  // shard count must cover it at <=2 flies/shard to keep every brain within the DO memory + 2 MB value limits.
+  // shard count must cover it at <=1 fly/shard: one 30,800-neuron brain per isolate stays inside the DO
+  // 128 MB heap (its deserialize clone peak) and its per-fly value inside the 2 MB single-value limit.
   const maxLivePopulation = clampInt(
     Number(env.EVOLUTION_MAX_LIVE_POPULATION || String(populationSize)),
     populationSize,
     256,
   );
-  // Shards are capped at the growth ceiling (one shard per fly is the finest useful split) and at 64 (a
-  // sane ceiling on fan-out round-trips per cron). 1 ⇒ the single FlyStateDO, unchanged.
-  const shardCount = clampInt(Number(env.SHARD_COUNT || "1"), 1, Math.min(64, maxLivePopulation));
+  // Shards are capped at the growth ceiling only (one shard per fly is the finest useful split AND the
+  // memory-safe target: each isolate then hosts exactly ONE 30,800-neuron brain). The old extra cap of 64
+  // silently forced flies/shard = ceil(100/64) = 2 at cap 100 — two brains per isolate whose combined
+  // deserialize peak (~144 MB) breaches the 128 MB wall and whose ~4.2 s advance brushes the 5 s timeout.
+  // Fan-out width is NOT a reason to cap: Cloudflare QUEUES subrequests beyond the 6th (see swarm.ts step()),
+  // so 100 shards cost no more round-trip waves than the memory-safe layout already needs. 1 ⇒ single FlyStateDO.
+  const shardCount = clampInt(Number(env.SHARD_COUNT || "1"), 1, maxLivePopulation);
 
-  // HATCH GUARD: hatching grows the live population into slots the shards must ALREADY cover at <=2
-  // flies/shard (the DO 128 MB heap + 2 MB value ceiling). If SHARD_COUNT wasn't raised to match the cap,
-  // flies/shard would exceed 2 and a shard could OOM / overflow — so refuse to hatch (breeding stays
-  // lineage-only, exactly today's behaviour) rather than risk a live fly that can't be safely hosted.
+  // HATCH GUARD: hatching grows the live population into slots the shards must ALREADY cover at <=1
+  // fly/shard (one 30,800-neuron brain alone inside the DO 128 MB heap + 2 MB value ceiling). If SHARD_COUNT
+  // wasn't raised to match the cap, flies/shard would exceed 1 and a shard could OOM / overflow — so refuse
+  // to hatch (breeding stays lineage-only) rather than risk a live fly that can't be safely hosted alone.
   const hatchLiveRequested = (env.EVOLUTION_HATCH_LIVE ?? "false").toLowerCase() === "true";
   const fliesPerShardAtCap = fliesPerShard(maxLivePopulation, shardCount);
-  const hatchLive = hatchLiveRequested && fliesPerShardAtCap <= 2;
+  const hatchLive = hatchLiveRequested && fliesPerShardAtCap <= 1;
   // LIVE-RETIRE (POP_LIVE_RETIRE, default TRUE). Independent of hatchLive: retiring the dead always keeps
   // size()/aliveCount honest about who is actually alive; the freed slots simply become available again.
   const liveRetire = (env.POP_LIVE_RETIRE ?? "true").toLowerCase() !== "false";
   if (hatchLiveRequested && !hatchLive) {
     console.error(
-      `[config] EVOLUTION_HATCH_LIVE ignored: need SHARD_COUNT >= ceil(cap/2) so flies/shard <= 2 ` +
+      `[config] EVOLUTION_HATCH_LIVE ignored: need SHARD_COUNT >= cap so flies/shard <= 1 ` +
         `(have cap=${maxLivePopulation}, shards=${shardCount}, flies/shard=${fliesPerShardAtCap}). ` +
         `Breeding stays lineage-only.`,
     );

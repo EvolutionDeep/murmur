@@ -151,13 +151,17 @@ export class FlyBrain implements IFlyBrain {
   }
 
   /** Serialize to a string (for persistence into a Durable Object / D1).
-   *  version 3 marks archives written under the TUNED SFA (adaptIncrement=0.05) that actually breaks
-   *  the WTA latch under the worker's real drive; see deserialize() for the one-time migration that
-   *  wakes brains frozen in the latch (v1 = pre-SFA, v2 = re-latched under the too-weak 0.03 SFA). */
+   *  version 4 packs the electrical state as ONE base64 float32 blob (lossless — the runtime state
+   *  is already Float32Array) instead of six decimal JSON arrays, cutting the archive ~2.9x so a
+   *  30k-neuron brain stays under the DO 2 MB single-value wall (~1.0 MB vs ~2.1 MB).
+   *  version 3 marked archives written under the TUNED SFA (adaptIncrement=0.05) that actually
+   *  breaks the WTA latch under the worker's real drive; see deserialize() for the one-time
+   *  migration that wakes brains frozen in the latch (v1 = pre-SFA, v2 = re-latched under the
+   *  too-weak 0.03 SFA). deserialize() still reads v1–v3 text archives. */
   serialize(): string {
     return JSON.stringify({
-      version: 3,
-      net: this.net.toJSON(),
+      version: 4,
+      net: this.net.toCompact(),
       noiseState: this.noiseState,
     });
   }
@@ -181,17 +185,22 @@ export class FlyBrain implements IFlyBrain {
   ): FlyBrain {
     const parsed = JSON.parse(data);
     const brain = new FlyBrain(opts);
-    const sameSize =
-      parsed?.net && Array.isArray(parsed.net.V) && parsed.net.V.length === brain.net.N;
+    const net = parsed?.net;
+    const compact = !!net && typeof net.b64 === "string";   // v4 base64-float32 blob
+    const sameSize = compact
+      ? brain.net.fromCompact(net)                          // false ⇒ packed length ≠ 6·N·4 ⇒ wake fresh
+      : !!net && Array.isArray(net.V) && net.V.length === brain.net.N;
     const sfaEra = (parsed?.version ?? 1) >= 3;
-    if (sameSize && sfaEra) {
-      brain.net.fromJSON(parsed.net);
-    } else if (sameSize && parsed.net) {
+    if (sameSize && sfaEra && !compact) {
+      brain.net.fromJSON(net);
+    } else if (sameSize && !sfaEra && net) {
       // pre-v3 archive (v1 = pre-SFA, v2 = still latched under the too-weak 0.03 SFA): keep the
       // simulation clock continuous but wake the electrical state fresh so the tuned 0.05 SFA bites.
-      brain.net.t = parsed.net.t ?? 0;
-      brain.net.step = parsed.net.step ?? 0;
+      brain.net.t = net.t ?? 0;
+      brain.net.step = net.step ?? 0;
     }
+    // (compact && sameSize ⇒ fromCompact already restored t/step and the full electrical state;
+    //  it is only ever written by v4 archives, which are by definition SFA-era.)
     if (typeof parsed?.noiseState === "number") brain.noiseState = parsed.noiseState;
     return brain;
   }

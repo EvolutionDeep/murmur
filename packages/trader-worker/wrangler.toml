@@ -17,11 +17,13 @@ routes = [
 crons = ["* * * * *"]
 
 # ---------- Variables (non-sensitive, committed with the code) ----------
-# PRODUCTION PHASE — 10x LIVE + GROWTH ARMED (Phase C). The swarm runs 10,800-neuron brains sharded across
-# 50 FlyShardDO isolates (SHARD_COUNT = "50" + the connectome sizing below), and ECONOMY_SHADOW = "false" so every netted transfer is
-# a REAL EIP-3009 USDC broadcast on Arc mainnet, bounded by the daily/per-agent caps + kill switch below. The
-# 10x behaviour decoder is recalibrated (band collapse fixed: inject() normalises against a fixed reference
-# channel size and proboscis uses a fixed fan-in, so all 5 motor channels stay live and unsaturated at 10x).
+# PRODUCTION PHASE — 30,800-NEURON LIVE + GROWTH ARMED (Phase C). The swarm runs 30,800-neuron brains sharded
+# ONE fly per isolate across 100 FlyShardDO isolates (SHARD_COUNT = "100" + the connectome sizing below), and
+# ECONOMY_SHADOW = "false" so every netted transfer is a REAL EIP-3009 USDC broadcast on Arc mainnet, bounded by
+# the daily/per-agent caps + kill switch below. The behaviour decoder's band-collapse fix (inject() normalises
+# against a fixed reference channel size; proboscis uses a fixed fan-in, so all 5 motor channels stay live and
+# unsaturated) is size-independent, but the drive DISTRIBUTION shifts with the 10,800→30,800 scale-up — real-money
+# behaviour drifts on the flip, so watch the first crons after deploy.
 # ECONOMY_FACILITATOR stays "onchain" and the mnemonic/keys stay fully wired; set ECONOMY_SHADOW = "true" to
 # fall back to sign + eth_call simulation with no broadcast. Secrets (NEVER committed): ECONOMY_MNEMONIC,
 # optionally ECONOMY_FACILITATOR_PK, ALCHEMY_ARC_RPC_URL. A fresh checkout with NO mnemonic falls back to sim.
@@ -47,18 +49,21 @@ POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = bas
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
 # Swarm sharding (see swarm.ts / shard.ts). "1" = the original single-DO swarm — every brain in FlyStateDO,
-# the FLY_SHARD binding inert (ZERO shards). "50" fans the HEAVY per-fly LIF advance out to 50 FlyShardDO
+# the FLY_SHARD binding inert (ZERO shards). "100" fans the HEAVY per-fly LIF advance out to 100 FlyShardDO
 # isolates, each with its own 128 MB + CPU budget and its own SQLite, so each brain can grow past the
 # single-isolate memory ceiling. Only the compact motor/sensory read-out crosses the boundary, so the
-# coordinator stays small at any size. MUST stay paired with EVOLUTION_MAX_LIVE_POPULATION: shardCount =
-# ceil(cap/2) keeps ≤2 flies/shard (2 of the 10,800-neuron brains serialise to ~1.4 MB, under the 2 MB
-# single-value cap) — cap=100 ⇒ 50 shards (the startup guard forces hatchLive=false if flies/shard > 2).
-# Because slices derive from the STABLE cap, shardSlice(100,50,k) = shardSlice(48,24,k) = [2k,2k+2) for
-# k=0..23 — the existing 48 brains NEVER migrate when the ceiling is raised 48→100; shards 24..49 are new +
-# empty until an offspring hatches into slots 48..99. Cloudflare QUEUES subrequests past the 6th (never
-# rejects), so 50 fan out safely (50/6≈9 waves × ~0.35 s ≈ 3 s per sub-tick, well inside the 60 s cadence).
-# Rollback = SHARD_COUNT back to "24" + EVOLUTION_MAX_LIVE_POPULATION back to "48" (or "1" for single-DO).
-SHARD_COUNT = "50"
+# coordinator stays small at any size. At the 30,800-neuron sizing ONE fly's deserialize peak is ~72 MB of
+# the 128 MB isolate, so we shard ONE fly per isolate (SHARD_COUNT = EVOLUTION_MAX_LIVE_POPULATION = 100)
+# rather than the old two-per-shard: a max-budget offspring (~94 MB) still fits with headroom, whereas two
+# such brains in one isolate would OOM. (The startup guard forces hatchLive=false if flies/shard > 2; 1 is
+# well inside it.) shardSlice(100,100,k) = [k,k+1) — one slot per shard. Because the connectome sizing
+# changed 10,800→30,800, every persisted brain fresh-wakes on the first cron regardless (the old archive no
+# longer matches the new layout); the on-chain lineage + genome + HD wallets are untouched, and the orphaned
+# rows in the old 50-shard SQLite are simply never read again. Cloudflare QUEUES subrequests past the 6th
+# (never rejects), so 100 fan out safely (100/6≈17 waves × ~2.1 s ≈ 35 s per cron at the full 100-fly cap,
+# less at the current live roster — inside the 60 s cadence but worth watching).
+# Rollback = SHARD_COUNT back to "50" + the BRAIN_N_*/DENSITY block back to the 10,800n values (or "1" for single-DO).
+SHARD_COUNT = "100"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
@@ -478,8 +483,8 @@ EVOLUTION_ENABLED = "true"                    # LIVE: each cron the fittest agen
 EVOLUTION_TREASURY = "0x307D8a9333Bd3e4FCe93FfAC6468eB7478423a0d"   # revenue address collecting each breeding fee = the project deployer wallet (0x307D…3a0d)
 EVOLUTION_FEE_USDC = "0.002"                  # breeding fee per offspring (USDC), paid by the parent from its own wallet (~1 base good)
 EVOLUTION_MAX_PER_CRON = "1"                  # max offspring bred per cron tick (bounds CPU + spend); 0 = disabled
-EVOLUTION_PER_AGENT_DAILY = "2"               # max offspring ONE agent may fund per UTC day (raised 1→2 so a thin fit-parent pool can still fill ~20 slots/day); 0 = no per-agent limit
-EVOLUTION_GLOBAL_DAILY = "40"                 # max offspring bred per UTC day across the whole swarm (raised 4→12→30→40 so the live population can clear 60 within the current UTC day, cap 100); 0 = no global limit
+EVOLUTION_PER_AGENT_DAILY = "4"               # max offspring ONE agent may fund per UTC day (raised 1→2→4 with the hatch re-arm so a thin fit-parent pool can still fill the ~52 open slots to cap 100 within a day); 0 = no per-agent limit
+EVOLUTION_GLOBAL_DAILY = "60"                 # max offspring bred per UTC day across the whole swarm (raised 4→12→30→40→60 with the hatch re-arm: ≥ the ~52 open slots so the live population can refill to cap 100 within one UTC day at the structural 1-breed/cron rate); 0 = no global limit
 EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, P(cross the top two) else mutate the champion
 
 # ----- Live-population GROWTH (Phase C — hatch bred offspring into REAL trading flies) -----
@@ -487,32 +492,43 @@ EVOLUTION_CROSS_BIAS = "0.5"                  # 0..1 — with ≥2 fit parents, 
 # is persisted + anchored on-chain it may HATCH into a new live trading fly. Each hatch is gated by (1) live
 # size < EVOLUTION_MAX_LIVE_POPULATION, (2) the genome passing genomeWithinBudget — bounds BOTH the 2 MB
 # serialised-value cap (via neurons) AND the 128 MB isolate heap (via synapses), self-calibrated from the
-# genesis brain, and (3) economy.fundOffspring settling a REAL USDC bootstrap from the PARENT's own HD wallet
+# genesis brain with the tightened factors in state.ts (HATCH_BUDGET_FACTORS = 1.2× neurons / 1.4× synapses,
+# so a bred offspring can never build a connectome that OOMs its one-fly isolate), and (3) economy.fundOffspring
+# settling a REAL USDC bootstrap from the PARENT's own HD wallet
 # to the child's fresh HD address (same x402/EIP-3009 rails + caps as a trade; the child goes live ONLY once
 # that transfer is MINED). EVOLUTION_MAX_LIVE_POPULATION is the hard live ceiling (genesis 24 .. 256) AND the
-# STABLE basis for shard slicing — keep it paired with SHARD_COUNT = ceil(cap/2) so ≤2 flies/shard. Genesis
-# slots 0..23 (and the bred slots 24..47) keep their shard across the (48,24)→(100,50) change (zero brain
-# migration — the slice [2k,2k+2) is unchanged for every existing id); growth fills the empty slots 48..99.
+# STABLE basis for shard slicing — at the 30,800-neuron sizing we pair it 1:1 with SHARD_COUNT = cap = 100 so
+# each isolate hosts exactly ONE fly (shardSlice(100,100,k) = [k,k+1)); a fly's deserialize peak (~72 MB) then
+# fits the 128 MB isolate with headroom, whereas two-per-shard would not. NOTE: the 10,800→30,800 sizing change
+# fresh-wakes every persisted brain on the first cron regardless (the old archive no longer matches the new
+# layout) — on-chain lineage + genome + HD wallets are untouched; growth still fills the empty slots up to 100.
 # Set EVOLUTION_HATCH_LIVE = "false" to freeze the live population instantly (bred genomes
 # still commit on-chain; the 24 genesis flies are untouched either way).
-EVOLUTION_MAX_LIVE_POPULATION = "100"         # hard live-population ceiling (genesis 24 → 100); ALSO the stable shard-slice basis — keep paired with SHARD_COUNT = ceil(cap/2) = 50
-EVOLUTION_HATCH_LIVE = "true"                 # LIVE: a bred offspring hatches into a new live trading fly (parent-funded, memory-gated); set "false" to freeze the live population
+EVOLUTION_MAX_LIVE_POPULATION = "100"         # hard live-population ceiling (genesis 24 → 100); ALSO the stable shard-slice basis — paired 1:1 with SHARD_COUNT = 100 (one fly per isolate at 30,800n)
+EVOLUTION_HATCH_LIVE = "true"                 # RE-ARMED (the per=1 migration has shipped + been verified live): SHARD_COUNT = cap = 100 => flies/shard = 1, so the config.ts
+# hatch guard (fliesPerShard <= 1) passes and each 30,800-spec brain hosts ALONE in its 128 MB isolate — a max-budget
+# offspring (~94 MB deserialize peak, gated by genomeWithinBudget vs hatchBudgetFromGenesis) fits with headroom, and the
+# HD keys cover 0..maxLivePopulation-1 so a hatch into ANY growth slot can sign its own bootstrap. When "true": a bred
+# offspring hatches into a new live trading fly (parent-funded via EVOLUTION_HATCH_SEED_USDC, memory-gated). Set "false"
+# to freeze the live population instantly (bred genomes still commit on-chain; the interim-freeze rationale is in git history).
 EVOLUTION_HATCH_SEED_USDC = "0.002"           # real USDC bootstrap the PARENT sends the child's own wallet at hatch (~1 base good); bounded by the per-agent/global daily caps
 
 
-# ===== Connectome sizing — 10x (10,800 neurons/fly): 1800 + 4000 + 4000 + 400 + 120×5 motor = 10,800 =====
-# 10× every layer of the original ~1,080-neuron default. DENSITY drops 0.02 → 0.002 to hold fan-in linear:
-# connect() sets fan-in = floor(fromRangeSize × density), so at a fixed density synapses scale ~quadratically
-# with layer size — keeping 0.02 at 10x would give ~837k synapses/fly (~66 MB heap). 0.002 holds it to
-# ~116k/fly (~11 MB), which fits 2 flies/shard under 128 MB and ~1.4 MB serialised under the 2 MB value cap
-# (hence SHARD_COUNT = ceil(cap/2) = 50 at cap 100 above). NOTE: the read-out decoder's population bands were calibrated at 1,080n;
-# the 10x drive distribution needs recalibration — which is exactly why ECONOMY_SHADOW stays on until then.
-BRAIN_N_SENSORY = "1800"
-BRAIN_N_INTER_L1 = "4000"
-BRAIN_N_INTER_L2 = "4000"
-BRAIN_N_MODULATORY = "400"
-BRAIN_N_MOTOR_PER_CHANNEL = "120"
-BRAIN_DENSITY = "0.002"
+# ===== Connectome sizing — 30,800 neurons/fly: 5200 + 11400 + 11400 + 1100 + 340×5 motor = 30,800 =====
+# ~2.85× the previous 10,800n production sizing (itself 10× the ~1,080-neuron library default). DENSITY drops
+# 0.002 → 0.0007 to hold fan-in linear: connect() sets fan-in = floor(fromRangeSize × density), so at a fixed
+# density synapses scale ~quadratically with layer size — keeping 0.002 at 30,800n would give ~824k synapses/fly
+# (~130 MB build peak, OVER the 128 MB isolate). 0.0007 holds it to ~404k/fly: ~37 MB retained / ~72 MB
+# deserialize peak, which fits ONE fly per shard (SHARD_COUNT = 100) with real headroom, and the v4 compact
+# archive (base64 float32) serialises to ~963 KB — under the 2 MB single-value cap (the v3 text form would be
+# ~2.1 MB and breach it). NOTE: the read-out decoder's population bands were calibrated at 1,080n; the drive
+# distribution shifts again at 30,800n, so real-money behaviour drifts on the flip — watch the first crons.
+BRAIN_N_SENSORY = "5200"
+BRAIN_N_INTER_L1 = "11400"
+BRAIN_N_INTER_L2 = "11400"
+BRAIN_N_MODULATORY = "1100"
+BRAIN_N_MOTOR_PER_CHANNEL = "340"
+BRAIN_DENSITY = "0.0007"
 
 # ---------- Durable Object: population + market state ----------
 [[durable_objects.bindings]]

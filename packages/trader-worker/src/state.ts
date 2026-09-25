@@ -95,6 +95,17 @@ import { deriveAgentKeys } from "./keys.js";
 import type { Address, LocalAccount } from "viem";
 import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext, type ShockKind } from "./chronicler.js";
 
+/**
+ * Hatch-budget safety factors for the 30,800-neuron production genesis, sharded ONE fly per isolate
+ * (SHARD_COUNT = 100). The library default {neurons:1.2, synapses:2.0} was calibrated for the 10,800n
+ * genesis at TWO flies/shard; at 30,800n a 2.0× synapse ceiling (~807k synapses) builds to a ~130 MB
+ * peak and would OOM the 128 MB isolate even at one fly/shard. 1.2× neurons keeps a max offspring's v4
+ * archive (~1.15 MB) under the 2 MB value cap; 1.4× synapses caps the build at ~565k synapses (~94 MB
+ * peak), leaving real headroom. Measured locally (see the Phase 0 bench): genesis 30,800n/403,780 syn =
+ * 37 MB retained / 72 MB deserialize peak; a 1.4×-budget offspring = 48 MB / 94 MB.
+ */
+const HATCH_BUDGET_FACTORS = { neurons: 1.2, synapses: 1.4 } as const;
+
 const KEY_METER = "marketMeter:v1";
 const KEY_MARKET = "market:v1";
 const KEY_LAST_SNAPSHOT = "lastSnapshot:v1";
@@ -1104,7 +1115,7 @@ export class FlyStateDO {
         const liveCount = occupied.size;
         if (liveCount >= this.cfg.maxLivePopulation) {
           console.log(`[DO] evolution: live cap ${this.cfg.maxLivePopulation} reached — lineage kept, no hatch`);
-        } else if (!genomeWithinBudget(child.genome, hatchBudgetFromGenesis(this.cfg.brainOpts))) {
+        } else if (!genomeWithinBudget(child.genome, hatchBudgetFromGenesis(this.cfg.brainOpts, HATCH_BUDGET_FACTORS))) {
           console.log(
             `[DO] evolution: genome over memory budget — lineage kept, no hatch (child=${child.genomeHash.slice(0, 12)})`,
           );
@@ -3402,8 +3413,8 @@ export class FlyStateDO {
   /**
    * Assemble (once) + hash the brain manifest; cached because it is a pure function of the config.
    * Cost is bounded: connectomeSpecForSeed builds ONE fly's connectome, digests it and drops it, so peak
-   * memory is a single 10,800-neuron brain (tens of MB), not all 24 — safe inside this coordinator DO
-   * (which holds no brains at SHARD_COUNT>1). Measured ~0.65s to assemble the full 10x roster locally;
+   * memory is a single 30,800-neuron brain (~37 MB), not all 24 — safe inside this coordinator DO
+   * (which holds no brains at SHARD_COUNT>1). Measured in seconds to assemble the full ~28× roster locally;
    * a few seconds of CPU on Cloudflare, paid once per DO lifetime and then served from the cache.
    */
   private async ensureManifest(): Promise<{ manifest: BrainManifest; hash: string }> {

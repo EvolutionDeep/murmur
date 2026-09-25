@@ -107,7 +107,7 @@ HD-derives every account via BIP-44 — lazily, for every fly id up to the live-
 > float must first be **distributed** to the genesis derived addresses — the 24 founders + facilitator that
 > `fund-agents.mjs` funds by default (pass `AGENTS` to cover more). Offspring **bred later are not operator-funded**:
 > each parent self-funds its child's own HD wallet on hatch (`EVOLUTION_HATCH_SEED_USDC`), and the Worker derives
-> signer keys lazily for every id up to `EVOLUTION_MAX_LIVE_POPULATION` (48). See
+> signer keys lazily for every id up to `EVOLUTION_MAX_LIVE_POPULATION` (100). See
 > [`scripts/fund-agents.mjs`](../packages/trader-worker/scripts/fund-agents.mjs) below.
 
 ### Safety rails (LIVE in production; inert only in the keyless fallback)

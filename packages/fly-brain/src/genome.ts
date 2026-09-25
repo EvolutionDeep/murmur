@@ -44,13 +44,17 @@ export interface Genome {
   density: number;
 }
 
-/** Sane breeding bounds so offspring stay buildable on the edge (never 0-size, never absurd). */
+/** Sane breeding bounds so offspring stay buildable on the edge (never 0-size, never absurd).
+ *  Upper limits are sized for the 30,800-neuron production genesis (5200/11400/11400/1100/340×5) with
+ *  headroom to mutate around it; the hard memory/serialisation ceiling is enforced separately by the
+ *  hatch budget (hatchBudgetFromGenesis + genomeWithinBudget), NOT by these clamps. These bounds only
+ *  limit how far breeding can drift — they do not touch connectome structure or the manifestHash. */
 export const GENOME_BOUNDS = {
-  nSensory: [8, 2000],
-  nInterL1: [8, 4000],
-  nInterL2: [8, 4000],
-  nModulatory: [4, 2000],
-  nMotorPerChannel: [1, 500],
+  nSensory: [8, 6000],
+  nInterL1: [8, 13000],
+  nInterL2: [8, 13000],
+  nModulatory: [4, 3000],
+  nMotorPerChannel: [1, 1000],
   density: [0.0005, 0.2],
 } as const;
 

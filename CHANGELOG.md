@@ -8,11 +8,13 @@ All notable changes to **murmur** are documented in this file. The format is bas
 > into an **agent economy on Arc** that now settles **real USDC on mainnet**. The legacy trading stack was removed
 > wholesale; see `0.2.0` below, and `[Unreleased]` for the go-live.
 
-> **Current live numbers — single source of truth.** Each fly runs a **10,800-neuron** production LIF connectome
-> (the `@fly/fly-brain` library *default* is 1,080; production overrides it via `BRAIN_N_*`). The population
-> **founds at 24 and breeds live toward a 48 cap** (`EVOLUTION_MAX_LIVE_POPULATION`) — 24 is genesis, not a fixed
-> cast. **372 unit tests** pass (47 `fly-brain` + 301 `trader-worker` + 24 `arc-circle-x402`). The dated entries
-> below are historical snapshots and legitimately reflect the smaller values of their own release.
+> **Current live numbers — single source of truth.** The **30,800-neuron** LIF connectome is the on-chain committed
+> *species/genesis spec* (the `@fly/fly-brain` library *default* is 1,080; production `BRAIN_N_*` sets the spec) —
+> each **live** fly's brain is grown from its own genome instead, so individuals vary (**~10,800 neurons today**),
+> sharded **one fly per isolate** across 100 `FlyShardDO` shards. The population **founds at 24 and breeds live
+> toward a 100 cap** (`EVOLUTION_MAX_LIVE_POPULATION`) — 24 is genesis, not a fixed cast. **642 unit tests** pass
+> (53 `fly-brain` + 565 `trader-worker` + 24 `arc-circle-x402`). The dated entries below are historical snapshots and
+> legitimately reflect the smaller values of their own release.
 
 ## [Unreleased]
 
@@ -56,6 +58,20 @@ All notable changes to **murmur** are documented in this file. The format is bas
   hourly bucket; the production Worker runs `ARENA_ENABLED="true"`, first live round `497162` opened on-chain.
 
 ### Changed
+- **Connectome scaled 10,800 → 30,800 neurons/fly** (`BRAIN_N_*` = `5200/11400/11400/1100/340×5`, `BRAIN_DENSITY`
+  `0.002 → 0.0007` to hold fan-in linear at ~404k synapses/fly). Sharding moved to **one fly per isolate**
+  (`SHARD_COUNT` `50 → 100`): a 30,800-neuron brain's deserialize peak is ~72 MB of the 128 MB isolate, so two
+  per shard would leave no headroom for a bred offspring. The hatch budget's synapse factor was tightened
+  (`state.ts` `HATCH_BUDGET_FACTORS` = 1.2× neurons / **1.4×** synapses, from the library default 2.0×) so no legal
+  offspring can build a connectome that OOMs its isolate, and `GENOME_BOUNDS` were widened to let breeding reach
+  the new genesis sizing. The on-chain brain-manifest identity rotates with the sizing, so the new `manifestHash`
+  is re-committed to the existing `NeuralManifestRegistry`. Every persisted brain **fresh-wakes** on the first cron
+  (the old 10,800-archive no longer matches the new layout) — on-chain lineage, genome and HD wallets are untouched.
+- **Compact `v4` brain archive (base64 float32)**: `FlyBrain.serialize()` now packs the six per-neuron `Float32Array`s
+  into one base64 blob instead of spelling every float out in decimal. It is **lossless** (the runtime state is
+  already float32) and ~2.9× smaller — a 30,800-neuron brain serialises to ~963 KB, under the Durable Object 2 MB
+  single-value cap that the `v3` text form (~2.1 MB) would breach. `deserialize()` reads both `v4` and legacy `v3`
+  archives, and a size-mismatched archive still wakes the brain fresh. (+6 `fly-brain` tests.)
 - **GONE LIVE WITH REAL MONEY.** The production Worker now runs `ECONOMY_FACILITATOR = "onchain"` with
   `ECONOMY_SHADOW = "false"`: agents settle **real USDC on Arc mainnet** via EIP-3009 `transferWithAuthorization`,
   broadcast under the kill switch + daily/per-agent/per-deal caps. The keyless `SimulatedFacilitator` remains only

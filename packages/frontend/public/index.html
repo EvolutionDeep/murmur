@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f2eee6" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>murmur — a population of neural agents settling on arc</title>
-  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose 10,800-neuron connectome decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
+  <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
   <link rel="stylesheet" href="./styles.css?v=93" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
@@ -394,8 +394,8 @@
     <div class="bloom-scale" id="bloom-scale" role="group" data-i18n-aria="ins.brainCmp" aria-label="compare brain size">
       <span class="bs-cap" data-i18n="ins.brain">brain</span>
       <button type="button" class="bs-btn" data-before="1" data-i18n-title="ins.brainLaunch" title="render at the launch density — 1,080 neurons">1,080</button>
-      <button type="button" class="bs-btn is-on" data-before="0" data-i18n-title="ins.brainLive" title="render live — 10,800 neurons">10,800</button>
-      <span class="bs-x" title="10× the launch connectome">10×</span>
+      <button type="button" class="bs-btn is-on" data-before="0" data-i18n-title="ins.brainLive" title="render live — the fly's real genome-sized connectome (~10,800 neurons today; species spec 30,800)">30,800</button>
+      <span class="bs-x" title="~28× the launch connectome">~28×</span>
     </div>
     <div class="raster-wrap">
       <div class="raster-label"><span data-i18n="ins.liveSpikes">live spikes</span> <span id="raster-hz"></span></div>
@@ -442,7 +442,7 @@
       <div><dt data-i18n="ins.fingerprint">fingerprint</dt><dd id="ins-fp" class="fp">–</dd></div>
       <div><dt data-i18n="ins.social">social</dt><dd id="ins-social">–</dd></div>
     </dl>
-    <div class="ins-foot"><span class="n-badge" title="10× the launch connectome (1,080 → 10,800 neurons)">10×</span><span id="ins-ncount">–</span> <span data-i18n="ins.neurons">neurons</span> · t=<span id="ins-t">–</span>ms</div>
+    <div class="ins-foot"><span class="n-badge" title="~28× the launch connectome (1,080 → 30,800 neurons)">~28×</span><span id="ins-ncount">–</span> <span data-i18n="ins.neurons">neurons</span> · t=<span id="ins-t">–</span>ms</div>
   </aside>
 
   <!-- ============ all agent wallets (right drawer) — every fly owns its own x402 wallet ============ -->
@@ -590,6 +590,6 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
-  <script src="./app.js?v=107" type="module"></script>
+  <script src="./app.js?v=110" type="module"></script>
 </body>
 </html>

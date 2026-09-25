@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=93";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=95";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -388,7 +388,8 @@ let lastHistSample = 0;
 // the collective mood (for the aura) and the read-only `topology` (for the isolates). No extra polling
 // and no per-neuron fetch: the aura is a stylised breath of the swarm's shared neural activity, and the
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
-// each brain grow to 10,800 neurons. Both are offscreen-cached or trivially cheap, per the perf budget.
+// each brain grow to the 30,800-neuron species spec (live flies are genome-sized, ~10,800 today). Both are
+// offscreen-cached or trivially cheap, per the perf budget.
 let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true, showChron = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
@@ -396,6 +397,7 @@ let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0
 const MIND_REBUILD_MS = 320;                          // offscreen + low-frequency rebuild (per-frame is one drawImage)
 // ---- illuminated-manuscript layers: an aged-parchment base + a gilded frame (offscreen, rebuilt rarely) ----
 let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
+let dnOff = null, dnOffCtx = null, dnKey = "", dnLastPaint = 0;   // baked day/night grade: repaint ≤4fps, blit per frame
 let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (static ⇒ repaint on change, blit per frame)
 let terrPol = null;                                    // last built province list — the screen-space map key reads it
 let territorySeizureSig = "";                            // a stable signature of which zones changed hands in war — folded into terrKey so a conquest repaints the dominion map
@@ -2583,19 +2585,32 @@ function drawFlock(now) {
 /** A cinematic golden-hour grade laid over the whole field: warm sunlit sky up top, cool shadow below, a slow
  *  warm↔cool breathe cross-faded with the market temperature, and a strong corner vignette for the diorama depth. */
 function renderDayNight(pal, now) {
-  const cyc = 0.5 + 0.5 * Math.sin(now * 0.00025);            // very slow (≈7-min) light cycle
-  // a LIGHT parchment grade: a warm sunlit wash up top, a faint cool sea-shadow below, and a soft brown vignette
-  // at the corners — aged-atlas depth without ever darkening the land into murk.
-  const warm = mix([255, 246, 224], pal.accent, 0.18);
-  const cool = mix([126, 156, 150], INK, 0.12);
-  const g = ctx.createLinearGradient(0, 0, 0, VH);
-  g.addColorStop(0, rgba(warm, 0.06 + 0.04 * cyc));
-  g.addColorStop(0.5, rgba(mix(warm, cool, 0.6), 0.015));
-  g.addColorStop(1, rgba(cool, 0.06 + 0.04 * (1 - cyc)));
-  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
-  const r = ctx.createRadialGradient(VW / 2, VH * 0.46, Math.min(VW, VH) * 0.42, VW / 2, VH / 2, Math.max(VW, VH) * 0.75);
-  r.addColorStop(0, rgba([0, 0, 0], 0)); r.addColorStop(1, rgba([96, 74, 52], 0.14));
-  ctx.fillStyle = r; ctx.fillRect(0, 0, VW, VH);
+  // Baked offscreen + 250ms throttle: the light cycle is ≈7 min and the temperature grade drifts slowly, so a
+  // 4fps repaint is imperceptible — this removes the last per-frame FULL-SCREEN gradient fills (two of them)
+  // from the hot path, leaving one blit per frame (the parchOff/terrOff discipline).
+  const key = VW + "x" + VH + "@" + DPR;
+  if (!dnOff || dnKey !== key || now - dnLastPaint > 250) {
+    if (!dnOff) { dnOff = document.createElement("canvas"); dnOffCtx = dnOff.getContext("2d"); }
+    const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
+    if (dnOff.width !== w || dnOff.height !== h) { dnOff.width = w; dnOff.height = h; }
+    dnKey = key; dnLastPaint = now;
+    const g = dnOffCtx;
+    g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
+    const cyc = 0.5 + 0.5 * Math.sin(now * 0.00025);            // very slow (≈7-min) light cycle
+    // a LIGHT parchment grade: a warm sunlit wash up top, a faint cool sea-shadow below, and a soft brown vignette
+    // at the corners — aged-atlas depth without ever darkening the land into murk.
+    const warm = mix([255, 246, 224], pal.accent, 0.18);
+    const cool = mix([126, 156, 150], INK, 0.12);
+    const lg = g.createLinearGradient(0, 0, 0, VH);
+    lg.addColorStop(0, rgba(warm, 0.06 + 0.04 * cyc));
+    lg.addColorStop(0.5, rgba(mix(warm, cool, 0.6), 0.015));
+    lg.addColorStop(1, rgba(cool, 0.06 + 0.04 * (1 - cyc)));
+    g.fillStyle = lg; g.fillRect(0, 0, VW, VH);
+    const r = g.createRadialGradient(VW / 2, VH * 0.46, Math.min(VW, VH) * 0.42, VW / 2, VH / 2, Math.max(VW, VH) * 0.75);
+    r.addColorStop(0, rgba([0, 0, 0], 0)); r.addColorStop(1, rgba([96, 74, 52], 0.14));
+    g.fillStyle = r; g.fillRect(0, 0, VW, VH);
+  }
+  ctx.drawImage(dnOff, 0, 0, VW, VH);
 }
 
 
@@ -7660,7 +7675,7 @@ function synthNeural(id) {
   pushSpikes(spikes, N);
 }
 
-// Roll the neuron counter up from the 1,080 launch size to the live count on the first read, so the 10×
+// Roll the neuron counter up from the 1,080 launch size to the live count on the first read, so the ~28×
 // scale-up is felt as a change rather than read as a static number. Later reads set it directly.
 let ncountShown = 0, ncountRaf = 0;
 function setNeuronCount(N, prefix = "") {
@@ -7680,7 +7695,7 @@ function setNeuronCount(N, prefix = "") {
 }
 
 // brain-size compare toggle: re-render the SAME live bloom at the sparse 1,080 launch density vs the live
-// count, so a visitor can see the 10× difference directly instead of taking our word for it.
+// count, so a visitor can see the ~28× difference directly instead of taking our word for it.
 function bindBloomScale() {
   const host = $("bloom-scale");
   if (!host) return;
@@ -7707,10 +7722,10 @@ function rebuildBloom() {
   const { rates, kinds } = bloomData;
   const N = rates.length;
   if (!N) return;
-  // Perceived density scales with the REAL neuron count (bloomData.N): a 10,800-neuron brain blooms ~10×
-  // denser than the 1,080 launch size, so the upgrade is something you SEE, not just a number you read.
-  // bloomShowBefore (the compare toggle) forces the sparse 1,080-equivalent density for a side-by-side feel.
-  const SAMPLE_STRIDE = 9;                                   // ≈1,200 strokes at 10,800n — offscreen + rebuilt 4×/s, so cheap
+  // Perceived density scales with the REAL neuron count (bloomData.N): a live ~10,800-neuron brain (species
+  // spec 30,800) blooms ~10× denser than the 1,080 launch size, so the upgrade is something you SEE, not just a
+  // number you read. bloomShowBefore (the compare toggle) forces the sparse 1,080-equivalent for a side-by-side.
+  const SAMPLE_STRIDE = 9;                                   // ≈1,200 strokes at ~10,800n — offscreen + rebuilt 4×/s, so cheap
   const realN = bloomData.N || N;
   const target = Math.max(1, bloomShowBefore ? Math.floor(1080 / SAMPLE_STRIDE) : Math.floor(realN / SAMPLE_STRIDE));
   const stride = Math.max(1, Math.floor(N / target));
