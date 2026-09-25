@@ -2570,6 +2570,12 @@ const CIV_ROOF = [122, 80, 50];           // timber-shingle roof
 const CIV_SHADOW = [20, 16, 12];
 const WK_AGE_TICKS = 60;                  // mirrors works.ts WK_AGE — a work's mortar term, for the weathering read
 const WORK_SLOT = { granary: [-48, 14], aqueduct: [2, 46], monument: [50, 10] };   // beside the greatest city
+// City-builder dressing (the sun-baked mudbrick town read): wall/roof/plaza/water/green tones, all static ⇒ baked.
+const MUD = [198, 170, 128], MUD_HI = [228, 206, 166], MUD_SH = [158, 128, 94];
+const TERRA = [176, 96, 60];              // terracotta tile accent
+const PLAZA = [216, 198, 166], POOL = [104, 152, 172];
+const PALM = [92, 122, 62], BLOSSOM = [198, 88, 102], GARDEN = [128, 158, 88];
+const SAIL = [246, 240, 224], HULL = [92, 66, 44], RIVER_BLUE = [104, 140, 176];
 
 /** A zone's world anchor — the SAME force-field spot updateSim pulls that zone's kin toward (smx + ax·(VW−2smx),
  *  ax/ay the territoryColonies grid), so a settlement is drawn inside the swarm that is its people, never adrift
@@ -2585,7 +2591,7 @@ function zoneAnchor(z) {
  *  (kind:era:age-bucket) and the road's two names — so routine ±1 pop jitter never forces a heavy repaint, but a
  *  founding, a rank step, a conquest, a new work or its weathering does. */
 function civSignature(C) {
-  let s = VW + "x" + VH + "@" + DPR + ":q" + (quality >= 2 ? 2 : quality) + ":c" + Math.round(((chronMeta && chronMeta.civLevel) || 50) / 25);
+  let s = VW + "x" + VH + "@" + DPR + ":q" + (quality >= 2 ? 2 : quality) + ":c" + Math.round(((chronMeta && chronMeta.civLevel) || 50) / 25) + ":t" + (showTerritory ? 1 : 0);
   for (const st of C.settlements) s += "|" + st.zone + ":" + st.rank + ":" + Math.min(14, st.pop | 0) + ":" + (st.houseName || "");
   const W = econWorks;
   if (W && Array.isArray(W.active)) for (const w of W.active) {
@@ -2596,58 +2602,103 @@ function civSignature(C) {
   return s;
 }
 
-/** One house in the offscreen: a cast shadow, a daub wall, a gabled shingle roof and a doorway, tinted at the wall
- *  with the holding house's colour so a town reads as its family's. `city` adds a sunlit ridge. */
+/** One house in the offscreen, city-builder read: a sun-baked mudbrick block with an oblique side face and a
+ *  sunlit roof terrace (pseudo-3D depth), tinted at the wall with the holding house's colour so a town reads as
+ *  its family's. A deterministic variant crowns it — whitewashed dome, terracotta awning, pitched tile or parapet. */
 function civBuilding(g, x, y, w, h, color, city) {
   g.fillStyle = rgba(CIV_SHADOW, 0.18);
   g.beginPath(); g.ellipse(x - w * 0.2, y + h * 0.16, w * 0.85, h * 0.34, 0, 0, TAU); g.fill();
-  const wall = mix(CIV_THATCH, color, 0.22);
-  g.fillStyle = rgba(wall, 0.96); g.fillRect(x - w / 2, y - h, w, h);
-  g.fillStyle = rgba(mix(CIV_ROOF, color, 0.16), 0.96);
-  g.beginPath(); g.moveTo(x - w / 2 - 1.2, y - h); g.lineTo(x, y - h - w * 0.62); g.lineTo(x + w / 2 + 1.2, y - h); g.closePath(); g.fill();
-  if (city) { g.fillStyle = rgba(mix(wall, [255, 244, 214], 0.5), 0.45); g.fillRect(x - w / 2, y - h, w, 1); }
-  g.fillStyle = rgba(INK, 0.3); g.fillRect(x - w * 0.14, y - h * 0.52, w * 0.28, h * 0.52);   // the doorway
+  const wall = mix(MUD, color, 0.16);
+  const ox = w * 0.22, oy = h * 0.2;                       // the oblique depth offset (bird's-eye pseudo-3D)
+  g.fillStyle = rgba(mix(wall, INK, 0.3), 0.95);           // the shaded side face
+  g.beginPath(); g.moveTo(x + w / 2, y - h); g.lineTo(x + w / 2 + ox, y - h - oy); g.lineTo(x + w / 2 + ox, y - oy); g.lineTo(x + w / 2, y); g.closePath(); g.fill();
+  g.fillStyle = rgba(wall, 0.97); g.fillRect(x - w / 2, y - h, w, h);   // the sunlit front face
+  g.fillStyle = rgba(mix(MUD_HI, color, 0.1), 0.97);       // the roof terrace, lit from above
+  g.beginPath(); g.moveTo(x - w / 2, y - h); g.lineTo(x - w / 2 + ox, y - h - oy); g.lineTo(x + w / 2 + ox, y - h - oy); g.lineTo(x + w / 2, y - h); g.closePath(); g.fill();
+  g.fillStyle = rgba(mix(wall, [255, 246, 224], 0.5), 0.5); g.fillRect(x - w / 2, y - h, w, 0.9);   // parapet light
+  const v = fnv1a((x | 0) + ":" + (y | 0)) % 4;            // one deterministic crown per plot
+  if (v === 0) {   // a whitewashed dome
+    g.fillStyle = rgba(mix(MUD_HI, [255, 252, 244], 0.35), 0.95);
+    g.beginPath(); g.arc(x + ox * 0.4, y - h - oy * 0.7, w * 0.3, Math.PI, 0); g.closePath(); g.fill();
+  } else if (v === 1) {   // a terracotta awning over the street
+    g.fillStyle = rgba(TERRA, 0.85); g.fillRect(x - w / 2 - 1, y - h * 0.62, w * 0.62, 1.6);
+  } else if (v === 2) {   // a pitched tile roof
+    g.fillStyle = rgba(TERRA, 0.9);
+    g.beginPath(); g.moveTo(x - w / 2 - 1, y - h); g.lineTo(x + ox * 0.5, y - h - oy - w * 0.34); g.lineTo(x + w / 2 + ox, y - h - oy); g.lineTo(x + w / 2, y - h); g.closePath(); g.fill();
+  }
+  g.fillStyle = rgba(INK, 0.32); g.fillRect(x - w * 0.14, y - h * 0.5, w * 0.26, h * 0.5);   // the doorway
+  if (city) { g.fillStyle = rgba(INK, 0.22); g.fillRect(x + w * 0.16, y - h * 0.72, w * 0.16, h * 0.16); }   // a window
 }
 
-/** Bake every settlement's static structure into the offscreen `g`: a cast shadow, the rank's defences (a city's
- *  ring wall + crenellations, a town's low palisade), its houses grown from pop on a deterministic disc, a city's
- *  central keep, and the name cartouche. Records each town's spread on the node so the live layer knows its size. */
+/** Bake every settlement as a lived-in mudbrick town: a cast shadow, the rank's defences (a city's curtain wall
+ *  with square bastions, a town's low mud wall with gate towers), a paved plaza under the keep, houses grown from
+ *  pop packed on a deterministic disc, dirt lanes out to the fields, and a grove of palms & blossom trees beyond
+ *  the wall. A CITY also raises an amphitheatre ring outside its gates. Records the spread on the node. */
 function renderSettlements(g, nodes) {
   for (const nd of nodes) {
     const st = nd.s, rank = st.rank;
     const scale = clamp(0.82 + (st.pop | 0) * 0.045, 0.82, 1.7);
-    const houses = rank === "CITY" ? 8 + (fnv1a(st.name) % 5) : rank === "TOWN" ? 5 + (fnv1a(st.name) % 3) : 2 + (fnv1a(st.name) % 2);
+    const houses = rank === "CITY" ? 14 + (fnv1a(st.name) % 6) : rank === "TOWN" ? 9 + (fnv1a(st.name) % 4) : 3 + (fnv1a(st.name) % 2);
     const spread = (rank === "CITY" ? 26 : rank === "TOWN" ? 18 : 11) * scale;
     nd.r = spread;
     g.fillStyle = rgba(CIV_SHADOW, 0.16);   // the town's cast shadow (the low sun sits upper-right)
     g.beginPath(); g.ellipse(nd.x - spread * 0.28, nd.y + spread * 0.42, spread * 1.25, spread * 0.6, 0, 0, TAU); g.fill();
-    if (rank === "CITY") {   // a ring wall squashed for the bird's-eye read, a sunlit top edge, crenellations
-      const R = spread * 1.05;
-      g.lineWidth = Math.max(2, R * 0.16); g.strokeStyle = rgba(mix(CIV_WALL, INK, 0.3), 0.9);
-      g.beginPath(); g.ellipse(nd.x, nd.y, R, R * 0.66, 0, 0, TAU); g.stroke();
-      g.lineWidth = Math.max(1, R * 0.07); g.strokeStyle = rgba(mix(CIV_WALL, [255, 246, 224], 0.4), 0.45);
-      g.beginPath(); g.ellipse(nd.x, nd.y - R * 0.05, R, R * 0.66, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
-      g.strokeStyle = rgba(mix(CIV_WALL, INK, 0.4), 0.75); g.lineWidth = 1.1;
-      for (let i = 0; i < 12; i++) { const a = (i / 12) * TAU, cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.66; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - 3); g.stroke(); }
-    } else if (rank === "TOWN") {   // a low timber palisade
-      const R = spread * 1.02;
-      g.strokeStyle = rgba(mix(CIV_ROOF, INK, 0.2), 0.7); g.lineWidth = 1.4;
-      for (let i = 0; i < 14; i++) { const a = (i / 14) * TAU + 0.2, cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - 4.5); g.stroke(); }
+    g.strokeStyle = rgba([150, 120, 84], 0.35); g.lineWidth = 1.6; g.lineCap = "round";   // dirt lanes from the gates
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * TAU + 0.5 + (fnv1a(st.name + "lane") % 100) / 100 * 0.4;
+      g.beginPath(); g.moveTo(nd.x + Math.cos(a) * spread * 0.9, nd.y + Math.sin(a) * spread * 0.58);
+      g.lineTo(nd.x + Math.cos(a) * spread * 1.55, nd.y + Math.sin(a) * spread * 1.0); g.stroke();
     }
-    for (let i = 0; i < houses; i++) {   // the houses, packed on a deterministic disc (the societies-colony discipline)
+    if (rank === "CITY") {   // a mudbrick curtain wall with square bastion towers, squashed for the bird's-eye read
+      const R = spread * 1.05;
+      g.lineWidth = Math.max(2.4, R * 0.17); g.strokeStyle = rgba(mix(MUD_SH, INK, 0.22), 0.92);
+      g.beginPath(); g.ellipse(nd.x, nd.y, R, R * 0.66, 0, 0, TAU); g.stroke();
+      g.lineWidth = Math.max(1, R * 0.06); g.strokeStyle = rgba(mix(MUD_HI, [255, 246, 224], 0.4), 0.5);
+      g.beginPath(); g.ellipse(nd.x, nd.y - R * 0.05, R, R * 0.66, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU + 0.22, cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.66;
+        g.fillStyle = rgba(mix(MUD_SH, INK, 0.3), 0.95); g.fillRect(cx - 2.6, cy - 5.4, 5.2, 6.4);
+        g.fillStyle = rgba(MUD_HI, 0.8); g.fillRect(cx - 2.6, cy - 5.4, 5.2, 1.2);
+      }
+    } else if (rank === "TOWN") {   // a low mud wall with two gate towers
+      const R = spread * 1.02;
+      g.strokeStyle = rgba(mix(MUD_SH, INK, 0.15), 0.75); g.lineWidth = 1.8;
+      g.beginPath(); g.ellipse(nd.x, nd.y, R, R * 0.6, 0, 0, TAU); g.stroke();
+      for (const a of [0.4, Math.PI + 0.4]) {
+        const cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.6;
+        g.fillStyle = rgba(mix(MUD_SH, INK, 0.25), 0.9); g.fillRect(cx - 2, cy - 4.4, 4, 5.2);
+      }
+    }
+    if (rank === "CITY") {   // the paved plaza at the town's heart, under the keep
+      g.fillStyle = rgba(PLAZA, 0.5);
+      g.beginPath(); g.ellipse(nd.x, nd.y, spread * 0.34, spread * 0.22, 0, 0, TAU); g.fill();
+    }
+    for (let i = 0; i < houses; i++) {   // the mudbrick blocks, packed on a deterministic disc
       const a = (i / houses) * TAU + (fnv1a(st.name) % 100) / 100 * 0.9;
-      const rad = spread * (0.34 + 0.5 * Math.sqrt((i + 0.5) / houses));
+      const rad = spread * (0.3 + 0.58 * Math.sqrt((i + 0.5) / houses));
       const hx = nd.x + Math.cos(a) * rad, hy = nd.y + Math.sin(a) * rad * 0.62;
-      const w = (rank === "CITY" ? 7 : rank === "TOWN" ? 6 : 5.5) * scale * (0.86 + (fnv1a(st.name + i) % 30) / 100);
-      const h = w * (0.9 + (fnv1a(st.name + ":" + i) % 26) / 100);
+      const w = (rank === "CITY" ? 6.4 : rank === "TOWN" ? 5.8 : 5.2) * scale * (0.86 + (fnv1a(st.name + i) % 30) / 100);
+      const h = w * (0.95 + (fnv1a(st.name + ":" + i) % 30) / 100);
       civBuilding(g, hx, hy, w, h, nd.color, rank === "CITY");
     }
-    if (rank === "CITY") {   // the central keep — the tall stone heart the wall rings
+    if (rank === "CITY") {   // the central citadel — the tall mudbrick heart the curtain rings
       const kw = 9 * scale, kh = 15 * scale;
-      g.fillStyle = rgba(mix(CIV_WALL, INK, 0.42), 0.96); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, kh);
-      g.fillStyle = rgba(mix(CIV_ROOF, INK, 0.3), 0.96);
-      g.beginPath(); g.moveTo(nd.x - kw / 2 - 1.5, nd.y - kh); g.lineTo(nd.x, nd.y - kh - kw * 0.9); g.lineTo(nd.x + kw / 2 + 1.5, nd.y - kh); g.closePath(); g.fill();
-      g.fillStyle = rgba(mix(nd.color, [255, 246, 224], 0.3), 0.5); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, 1.4);
+      g.fillStyle = rgba(mix(MUD_SH, INK, 0.34), 0.96); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, kh);
+      g.fillStyle = rgba(mix(MUD_SH, INK, 0.46), 0.96); g.fillRect(nd.x + kw / 2, nd.y - kh, kw * 0.22, kh);
+      g.fillStyle = rgba(MUD_HI, 0.9); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, 1.4);
+      g.fillStyle = rgba(mix(MUD_SH, INK, 0.3), 0.96);   // corner turrets
+      g.fillRect(nd.x - kw / 2 - 2.2, nd.y - kh - 4, 2.6, kh + 4); g.fillRect(nd.x + kw / 2 + kw * 0.22 - 0.4, nd.y - kh - 4, 2.6, kh + 4);
+      g.fillStyle = rgba(TERRA, 0.9);
+      g.beginPath(); g.moveTo(nd.x - kw / 2 - 1.5, nd.y - kh - 4); g.lineTo(nd.x, nd.y - kh - 4 - kw * 0.5); g.lineTo(nd.x + kw / 2 + 1.5, nd.y - kh - 4); g.closePath(); g.fill();
+    }
+    if (rank === "CITY") drawAmphitheatre(g, nd, spread);   // the arena ring just outside the gates
+    const trees = rank === "CITY" ? 7 : rank === "TOWN" ? 5 : 3;   // a grove beyond the wall
+    for (let i = 0; i < trees; i++) {
+      const a = (fnv1a(st.name + "tree" + i) % 1000) / 1000 * TAU;
+      const rr = spread * (1.28 + (fnv1a(st.name + "tr" + i) % 100) / 100 * 0.42);
+      const tx = nd.x + Math.cos(a) * rr, ty = nd.y + Math.sin(a) * rr * 0.62;
+      if (i % 2) drawBlossom(g, tx, ty, 4 + (fnv1a(st.name + "ts" + i) % 3));
+      else drawPalm(g, tx, ty, 5 + (fnv1a(st.name + "ts" + i) % 4));
     }
     const label = (nd.sigil ? nd.sigil + " " : "") + st.name;   // the name cartouche, lifted clear of the roofs
     g.save();
@@ -2660,21 +2711,22 @@ function renderSettlements(g, nodes) {
   }
 }
 
-/** One public work baked into the offscreen: a thatch-domed granary, a deck on stone arches (the aqueduct — the
- *  most Roman thing a civilization builds), or a gilded obelisk. `age` (0 new → 1 at its WK_AGE mortar term)
- *  weathers it — the tone greys toward ash and cracks creep as it nears ruin. */
+/** One public work baked into the offscreen, city-builder read: a domed mudbrick granary, a water deck on stone
+ *  arches (the aqueduct), or a gilded obelisk raised over a paved plaza with a reflecting pool, kitchen gardens
+ *  and blossom trees (the golden age's wonder). `age` (0 new → 1 at its WK_AGE mortar term) weathers the stone. */
 function drawWorkStatic(g, kind, x, y, age) {
   const wear = clamp(age, 0, 1);
-  const stone = mix(CIV_WALL, ASH_GREY, wear * 0.5);
+  const stone = mix(MUD_SH, ASH_GREY, wear * 0.5);
   g.save();
   g.fillStyle = rgba(CIV_SHADOW, 0.2);
   g.beginPath(); g.ellipse(x - 5, y + 5, 20, 8, 0, 0, TAU); g.fill();
-  if (kind === "granary") {   // a round storehouse under a conical thatch cap
-    g.fillStyle = rgba(mix(stone, INK, 0.2), 0.96); g.fillRect(x - 11, y - 12, 22, 14);
-    g.fillStyle = rgba(mix(CIV_THATCH, ASH_GREY, wear * 0.4), 0.96);
-    g.beginPath(); g.moveTo(x - 13, y - 12); g.lineTo(x, y - 30); g.lineTo(x + 13, y - 12); g.closePath(); g.fill();
-    g.strokeStyle = rgba(mix(CIV_THATCH, INK, 0.4), 0.5); g.lineWidth = 0.8;
-    for (let i = -2; i <= 2; i++) { g.beginPath(); g.moveTo(x + i * 4, y - 12); g.lineTo(x + i * 1.6, y - 26); g.stroke(); }
+  if (kind === "granary") {   // a round mudbrick storehouse under a whitewashed dome
+    g.fillStyle = rgba(mix(MUD, ASH_GREY, wear * 0.4), 0.96); g.fillRect(x - 11, y - 12, 22, 14);
+    g.fillStyle = rgba(mix(MUD, INK, 0.3), 0.9); g.fillRect(x + 11, y - 12, 3.4, 14);   // side shade
+    g.fillStyle = rgba(mix(MUD_HI, [255, 252, 244], 0.3), 0.96);
+    g.beginPath(); g.arc(x, y - 12, 11, Math.PI, 0); g.closePath(); g.fill();
+    g.strokeStyle = rgba(mix(MUD_SH, INK, 0.3), 0.5); g.lineWidth = 0.8;
+    g.beginPath(); g.arc(x, y - 12, 11, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
     g.fillStyle = rgba(INK, 0.4); g.fillRect(x - 3, y - 7, 6, 9);
   } else if (kind === "aqueduct") {   // a water deck on four piers, three arches beneath
     const top = y - 26, deckH = 5, span = 40, piers = 4;
@@ -2689,7 +2741,17 @@ function drawWorkStatic(g, kind, x, y, age) {
       const ax0 = x - span / 2 + (i + 1) * (span / piers);
       g.beginPath(); g.arc(ax0, top + deckH + 6, span / piers * 0.42, Math.PI, 0); g.stroke();
     }
-  } else {   // monument: a tapered obelisk on a plinth, capped in gold (a golden age's wonder)
+  } else {   // monument: a gilded obelisk over a paved plaza with pool, gardens & blossom trees
+    g.fillStyle = rgba(PLAZA, 0.55);
+    g.beginPath(); g.ellipse(x, y + 2, 34, 19, 0, 0, TAU); g.fill();
+    g.strokeStyle = rgba(mix(MUD_SH, INK, 0.2), 0.5); g.lineWidth = 1;
+    g.beginPath(); g.ellipse(x, y + 2, 34, 19, 0, 0, TAU); g.stroke();
+    g.fillStyle = rgba(POOL, 0.8); g.fillRect(x - 26, y + 4, 16, 7);   // the reflecting pool
+    g.strokeStyle = rgba(mix(POOL, [255, 255, 255], 0.5), 0.6); g.lineWidth = 0.8; g.strokeRect(x - 26, y + 4, 16, 7);
+    drawGardenBed(g, x + 12, y + 3, 15, 8);
+    drawGardenBed(g, x + 14, y - 8, 12, 7);
+    drawBlossom(g, x - 30, y - 6, 5); drawBlossom(g, x + 30, y - 4, 5);
+    drawPalm(g, x - 22, y - 10, 6);
     g.fillStyle = rgba(mix(stone, INK, 0.25), 0.96); g.fillRect(x - 9, y - 5, 18, 7);
     g.fillStyle = rgba(mix(stone, INK, 0.05), 0.97);
     g.beginPath(); g.moveTo(x - 5.5, y - 5); g.lineTo(x - 3.4, y - 40); g.lineTo(x + 3.4, y - 40); g.lineTo(x + 5.5, y - 5); g.closePath(); g.fill();
@@ -2708,6 +2770,83 @@ function drawWorkStatic(g, kind, x, y, age) {
   g.restore();
 }
 function renderWorks(g, works) { for (const w of works) drawWorkStatic(g, w.kind, w.x, w.y, w.age); }
+
+/** The arena ring a great city raises just outside its gates: two tiered mudbrick ellipses, radial aisle ticks
+ *  and a sanded floor — the colosseum read, squashed for the bird's-eye. */
+function drawAmphitheatre(g, nd, spread) {
+  const a0 = (fnv1a(nd.s.name + "arena") % 1000) / 1000 * TAU;
+  const x = nd.x + Math.cos(a0) * spread * 1.5, y = nd.y + Math.sin(a0) * spread * 1.5 * 0.62;
+  const rx = spread * 0.36, ry = rx * 0.62;
+  g.fillStyle = rgba(PLAZA, 0.45);
+  g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill();
+  g.strokeStyle = rgba(mix(MUD_SH, INK, 0.2), 0.9); g.lineWidth = 2.6;
+  g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.stroke();
+  g.strokeStyle = rgba(mix(MUD_SH, INK, 0.1), 0.8); g.lineWidth = 1.4;
+  g.beginPath(); g.ellipse(x, y, rx * 0.72, ry * 0.72, 0, 0, TAU); g.stroke();
+  g.fillStyle = rgba([186, 158, 116], 0.5);
+  g.beginPath(); g.ellipse(x, y, rx * 0.42, ry * 0.42, 0, 0, TAU); g.fill();   // the sanded arena floor
+  g.strokeStyle = rgba(mix(MUD_SH, INK, 0.25), 0.5); g.lineWidth = 0.8;
+  for (let i = 0; i < 8; i++) {   // the radial aisles between the tiers
+    const a = (i / 8) * TAU + 0.3;
+    g.beginPath(); g.moveTo(x + Math.cos(a) * rx * 0.72, y + Math.sin(a) * ry * 0.72);
+    g.lineTo(x + Math.cos(a) * rx, y + Math.sin(a) * ry); g.stroke();
+  }
+}
+/** A palm: a curved trunk and a star of fronds — the riverine green of a settled land. */
+function drawPalm(g, x, y, s) {
+  g.strokeStyle = rgba([122, 96, 62], 0.8); g.lineWidth = 1.1;
+  g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + s * 0.18, y - s * 0.6, x + s * 0.1, y - s); g.stroke();
+  g.strokeStyle = rgba(PALM, 0.85); g.lineWidth = 1.2;
+  for (let i = 0; i < 6; i++) {
+    const a = -Math.PI / 2 + (i - 2.5) * 0.52;
+    g.beginPath(); g.moveTo(x + s * 0.1, y - s);
+    g.quadraticCurveTo(x + s * 0.1 + Math.cos(a) * s * 0.5, y - s + Math.sin(a) * s * 0.5 - s * 0.16, x + s * 0.1 + Math.cos(a) * s * 0.82, y - s + Math.sin(a) * s * 0.62); g.stroke();
+  }
+}
+/** A blossom tree: a dark trunk under a three-lobe canopy of rose — the garden colour of a lived-in town. */
+function drawBlossom(g, x, y, s) {
+  g.strokeStyle = rgba([96, 72, 48], 0.8); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - s * 0.8); g.stroke();
+  g.fillStyle = rgba(BLOSSOM, 0.75);
+  for (const [dx, dy, r] of [[-s * 0.4, -s, s * 0.55], [s * 0.4, -s * 1.05, s * 0.5], [0, -s * 1.35, s * 0.55]]) {
+    g.beginPath(); g.arc(x + dx, y + dy, r, 0, TAU); g.fill();
+  }
+  g.fillStyle = rgba(mix(BLOSSOM, [255, 236, 240], 0.5), 0.6);
+  g.beginPath(); g.arc(x - s * 0.2, y - s * 1.3, s * 0.28, 0, TAU); g.fill();
+}
+/** A walled kitchen garden: a green bed with ploughed rows, set beside a plaza or a work. */
+function drawGardenBed(g, x, y, w, h) {
+  g.fillStyle = rgba(GARDEN, 0.5); g.fillRect(x, y, w, h);
+  g.strokeStyle = rgba(mix(GARDEN, INK, 0.45), 0.5); g.lineWidth = 0.7;
+  for (let i = 1; i < 4; i++) { const yy = y + (h * i) / 4; g.beginPath(); g.moveTo(x + 1, yy); g.lineTo(x + w - 1, yy); g.stroke(); }
+  g.strokeStyle = rgba([120, 96, 62], 0.5); g.lineWidth = 0.8; g.strokeRect(x, y, w, h);
+}
+/** A river sailboat: a dark hull, one mast and a cream lateen sail, with a faint wake — goods & folk in motion. */
+function drawSailboat(g, x, y, s, flip) {
+  g.save(); g.translate(x, y); if (flip) g.scale(-1, 1);
+  g.strokeStyle = rgba(RIVER_BLUE, 0.35); g.lineWidth = 0.9;
+  g.beginPath(); g.moveTo(-s * 1.5, s * 0.5); g.lineTo(-s * 0.7, s * 0.5); g.stroke();   // the wake
+  g.fillStyle = rgba(HULL, 0.9);
+  g.beginPath(); g.moveTo(-s, 0); g.quadraticCurveTo(0, s * 0.75, s, 0); g.lineTo(s * 0.7, -s * 0.28); g.lineTo(-s * 0.7, -s * 0.28); g.closePath(); g.fill();
+  g.strokeStyle = rgba([70, 50, 34], 0.9); g.lineWidth = 0.8;
+  g.beginPath(); g.moveTo(0, -s * 0.28); g.lineTo(0, -s * 1.7); g.stroke();
+  g.fillStyle = rgba(SAIL, 0.92);
+  g.beginPath(); g.moveTo(0, -s * 1.7); g.lineTo(s * 0.85, -s * 0.42); g.lineTo(0, -s * 0.42); g.closePath(); g.fill();
+  g.restore();
+}
+/** Sailboats riding the two parchment rivers (the same deterministic sine the territory bake inks), so the water
+ *  reads as traffic rather than paint. Gated with the rivers themselves (showTerritory) via the bake signature. */
+function renderRiverBoats(g) {
+  for (let r = 0; r < 2; r++) {
+    const ph = (fnv1a("river:" + r) % 360) * Math.PI / 180;
+    const yb = VH * (r ? 0.66 : 0.34), amp = VH * 0.07;
+    for (let k = 0; k < 3; k++) {
+      const t = 0.2 + k * 0.26 + ((fnv1a("boat:" + r + ":" + k) % 100) / 100) * 0.08;
+      const x = t * VW, y = yb + Math.sin(t * 5 + ph + r) * amp + Math.sin(t * 13 + ph) * amp * 0.28;
+      drawSailboat(g, x, y - 1.5, 4.5 + (fnv1a("bs:" + r + ":" + k) % 3), k % 2 === 1);
+    }
+  }
+}
 
 /** The trade road between the two greatest settlements, baked as a double-stroked arc (a sunken dirt track with a
  *  lit centre). The golden caravan glints themselves ride it live in drawCivAnim. */
@@ -2778,6 +2917,7 @@ function rebuildCiv(C) {
       road = { a: { x: na.x, y: na.y }, b: { x: nb.x, y: nb.y }, ctrlx: mx - dy / len * len * 0.14, ctrly: my + dx / len * len * 0.14 };
     }
   }
+  if (showTerritory) renderRiverBoats(g);   // sailboats ride the rivers the territory bake inks, under the towns
   renderTradeRoads(g, road);       // the road sinks under the towns it connects
   renderSettlements(g, nodes);
   if (quality >= 2) renderFarmland(g, nodes, (chronMeta && chronMeta.civLevel) || 50);   // ⑥ the fields beside each city
@@ -3084,6 +3224,8 @@ function paintTerritoryMap(g, pol) {
     }
   }
   g.restore();
+  // 2½) the two parchment rivers, clipped to the landmass so they never run out into the sea
+  g.save(); traceContinent(g); g.clip(); drawRivers(g); g.restore();
   // 3) the continent coastline, inked over the province seams so the landmass reads as one bounded realm
   traceContinent(g);
   g.strokeStyle = rgba([110, 86, 62], 0.6); g.lineWidth = 2.2; g.stroke();
