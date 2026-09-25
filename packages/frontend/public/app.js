@@ -33,7 +33,7 @@
 // i18n kernel — pure read-out localisation layer (never touches sim/economy/proof).
 // NOTE: `t` is used all over this file as a local (time/totals/lerp), so we import the
 // translator under the alias `T` to avoid any shadowing. ct() = chronicle display, gl() = glossary.
-import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=95";
+import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=96";
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -390,7 +390,7 @@ let lastHistSample = 0;
 // ring of isolate nodes shows how the 24 flies are split across the FlyShardDO Durable Objects that let
 // each brain grow to the 30,800-neuron species spec (live flies are genome-sized, ~10,800 today). Both are
 // offscreen-cached or trivially cheap, per the perf budget.
-let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true, showChron = true;
+let showMind = false, showShards = false, showSocieties = true, showGraves = true, showTerritory = true, showChron = true, showCities = true;
 let topology = null;                                  // { sharded, shardCount, populationSize, fliesPerShard, shards:[{index,start,end}] }
 let lastTickIndex = null, shardPulseT = -1e9;         // a new on-chain tick fires one fan-out pulse across the isolates
 let mindOff = null, mindOffCtx = null, mindLast = 0, mindAngle = 0, mindSize = 0;
@@ -400,6 +400,8 @@ let parchOff = null, parchOffCtx = null, parchLast = 0, parchKey = "";
 let dnOff = null, dnOffCtx = null, dnKey = "", dnLastPaint = 0;   // baked day/night grade: repaint ≤4fps, blit per frame
 let terrOff = null, terrOffCtx = null, terrKey = "";   // cached territory map (static ⇒ repaint on change, blit per frame)
 let terrPol = null;                                    // last built province list — the screen-space map key reads it
+let civOff = null, civOffCtx = null, civKey = "";      // ⑭㉖ baked civilization layer (settlements/works/road): repaint on signature change, blit per frame
+let civLayout = null;                                  // last built civ layout {nodes,works,road} — the live anim/seats read it
 let territorySeizureSig = "";                            // a stable signature of which zones changed hands in war — folded into terrKey so a conquest repaints the dominion map
 
 // ================= canvas field =================
@@ -2375,11 +2377,8 @@ function renderLandLife(pal, now) {
   for (const p of territories) { if (seats.length >= 10) break; const s = politySeat(p); if (s) seats.push({ p, s }); }
   if (!seats.length) return;
   if (q >= 1) drawMarchRoutes(seats, now, q);     // torch-lit columns marching between the capitals
-  for (const { p, s } of seats) {
-    if (q >= 1) drawCity(p, s, now, q);            // a walled, fire-lit stronghold on its capital
-    if (p.occupied) drawBeacon(p, s, now, q); else drawHearth(p, s, now, q);
-    if (q >= 1) drawBanner(p, s, now);
-  }
+  // The decorative stronghold, banner, beacon and hearth were RETIRED here: the real settlements now carry the
+  // town visual, and each house's seat markers ride its home settlement in renderCivilization (⑭, showCities).
   if (q >= 1) drawFlock(now);
 }
 /** Rolling ground fog drifting low across the plain — a screen-blended band of the mist texture, tiled to wrap.
@@ -2409,36 +2408,8 @@ function drawGodRays(now, q) {
   ctx.drawImage(im, -VW * 0.08 + sway * VW, -VH * 0.06, VW * 1.16, VH * 1.12);
   ctx.restore();
 }
-/** A walled, fire-lit stronghold at a capital: an oval ring-wall with crenellations, a central keep and flickering windows, sized by the swarm gathered there. */
-function drawCity(p, s, now, q) {
-  const R = clamp(11 + s.n * 0.5, 12, 26);
-  const wall = mix(p.color, INK, 0.42), wallLit = mix(p.color, [255, 238, 205], 0.45), roof = mix(p.color, [30, 22, 16], 0.55);
-  ctx.save();
-  // long cast shadow to the lower-left (the low sun sits upper-right)
-  ctx.fillStyle = rgba([20, 16, 12], 0.22);
-  ctx.beginPath(); ctx.ellipse(s.x - R * 0.5, s.y + R * 0.55, R * 1.5, R * 0.6, 0, 0, TAU); ctx.fill();
-  // the ring wall (squashed for a bird's-eye read) + a sunlit top edge
-  ctx.lineWidth = Math.max(2, R * 0.28); ctx.strokeStyle = rgba(wall, 0.95);
-  ctx.beginPath(); ctx.ellipse(s.x, s.y, R, R * 0.62, 0, 0, TAU); ctx.stroke();
-  ctx.lineWidth = Math.max(1, R * 0.12); ctx.strokeStyle = rgba(wallLit, 0.5);
-  ctx.beginPath(); ctx.ellipse(s.x, s.y - R * 0.06, R, R * 0.62, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
-  // crenellations around the wall
-  const teeth = q >= 2 ? 12 : 8;
-  ctx.strokeStyle = rgba(wall, 0.8); ctx.lineWidth = 1.2;
-  for (let i = 0; i < teeth; i++) { const a = (i / teeth) * TAU, cx = s.x + Math.cos(a) * R, cy = s.y + Math.sin(a) * R * 0.62; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 3); ctx.stroke(); }
-  // the keep + a lit gable roof
-  const kw = R * 0.5, kh = R * 0.7;
-  ctx.fillStyle = rgba(roof, 0.95); ctx.fillRect(s.x - kw / 2, s.y - kh, kw, kh);
-  ctx.fillStyle = rgba(wallLit, 0.9);
-  ctx.beginPath(); ctx.moveTo(s.x - kw / 2 - 1, s.y - kh); ctx.lineTo(s.x, s.y - kh - R * 0.4); ctx.lineTo(s.x + kw / 2 + 1, s.y - kh); ctx.closePath(); ctx.fill();
-  // flickering warm windows
-  const wins = q >= 2 ? 4 : 2;
-  for (let i = 0; i < wins; i++) {
-    const wx = s.x - kw / 2 + (i + 0.5) / wins * kw, wy = s.y - kh * 0.55, fl = flick(now, i * 3 + (fnv1a(p.name) % 10), 0.01, 0.5, 1);
-    ctx.fillStyle = rgba(FIRE_HOT, 0.5 + 0.4 * fl); ctx.fillRect(wx - 0.8, wy - 1, 1.6, 2);
-  }
-  ctx.restore();
-}
+// drawCity (the decorative provincial stronghold) was RETIRED — the real econCities settlements now carry the
+// town visual, and the house seat markers ride them in renderCivilization. See that layer for the replacement.
 /** A closed march network between the capitals: a faint road each, with a column of torch glints marching along it. */
 function drawMarchRoutes(seats, now, q) {
   if (seats.length < 2) return;
@@ -2582,6 +2553,329 @@ function drawFlock(now) {
   }
   ctx.restore();
 }
+// ============ ⑭㉖ the living civilization: real settlements, public works & the trade road ============
+// Until now the "cities" on the field were six decorative provincial strongholds (drawCity) that never reflected
+// the swarm's actual settling. This layer reads the SAME econ* membranes the drawers do — econCities (⑭ the named
+// settlements + the road between the two greatest), econWorks (㉖ the standing granary/aqueduct/monument) and
+// econDynasty (whose HOME each zone is) — and turns them into geography. Every settlement sits at its zone's
+// force-field anchor (the very spot updateSim pulls its kin toward, so the town is drawn inside the cluster of
+// flies that IS its people), ranked hamlet → town → city and grown with its pop; the common works anchor beside
+// the greatest city; a golden caravan road threads the two greatest. PURE READ-OUT: it reads econ*, writes no
+// sim/economy, and is try/caught at the call site so a decoration bug can never veto a frame. Static structure is
+// baked into civOff (the terrOff discipline — one blit a frame, rebuilt only when the signature moves); only
+// smoke, fire, gilt glow and the caravans are drawn live, and only at quality ≥ 1.
+const CIV_THATCH = [150, 116, 66];        // a hamlet hut's daub wall
+const CIV_WALL = [172, 154, 126];         // a town/city's dressed stone
+const CIV_ROOF = [122, 80, 50];           // timber-shingle roof
+const CIV_SHADOW = [20, 16, 12];
+const WK_AGE_TICKS = 60;                  // mirrors works.ts WK_AGE — a work's mortar term, for the weathering read
+const WORK_SLOT = { granary: [-48, 14], aqueduct: [2, 46], monument: [50, 10] };   // beside the greatest city
+
+/** A zone's world anchor — the SAME force-field spot updateSim pulls that zone's kin toward (smx + ax·(VW−2smx),
+ *  ax/ay the territoryColonies grid), so a settlement is drawn inside the swarm that is its people, never adrift
+ *  in the sea or on another continent the way a raw mw() of the abstract grid would drop it. */
+function zoneAnchor(z) {
+  const smx = Math.max(96, Math.round(VW * 0.21)), smy = Math.max(88, Math.round(VH * 0.19));
+  const ax = clamp(0.14 + 0.24 * (z % 4), 0.06, 0.94);
+  const ay = clamp(0.14 + 0.24 * Math.floor(z / 4), 0.06, 0.94);
+  return { x: smx + ax * (VW - 2 * smx), y: smy + ay * (VH - 2 * smy) };
+}
+
+/** The bake key: viewport + DPR, then one token per settlement (zone:rank:pop-bucket:house), per standing work
+ *  (kind:era:age-bucket) and the road's two names — so routine ±1 pop jitter never forces a heavy repaint, but a
+ *  founding, a rank step, a conquest, a new work or its weathering does. */
+function civSignature(C) {
+  let s = VW + "x" + VH + "@" + DPR;
+  for (const st of C.settlements) s += "|" + st.zone + ":" + st.rank + ":" + Math.min(14, st.pop | 0) + ":" + (st.houseName || "");
+  const W = econWorks;
+  if (W && Array.isArray(W.active)) for (const w of W.active) {
+    const age = clamp(((lastTickIndex ?? 0) - Math.max(w.raisedTick | 0, w.lastRepairTick | 0)) / WK_AGE_TICKS, 0, 1);
+    s += "|" + w.kind + ":" + (w.raisedEra | 0) + ":" + (age * 4 | 0);
+  }
+  if (C.road) s += "|" + C.road.a + "-" + C.road.b;
+  return s;
+}
+
+/** One house in the offscreen: a cast shadow, a daub wall, a gabled shingle roof and a doorway, tinted at the wall
+ *  with the holding house's colour so a town reads as its family's. `city` adds a sunlit ridge. */
+function civBuilding(g, x, y, w, h, color, city) {
+  g.fillStyle = rgba(CIV_SHADOW, 0.18);
+  g.beginPath(); g.ellipse(x - w * 0.2, y + h * 0.16, w * 0.85, h * 0.34, 0, 0, TAU); g.fill();
+  const wall = mix(CIV_THATCH, color, 0.22);
+  g.fillStyle = rgba(wall, 0.96); g.fillRect(x - w / 2, y - h, w, h);
+  g.fillStyle = rgba(mix(CIV_ROOF, color, 0.16), 0.96);
+  g.beginPath(); g.moveTo(x - w / 2 - 1.2, y - h); g.lineTo(x, y - h - w * 0.62); g.lineTo(x + w / 2 + 1.2, y - h); g.closePath(); g.fill();
+  if (city) { g.fillStyle = rgba(mix(wall, [255, 244, 214], 0.5), 0.45); g.fillRect(x - w / 2, y - h, w, 1); }
+  g.fillStyle = rgba(INK, 0.3); g.fillRect(x - w * 0.14, y - h * 0.52, w * 0.28, h * 0.52);   // the doorway
+}
+
+/** Bake every settlement's static structure into the offscreen `g`: a cast shadow, the rank's defences (a city's
+ *  ring wall + crenellations, a town's low palisade), its houses grown from pop on a deterministic disc, a city's
+ *  central keep, and the name cartouche. Records each town's spread on the node so the live layer knows its size. */
+function renderSettlements(g, nodes) {
+  for (const nd of nodes) {
+    const st = nd.s, rank = st.rank;
+    const scale = clamp(0.82 + (st.pop | 0) * 0.045, 0.82, 1.7);
+    const houses = rank === "CITY" ? 8 + (fnv1a(st.name) % 5) : rank === "TOWN" ? 5 + (fnv1a(st.name) % 3) : 2 + (fnv1a(st.name) % 2);
+    const spread = (rank === "CITY" ? 26 : rank === "TOWN" ? 18 : 11) * scale;
+    nd.r = spread;
+    g.fillStyle = rgba(CIV_SHADOW, 0.16);   // the town's cast shadow (the low sun sits upper-right)
+    g.beginPath(); g.ellipse(nd.x - spread * 0.28, nd.y + spread * 0.42, spread * 1.25, spread * 0.6, 0, 0, TAU); g.fill();
+    if (rank === "CITY") {   // a ring wall squashed for the bird's-eye read, a sunlit top edge, crenellations
+      const R = spread * 1.05;
+      g.lineWidth = Math.max(2, R * 0.16); g.strokeStyle = rgba(mix(CIV_WALL, INK, 0.3), 0.9);
+      g.beginPath(); g.ellipse(nd.x, nd.y, R, R * 0.66, 0, 0, TAU); g.stroke();
+      g.lineWidth = Math.max(1, R * 0.07); g.strokeStyle = rgba(mix(CIV_WALL, [255, 246, 224], 0.4), 0.45);
+      g.beginPath(); g.ellipse(nd.x, nd.y - R * 0.05, R, R * 0.66, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
+      g.strokeStyle = rgba(mix(CIV_WALL, INK, 0.4), 0.75); g.lineWidth = 1.1;
+      for (let i = 0; i < 12; i++) { const a = (i / 12) * TAU, cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.66; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - 3); g.stroke(); }
+    } else if (rank === "TOWN") {   // a low timber palisade
+      const R = spread * 1.02;
+      g.strokeStyle = rgba(mix(CIV_ROOF, INK, 0.2), 0.7); g.lineWidth = 1.4;
+      for (let i = 0; i < 14; i++) { const a = (i / 14) * TAU + 0.2, cx = nd.x + Math.cos(a) * R, cy = nd.y + Math.sin(a) * R * 0.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - 4.5); g.stroke(); }
+    }
+    for (let i = 0; i < houses; i++) {   // the houses, packed on a deterministic disc (the societies-colony discipline)
+      const a = (i / houses) * TAU + (fnv1a(st.name) % 100) / 100 * 0.9;
+      const rad = spread * (0.34 + 0.5 * Math.sqrt((i + 0.5) / houses));
+      const hx = nd.x + Math.cos(a) * rad, hy = nd.y + Math.sin(a) * rad * 0.62;
+      const w = (rank === "CITY" ? 7 : rank === "TOWN" ? 6 : 5.5) * scale * (0.86 + (fnv1a(st.name + i) % 30) / 100);
+      const h = w * (0.9 + (fnv1a(st.name + ":" + i) % 26) / 100);
+      civBuilding(g, hx, hy, w, h, nd.color, rank === "CITY");
+    }
+    if (rank === "CITY") {   // the central keep — the tall stone heart the wall rings
+      const kw = 9 * scale, kh = 15 * scale;
+      g.fillStyle = rgba(mix(CIV_WALL, INK, 0.42), 0.96); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, kh);
+      g.fillStyle = rgba(mix(CIV_ROOF, INK, 0.3), 0.96);
+      g.beginPath(); g.moveTo(nd.x - kw / 2 - 1.5, nd.y - kh); g.lineTo(nd.x, nd.y - kh - kw * 0.9); g.lineTo(nd.x + kw / 2 + 1.5, nd.y - kh); g.closePath(); g.fill();
+      g.fillStyle = rgba(mix(nd.color, [255, 246, 224], 0.3), 0.5); g.fillRect(nd.x - kw / 2, nd.y - kh, kw, 1.4);
+    }
+    const label = (nd.sigil ? nd.sigil + " " : "") + st.name;   // the name cartouche, lifted clear of the roofs
+    g.save();
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "700 " + Math.round(rank === "CITY" ? 13 : rank === "TOWN" ? 11 : 10) + "px Fraunces, Cinzel, Georgia, serif";
+    g.shadowColor = rgba([250, 246, 238], 0.9); g.shadowBlur = 4;
+    g.fillStyle = rgba(mix(nd.color, INK, 0.6), 0.95);
+    g.fillText(label, nd.x, nd.y - spread - 18);
+    g.restore();
+  }
+}
+
+/** One public work baked into the offscreen: a thatch-domed granary, a deck on stone arches (the aqueduct — the
+ *  most Roman thing a civilization builds), or a gilded obelisk. `age` (0 new → 1 at its WK_AGE mortar term)
+ *  weathers it — the tone greys toward ash and cracks creep as it nears ruin. */
+function drawWorkStatic(g, kind, x, y, age) {
+  const wear = clamp(age, 0, 1);
+  const stone = mix(CIV_WALL, ASH_GREY, wear * 0.5);
+  g.save();
+  g.fillStyle = rgba(CIV_SHADOW, 0.2);
+  g.beginPath(); g.ellipse(x - 5, y + 5, 20, 8, 0, 0, TAU); g.fill();
+  if (kind === "granary") {   // a round storehouse under a conical thatch cap
+    g.fillStyle = rgba(mix(stone, INK, 0.2), 0.96); g.fillRect(x - 11, y - 12, 22, 14);
+    g.fillStyle = rgba(mix(CIV_THATCH, ASH_GREY, wear * 0.4), 0.96);
+    g.beginPath(); g.moveTo(x - 13, y - 12); g.lineTo(x, y - 30); g.lineTo(x + 13, y - 12); g.closePath(); g.fill();
+    g.strokeStyle = rgba(mix(CIV_THATCH, INK, 0.4), 0.5); g.lineWidth = 0.8;
+    for (let i = -2; i <= 2; i++) { g.beginPath(); g.moveTo(x + i * 4, y - 12); g.lineTo(x + i * 1.6, y - 26); g.stroke(); }
+    g.fillStyle = rgba(INK, 0.4); g.fillRect(x - 3, y - 7, 6, 9);
+  } else if (kind === "aqueduct") {   // a water deck on four piers, three arches beneath
+    const top = y - 26, deckH = 5, span = 40, piers = 4;
+    g.fillStyle = rgba(mix(stone, INK, 0.18), 0.96); g.fillRect(x - span / 2, top, span, deckH);
+    g.fillStyle = rgba(mix([120, 160, 180], INK, 0.2), 0.5); g.fillRect(x - span / 2 + 1, top + 1, span - 2, 1.6);
+    for (let i = 0; i < piers; i++) {
+      const px = x - span / 2 + (i + 0.5) * (span / piers);
+      g.fillStyle = rgba(mix(stone, INK, 0.3), 0.96); g.fillRect(px - 2.6, top + deckH, 5.2, y - top - deckH);
+    }
+    g.strokeStyle = rgba(mix(stone, INK, 0.35), 0.9); g.lineWidth = 2.4;
+    for (let i = 0; i < piers - 1; i++) {
+      const ax0 = x - span / 2 + (i + 1) * (span / piers);
+      g.beginPath(); g.arc(ax0, top + deckH + 6, span / piers * 0.42, Math.PI, 0); g.stroke();
+    }
+  } else {   // monument: a tapered obelisk on a plinth, capped in gold (a golden age's wonder)
+    g.fillStyle = rgba(mix(stone, INK, 0.25), 0.96); g.fillRect(x - 9, y - 5, 18, 7);
+    g.fillStyle = rgba(mix(stone, INK, 0.05), 0.97);
+    g.beginPath(); g.moveTo(x - 5.5, y - 5); g.lineTo(x - 3.4, y - 40); g.lineTo(x + 3.4, y - 40); g.lineTo(x + 5.5, y - 5); g.closePath(); g.fill();
+    g.fillStyle = rgba(GILT_HI, 0.95);
+    g.beginPath(); g.moveTo(x - 3.4, y - 40); g.lineTo(x, y - 47); g.lineTo(x + 3.4, y - 40); g.closePath(); g.fill();
+    g.strokeStyle = rgba(mix(stone, INK, 0.4), 0.4); g.lineWidth = 0.7;
+    for (let i = 1; i <= 3; i++) { const yy = y - 5 - i * 8; g.beginPath(); g.moveTo(x - 5, yy); g.lineTo(x + 5, yy); g.stroke(); }
+  }
+  if (wear > 0.55) {   // weathering: cracks creep over a work nearing the end of its mortar term
+    g.strokeStyle = rgba(INK, 0.28 * ((wear - 0.55) / 0.45)); g.lineWidth = 0.8;
+    for (let i = 0; i < 3; i++) {
+      const cx = x - 8 + (fnv1a(kind + i) % 16), cyy = y - 6 - (fnv1a(kind + ":" + i) % 20);
+      g.beginPath(); g.moveTo(cx, cyy); g.lineTo(cx + 3, cyy + 5); g.lineTo(cx + 1, cyy + 9); g.stroke();
+    }
+  }
+  g.restore();
+}
+function renderWorks(g, works) { for (const w of works) drawWorkStatic(g, w.kind, w.x, w.y, w.age); }
+
+/** The trade road between the two greatest settlements, baked as a double-stroked arc (a sunken dirt track with a
+ *  lit centre). The golden caravan glints themselves ride it live in drawCivAnim. */
+function renderTradeRoads(g, road) {
+  if (!road) return;
+  const a = road.a, b = road.b;
+  g.save(); g.lineCap = "round";
+  g.strokeStyle = rgba([120, 96, 64], 0.2); g.lineWidth = 3.4;
+  g.beginPath(); g.moveTo(a.x, a.y); g.quadraticCurveTo(road.ctrlx, road.ctrly, b.x, b.y); g.stroke();
+  g.strokeStyle = rgba([196, 168, 116], 0.32); g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(a.x, a.y); g.quadraticCurveTo(road.ctrlx, road.ctrly, b.x, b.y); g.stroke();
+  g.restore();
+}
+
+/** Recompute the civilization layout and bake its static structure into civOff. Settlements take their zone's
+ *  force-field anchor; each is flagged a capital when it sits in a house's HOME zone (and seized when that ground
+ *  is now held by another house). The road threads the two greatest; the standing works anchor beside the first. */
+function rebuildCiv(C) {
+  if (!civOff) { civOff = document.createElement("canvas"); civOffCtx = civOff.getContext("2d"); }
+  const w = Math.round(VW * DPR), h = Math.round(VH * DPR);
+  if (civOff.width !== w || civOff.height !== h) { civOff.width = w; civOff.height = h; }
+  const g = civOffCtx; g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, VW, VH);
+  const homeByZone = new Map();   // whose HOME each zone is (the seat), from the dynasty read-out
+  if (econDynasty && Array.isArray(econDynasty.houses))
+    for (const ho of econDynasty.houses) if (ho && ho.homeZone != null) homeByZone.set(ho.homeZone | 0, ho);
+  const nodes = [];
+  for (const st of C.settlements) {
+    if (!st || st.zone == null) continue;
+    const a = zoneAnchor(st.zone | 0);
+    const home = homeByZone.get(st.zone | 0) || null;
+    const color = (st.houseName ? houseColor(st.houseName) : null) || (home ? houseColor(home.name) : null)
+      || COLONY_COLORS[(st.zone | 0) % COLONY_COLORS.length];
+    const seized = !!(home && st.houseName && home.name && st.houseName.toLowerCase() !== home.name.toLowerCase());
+    nodes.push({
+      s: st, x: a.x, y: a.y, r: 12, color, sigil: st.sigil || (home && home.sigil) || "",
+      capital: home ? { name: home.name, color: houseColor(home.name) || color, sigil: home.sigil || st.sigil || "", occupied: seized } : null,
+    });
+  }
+  if (!nodes.length) { civLayout = null; return; }
+  let road = null;   // the caravan road between the two greatest, resolved by name to their anchors
+  if (C.road && C.road.a && C.road.b) {
+    const na = nodes.find((n) => n.s.name === C.road.a), nb = nodes.find((n) => n.s.name === C.road.b);
+    if (na && nb) {
+      const mx = (na.x + nb.x) / 2, my = (na.y + nb.y) / 2, dx = nb.x - na.x, dy = nb.y - na.y, len = Math.hypot(dx, dy) || 1;
+      road = { a: { x: na.x, y: na.y }, b: { x: nb.x, y: nb.y }, ctrlx: mx - dy / len * len * 0.14, ctrly: my + dx / len * len * 0.14 };
+    }
+  }
+  renderTradeRoads(g, road);       // the road sinks under the towns it connects
+  renderSettlements(g, nodes);
+  const works = [];                // the standing public works, anchored beside the greatest city (or the coffer)
+  const W = econWorks;
+  if (W && Array.isArray(W.active) && W.active.length) {
+    const hub = nodes[0];
+    const base = hub ? { x: hub.x, y: hub.y } : cofferAnchor();
+    const k = clamp((hub ? hub.r : 16) / 26, 0.7, 1.5);
+    for (const wk of W.active) {
+      if (!wk || !WORK_SLOT[wk.kind]) continue;
+      const off = WORK_SLOT[wk.kind];
+      const raised = Math.max(wk.raisedTick | 0, wk.lastRepairTick | 0);
+      works.push({ kind: wk.kind, x: base.x + off[0] * k, y: base.y + off[1] * k, age: clamp(((lastTickIndex ?? 0) - raised) / WK_AGE_TICKS, 0, 1) });
+    }
+  }
+  renderWorks(g, works);
+  civLayout = { nodes, works, road };
+}
+
+/** The live civilization animation, per frame in world space over the baked structure (quality ≥ 1): a city's
+ *  cooking smoke, a hamlet/town's campfire, a freshly-raised work's gilt glow, and the golden caravan glints
+ *  threading the trade road (warm gold — trade, unlike the torch-red march). All time-driven, cheap, capped. */
+function drawCivAnim(now, q) {
+  if (!civLayout) return;
+  ctx.save();
+  for (const nd of civLayout.nodes) {
+    const st = nd.s;
+    if (st.rank === "CITY") {
+      for (let c = 0; c < 2; c++) {   // two columns of cooking smoke over the keep
+        const ph = (fnv1a(st.name + ":" + c) % 1000) / 1000;
+        for (let i = 0; i < 3; i++) {
+          const life = ((now * 0.00013 + i / 3 + ph) % 1);
+          const sx = nd.x + (c ? 5 : -5) + Math.sin(life * 5 + c + ph * 6) * (1.5 + life * 4);
+          ctx.fillStyle = rgba(SMOKE, (1 - life) * 0.14);
+          ctx.beginPath(); ctx.arc(sx, nd.y - 16 - life * 26, 1.4 + life * 4.5, 0, TAU); ctx.fill();
+        }
+      }
+    } else {   // a campfire at the settlement's heart
+      const fx = nd.x, fy = nd.y + 1, fl = flick(now, (fnv1a(st.name) % 100) / 10, 0.02, 0.7, 1.2);
+      const gr = ctx.createRadialGradient(fx, fy, 0, fx, fy, 11 * fl);
+      gr.addColorStop(0, rgba(FIRE_HOT, 0.3)); gr.addColorStop(0.5, rgba(FIRE_MID, 0.14)); gr.addColorStop(1, rgba(FIRE_LO, 0));
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(fx, fy, 11 * fl, 0, TAU); ctx.fill();
+      ctx.fillStyle = rgba(FIRE_MID, 0.85);
+      ctx.beginPath(); ctx.moveTo(fx - 2, fy); ctx.quadraticCurveTo(fx - 0.8, fy - 5 * fl, fx, fy - 8 * fl);
+      ctx.quadraticCurveTo(fx + 0.8, fy - 5 * fl, fx + 2, fy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = rgba(FIRE_HOT, 0.9);
+      ctx.beginPath(); ctx.moveTo(fx - 1, fy); ctx.quadraticCurveTo(fx, fy - 3 * fl, fx + 1, fy); ctx.closePath(); ctx.fill();
+    }
+  }
+  for (const wk of civLayout.works) {   // a freshly-raised work glows gilt until its mortar sets
+    if (wk.age < 0.3) {
+      const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+      const gr = ctx.createRadialGradient(wk.x, wk.y - 16, 0, wk.x, wk.y - 16, 26);
+      gr.addColorStop(0, rgba(GILT_HI, 0.22 * (1 - wk.age / 0.3) * (0.6 + 0.4 * pulse)));
+      gr.addColorStop(1, rgba(GILT_HI, 0));
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(wk.x, wk.y - 16, 26, 0, TAU); ctx.fill();
+    }
+  }
+  const road = civLayout.road;   // the golden caravan threading the trade road (goods in transit)
+  if (road) {
+    const dots = q >= 2 ? 7 : 4, a = road.a, b = road.b;
+    for (let k = 0; k < dots; k++) {
+      const t = ((now * 0.00005 + k / dots) % 1), it = 1 - t;
+      const px = it * it * a.x + 2 * it * t * road.ctrlx + t * t * b.x;
+      const py = it * it * a.y + 2 * it * t * road.ctrly + t * t * b.y;
+      const fl = 0.7 + 0.3 * Math.sin(now * 0.02 + k * 1.9);
+      ctx.fillStyle = rgba(COIN_GOLD, 0.1 * fl); ctx.beginPath(); ctx.arc(px, py, 3.2, 0, TAU); ctx.fill();
+      ctx.fillStyle = rgba(GILT_HI, 0.6 * fl); ctx.beginPath(); ctx.arc(px, py, 1.1, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/** A house seat's crown — the marker that says "this settlement is a family's home": a small gilt coronet that
+ *  bobs gently over a soft halo, above the place name. */
+function drawCrown(x, y, color, now) {
+  const cy = y + Math.sin(now * 0.0016 + x * 0.01) * 1.6;
+  ctx.save();
+  const gr = ctx.createRadialGradient(x, cy, 0, x, cy, 15);
+  gr.addColorStop(0, rgba(GILT_HI, 0.34)); gr.addColorStop(1, rgba(GILT_HI, 0));
+  ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, cy, 15, 0, TAU); ctx.fill();
+  ctx.fillStyle = rgba(GILT, 0.96);
+  ctx.beginPath();
+  ctx.moveTo(x - 7, cy + 3); ctx.lineTo(x - 7, cy - 1); ctx.lineTo(x - 3.5, cy + 1.5); ctx.lineTo(x, cy - 5);
+  ctx.lineTo(x + 3.5, cy + 1.5); ctx.lineTo(x + 7, cy - 1); ctx.lineTo(x + 7, cy + 3); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = rgba(mix(GILT, INK, 0.4), 0.7); ctx.lineWidth = 0.7; ctx.stroke();
+  ctx.fillStyle = rgba(mix(color, [255, 255, 255], 0.3), 0.95);
+  ctx.beginPath(); ctx.arc(x, cy + 1.4, 1.3, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+/** The live seat markers over each CAPITAL settlement: the house's beacon (seized ground) or hearth-smoke
+ *  (peaceful), its banner off the keep, and the gilt crown that names it a family seat. These are the retired
+ *  renderLandLife decorations, re-pointed from the six provincial strongholds onto the real home settlements. */
+function drawCivSeats(now, q) {
+  if (!civLayout) return;
+  for (const nd of civLayout.nodes) {
+    const cap = nd.capital; if (!cap) continue;
+    const p = { name: cap.name, color: cap.color, sigil: cap.sigil, occupied: cap.occupied };
+    if (cap.occupied) drawBeacon(p, { x: nd.x, y: nd.y - 2, n: nd.s.pop | 0 }, now, q);
+    else drawHearth(p, { x: nd.x, y: nd.y - 2, n: nd.s.pop | 0 }, now, q);
+    drawBanner(p, { x: nd.x + nd.r * 0.6, y: nd.y - nd.r * 0.15 }, now);
+    drawCrown(nd.x, nd.y - nd.r - 36, cap.color, now);
+  }
+}
+
+/** The civilization layer's entry point (world space, under the flies, over the dominion map): blit the baked
+ *  settlements/works/road, then the live smoke/fire/glow/caravans and the seat markers. Gated by showCities; the
+ *  bake is rebuilt only when the settlement/works signature moves (the terrOff discipline). */
+function renderCivilization(now) {
+  if (!showCities) { civKey = ""; return; }
+  const C = econCities;
+  if (!C || !Array.isArray(C.settlements) || !C.settlements.length) { civKey = ""; return; }
+  const q = quality;
+  const sig = civSignature(C);
+  if (!civOff || civKey !== sig) { civKey = sig; rebuildCiv(C); }
+  if (!civLayout) return;
+  ctx.drawImage(civOff, 0, 0, VW, VH);
+  if (q >= 1) { drawCivAnim(now, q); drawCivSeats(now, q); }
+}
+
 /** A cinematic golden-hour grade laid over the whole field: warm sunlit sky up top, cool shadow below, a slow
  *  warm↔cool breathe cross-faded with the market temperature, and a strong corner vignette for the diorama depth. */
 function renderDayNight(pal, now) {
@@ -2859,6 +3153,10 @@ function render(pal, now) {
   // river shimmer and a passing flock — all world-locked to the map, drawn over it but under the flies.
   // Wrapped so a decoration bug can never veto the rest of the frame (the flies must still be drawn).
   try { renderLandLife(pal, now); } catch { /* ambient only — never break the frame */ }
+
+  // ⑭㉖ THE LAND IS SETTLED: real named towns grown from the swarm's own zones, their public works and the
+  // golden caravan road between the two greatest — world-locked over the dominion map, under the flies.
+  try { renderCivilization(now); } catch { /* ambient only — never break the frame */ }
 
   // the societies layer: colony territories + bond filaments, drawn under the mesh and the flies
   renderSocieties(pal, now);
@@ -8028,6 +8326,7 @@ function bindUI() {
     else if (b.dataset.layer === "territory") { showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { showGraves = on; if (!on) hideEpitaph(); }
     else if (b.dataset.layer === "chronicle") showChron = on;
+    else if (b.dataset.layer === "cities") showCities = on;
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);

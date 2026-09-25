@@ -7043,4 +7043,42 @@ Object.assign(ja, jaWd);
 Object.assign(ko, koWd);
 Object.assign(ar, arWd);
 
+// ---- ⑭ the cities layer toggle: the swarm's REAL settlements on the land (hamlet → town → city, their public
+// works, and the golden caravan road between the two greatest) — a pure read-out of econCities/econWorks. ----
+const enCities = {
+  "layers.cities": "cities",
+  "layers.citiesTitle": "the swarm's real settlements drawn on the land: named towns grown from each zone's own kin, ranked hamlet → town → city, their granaries, aqueducts and monuments beside the greatest, and the golden caravan road between the two greatest — drawn live from the economy's own read-outs (a visualisation only; no economic change)",
+};
+const zhCities = {
+  "layers.cities": "城市",
+  "layers.citiesTitle": "把果蝇真实的定居点绘于大地：由每区自己的亲族长成的具名城镇，按村落→集镇→城市分级，最大城市之侧的粮仓、水道与纪念碑，以及两大城镇之间金色的商队道路 —— 皆由经济自身的读数实时绘出（仅为可视化，不改经济）",
+};
+const frCities = {
+  "layers.cities": "cités",
+  "layers.citiesTitle": "les véritables établissements de l'essaim dessinés sur le pays : des villes nommées nées de la parenté de chaque zone, classées hameau → bourg → cité, leurs greniers, aqueducs et monuments près de la plus grande, et la route caravanière dorée entre les deux plus grandes — dessinés en direct d'après les propres relevés de l'économie (une visualisation seulement ; aucun changement économique)",
+};
+const esCities = {
+  "layers.cities": "ciudades",
+  "layers.citiesTitle": "los asentamientos reales del enjambre dibujados sobre la tierra: ciudades con nombre surgidas de la parentela de cada zona, clasificadas en aldea → pueblo → ciudad, sus graneros, acueductos y monumentos junto a la más grande, y la ruta caravanera dorada entre las dos más grandes — dibujado en vivo a partir de las propias lecturas de la economía (solo una visualización; ningún cambio económico)",
+};
+const jaCities = {
+  "layers.cities": "都市",
+  "layers.citiesTitle": "群れの実際の居住地を大地に描く：各区の血縁から育った名ある町々、村落→町→都市の階級に分け、最大の都市の傍らの穀倉・水道橋・記念碑、そして二つの大都市の間の金色の隊商路 —— いずれも経済自身の読み取りからライブ描画（可視化のみ；経済には一切影響しない）",
+};
+const koCities = {
+  "layers.cities": "도시",
+  "layers.citiesTitle": "땅 위에 그린 무리의 실제 정착지: 각 구역의 혈족에서 자란 이름 있는 마을들, 촌락 → 읍 → 도시의 등급, 가장 큰 도시 곁의 곡창·수도교·기념비, 그리고 두 가장 큰 정착지 사이의 황금 대상(商隊) 길 —— 모두 경제 자신의 판독값에서 실시간으로 그림(시각화일 뿐; 경제에는 아무 변화 없음)",
+};
+const arCities = {
+  "layers.cities": "المدن",
+  "layers.citiesTitle": "مستوطنات السرب الحقيقية مرسومةً على الأرض: بلدانٌ ذات أسماء نمت من قرابة كل منطقة، مُصنَّفةً قرية ← بلدة ← مدينة، وصوامعها وقنواتها ونُصبها بجانب أعظمها، وطريق القوافل الذهبي بين أعظم اثنتين — تُرسم جميعها مباشرةً من قراءات الاقتصاد نفسه (مجرّد تصوّر؛ بلا أي تغيير اقتصادي)",
+};
+Object.assign(en, enCities);
+Object.assign(zh, zhCities);
+Object.assign(fr, frCities);
+Object.assign(es, esCities);
+Object.assign(ja, jaCities);
+Object.assign(ko, koCities);
+Object.assign(ar, arCities);
+
 export { en, zh, fr, es, ja, ko, ar };
