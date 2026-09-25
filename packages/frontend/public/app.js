@@ -36,6 +36,10 @@
 import { t as T, ct, gl, currentLang, getLang, setLang, applyDom, SUPPORTED, ENDONYMS } from "./i18n.js?v=96";
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Water } from 'three/addons/objects/Water.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 
 const params = new URLSearchParams(location.search);
 const API =
@@ -3351,266 +3355,700 @@ class ThreeScene {
     this.renderer = null;
     this.controls = null;
     this.terrain = null;
-    this.ocean = null;
-    this.flyMesh = null;
+    this.water = null;              // three.js official Water (webgl_shaders_ocean)
+    this.sky = null;                // three.js official Sky (Preetham model)
+    this.sun = new THREE.Vector3();
+    this.flyBody = null;            // instanced drosophila bodies (striped, wealth-tinted)
+    this.flyEye = null;             // instanced red eyes (two per fly)
+    this.flyWingL = null; this.flyWingR = null;   // instanced translucent flapping wings
+    this._m4 = new THREE.Matrix4(); this._m5 = new THREE.Matrix4();
+    this._eyeL = new THREE.Matrix4().makeTranslation(0.92, 0.06, 0.24);
+    this._eyeR = new THREE.Matrix4().makeTranslation(0.92, 0.06, -0.24);
+    this._hingeL = new THREE.Matrix4().makeTranslation(0.42, 0.30, 0.16);
+    this._hingeR = new THREE.Matrix4().makeTranslation(0.42, 0.30, -0.16);
     this.settlementGroup = new THREE.Group();
     this.settlementSig = "";
-    this.rivers = [];
-    this.clock = new THREE.Clock();
+    this._hGrid = null; this._hN = 0; this._hStepX = 1; this._hStepZ = 1;   // height field for terrain sampling
+    this._WSX = 480; this._WSZ = 300;
+    this._ramp = null;
+    this._mats = null;
     this._dummy = new THREE.Object3D();
     this._color = new THREE.Color();
+    this.clock = new THREE.Clock();
     this._init();
+  }
+
+  // 4-step crisp toon ramp shared by every material — the clean light bands the first pass lacked
+  _toonRamp() {
+    if (this._ramp) return this._ramp;
+    const v = [110, 152, 205, 255];
+    const data = new Uint8Array(16);
+    for (let i = 0; i < 4; i++) { data[i * 4] = v[i]; data[i * 4 + 1] = v[i]; data[i * 4 + 2] = v[i]; data[i * 4 + 3] = 255; }
+    const tex = new THREE.DataTexture(data, 4, 1, THREE.RGBAFormat);
+    tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
+    tex.needsUpdate = true;
+    this._ramp = tex;
+    return tex;
+  }
+  _toon(color, extra) {
+    return new THREE.MeshToonMaterial(Object.assign({ color, gradientMap: this._toonRamp() }, extra || {}));
   }
 
   _init() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf2eee6);
-    this.scene.fog = new THREE.FogExp2(0xf2eee6, 0.006);
+    this.scene.fog = new THREE.FogExp2(0xdfe8ef, 0.00075);   // faint haze so the horizon melts into the sky
 
     const aspect = VW / VH;
-    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
-    this.camera.position.set(0, 70, 55);
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.5, 12000);
+    this.camera.position.set(0, 210, 290);      // the whole landmass framed edge-to-edge, sea only a margin
 
     this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('field'), antialias: true, alpha: true });
     this.renderer.setSize(VW, VH);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x000000, 0);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.8;
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.05;
-    this.controls.maxPolarAngle = Math.PI / 2.2;
-    this.controls.minDistance = 15;
-    this.controls.maxDistance = 180;
-    this.controls.target.set(0, 0, 0);
+    this.controls.dampingFactor = 0.06;
+    this.controls.maxPolarAngle = Math.PI / 2.15;   // never dip below the sea plane
+    this.controls.minDistance = 60;
+    this.controls.maxDistance = 1100;
+    this.controls.target.set(0, 4, 0);
+    this.controls.autoRotate = true;          // slow turntable until the reader touches the model
+    this.controls.autoRotateSpeed = 0.3;
+    this.controls.addEventListener("start", () => { this.controls.autoRotate = false; });
 
-    // Warm parchment lighting
-    this.scene.add(new THREE.AmbientLight(0xfff4e6, 0.55));
-    const sun = new THREE.DirectionalLight(0xffe8c8, 0.85);
-    sun.position.set(50, 80, 30);
-    this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xc8d8ff, 0.2);
-    fill.position.set(-40, 30, -50);
-    this.scene.add(fill);
+    // Sun-aligned key light + sky/ground bounce — the official ocean example's lighting recipe
+    this.scene.add(new THREE.HemisphereLight(0xbfd9ec, 0xc9b18c, 0.5));
+    this.sunLight = new THREE.DirectionalLight(0xfff0d6, 1.5);
+    this.scene.add(this.sunLight);
+    this.castleGroup = new THREE.Group();
+    this.scene.add(this.castleGroup);
 
-    this._buildOcean();
+    this._mats = {
+      mud: this._toon(0xc6aa80), mudHi: this._toon(0xe4cea6),
+      terra: this._toon(0xb0603c), mudSh: this._toon(0x9e805e),
+      fieldA: this._toon(0xd8b84a), fieldB: this._toon(0x7fa044), fieldC: this._toon(0x8a6a44),
+      road: this._toon(0xc9b183),
+    };
+
+    this._buildSky();
+    this._buildWater();
     this._buildTerrain();
-    this._buildFlies();
     this._buildRivers();
+    this._buildForest();
+    this._buildLabels();
+    this._buildFlies();
     this.scene.add(this.settlementGroup);
   }
 
-  // ---- ocean: a flat translucent plane beneath the terrain ----
-  _buildOcean() {
-    const geo = new THREE.PlaneGeometry(200, 200);
-    const mat = new THREE.MeshToonMaterial({ color: 0x8ab4c8, transparent: true, opacity: 0.45 });
-    this.ocean = new THREE.Mesh(geo, mat);
-    this.ocean.rotation.x = -Math.PI / 2;
-    this.ocean.position.y = -0.3;
-    this.scene.add(this.ocean);
+  // ---- sky: three.js official Sky addon (Preetham model, the webgl_shaders_sky example recipe) ----
+  _buildSky() {
+    const sky = new Sky();
+    sky.scale.setScalar(45000);
+    this.scene.add(sky);
+    const u = sky.material.uniforms;
+    u["turbidity"].value = 5;
+    u["rayleigh"].value = 2.2;
+    u["mieCoefficient"].value = 0.004;
+    u["mieDirectionalG"].value = 0.85;
+    const elevation = 34, azimuth = 122;
+    const phi = THREE.MathUtils.degToRad(90 - elevation);
+    const theta = THREE.MathUtils.degToRad(azimuth);
+    this.sun.setFromSphericalCoords(1, phi, theta);
+    u["sunPosition"].value.copy(this.sun);
+    this.sunLight.position.copy(this.sun).multiplyScalar(1000);
   }
 
-  // ---- terrain: PlaneGeometry + vertex displacement + height-based vertex colors ----
+  // ---- sea: three.js official Water addon (webgl_shaders_ocean recipe, self-hosted normal map) ----
+  _buildWater() {
+    const geo = new THREE.PlaneGeometry(7600, 7600);
+    this.water = new Water(geo, {
+      textureWidth: 512,
+      textureHeight: 512,
+      waterNormals: new THREE.TextureLoader().load("./assets/waternormals.jpg", (t) => {
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      }),
+      sunDirection: this.sun.clone(),
+      sunColor: 0xffffff,
+      waterColor: 0x1d4f66,
+      distortionScale: 2.2,
+      fog: false,
+    });
+    this.water.material.uniforms["size"].value = 6;
+    this.water.rotation.x = -Math.PI / 2;
+    this.water.position.y = -1.1;
+    this.scene.add(this.water);
+  }
+
+  // ---- the land: a model piece with a readable coastline, cliff sides and crisp painted height bands ----
   _buildTerrain() {
-    const size = 100, segs = 128;
-    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+    const WSX = 480, WSZ = 300, N = 321;   // world rectangle at screen aspect — the landmass fills it coast to coast
+    this._WSX = WSX; this._WSZ = WSZ;
+    const geo = new THREE.PlaneGeometry(WSX, WSZ, N - 1, N - 1);
 
-    // Value noise (deterministic, smooth)
-    const noise = (x, z) => {
-      const ix = Math.floor(x), iz = Math.floor(z);
-      const fx = x - ix, fz = z - iz;
-      const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
-      const h = (a, b) => Math.sin(a * 12.9898 + b * 78.233) * 43758.5453 % 1;
-      const n00 = h(ix, iz), n10 = h(ix + 1, iz), n01 = h(ix, iz + 1), n11 = h(ix + 1, iz + 1);
-      return (n00 + (n10 - n00) * sx) + ((n01 + (n11 - n01) * sx) - (n00 + (n10 - n00) * sx)) * sz;
-    };
-
-    // Multi-octave noise for richer terrain
-    const fbm = (x, z) => {
+    // three.js official ImprovedNoise (Perlin) — the exact noise of the webgl_terrain example
+    const perlin = new ImprovedNoise();
+    const fbm = (x, z, s) => {
       let v = 0, amp = 1, freq = 1;
-      for (let o = 0; o < 4; o++) { v += noise(x * freq, z * freq) * amp; amp *= 0.5; freq *= 2.1; }
-      return v / 1.875; // normalise
+      for (let o = 0; o < 4; o++) { v += perlin.noise(x * freq + s, 31.7, z * freq - s) * amp; amp *= 0.5; freq *= 2.07; }
+      return v / 1.875;                       // ≈ [-1, 1]
     };
-
-    // Continent mask (ray-casting point-in-polygon)
-    const inContinent = (px, pz) => {
-      const nx = (px + size / 2) / size, nz = (pz + size / 2) / size;
-      if (nx < 0.14 || nx > 0.76 || nz < 0.09 || nz > 0.91) return 0;
+    const ridge = (x, z) => 1 - Math.abs(perlin.noise(x, 7.3, z));   // ridged noise → sharp mountain crests
+    const inContinent = (nx0, nz0) => {
+      // stretch the coastline polygon until the continent fills the whole world rectangle —
+      // the sea survives only as a thin margin, this is a landmass, not an island dot
+      const nx = (nx0 - 0.5) * 0.66 + 0.5, nz = (nz0 - 0.5) * 0.84 + 0.5;
+      if (nx < 0.14 || nx > 0.76 || nz < 0.09 || nz > 0.91) return false;
       let inside = false;
       for (let i = 0, j = CONTINENT.length - 1; i < CONTINENT.length; j = i++) {
         const xi = CONTINENT[i][0], zi = CONTINENT[i][1];
         const xj = CONTINENT[j][0], zj = CONTINENT[j][1];
         if ((zi > nz) !== (zj > nz) && nx < (xj - xi) * (nz - zi) / (zj - zi) + xi) inside = !inside;
       }
-      return inside ? 1 : 0;
+      return inside;
     };
 
-    // Displace vertices + compute vertex colors
-    const pos = geo.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
-    // Toon height bands: cream → ochre → terracotta → deep brown
-    const bands = [
-      [0.95, 0.94, 0.90],  // h=0  parchment cream
-      [0.79, 0.60, 0.25],  // h=0.3 ochre
-      [0.69, 0.38, 0.24],  // h=0.6 terracotta
-      [0.35, 0.25, 0.19],  // h=1  deep brown
-    ];
-    const sampleBand = (h) => {
-      h = Math.max(0, Math.min(1, h));
-      const idx = h * (bands.length - 1);
-      const lo = Math.floor(idx), hi = Math.min(bands.length - 1, lo + 1);
-      const t = idx - lo;
-      return [bands[lo][0] + (bands[hi][0] - bands[lo][0]) * t,
-              bands[lo][1] + (bands[hi][1] - bands[lo][1]) * t,
-              bands[lo][2] + (bands[hi][2] - bands[lo][2]) * t];
-    };
-
-    const maxH = 10;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getY(i);
-      const mask = inContinent(x, z);
-      const n = fbm(x * 0.06 + 3.7, z * 0.06 + 1.2);
-      const h = mask * n * maxH;
-      pos.setZ(i, h);
-      const c = sampleBand(mask ? n * 0.85 + 0.15 : 0.05);
-      colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
+    // raw height field: a land plateau inside the coastline, seabed outside
+    const raw = new Float32Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -WSX / 2 + (i / (N - 1)) * WSX;
+      const z = -WSZ / 2 + (j / (N - 1)) * WSZ;
+      const inside = inContinent((x + WSX / 2) / WSX, (z + WSZ / 2) / WSZ);
+      if (!inside) { raw[j * N + i] = -5.7; continue; }
+      const plains = (fbm(x * 0.0071 + 11.3, z * 0.0071 - 4.1, 0) + 0.55) * 5.7;   // rolling lowland
+      const rm = Math.max(0, ridge(x * 0.0094 + 9.2, z * 0.0094 - 3.7) - 0.52);    // crest mask
+      const range = 0.35 + 0.65 * (0.5 + 0.5 * fbm(x * 0.0033, z * 0.0033, 77));   // where the ranges live
+      raw[j * N + i] = 2.9 + plains + rm * rm * 78 * range;                       // peaks up to ~30
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    // two blur passes: the 0/1 coastline becomes a steep cliff band (readable shore, no jaggies)
+    let h = raw.slice();
+    for (let p = 0; p < 2; p++) {
+      const out = h.slice();
+      for (let j = 1; j < N - 1; j++) for (let i = 1; i < N - 1; i++) {
+        const c = h[j * N + i];
+        out[j * N + i] = c * 0.36 +
+          (h[j * N + i + 1] + h[j * N + i - 1] + h[(j + 1) * N + i] + h[(j - 1) * N + i]) * 0.11 +
+          (h[(j - 1) * N + i + 1] + h[(j - 1) * N + i - 1] + h[(j + 1) * N + i + 1] + h[(j + 1) * N + i - 1]) * 0.05;
+      }
+      h = out;
+    }
+    this._hGrid = h; this._hN = N; this._hStepX = WSX / (N - 1); this._hStepZ = WSZ / (N - 1);
+
+    // carve river valleys so the painted ribbons sit in real channels, not on ridges
+    const rPts = [];
+    for (let r = 0; r < 2; r++) for (let i = 0; i <= 40; i++) {
+      const t = 0.16 + (i / 40) * 0.68;
+      rPts.push([(t - 0.5) * WSX, this._riverZ(r, t)]);
+    }
+    const rDist = new Float32Array(N * N).fill(1e9);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -WSX / 2 + (i / (N - 1)) * WSX, z = -WSZ / 2 + (j / (N - 1)) * WSZ;
+      let best = 1e9;
+      for (let p = 0; p < rPts.length; p++) {
+        const dx = x - rPts[p][0], dz = z - rPts[p][1];
+        const dd = dx * dx + dz * dz;
+        if (dd < best) best = dd;
+      }
+      best = Math.sqrt(best);
+      rDist[j * N + i] = best;
+      if (best < 7.7 && h[j * N + i] > -1.2) h[j * N + i] -= (1 - best / 7.7) * 2.6;
+    }
+    this._rDist = rDist; this._noise = perlin;
+
+    // territory cells: every vertex belongs to its nearest zone anchor (the same 4×4 grid the
+    // 2D dominion map and the settlement anchors use) — conquests recolour the land itself
+    const anchors = [];
+    for (let z = 0; z < 16; z++) {
+      const za = zoneAnchor(z);
+      anchors.push([(za.x / VW - 0.5) * WSX, (za.y / VH - 0.5) * WSZ]);
+    }
+    const vZone = new Int16Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -WSX / 2 + (i / (N - 1)) * WSX, zc = -WSZ / 2 + (j / (N - 1)) * WSZ;
+      let best = 0, bd = 1e18;
+      for (let a = 0; a < anchors.length; a++) {
+        const dx = x - anchors[a][0], dz = zc - anchors[a][1];
+        const dd = dx * dx + dz * dz;
+        if (dd < bd) { bd = dd; best = a; }
+      }
+      vZone[j * N + i] = best;
+    }
+    this._vZone = vZone;
+
+    const pos = geo.attributes.position;
+    for (let k = 0; k < pos.count; k++) pos.setZ(k, h[k]);   // plane local Z becomes world Y after the -90° X rotation
     geo.computeVertexNormals();
 
-    const mat = new THREE.MeshToonMaterial({ vertexColors: true });
-    this.terrain = new THREE.Mesh(geo, mat);
+    this.terrain = new THREE.Mesh(geo, this._toon(0xffffff, { vertexColors: true }));
     this.terrain.rotation.x = -Math.PI / 2;
     this.scene.add(this.terrain);
+    this._colorTerrain(null);
   }
 
-  // ---- flies: InstancedMesh (1 draw call for the whole swarm) ----
-  _buildFlies() {
-    // Ellipsoid body (stretched sphere)
-    const geo = new THREE.SphereGeometry(0.35, 8, 6);
-    geo.scale(1.6, 0.8, 0.8); // elongate along local X (heading direction)
-    const mat = new THREE.MeshToonMaterial({ color: 0xffffff });
-    this.flyMesh = new THREE.InstancedMesh(geo, mat, 120);
-    this.flyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.flyMesh.count = 0;
-    this.scene.add(this.flyMesh);
-  }
-
-  // ---- rivers: two TubeGeometry rivers matching the existing sine-curve formula ----
-  _buildRivers() {
-    const riverMat = new THREE.MeshPhongMaterial({
-      color: 0x6898b0, transparent: true, opacity: 0.6, shininess: 120
-    });
-    for (let r = 0; r < 2; r++) {
-      const pts = [];
-      // Match existing drawRivers: yb at VH*0.34 / VH*0.66, mapped to 3D z
-      const zb = (r === 0 ? 0.34 : 0.66) * 100 - 50; // map to [-50,50]
-      const amp = 7, ampSm = 2;
-      for (let i = 0; i <= 44; i++) {
-        const t = i / 44;
-        const x = (t - 0.5) * 100;
-        const z = zb + Math.sin(t * 5 + r) * amp + Math.sin(t * 13) * ampSm;
-        pts.push(new THREE.Vector3(x, 0.6, z));
+  // ---- the painted land: height bands + rivers + slope rock, then the dominion overlay —
+  // house tints and border lines straight from econDynasty.zoneOwners, the same authority the
+  // 2D dominion map obeys. Repainted only when the ownership signature changes. ----
+  _colorTerrain(owners) {
+    const N = this._hN, h = this._hGrid, rDist = this._rDist, vZone = this._vZone;
+    const geo = this.terrain.geometry;
+    const pos = geo.attributes.position;
+    let colors = geo.attributes.color;
+    if (!colors) {
+      colors = new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
+      geo.setAttribute("color", colors);
+    }
+    const arr = colors.array;
+    const stX = this._hStepX, stZ = this._hStepZ;
+    const pn = this._noise;
+    const perlinJit = (i, j) => pn.noise(i * 0.31, 5.1, j * 0.31);
+    const mottleN = (i, j) => pn.noise(i * 0.13, 9.4, j * 0.13) + 1;
+    const band = (y) => {
+      if (y < -1.30) return [0.16, 0.32, 0.40];   // seabed
+      if (y < 1.20)  return [0.87, 0.80, 0.60];   // shore sand
+      if (y < 7.00)  return [0.44, 0.62, 0.30];   // grass lowland — the kingdom's green
+      if (y < 10.60) return [0.34, 0.51, 0.26];   // dark meadow / forest floor
+      if (y < 14.50) return [0.55, 0.49, 0.31];   // foothill scrub
+      if (y < 19.40) return [0.50, 0.45, 0.41];   // mountain rock
+      return [0.96, 0.97, 0.98];                  // snow caps
+    };
+    for (let k = 0; k < pos.count; k++) {
+      const y = h[k];
+      let c;
+      if (rDist[k] < 3.4 && y > -2.6) {
+        c = [0.26, 0.47, 0.60];             // painted river water in the carved channel
+      } else {
+        const i = k % N, j = (k / N) | 0;
+        const jit = perlinJit(i, j) * 0.66;   // dither the band edges
+        c = band(y + jit);
+        if (i > 0 && i < N - 1 && j > 0 && j < N - 1) {
+          const gx = (h[j * N + i + 1] - h[j * N + i - 1]) / (2 * stX);
+          const gz = (h[(j + 1) * N + i] - h[(j - 1) * N + i]) / (2 * stZ);
+          if (Math.hypot(gx, gz) > 0.6 && y > 0.9) c = [0.47, 0.42, 0.38];   // steep slopes read as bare rock
+        }
+        const m = 0.96 + 0.05 * mottleN(i, j);  // mottle so plains aren't flat paint
+        c = [c[0] * m, c[1] * m, c[2] * m];
+        // dominion overlay: tint each zone toward its holding house, line the borders
+        const z = vZone[k];
+        if (owners && z >= 0) {
+          const o = owners.get(z);
+          if (o) {
+            const hc = houseColor(o.name);
+            if (hc) c = [c[0] * 0.72 + (hc[0] / 255) * 0.28, c[1] * 0.72 + (hc[1] / 255) * 0.28, c[2] * 0.72 + (hc[2] / 255) * 0.28];
+          }
+          if (i > 0 && i < N - 1 && j > 0 && j < N - 1 &&
+              (vZone[k + 1] !== z || vZone[k - 1] !== z || vZone[k + N] !== z || vZone[k - N] !== z)) {
+            c = [c[0] * 0.55, c[1] * 0.52, c[2] * 0.50];   // border line between zones
+          }
+        }
       }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      const tubeGeo = new THREE.TubeGeometry(curve, 44, 1.2, 8, false);
-      const river = new THREE.Mesh(tubeGeo, riverMat);
-      this.scene.add(river);
-      this.rivers.push(river);
+      arr[k * 3] = c[0]; arr[k * 3 + 1] = c[1]; arr[k * 3 + 2] = c[2];
+    }
+    colors.needsUpdate = true;
+  }
+
+  // bilinear sample of the baked height field (flies ride the relief, settlements sit on the land)
+  heightAt(x, z) {
+    const g = this._hGrid; if (!g) return 0;
+    const N = this._hN;
+    const u = Math.max(0, Math.min(N - 1.001, (x + this._WSX / 2) / this._hStepX));
+    const v = Math.max(0, Math.min(N - 1.001, (z + this._WSZ / 2) / this._hStepZ));
+    const i0 = u | 0, j0 = v | 0, fu = u - i0, fv = v - j0;
+    const i1 = Math.min(N - 1, i0 + 1), j1 = Math.min(N - 1, j0 + 1);
+    const a = g[j0 * N + i0], b = g[j0 * N + i1], c = g[j1 * N + i0], d = g[j1 * N + i1];
+    const top = a + (b - a) * fu, bot = c + (d - c) * fu;
+    return top + (bot - top) * fv;
+  }
+
+  // river centreline (shared by the valley carving and the ribbon mesh)
+  _riverZ(r, t) {
+    const WS = this._WSZ || 300;
+    const zb = (r === 0 ? 0.34 : 0.66) * WS - WS / 2;
+    return zb + Math.sin(t * 5 + r) * 22.4 + Math.sin(t * 13) * 6.4;
+  }
+
+  // ---- rivers: flat blue ribbons sitting in the carved channels ----
+  _buildRivers() {
+    const mat = this._toon(0x4a7f9c, { transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+    for (let r = 0; r < 2; r++) {
+      const SEG = 64, W = 6.0;
+      const verts = [], idx = [];
+      const cz = (t) => this._riverZ(r, t);
+      for (let i = 0; i <= SEG; i++) {
+        const t = 0.16 + (i / SEG) * 0.68;          // stay on the landmass
+        const x = (t - 0.5) * this._WSX, z = cz(t);
+        const y = Math.max(this.heightAt(x, z) + 0.4, -1.8);
+        const t2 = t + 0.01;
+        let dx = (t2 - t) * this._WSX, dz = cz(t2) - z;
+        const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+        const px = -dz * W / 2, pz = dx * W / 2;
+        verts.push(x - px, y, z - pz, x + px, y, z + pz);
+      }
+      for (let i = 0; i < SEG; i++) {
+        const a = i * 2;
+        idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      this.scene.add(new THREE.Mesh(geo, mat));
     }
   }
 
-  // ---- settlements: dynamically built from econCities data (rebuilt when signature changes) ----
+  // ---- flies: procedural drosophila. Striped abdomen + thorax + head merged into one
+  // vertex-coloured geometry, instanced once for the whole swarm and tinted per fly by the
+  // wealth ramp; instanced red eyes and translucent flapping wings ride the same base
+  // matrix. Four draw calls for the entire swarm. ----
+  _buildFlies() {
+    const flat = (geo, col) => {
+      const n = geo.attributes.position.count;
+      const arr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { arr[i * 3] = col[0]; arr[i * 3 + 1] = col[1]; arr[i * 3 + 2] = col[2]; }
+      geo.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+      return geo;
+    };
+    // abdomen: ellipsoid with the melanogaster banding baked in as vertex colours
+    const abd = new THREE.SphereGeometry(0.5, 14, 10);
+    abd.scale(1.5, 0.62, 0.55); abd.translate(-0.45, 0, 0);
+    const pa = abd.attributes.position, ca = new Float32Array(pa.count * 3);
+    for (let i = 0; i < pa.count; i++) {
+      const stripe = Math.sin((pa.getX(i) + 1.2) * 7.5) > 0.2;
+      const col = stripe ? [0.34, 0.21, 0.10] : [0.85, 0.62, 0.30];
+      ca[i * 3] = col[0]; ca[i * 3 + 1] = col[1]; ca[i * 3 + 2] = col[2];
+    }
+    abd.setAttribute("color", new THREE.BufferAttribute(ca, 3));
+    const thorax = flat(new THREE.SphereGeometry(0.44, 12, 10), [0.46, 0.33, 0.19]);
+    thorax.translate(0.42, 0.06, 0);
+    const head = flat(new THREE.SphereGeometry(0.30, 12, 10), [0.31, 0.21, 0.12]);
+    head.translate(0.92, 0.02, 0);
+    const bodyGeo = mergeGeometries([abd, thorax, head], false);
+    this.flyBody = new THREE.InstancedMesh(bodyGeo,
+      new THREE.MeshToonMaterial({ gradientMap: this._toonRamp(), vertexColors: true }), 120);
+    this.flyBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.flyBody.count = 0;
+    this.scene.add(this.flyBody);
+
+    // eyes: the signature red of drosophila — fixed colour, two instances per fly
+    this.flyEye = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 8), this._toon(0xc22a1e), 240);
+    this.flyEye.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.flyEye.count = 0;
+    this.scene.add(this.flyEye);
+
+    // wings: narrow translucent blades, hinge at the origin, swept back; mirrored per side
+    const mkWing = (side) => {
+      const g = new THREE.CircleGeometry(0.5, 14);
+      g.rotateX(-Math.PI / 2);
+      g.scale(1.9, 1, 0.62);
+      g.translate(-0.85, 0, 0);
+      g.rotateY(side * 0.55);
+      return g;
+    };
+    const wingMat = new THREE.MeshToonMaterial({ color: 0xf4efe2, gradientMap: this._toonRamp(), transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
+    this.flyWingL = new THREE.InstancedMesh(mkWing(1), wingMat, 120);
+    this.flyWingR = new THREE.InstancedMesh(mkWing(-1), wingMat, 120);
+    for (const w of [this.flyWingL, this.flyWingR]) {
+      w.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      w.count = 0;
+      this.scene.add(w);
+    }
+  }
+
+  // bilinear sample of the river-distance field (keeps forests and farms out of the channels)
+  _rDistAt(x, z) {
+    const g = this._rDist; if (!g) return 1e9;
+    const N = this._hN;
+    const u = Math.max(0, Math.min(N - 1.001, (x + this._WSX / 2) / this._hStepX));
+    const v = Math.max(0, Math.min(N - 1.001, (z + this._WSZ / 2) / this._hStepZ));
+    const i0 = u | 0, j0 = v | 0, fu = u - i0, fv = v - j0;
+    const i1 = i0 + 1, j1 = j0 + 1;
+    const a = g[j0 * N + i0], b = g[j0 * N + i1], c = g[j1 * N + i0], d = g[j1 * N + i1];
+    const top = a + (b - a) * fu, bot = c + (d - c) * fu;
+    return top + (bot - top) * fv;
+  }
+
+  // ---- forests: Polyworld-style instanced low-poly trees (pines + broadleaf clumps),
+  // scattered by a noise mask over the meadow band, clear of rivers and sea ----
+  _buildForest() {
+    const flat = (geo, col) => {
+      const n = geo.attributes.position.count;
+      const arr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { arr[i * 3] = col[0]; arr[i * 3 + 1] = col[1]; arr[i * 3 + 2] = col[2]; }
+      geo.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+      return geo;
+    };
+    const nidx = (g) => (g.index ? g.toNonIndexed() : g);   // mergeGeometries demands uniform indexedness (Icosahedron is non-indexed)
+    const pineGeo = mergeGeometries([
+      nidx(flat(new THREE.CylinderGeometry(0.09, 0.14, 0.9, 6), [0.42, 0.30, 0.18]).translate(0, 0.45, 0)),
+      nidx(flat(new THREE.ConeGeometry(0.62, 1.3, 7), [0.19, 0.40, 0.20]).translate(0, 1.5, 0)),
+      nidx(flat(new THREE.ConeGeometry(0.45, 1.0, 7), [0.24, 0.47, 0.24]).translate(0, 2.25, 0)),
+    ], false);
+    const broadGeo = mergeGeometries([
+      nidx(flat(new THREE.CylinderGeometry(0.10, 0.15, 1.1, 6), [0.40, 0.28, 0.16]).translate(0, 0.55, 0)),
+      nidx(flat(new THREE.IcosahedronGeometry(0.7, 0), [0.30, 0.52, 0.24]).scale(1, 0.85, 1).translate(0, 1.6, 0)),
+    ], false);
+
+    let s = 987654321 >>> 0;
+    const rand = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    const pines = [], broads = [];
+    for (let k = 0; k < 15000 && pines.length + broads.length < 2600; k++) {
+      const x = (rand() - 0.5) * this._WSX * 0.94, z = (rand() - 0.5) * this._WSZ * 0.94;
+      const y = this.heightAt(x, z);
+      if (y < 2.2 || y > 11.9) continue;
+      if (this._rDistAt(x, z) < 9) continue;
+      if (this._noise.noise(x * 0.011 + 40.2, 12.3, z * 0.011 - 18.7) < 0.10) continue;   // forest clumps
+      (rand() < 0.62 ? pines : broads).push([x, y, z, (0.75 + rand() * 0.7) * 4.0, rand() * Math.PI * 2]);
+    }
+    const put = (list, mesh) => {
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        this._dummy.position.set(t[0], t[1] - 0.4, t[2]);
+        this._dummy.rotation.set(0, t[4], 0);
+        this._dummy.scale.setScalar(t[3]);
+        this._dummy.updateMatrix();
+        mesh.setMatrixAt(i, this._dummy.matrix);
+      }
+      mesh.count = list.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    };
+    const treeMat = this._toon(0xffffff, { vertexColors: true });
+    this.forestPine = new THREE.InstancedMesh(pineGeo, treeMat, 2600);
+    this.forestBroad = new THREE.InstancedMesh(broadGeo, treeMat, 2600);
+    put(pines, this.forestPine); put(broads, this.forestBroad);
+    this.scene.add(this.forestPine, this.forestBroad);
+  }
+
+  // ---- settlements: mud-brick model towns, rebuilt only when the census signature changes ----
   _rebuildSettlements(econCities) {
-    while (this.settlementGroup.children.length) this.settlementGroup.remove(this.settlementGroup.children[0]);
-    if (!econCities || !Array.isArray(econCities.settlements) || !econCities.settlements.length) return;
-    // Signature to detect changes
+    for (const child of [...this.settlementGroup.children]) {
+      this.settlementGroup.remove(child);
+      child.traverse((o) => { if (o.geometry) o.geometry.dispose(); });   // materials are shared singletons
+    }
+    if (!econCities || !Array.isArray(econCities.settlements) || !econCities.settlements.length) {
+      this.settlementSig = "";
+      return;
+    }
     let sig = "";
-    for (const s of econCities.settlements) sig += s.zone + ":" + s.rank + ":" + (s.houseName || "") + ",";
+    for (const s of econCities.settlements) sig += s.zone + ":" + s.rank + ":" + ((s.pop | 0) >> 2) + ":" + (s.houseName || "") + ",";
     if (sig === this.settlementSig) return;
     this.settlementSig = sig;
-
-    const mudCol = new THREE.Color(0xc6aa80);   // MUD
-    const mudHi = new THREE.Color(0xe4cea6);    // MUD_HI
-    const terraCol = new THREE.Color(0xb0603c);  // TERRA
+    const M = this._mats;
 
     for (const s of econCities.settlements) {
-      const g = new THREE.Group();
-      // Map zone to 3D coords (same mapping as flies)
       const za = zoneAnchor(s.zone);
-      const wx = (za.x / VW - 0.5) * 100;
-      const wz = (za.y / VH - 0.5) * 100;
-      g.position.set(wx, 0, wz);
-
-      // Building count by rank
-      const nBuildings = s.rank === "CITY" ? 16 : s.rank === "TOWN" ? 8 : 3;
-      const maxH = s.rank === "CITY" ? 5 : s.rank === "TOWN" ? 3 : 1.8;
-      const spread = s.rank === "CITY" ? 4 : s.rank === "TOWN" ? 2.5 : 1.5;
-
-      for (let b = 0; b < nBuildings; b++) {
-        const bw = 0.5 + Math.random() * 0.8;
-        const bh = 0.8 + Math.random() * maxH;
-        const bd = 0.5 + Math.random() * 0.8;
-        const bGeo = new THREE.BoxGeometry(bw, bh, bd);
-        const bMat = new THREE.MeshToonMaterial({ color: Math.random() > 0.3 ? mudCol : mudHi });
-        const bMesh = new THREE.Mesh(bGeo, bMat);
-        bMesh.position.set((Math.random() - 0.5) * spread, bh / 2, (Math.random() - 0.5) * spread);
-        g.add(bMesh);
-      }
-
-      // CITY gets a wall ring + corner towers
-      if (s.rank === "CITY") {
-        const wallGeo = new THREE.TorusGeometry(spread * 0.8, 0.25, 6, 24);
-        const wallMat = new THREE.MeshToonMaterial({ color: terraCol });
-        const wall = new THREE.Mesh(wallGeo, wallMat);
-        wall.rotation.x = -Math.PI / 2;
-        wall.position.y = 0.5;
-        g.add(wall);
-        for (let t = 0; t < 4; t++) {
-          const tGeo = new THREE.CylinderGeometry(0.3, 0.4, 3, 6);
-          const tMesh = new THREE.Mesh(tGeo, new THREE.MeshToonMaterial({ color: terraCol }));
-          const angle = (t / 4) * Math.PI * 2;
-          tMesh.position.set(Math.cos(angle) * spread * 0.8, 1.5, Math.sin(angle) * spread * 0.8);
-          g.add(tMesh);
+      const wx = (za.x / VW - 0.5) * this._WSX, wz = (za.y / VH - 0.5) * this._WSZ;
+      const g = new THREE.Group();
+      g.position.set(wx, this.heightAt(wx, wz) - 1.0, wz);
+      g.scale.setScalar(4.0);
+      const city = s.rank === "CITY", town = s.rank === "TOWN";
+      const nB = city ? 14 : town ? 7 : 3;
+      const spread = city ? 7 : town ? 4.2 : 2.4;
+      const hMax = city ? 4.6 : town ? 3.0 : 1.7;
+      for (let b = 0; b < nB; b++) {
+        const bw = 1.0 + Math.random() * 1.3, bh = 1.0 + Math.random() * hMax, bd = 1.0 + Math.random() * 1.3;
+        const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), Math.random() > 0.35 ? M.mud : M.mudHi);
+        const ox = (Math.random() - 0.5) * spread, oz = (Math.random() - 0.5) * spread;
+        bm.position.set(ox, bh / 2, oz);
+        bm.rotation.y = Math.random() * 0.6 - 0.3;
+        g.add(bm);
+        if (Math.random() > 0.45) {   // terracotta pyramid roof
+          const rf = new THREE.Mesh(new THREE.ConeGeometry(Math.max(bw, bd) * 0.72, 1.1, 4), M.terra);
+          rf.position.set(ox, bh + 0.55, oz);
+          rf.rotation.y = Math.PI / 4 + bm.rotation.y;
+          g.add(rf);
         }
       }
-
+      if (city || town) {   // curtain wall + capped towers
+        const wr = spread * 0.78;
+        const wall = new THREE.Mesh(new THREE.TorusGeometry(wr, city ? 0.5 : 0.34, 6, 28), M.mudSh);
+        wall.rotation.x = -Math.PI / 2;
+        wall.position.y = city ? 1.1 : 0.7;
+        g.add(wall);
+        const nt = city ? 4 : 2;
+        for (let t = 0; t < nt; t++) {
+          const a = (t / nt) * Math.PI * 2 + 0.4;
+          const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, city ? 3.4 : 2.2, 8), M.mudSh);
+          tw.position.set(Math.cos(a) * wr, city ? 1.7 : 1.1, Math.sin(a) * wr);
+          g.add(tw);
+          const cap = new THREE.Mesh(new THREE.ConeGeometry(1.0, 1.2, 8), M.terra);
+          cap.position.set(Math.cos(a) * wr, city ? 3.9 : 2.7, Math.sin(a) * wr);
+          g.add(cap);
+        }
+      }
+      // the castle seat per zone now comes from the dominion layer (_rebuildCastles),
+      // tinted and bannered in the holding house's colours — no double keep here
+      // farm plots ringing the settlement — the kingdom feeds itself
+      const nF = city ? 8 : town ? 5 : 3;
+      const gy = this.heightAt(wx, wz) - 1.0;
+      for (let q = 0; q < nF; q++) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = spread + 2 + Math.random() * 3.5;
+        const ox = Math.cos(a) * rr, oz = Math.sin(a) * rr;
+        const gq = new THREE.PlaneGeometry(2.4 + Math.random() * 1.8, 1.6 + Math.random() * 1.2);
+        gq.rotateX(-Math.PI / 2);
+        gq.rotateY(Math.random() * Math.PI);
+        const mesh = new THREE.Mesh(gq, [M.fieldA, M.fieldB, M.fieldC][(Math.random() * 3) | 0]);
+        mesh.position.set(ox, (this.heightAt(wx + ox * 4.0, wz + oz * 4.0) - gy) / 4.0 + 0.05, oz);
+        g.add(mesh);
+      }
       this.settlementGroup.add(g);
+    }
+
+    // the king's road: a tan ribbon linking the settlements in census order
+    if (econCities.settlements.length > 1) {
+      const pts = econCities.settlements.map((s) => {
+        const za = zoneAnchor(s.zone);
+        return [(za.x / VW - 0.5) * this._WSX, (za.y / VH - 0.5) * this._WSZ];
+      });
+      const verts = [], idx = [];
+      for (let p = 0; p < pts.length - 1; p++) {
+        const ax = pts[p][0], az = pts[p][1], bx = pts[p + 1][0], bz = pts[p + 1][1];
+        const SEG = 48, W = 3.5;
+        const base = verts.length / 3;
+        for (let i = 0; i <= SEG; i++) {
+          const t = i / SEG;
+          const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+          const y = this.heightAt(x, z) + 0.25;
+          let dx = bx - ax, dz = bz - az; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+          const px = -dz * W / 2, pz = dx * W / 2;
+          verts.push(x - px, y, z - pz, x + px, y, z + pz);
+        }
+        for (let i = 0; i < SEG; i++) { const a = base + i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      this.settlementGroup.add(new THREE.Mesh(geo, M.road));
+    }
+  }
+
+  // ---- dominion castles: one seat per held zone at its anchor, tinted + bannered in the
+  // holding house's colours — the 3D twin of the 2D conquest map's "♜ conqueror" markers ----
+  _rebuildCastles(owners) {
+    for (const child of [...this.castleGroup.children]) {
+      this.castleGroup.remove(child);
+      child.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    }
+    const SC = 4.0;
+    for (const [zone, o] of owners) {
+      const za = zoneAnchor(zone);
+      const wx = (za.x / VW - 0.5) * this._WSX, wz = (za.y / VH - 0.5) * this._WSZ;
+      const gy = this.heightAt(wx, wz) - 1.0;
+      const hc = houseColor(o.name) || [176, 142, 86];
+      const rgb = (hc[0] << 16) | (hc[1] << 8) | hc[2];
+      const g = new THREE.Group();
+      g.position.set(wx, gy, wz);
+      g.scale.setScalar(SC);
+      const wallMat = this._toon(0x9e805e);
+      const wall = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.0, 1.4, 8, 1, true), wallMat);
+      wall.position.y = 0.7;
+      const keep = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.9, 6.2, 8), this._toon(rgb));
+      keep.position.y = 3.1;
+      const keepTop = new THREE.Mesh(new THREE.ConeGeometry(2.1, 2.4, 8), this._toon(0xb0603c));
+      keepTop.position.y = 7.2;
+      g.add(wall, keep, keepTop);
+      for (let k = 0; k < 4; k++) {
+        const a = k * Math.PI / 2 + 0.78;
+        const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 2.8, 6), wallMat);
+        tw.position.set(Math.cos(a) * 2.75, 1.4, Math.sin(a) * 2.75);
+        g.add(tw);
+      }
+      // sigil banner: pole + house-coloured pennant above the keep
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.0, 5), this._toon(0x6b5237));
+      pole.position.y = 9.9;
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.9),
+        new THREE.MeshBasicMaterial({ color: rgb, side: THREE.DoubleSide }));
+      flag.position.set(0.85, 10.8, 0);
+      g.add(pole, flag);
+      this.castleGroup.add(g);
+    }
+  }
+
+  // ---- province names floating over the land — the atlas's own labels ----
+  _buildLabels() {
+    const mk = (text) => {
+      const cv = document.createElement("canvas");
+      cv.width = 512; cv.height = 128;
+      const c = cv.getContext("2d");
+      c.font = "italic 54px Georgia, serif";
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillStyle = "rgba(58,42,26,0.82)";
+      c.fillText(text, 256, 64);
+      const tex = new THREE.CanvasTexture(cv);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+      sp.scale.set(58, 14.5, 1);
+      return sp;
+    };
+    for (const p of PROVINCES) {
+      const x = (p.t[0] - 0.5) * this._WSX, z = (p.t[1] - 0.5) * this._WSZ;
+      const sp = mk(p.name);
+      sp.position.set(x, this.heightAt(x, z) + 22, z);
+      this.scene.add(sp);
     }
   }
 
   update(sim, econCities, now) {
-    // Update fly positions from sim data
+    const dt = Math.min(this.clock.getDelta(), 0.05);
+
+    // the dominion overlay obeys econDynasty.zoneOwners — the same authority the 2D map uses;
+    // a conquest recolours the land and raises the new house's castle on the next frame
+    const owners = new Map();
+    if (econDynasty && Array.isArray(econDynasty.zoneOwners)) {
+      for (const zo of econDynasty.zoneOwners) if (zo && zo.zone != null) owners.set(zo.zone | 0, zo);
+    }
+    let tsig = "";
+    for (const [z, o] of [...owners].sort((a, b) => a[0] - b[0])) tsig += z + ":" + (o.name || "") + ",";
+    if (tsig !== this._terrSig) {
+      this._terrSig = tsig;
+      this._colorTerrain(owners);
+      this._rebuildCastles(owners);
+    }
+
     const flies = [...sim.values()].filter(f => !f.dying);
     const d = this._dummy, c = this._color;
-
-    for (let i = 0; i < flies.length && i < 120; i++) {
+    const n = Math.min(flies.length, 120);
+    for (let i = 0; i < n; i++) {
       const f = flies[i];
-      const x = (f.x / VW - 0.5) * 100;
-      const z = (f.y / VH - 0.5) * 100;
-      const y = 2.5; // fly altitude
-
-      d.position.set(x, y, z);
-      d.rotation.set(0, -(f.heading || 0), 0);
+      const x = (f.x / VW - 0.5) * this._WSX;
+      const z = (f.y / VH - 0.5) * this._WSZ;
+      const y = Math.max(this.heightAt(x, z), 0) + 5 + Math.sin(now * 0.004 + (f.phase || 0)) * 1.6;   // ride the relief, never below sea level
       const balN = f.balN != null ? f.balN : 0.5;
-      const sz = 0.6 + balN * 0.6;
-      d.scale.set(sz, sz, sz);
+      const sz = (0.7 + balN * 0.6) * 4.0;
+      d.position.set(x, y, z);
+      d.rotation.set(Math.sin(now * 0.002 + (f.phase || 0)) * 0.12, -(f.heading || 0), 0, "YXZ");
+      d.scale.setScalar(sz);
       d.updateMatrix();
-      this.flyMesh.setMatrixAt(i, d.matrix);
-
-      // Wealth colour: reuse WEALTH_RAMP logic (slate → sage → amber → gold)
-      const wc = wealthColorAt(balN);
+      this.flyBody.setMatrixAt(i, d.matrix);
+      const wc = wealthColorAt(balN);          // the same wealth ramp the 2D field uses (slate → sage → amber → gold)
       c.setRGB(wc[0] / 255, wc[1] / 255, wc[2] / 255);
-      this.flyMesh.setColorAt(i, c);
+      this.flyBody.setColorAt(i, c);
+      // eyes ride the head
+      this._m4.copy(d.matrix).multiply(this._eyeL); this.flyEye.setMatrixAt(i * 2, this._m4);
+      this._m4.copy(d.matrix).multiply(this._eyeR); this.flyEye.setMatrixAt(i * 2 + 1, this._m4);
+      // wings: symmetric flap around the hinge axis
+      const flap = Math.sin(now * 0.05 + (f.phase || 0) * 3) * 0.5 + 0.12;
+      this._m4.copy(d.matrix).multiply(this._hingeL);
+      this._m5.makeRotationX(-flap);
+      this.flyWingL.setMatrixAt(i, this._m4.multiply(this._m5));
+      this._m4.copy(d.matrix).multiply(this._hingeR);
+      this._m5.makeRotationX(flap);
+      this.flyWingR.setMatrixAt(i, this._m4.multiply(this._m5));
     }
-    this.flyMesh.count = Math.min(flies.length, 120);
-    this.flyMesh.instanceMatrix.needsUpdate = true;
-    if (this.flyMesh.instanceColor) this.flyMesh.instanceColor.needsUpdate = true;
+    this.flyBody.count = n;
+    this.flyEye.count = n * 2;
+    this.flyWingL.count = n;
+    this.flyWingR.count = n;
+    this.flyBody.instanceMatrix.needsUpdate = true;
+    this.flyEye.instanceMatrix.needsUpdate = true;
+    this.flyWingL.instanceMatrix.needsUpdate = true;
+    this.flyWingR.instanceMatrix.needsUpdate = true;
+    if (this.flyBody.instanceColor) this.flyBody.instanceColor.needsUpdate = true;
 
-    // Rebuild settlements when econCities data changes
     this._rebuildSettlements(econCities);
-
+    if (this.water) this.water.material.uniforms["time"].value += dt;
     this.controls.update();
   }
 
