@@ -1714,9 +1714,12 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
        min-height:601px so the stacked fallback below is unaffected. --- */
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 900px) {
   .econ-feed { display: none; }
-  .panel-econ, .panel-temp, .panel-pop, .panel-chron {
+  .panel-econ, .panel-temp, .panel-pop {
     max-height: 42vh; overflow-y: auto; scrollbar-width: thin;
   }
+  /* .panel-chron is intentionally excluded: it is a full-height right-edge sheet (top:0; bottom:0),
+     not a corner panel. Constraining it to 42vh would break the chronicle browsing experience on
+     laptop-sized viewports (601px–900px height). */
 }
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 800px) {
   .temp-history { display: none; }
