@@ -95,3 +95,7 @@
 # task 51: procedural terrain splat textures — bare-imported by scene3d.js
 /terrainTex.js
   Cache-Control: no-cache, must-revalidate
+
+# task 50: GPU particle weather system — bare-imported by scene3d.js
+/particles.js
+  Cache-Control: no-cache, must-revalidate

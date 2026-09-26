@@ -14,6 +14,7 @@ import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNation
 import { cameraMode } from './camera.js';
 import { DayNight } from './dayNight.js';
 import { createTerrainTextures } from './terrainTex.js';
+import { ParticleSystem, EVENT_MAP as PARTICLE_EVENT_MAP, WEATHER as PARTICLE_WEATHER } from './particles.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -126,6 +127,12 @@ export class ThreeScene {
     this.clock = new THREE.Clock();
     this.walkMode = null;                        // task 48: assigned by main.js after construction
     this._flyPosScratch = null;                  // task 48: reused by getFlyPosition (zero allocation)
+    // ---- task 50: GPU particle weather — chronicle events become visible weather ----
+    this.particles = null;                       // the single Points-based ParticleSystem (built in _initOverlays)
+    this._pxSeenSeq = 0;                         // high-water mark over raw /annals rows already turned into particles
+    this._pxNationCursor = 0;                    // round-robin nation pick for region-agnostic events
+    this._weatherNextAt = 0;                     // performance.now() when the ambient weather next re-rolls
+    this._snowMin = null;                        // cached high-country height gate for the snow layer
     this._init();
   }
 
@@ -258,7 +265,7 @@ export class ThreeScene {
       uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
       uSunColor: { value: new THREE.Color(1.0, 0.95, 0.85) },
       uNightFactor: { value: 0.0 },
-      uSeaColor: { value: new THREE.Color(0.11, 0.42, 0.48) },
+      uSeaColor: { value: new THREE.Color(0.055, 0.28, 0.34) },   // shallow teal (linear); deep = ×0.42 in-shader
       uFoamColor: { value: new THREE.Color(0.85, 0.92, 0.94) },
       fogColor: { value: new THREE.Color(0xcfe3e6) },
       fogDensity: { value: 0.00085 },
@@ -299,22 +306,30 @@ void main() {
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   vec3 L = normalize(uSunDir);
-  // diffuse + specular
   float ndl = max(dot(N, L), 0.0);
   vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 96.0) * 0.6;
-  vec3 col = uSeaColor * (0.35 + ndl * 0.65) + uSunColor * spec;
-  // coastline foam: sample terrain height, foam where h ∈ (-0.8, 1.8)
+  // tighter, brighter sun glint + a broad secondary sheen → a wet, living surface
+  float nh = max(dot(N, H), 0.0);
+  float spec = pow(nh, 240.0) * 1.25 + pow(nh, 22.0) * 0.09;
+  // coastline distance from the baked terrain height → deep-water gradient
   vec2 terrUV = vec2(
     (vWorldPos.x + uTerrainSize.x * 0.5) / uTerrainSize.x,
     (vWorldPos.z + uTerrainSize.y * 0.5) / uTerrainSize.y
   );
+  bool onMap = terrUV.x > 0.0 && terrUV.x < 1.0 && terrUV.y > 0.0 && terrUV.y < 1.0;
+  float th = 0.0;
+  float shallow = 0.0;
+  if (onMap) {
+    th = texture2D(uCoastTex, terrUV).r * 32.0 - 8.0;  // decode: stored as (h+8)/32
+    shallow = 1.0 - smoothstep(-1.0, 3.5, th);
+  }
+  // deep abyssal teal offshore → brighter shallow shelf near the beach
+  vec3 seaBase = mix(uSeaColor * 0.42, uSeaColor, shallow);
+  vec3 col = seaBase * (0.30 + ndl * 0.70) + uSunColor * spec;
+  // coastline foam (kept): a band right at the waterline, gently animated
   float foam = 0.0;
-  if (terrUV.x > 0.0 && terrUV.x < 1.0 && terrUV.y > 0.0 && terrUV.y < 1.0) {
-    float th = texture2D(uCoastTex, terrUV).r * 32.0 - 8.0;  // decode: stored as (h+8)/32
-    float coastDist = abs(th);
-    foam = 1.0 - smoothstep(0.0, 2.8, coastDist);
-    // animate foam with a noise-like pattern
+  if (onMap) {
+    foam = 1.0 - smoothstep(0.0, 2.8, abs(th));
     foam *= 0.5 + 0.5 * sin(vWorldPos.x * 0.3 + uTime * 2.0) * sin(vWorldPos.z * 0.25 - uTime * 1.5);
     foam = clamp(foam, 0.0, 1.0) * 0.7;
   }
@@ -325,6 +340,9 @@ void main() {
   float depth = length(vWorldPos - cameraPosition);
   float fogFactor = 1.0 - exp(-fogDensity * fogDensity * depth * depth);
   gl_FragColor = vec4(mix(col, fogColor, clamp(fogFactor, 0.0, 1.0)), 0.92);
+  // match the tone-mapped PBR terrain: ACES + sRGB (the pars live in three's program prefix)
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }`;
     const mat = new THREE.ShaderMaterial({
       uniforms: this._waterUniforms,
@@ -425,78 +443,90 @@ void main() {
     for (let k = 0; k < pos.count; k++) pos.setZ(k, h[k]);   // plane local Z becomes world Y after the -90° X rotation
     geo.computeVertexNormals();
 
-    // task 51: wowser-style terrain splatting — 4-layer texture blend + nation tint.
-    // Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
+    // task 51 (redo): wowser-style terrain splatting on top of the FULL PBR pipeline.
+    // Portions adapted from wowserhq/scene (MIT), © Wowser Contributors.
+    // The land is a MeshStandardMaterial, so it keeps env-map sheen (scene.environment), the real
+    // sun/hemi lights, FogExp2 and ACES tone-mapping; onBeforeCompile only injects the 4-layer
+    // albedo splat + a detail-normal micro-relief. dayNight.js already drives tm.envMapIntensity
+    // (1.0→0.10) so the land dims at night alongside everything else.
     const texSet = createTerrainTextures();
-    const repeat = new THREE.Vector2(WSX / 8, WSZ / 8);   // ~90×56 tile repeats
-    this._terrainUniforms = {
+    const splatUniforms = {
       tGrass: { value: texSet.grass },
       tRock:  { value: texSet.rock },
       tSand:  { value: texSet.sand },
       tSnow:  { value: texSet.snow },
-      uRepeat: { value: repeat },
-      uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
-      uSunColor: { value: new THREE.Color(1.0, 0.95, 0.85) },
-      uAmbient: { value: new THREE.Color(0.28, 0.32, 0.36) },
-      uNightFactor: { value: 0.0 },
-      fogColor: { value: new THREE.Color(0xcfe3e6) },
-      fogDensity: { value: 0.00085 },
+      tDetailNormal: { value: texSet.detailNormal },
+      // 64 world units per tile → ~11×7 repeats over the 720×450 island (was 90×56 → obvious tiling)
+      uTexScale: { value: new THREE.Vector2(1 / 64, 1 / 64) },
     };
-    const terrainVert = `// Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
-attribute vec4 aSplat;
-attribute vec3 aNation;
-varying vec4 vSplat;
-varying vec3 vNation;
-varying vec3 vNormal;
-varying vec3 vWorldPos;
-varying vec2 vUv;
-void main() {
-  vSplat = aSplat;
-  vNation = aNation;
-  vUv = uv;
-  vNormal = normalize(normalMatrix * normal);
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  vWorldPos = wp.xyz;
-  gl_Position = projectionMatrix * viewMatrix * wp;
-}`;
-    const terrainFrag = `// Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
-uniform sampler2D tGrass, tRock, tSand, tSnow;
-uniform vec2 uRepeat;
-uniform vec3 uSunDir, uSunColor, uAmbient;
-uniform float uNightFactor;
-uniform vec3 fogColor;
-uniform float fogDensity;
-varying vec4 vSplat;
-varying vec3 vNation;
-varying vec3 vNormal;
-varying vec3 vWorldPos;
-varying vec2 vUv;
-void main() {
-  vec2 uv = vUv * uRepeat;
-  vec4 cGrass = texture2D(tGrass, uv);
-  vec4 cRock  = texture2D(tRock,  uv * 1.31);
-  vec4 cSand  = texture2D(tSand,  uv * 0.79);
-  vec4 cSnow  = texture2D(tSnow,  uv * 1.13);
-  vec3 albedo = cGrass.rgb * vSplat.x + cRock.rgb * vSplat.y
-              + cSand.rgb * vSplat.z + cSnow.rgb * vSplat.w;
-  // nation tint — soft 18% dye so the land still reads natural
-  albedo = mix(albedo, vNation, 0.18);
-  // simple Lambert + ambient
-  vec3 N = normalize(vNormal);
-  float ndl = max(dot(N, normalize(uSunDir)), 0.0);
-  vec3 lit = albedo * (uAmbient + uSunColor * ndl);
-  // night dimming
-  lit *= mix(1.0, 0.12, uNightFactor);
-  // exponential-squared fog (matches Three.js FogExp2)
-  float depth = length(vWorldPos - cameraPosition);
-  float fogFactor = 1.0 - exp(-fogDensity * fogDensity * depth * depth);
-  gl_FragColor = vec4(mix(lit, fogColor, clamp(fogFactor, 0.0, 1.0)), 1.0);
-}`;
-    const terrainMat = new THREE.ShaderMaterial({
-      uniforms: this._terrainUniforms,
-      vertexShader: terrainVert,
-      fragmentShader: terrainFrag,
+    this._terrainUniforms = splatUniforms;
+
+    const terrainMat = new THREE.MeshStandardMaterial({
+      roughness: 0.86,
+      metalness: 0.0,
+      vertexColors: false,
+      envMapIntensity: 1.0,
+      dithering: true,
     });
+    // unique cache key → the splat program is never shared with other MeshStandardMaterials
+    terrainMat.customProgramCacheKey = () => 'murmur-terrain-splat-v2';
+    terrainMat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, splatUniforms);
+
+      // vertex: carry splat weights, nation colour and world position into the fragment stage
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <common>',
+        `#include <common>
+         attribute vec4 aSplat;
+         attribute vec3 aNation;
+         varying vec4 vSplat;
+         varying vec3 vNation;
+         varying vec3 vWorldPos2;`
+      );
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         vSplat = aSplat;
+         vNation = aNation;
+         vWorldPos2 = (modelMatrix * vec4(position, 1.0)).xyz;`
+      );
+
+      // fragment: declare the splat samplers + varyings
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <common>',
+        `#include <common>
+         uniform sampler2D tGrass, tRock, tSand, tSnow, tDetailNormal;
+         uniform vec2 uTexScale;
+         varying vec4 vSplat;
+         varying vec3 vNation;
+         varying vec3 vWorldPos2;`
+      );
+      // albedo: world-space multi-layer splat (square tiles, per-layer offsets hide repetition)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `vec2 tUv = vWorldPos2.xz * uTexScale;
+         vec3 cG = texture2D(tGrass, tUv).rgb;
+         vec3 cR = texture2D(tRock,  tUv * 1.37 + 0.31).rgb;
+         vec3 cS = texture2D(tSand,  tUv * 0.73 + 0.67).rgb;
+         vec3 cN = texture2D(tSnow,  tUv * 1.13 + 0.13).rgb;
+         vec3 splatAlbedo = cG * vSplat.x + cR * vSplat.y + cS * vSplat.z + cN * vSplat.w;
+         splatAlbedo = mix(splatAlbedo, vNation, 0.08);
+         diffuseColor.rgb = splatAlbedo;`
+      );
+      // roughness: snow/rock read smoother (icy / wet sheen), grass + sand stay matte
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+         roughnessFactor = clamp(roughnessFactor - vSplat.w * 0.30 - vSplat.y * 0.12, 0.34, 1.0);`
+      );
+      // detail normal: micro-relief so the ground is never flat (subtle tangent-space tilt)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+         vec3 dn = texture2D(tDetailNormal, tUv * 3.0).xyz * 2.0 - 1.0;
+         normal = normalize(normal + vec3(dn.xy, 0.0) * 0.45);`
+      );
+    };
     this.terrain = new THREE.Mesh(geo, terrainMat);
     this.terrain.rotation.x = -Math.PI / 2;
     this.scene.add(this.terrain);
@@ -1933,6 +1963,21 @@ void main() {
       "font:600 11px Georgia,serif;color:#28201a;pointer-events:none;max-width:210px;line-height:16px;";
     document.body.appendChild(el);
     this._legendEl = el;
+
+    // ---- task 50: GPU particle weather — one Points object for every chronicle burst + the ambient
+    // rain/snow layer. Built LAST so the renderer + scene already exist; isolated so a shader-compile
+    // failure can never blank the diorama. maxParticles auto-halves on mobile (particles.js). ----
+    try {
+      this.particles = new ParticleSystem(this.scene, this.renderer);
+      // resume a stored weather layer if one is still fresh (< ~12 min), else roll one soon
+      const rw = this.particles.restoredWeather;
+      if (rw && PARTICLE_WEATHER[rw]) { this._startWeather(rw); this._weatherNextAt = performance.now() + (5 + Math.random() * 5) * 60000; }
+      else this._weatherNextAt = performance.now() + 20000;   // first live roll ~20s after load
+      // debug hooks (headless verification): force a burst / a weather layer from the console
+      window.__murmurBurst = (kind) => { const p = PARTICLE_EVENT_MAP[(kind || '').toUpperCase()]; if (!p || !this.particles) return false; this._emitEventBurst(p, null); return true; };
+      window.__murmurWeather = (type) => { if (!this.particles) return false; if (type === 'clear') { this.particles.stopAmbient(); return true; } return !!this._startWeather(type); };
+      window.__murmurParticles = () => this.particles;
+    } catch (e) { console.warn('[scene3d] particle system init failed:', e); this.particles = null; }
   }
 
   // one shared radial-gradient canvas texture for every glow sprite (prophet halo / candle point)
@@ -2257,6 +2302,9 @@ void main() {
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
     try { this._updateTemple(now, dt); } catch (e) { console.warn("temple", e); }
     try { this._updateLegend(sim, now); } catch (e) { console.warn("legend", e); }
+    // ---- task 50: GPU particle weather — consume new chronicle rows as bursts, roll the ambient
+    // weather, then advance the shader clock. Fully isolated: a particle fault never vetoes the frame.
+    try { this._updateParticleWeather(now, dt); } catch (e) { console.warn("particles", e); }
   }
 
   // ============================ task 7 — layer implementations ============================
@@ -2632,6 +2680,138 @@ void main() {
     }
   }
 
+  // ============================ task 50 — GPU particle weather ============================
+  // Turn the raw /annals rows into visible weather. Each NEW chronicle event whose kind has a
+  // particle preset fires ONE GPU burst anchored on the relevant nation; the ambient rain/snow
+  // layer re-rolls every 5–10 min. All motion lives in the vertex shader — this method only feeds
+  // it events + advances the clock, so it does zero per-particle CPU work.
+  _updateParticleWeather(now, dt) {
+    const ps = this.particles;
+    if (!ps) return;
+    // night linkage: particles glow brighter after dark (read straight off the day/night driver)
+    ps.nightFactor = this.dayNight ? this.dayNight.nightFactor : 0;
+
+    // ---- ① ambient weather scheduler: a fresh random layer every 5–10 minutes ----
+    if (now >= this._weatherNextAt) {
+      this._weatherNextAt = now + (5 + Math.random() * 5) * 60000;
+      const roll = Math.random();
+      if (roll < 0.45) this._startWeather('rain');        // ~45% rain
+      else if (roll < 0.75) this._startWeather('snow');   // ~30% snow (settles only over peaks)
+      else ps.stopAmbient();                              // ~25% clear
+    }
+
+    // ---- ② chronicle bursts: consume raw rows newer than the high-water mark ----
+    const rows = state.chronRows;
+    if (Array.isArray(rows) && rows.length) {
+      const head = rows[0].seq || 0;                 // rows are desc by seq → [0] is the newest
+      if (this._pxSeenSeq === 0) {
+        // first sight: seed the mark WITHOUT emitting, so a reload never floods the whole backlog
+        this._pxSeenSeq = head;
+      } else if (head > this._pxSeenSeq) {
+        let fired = 0;
+        for (const e of rows) {
+          const sq = e.seq || 0;
+          if (sq <= this._pxSeenSeq) break;
+          if (fired >= 6) break;                     // a reconnect can hand back dozens — pace them
+          const preset = PARTICLE_EVENT_MAP[e.kind];
+          if (preset) { this._emitEventBurst(preset, e); fired++; }
+        }
+        this._pxSeenSeq = head;
+      }
+    }
+
+    ps.update(dt, this.camera);
+  }
+
+  // fire one event burst, resolving the world anchor + any per-event colour override
+  _emitEventBurst(preset, e) {
+    const anchor = this._particleAnchor(preset.region || 'field', e);
+    // only a dynasty/era banner wears the falling house's colour; every other family keeps its palette
+    if (!(preset.useNationColor && anchor.color)) anchor.color = null;
+    this.particles.emit(preset, anchor);
+  }
+
+  // resolve a preset region (+ optional event) into a world anchor {x,y,z,radius,color}
+  _particleAnchor(region, e) {
+    const nd = this._nationData;
+    const seeds = nd && Array.isArray(nd.nationSeeds) ? nd.nationSeeds : null;
+    const colors = nd && Array.isArray(nd.nationColors) ? nd.nationColors : null;
+    let x = 0, z = 0, nationIdx = -1;
+    let radius = region === 'capital' ? 12 : region === 'graveyard' ? 22 : region === 'plague' ? 34 : region === 'border' ? 26 : 55;
+
+    // ① prefer the live actor's fly when the event names one (a hero/prophet burst sits on the fly)
+    const actors = e && Array.isArray(e.actors) ? e.actors : null;
+    const fa = (actors && actors[0] != null && this._simRef) ? this._simRef.get(actors[0]) : null;
+    if (fa && !fa.dying) {
+      x = (fa.x / state.VW - 0.5) * this._WSX;
+      z = (fa.y / state.VH - 0.5) * this._WSZ;
+      nationIdx = this._nearestNation(x, z, seeds);
+    } else if (seeds && seeds.length) {
+      if (region === 'border' && seeds.length >= 2) {
+        // a border clash lands halfway between two random realms
+        const i = Math.floor(Math.random() * seeds.length);
+        const j = (i + 1 + Math.floor(Math.random() * (seeds.length - 1))) % seeds.length;
+        x = (seeds[i].x + seeds[j].x) * 0.5; z = (seeds[i].z + seeds[j].z) * 0.5;
+        nationIdx = i;
+      } else {
+        // nation / capital / plague / graveyard / field → a realm centroid (round-robin for variety)
+        nationIdx = this._pxNationCursor = (this._pxNationCursor + 1) % seeds.length;
+        x = seeds[nationIdx].x; z = seeds[nationIdx].z;
+        if (region === 'field') radius = 70;
+      }
+    }
+
+    // vertical placement: a rising burst starts just above the crest; a falling layer starts high
+    const gy = Math.max(this.heightAt(x, z), 0);
+    const falling = (region === 'nation' || region === 'graveyard');
+    const y = gy + (falling ? 34 : 6);
+
+    const nc = (nationIdx >= 0 && colors && colors[nationIdx]) ? colors[nationIdx] : null;
+    return { x, y, z, radius, color: nc ? [nc.r, nc.g, nc.b] : null };
+  }
+
+  _nearestNation(x, z, seeds) {
+    if (!seeds || !seeds.length) return -1;
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < seeds.length; i++) {
+      const dx = seeds[i].x - x, dz = seeds[i].z - z, d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  // start an ambient rain/snow layer across the whole continent (ground sampled cheaply, once)
+  _startWeather(type) {
+    const ps = this.particles;
+    if (!ps || !PARTICLE_WEATHER[type]) return false;
+    const hx = this._WSX * 0.5, hz = this._WSZ * 0.5;
+    const written = ps.startAmbient(type, {
+      x0: -hx, x1: hx, z0: -hz, z1: hz,
+      groundFn: (x, z) => this.heightAt(x, z),
+      minGround: type === 'snow' ? this._snowMinGround() : undefined,
+    });
+    return written > 0;
+  }
+
+  // The task's literal ">12" snow gate assumed a taller relief than this diorama's (its mountain term
+  // rm²·62·gate rarely clears 12), so snow would never find a peak and the layer stayed empty. Instead
+  // crown the actual high country: the 90th-percentile LAND height, clamped to a sane band, cached once.
+  _snowMinGround() {
+    if (this._snowMin != null) return this._snowMin;
+    const h = this._hGrid;
+    let v = 8;
+    if (h && h.length) {
+      const vals = [];
+      for (let i = 0; i < h.length; i += 7) if (h[i] > 0.5) vals.push(h[i]);
+      if (vals.length) {
+        vals.sort((a, b) => a - b);
+        v = vals[Math.floor(vals.length * 0.90)];
+      }
+    }
+    this._snowMin = Math.min(14, Math.max(4, v));
+    return this._snowMin;
+  }
+
   // ⑤ murmuration mesh — faint threads between close flies while the swarm is cohesive
   _updateMeshLines(sim) {
     const ok = state.qualityCoeff > 0.6 && state.cohSmoothed > 0.34;
@@ -2739,35 +2919,20 @@ void main() {
     dn.update(tick, gen, now);
   }
 
-  // task 51: sync the terrain splat shader uniforms with the live dayNight state each frame.
+  // task 51 (redo): the terrain is now a MeshStandardMaterial — its day/night rides on the real
+  // sun/hemi lights + scene.fog + envMapIntensity (all driven by dayNight.js), so there are no
+  // terrain uniforms left to push. This shim now only feeds the custom WATER shader, which still
+  // shades + fogs itself in-shader.
   _syncTerrainUniforms() {
-    const u = this._terrainUniforms;
     const wu = this._waterUniforms;
     const dn = this.dayNight;
     const fog = this.scene.fog;
-    if (dn) {
-      if (u) {
-        u.uSunDir.value.copy(dn._sunDir);
-        u.uNightFactor.value = dn.nightFactor;
-        if (this.sunLight) u.uSunColor.value.copy(this.sunLight.color).multiplyScalar(this.sunLight.intensity * 0.8);
-        if (this.hemiLight) {
-          const amb = u.uAmbient.value;
-          amb.copy(this.hemiLight.color).multiplyScalar(0.35);
-          amb.r += this.hemiLight.groundColor.r * 0.15;
-          amb.g += this.hemiLight.groundColor.g * 0.15;
-          amb.b += this.hemiLight.groundColor.b * 0.15;
-        }
-      }
-      if (wu) {
-        wu.uSunDir.value.copy(dn._sunDir);
-        wu.uNightFactor.value = dn.nightFactor;
-        if (this.sunLight) wu.uSunColor.value.copy(this.sunLight.color).multiplyScalar(this.sunLight.intensity * 0.7);
-      }
+    if (dn && wu) {
+      wu.uSunDir.value.copy(dn._sunDir);
+      wu.uNightFactor.value = dn.nightFactor;
+      if (this.sunLight) wu.uSunColor.value.copy(this.sunLight.color).multiplyScalar(this.sunLight.intensity * 0.7);
     }
-    if (fog) {
-      if (u) { u.fogColor.value.copy(fog.color); u.fogDensity.value = fog.density; }
-      if (wu) { wu.fogColor.value.copy(fog.color); wu.fogDensity.value = fog.density; }
-    }
+    if (fog && wu) { wu.fogColor.value.copy(fog.color); wu.fogDensity.value = fog.density; }
   }
 
   // task 49: the current watch (☀️/🌅/🌙/🌄, 🌑 under eclipse) rides as a leading glyph INSIDE the
@@ -2992,6 +3157,10 @@ void main() {
       if (this._onClick) this._cvEl.removeEventListener("click", this._onClick);
     }
     if (this._legendEl && this._legendEl.parentNode) this._legendEl.parentNode.removeChild(this._legendEl);
+    // task 50: tear the particle system down first — it removes its Points from the scene so the
+    // traverse below never double-disposes the shared geometry/material — and drop the debug hooks.
+    if (this.particles) { try { this.particles.dispose(); } catch (_) { /* already gone */ } this.particles = null; }
+    try { delete window.__murmurBurst; delete window.__murmurWeather; delete window.__murmurParticles; } catch (_) { /* ignore */ }
     const seenTex = new Set();
     const killMat = (m) => {
       for (const kk of ["map", "alphaMap", "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "gradientMap", "envMap"]) {
@@ -3008,7 +3177,7 @@ void main() {
     });
     if (this._coastTex && this._coastTex.dispose) { this._coastTex.dispose(); }   // task 51: coast height texture
     if (this._terrainUniforms) {
-      for (const k of ['tGrass','tRock','tSand','tSnow']) {
+      for (const k of ['tGrass','tRock','tSand','tSnow','tDetailNormal']) {
         const t = this._terrainUniforms[k] && this._terrainUniforms[k].value;
         if (t && t.dispose && !seenTex.has(t)) { seenTex.add(t); t.dispose(); }
       }
