@@ -2608,6 +2608,14 @@ html[dir="rtl"] .wk-row {
   line-height: 1.2;
 }
 #era-hud:empty { display: none; }
+/* task 49: the day/night watch glyph (☀️ morning→noon, ☀️ afternoon, 🌙 night, 🌄 dawn, 🌑 eclipse)
+   leads the era pill. scene3d._updateDayPhaseHud writes it into a .era-hud-phase span as the first
+   child of #era-hud — purely decorative, so it never disturbs the bottom-centre HUD geometry. */
+#era-hud .era-hud-phase {
+  flex: none; align-self: center;
+  font-size: 13px; line-height: 1;
+  filter: saturate(1.15) drop-shadow(0 0 3px rgba(var(--gold-rgb), 0.35));
+}
 #era-hud .era-hud-num {
   flex: none;
   font-family: var(--title); font-size: 12.5px; font-weight: 700;

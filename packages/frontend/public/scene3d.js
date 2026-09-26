@@ -12,6 +12,7 @@ import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './rende
 import { select as selectFly, deselect as deselectFly } from './inspector.js';
 import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
 import { cameraMode } from './camera.js';
+import { DayNight } from './dayNight.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -59,6 +60,8 @@ export class ThreeScene {
     this.terrain = null;
     this.water = null;              // deep-sea plane: MeshStandardMaterial + scrolling normal map (no transmission, no mirror pass)
     this.sky = null;                // three.js official Sky (Preetham model)
+    this.skyUniforms = null;        // task 49: the Sky shader uniforms, driven per-frame by dayNight
+    this.dayNight = null;           // task 49: tick-driven day/night cycle (sun, lights, fog, stars, glow)
     this.sun = new THREE.Vector3();
     this.flyBody = null;            // instanced drosophila bodies (striped, wealth-tinted)
     this.flyEye = null;             // instanced red eyes (two per fly)
@@ -107,6 +110,8 @@ export class ThreeScene {
     this._shardRings = []; this._shardGuide = null;
     this._graveHits = [];                      // task 20②: invisible ×3 hit proxies, one per necropolis sprite
     this._eraHudEl = null; this._eraSig = "";  // task 20⑥: era label is a fixed DOM HUD, not a camera-riding Sprite
+    this._dayPhaseEl = null; this._dayPhaseIcon = "";   // task 49: the ☀/🌅/🌙/🌄 watch glyph riding inside #era-hud
+    this._castleWindowGeo = null; this._castleWindowMats = null;   // task 49: arrow-slits split out so they can glow at night
     // ---- task 32: civ-stage atmosphere cross-fade scratch (pre-allocated, never re-created in update()) ----
     this._civStage = null;            // current applied stage (null ⇒ never set ⇒ the first setCivStage snaps, no intro fade)
     this._civFadeStart = 0;           // performance.now() origin of the armed ≤2s cross-fade
@@ -204,6 +209,9 @@ export class ThreeScene {
     for (const [fn, name] of steps) {
       try { fn.call(this); } catch (e) { console.warn('[scene3d] step failed:', name, e); }
     }
+    // task 49: the tick-driven day/night cycle. Built AFTER the sky/lights exist so it can bind
+    // to them; isolated so a failure leaves the (still lit) scene intact rather than blank.
+    try { this.dayNight = new DayNight(this); } catch (e) { console.warn('[scene3d] dayNight init failed:', e); }
   }
 
   // ---- sky: three.js official Sky addon (Preetham model, the webgl_shaders_sky example recipe) ----
@@ -211,11 +219,16 @@ export class ThreeScene {
     const sky = new Sky();
     sky.scale.setScalar(45000);
     this.scene.add(sky);
+    this.sky = sky;                       // task 49: dayNight drives this sky's uniforms per frame
     const u = sky.material.uniforms;
+    this.skyUniforms = u;
     u["turbidity"].value = 5;
     u["rayleigh"].value = 2.2;
     u["mieCoefficient"].value = 0.004;
     u["mieDirectionalG"].value = 0.85;
+    // task 49: this fixed sun is only the PMREM env-bake pose (the sea's sheen). The LIVE sun —
+    // its position, the key light and every sky uniform — is recomputed each frame by dayNight
+    // off the simulation tick, so the elevation/azimuth here are no longer the rendered truth.
     const elevation = 34, azimuth = 122;
     const phi = THREE.MathUtils.degToRad(90 - elevation);
     const theta = THREE.MathUtils.degToRad(azimuth);
@@ -674,8 +687,10 @@ export class ThreeScene {
     const head = flat(new THREE.SphereGeometry(0.30, 12, 10), [0.31, 0.21, 0.12]);
     head.translate(0.92, 0.02, 0);
     const bodyGeo = mergeGeometries([abd, thorax, head], false);
+    // task 49: the bodies carry a warm emissive that dayNight lifts at night — the swarm reads as
+    // fireflies over the dark island. emissiveIntensity starts at 0 (invisible in daylight).
     this.flyBody = new THREE.InstancedMesh(bodyGeo,
-      new THREE.MeshToonMaterial({ gradientMap: this._toonRamp(), vertexColors: true }), 120);
+      new THREE.MeshToonMaterial({ gradientMap: this._toonRamp(), vertexColors: true, emissive: 0xffd27a, emissiveIntensity: 0 }), 120);
     this.flyBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.flyBody.count = 0;
     // task 20③: instances scatter across the whole 720×450 continent, far beyond the base geometry's
@@ -763,6 +778,7 @@ export class ThreeScene {
       // per-nation toon materials are disposable (the shared caches live on this._castle*Geo)
       child.traverse((o) => { if (o.material) o.material.dispose(); });
     }
+    this._castleWindowMats = [];   // task 49: the just-disposed window materials are gone; repopulated below
     const nat = this._nationData;
     if (!nat || !Array.isArray(nat.nationSeeds) || !nat.nationSeeds.length) return;
 
@@ -790,7 +806,7 @@ export class ThreeScene {
       const WOOD = [0.42, 0.30, 0.20];  // doors / flag poles
       const DARK = [0.20, 0.14, 0.10];  // the recessed gate passage
       const WIN = [0.08, 0.06, 0.12];   // window voids — near-black with a purple cast
-      const stone = [], roof = [], wood = [], flag = [];
+      const stone = [], roof = [], wood = [], flag = [], windows = [];   // task 49: windows split out so they can glow
       const MOT = 0.12;  // task 46: doubled mottle (was 0.06) for visible stonework texture
       const merlonRing = (cx, cz, r, y, count, mw, mh, md) => {
         for (let i = 0; i < count; i++) {
@@ -835,7 +851,7 @@ export class ThreeScene {
           const win = new THREE.BoxGeometry(0.4, 1.2, 0.7);
           win.rotateY(-wa);
           win.translate(wx, wy, wz);
-          stone.push(solid(win, WIN, 0));
+          windows.push(solid(win, WIN, 0));
         }
         if (t < 3) flagTops.push([tx, 18.1, tz, a]);
       }
@@ -851,7 +867,7 @@ export class ThreeScene {
         // task 46: single window slit on each low tower
         const wx = tx + Math.cos(a) * 2.3, wz = tz + Math.sin(a) * 2.3;
         const lwin = new THREE.BoxGeometry(0.35, 0.9, 0.6); lwin.rotateY(-a); lwin.translate(wx, 4.2, wz);
-        stone.push(solid(lwin, WIN, 0));
+        windows.push(solid(lwin, WIN, 0));
       }
       // GATEHOUSE: twin flanking towers with conical caps + dark recessed passage + stone arch
       for (const sz of [-3.6, 3.6]) {
@@ -887,10 +903,10 @@ export class ThreeScene {
         const ka = kw * Math.PI * 0.5;
         const kwx = Math.cos(ka) * 4.8, kwz = Math.sin(ka) * 4.8;
         const kwin = new THREE.BoxGeometry(0.5, 2.2, 0.9); kwin.rotateY(-ka); kwin.translate(kwx, 9.5, kwz);
-        stone.push(solid(kwin, WIN, 0));
+        windows.push(solid(kwin, WIN, 0));
         // a smaller upper window
         const kwin2 = new THREE.BoxGeometry(0.4, 1.4, 0.7); kwin2.rotateY(-ka); kwin2.translate(kwx * 0.95, 13.0, kwz * 0.95);
-        stone.push(solid(kwin2, WIN, 0));
+        windows.push(solid(kwin2, WIN, 0));
       }
       flagTops.push([0, 21.8, 0, 0]);
       for (const [qx, qz] of [[3.4, 3.4], [-3.4, 3.4], [3.4, -3.4], [-3.4, -3.4]]) {
@@ -922,7 +938,7 @@ export class ThreeScene {
         const cwa = a + 0.55;
         const cwx = hx + Math.cos(cwa) * 1.82, cwz = hz + Math.sin(cwa) * 1.82;
         const cw = new THREE.BoxGeometry(0.15, 0.7, 0.6); cw.rotateY(-a); cw.translate(cwx, 1.8, cwz);
-        stone.push(solid(cw, WIN, 0));
+        windows.push(solid(cw, WIN, 0));
       }
       // ---- task 46: courtyard WELL — stone ring + timber frame + tiny cone roof ----
       {
@@ -958,6 +974,7 @@ export class ThreeScene {
       this._castleRoofGeo = mergeGeometries(roof, false);
       this._castleWoodGeo = mergeGeometries(wood, false);
       this._castleFlagGeo = mergeGeometries(flag, false);
+      this._castleWindowGeo = mergeGeometries(windows, false);   // task 49: every arrow-slit/pane in one shared mesh
     }
 
     // nation id → monochrome palette { s: stonework, r: roofs } — amber / gold / cream / grey / crimson
@@ -982,6 +999,12 @@ export class ThreeScene {
       group.add(new THREE.Mesh(this._castleRoofGeo, this._toon(pal.r, { vertexColors: true })));
       group.add(new THREE.Mesh(this._castleWoodGeo, this._toon(0xffffff, { vertexColors: true })));
       group.add(new THREE.Mesh(this._castleFlagGeo, this._toon(pal.s, { vertexColors: true, side: THREE.DoubleSide })));
+      // task 49: a 5th mesh carries the window voids on an emissive material. Diffuse stays the
+      // near-black WIN vertex colour by day; at night dayNight lifts emissiveIntensity so every
+      // arrow-slit banks like a hearth. One extra draw call per castle (25 total) — no new lights.
+      const winMat = this._toon(0xffffff, { vertexColors: true, emissive: 0xff9030, emissiveIntensity: 0 });
+      group.add(new THREE.Mesh(this._castleWindowGeo, winMat));
+      this._castleWindowMats.push(winMat);
       this.castleGroup.add(group);
     }
   }
@@ -2046,6 +2069,7 @@ export class ThreeScene {
     try { this._updateFaith(now); } catch (e) { console.warn("faith", e); }
     try { this._updateDayNight(now); } catch (e) { console.warn("dayNight", e); }
     try { this._updateEraHud(); } catch (e) { console.warn("eraHud", e); }
+    try { this._updateDayPhaseHud(); } catch (e) { console.warn("dayPhaseHud", e); }   // task 49: after era-hud so an era rewrite can't drop the watch glyph
     try { this._updateSwarmAura(now); } catch (e) { console.warn("swarmAura", e); }
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
     try { this._updateTemple(now, dt); } catch (e) { console.warn("temple", e); }
@@ -2351,6 +2375,9 @@ export class ThreeScene {
   }
 
   _chronFxSpawn(fx) {
+    // task 49: a dynasty fall / era passage rides in as an "eclipse" chronFx (pushed by render2d's
+    // spawnChronFx) — it carries no world position, it just forces the blood eclipse on the sky.
+    if (fx.kind === "eclipse") { if (this.dayNight) this.dayNight.forceEclipse(fx.ticks || 30); return; }
     // world position: the live actor's fly if present, else the entry's atlas coords, else the field's heart
     let wx = null, wz = null;
     const fa = (fx.a != null && this._simRef) ? this._simRef.get(fx.a) : null;
@@ -2514,23 +2541,37 @@ export class ThreeScene {
   // ⑦ chronicle ambient — REMOVED (task 20①). The totem steles / school / lost-art / coffer map
   // decoration read as scattered grey blocks; the chronicle drawer + bottom ticker (DOM) remain.
 
-  // ⑧ day/night — the ≈7-min light cycle drives the key light's colour & level; tempSmoothed grades the hue
+  // ⑧ day/night — task 49: the sun is now driven by the SIMULATION TICK, not a wall-clock sine.
+  // One generation (≈42 ticks) is one full turn of the sky. All the light/fog/sky/star/glow work
+  // lives in dayNight.js; this shim only feeds it the authoritative tick + generation off state and
+  // repaints the watch glyph. (The old now*0.00025 time-based cycle and its tempSmoothed hue nudge
+  // are retired — the tick is the single source of diurnal truth now.)
   _updateDayNight(now) {
-    const cyc = 0.5 + 0.5 * Math.sin(now * 0.00025);       // 0 night → 0.5 noon → 1 night (the 2D light cycle)
-    // key-light colour: cold night → warm dawn → white day → amber dusk
-    let rr, gg, bb;
-    if (cyc < 0.12) { const t = cyc / 0.12; rr = 148 + 107 * t; gg = 176 + 20 * t; bb = 216 - 96 * t; }
-    else if (cyc < 0.30) { const t = (cyc - 0.12) / 0.18; rr = 255; gg = 196 + 44 * t; bb = 120 + 94 * t; }
-    else if (cyc < 0.70) { rr = 255; gg = 240; bb = 214; }
-    else if (cyc < 0.88) { const t = (cyc - 0.70) / 0.18; rr = 255; gg = 240 - 90 * t; bb = 214 - 126 * t; }
-    else { const t = (cyc - 0.88) / 0.12; rr = 255 - 107 * t; gg = 150 + 26 * t; bb = 88 + 128 * t; }
-    const temp = state.tempSmoothed == null ? 0.5 : clamp(state.tempSmoothed);
-    const warm = (temp - 0.5) * 2;                          // hot market → warmer hue, cold → cooler
-    rr = clamp(rr + warm * 14, 0, 255); gg = clamp(gg + warm * 6, 0, 255); bb = clamp(bb - warm * 12, 0, 255);
-    this.sunLight.color.setRGB(rr / 255, gg / 255, bb / 255, THREE.SRGBColorSpace);
-    const dayness = clamp(Math.sin(Math.PI * cyc));         // 0 at midnight, 1 at noon
-    this.sunLight.intensity = 0.35 + 1.15 * dayness;
-    this.hemiLight.intensity = 0.2 + 0.4 * dayness;         // the 2D ambient: 0.2 night → 0.6 day
+    const dn = this.dayNight;
+    if (!dn) return;
+    // tick: the live on-chain tickIndex when present, else the simulated counter, else 0
+    const tick = (state.lastTickIndex != null) ? state.lastTickIndex
+      : (Number.isFinite(state.synthTick) ? state.synthTick : 0);
+    const gen = (state.chronMeta && state.chronMeta.generation != null) ? state.chronMeta.generation : 0;
+    dn.update(tick, gen, now);
+  }
+
+  // task 49: the current watch (☀️/🌅/🌙/🌄, 🌑 under eclipse) rides as a leading glyph INSIDE the
+  // existing #era-hud pill — no new positioned element, so the bottom-centre HUD stack is untouched.
+  // Mutates the DOM only when the glyph actually changes; _updateEraHud re-adds it after an era rewrite.
+  _updateDayPhaseHud() {
+    const el = this._eraHudEl, dn = this.dayNight;
+    if (!el || !dn) return;
+    const icon = dn.icon;
+    if (icon === this._dayPhaseIcon && this._dayPhaseEl && this._dayPhaseEl.parentNode === el) return;
+    this._dayPhaseIcon = icon;
+    if (!this._dayPhaseEl || this._dayPhaseEl.parentNode !== el) {
+      this._dayPhaseEl = document.createElement("span");
+      this._dayPhaseEl.className = "era-hud-phase";
+      this._dayPhaseEl.setAttribute("aria-hidden", "true");
+      el.insertBefore(this._dayPhaseEl, el.firstChild);
+    }
+    this._dayPhaseEl.textContent = icon;
   }
 
   // ⑨ era label — task 20⑥: a FIXED DOM HUD (#era-hud), no longer a Sprite riding the camera (which
@@ -2762,7 +2803,7 @@ export class ThreeScene {
       if (e.material) { const ms = Array.isArray(e.material) ? e.material : [e.material]; for (const m of ms) killMat(m); }
     }
     // task 24: shared procedural caches (castle stonework/roofs, plinth, cottages, mills, trees)
-    for (const k of ["_castleStoneGeo", "_castleRoofGeo", "_castleWoodGeo", "_castleFlagGeo", "_plinthGeo", "_houseGeo", "_millGeo", "_broadGeo", "_coniferGeo"]) {
+    for (const k of ["_castleStoneGeo", "_castleRoofGeo", "_castleWoodGeo", "_castleFlagGeo", "_castleWindowGeo", "_plinthGeo", "_houseGeo", "_millGeo", "_broadGeo", "_coniferGeo"]) {
       if (this[k] && this[k].dispose) this[k].dispose();
     }
     for (const k of ["_plinthMat", "_villageMat", "_treeMat"]) {

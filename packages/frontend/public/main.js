@@ -15,6 +15,14 @@ import { updateMotes, updateSim } from './sim.js';
 
 // read-only perf probe for diagnostics (never writes anything): frame cost, adaptive quality, swarm & ledger size
 window.__murmurPerf = () => ({ frameMsAvg: Math.round(state.frameMsAvg * 10) / 10, qualityCoeff: Math.round(state.qualityCoeff * 100) / 100, flies: sim.size, graves: graveField.length });
+// task 49: hooks for the tick-driven day/night cycle. The DayNight instance lives on the ThreeScene
+// (it binds the scene's lights/sky/fog), so main.js only exposes it — it never drives a second copy.
+//   __murmurDayNight()      → the live instance (phase / nightFactor / watch / icon)
+//   __murmurSetPhase(p)     → pin the sky to phase p∈[0,1) for screenshots; null resumes the tick
+//   __murmurEclipse(t)      → force a t-tick blood eclipse (dynasty fall / era passage)
+window.__murmurDayNight = () => (state.threeScene && state.threeScene.dayNight) || null;
+window.__murmurSetPhase = (p) => { const dn = window.__murmurDayNight(); if (dn) dn.forcePhase = (p == null ? null : Number(p)); return dn ? dn.forcePhase : null; };
+window.__murmurEclipse = (t) => { const dn = window.__murmurDayNight(); if (dn) dn.forceEclipse(t || 30); return !!dn; };
 export function loop(now) {
   try {
     const ms = now - state.last;

@@ -82,6 +82,10 @@
 /walkMode.js
   Cache-Control: no-cache, must-revalidate
 
+# task 49: the tick-driven day/night cycle — bare-imported by scene3d.js, needs etag revalidation
+/dayNight.js
+  Cache-Control: no-cache, must-revalidate
+
 /economy.js
   Cache-Control: no-cache, must-revalidate
 

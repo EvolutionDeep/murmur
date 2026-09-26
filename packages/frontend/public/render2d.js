@@ -1113,6 +1113,14 @@ export function spawnChronFx(e) {
     if (e.kind === "WARD_TAKEN") chronFx.push({ kind: "law", t0: now, dur: 3000 });
     else chronFx.push({ kind: "holy", t0: now, dur: 3600 });
     setBanner(T("banner.guardians"), ct(e.kind, t), LAW_GOLD);
+  } else if (e.kind === "DYNASTY_FALL" || e.kind === "DARK_AGE" || e.kind === "DYNASTY"
+          || e.kind === "ERA_PASSAGE" || e.kind === "ERA_SHIFT") {
+    // task 49: a dynasty falls / an age turns over — force a blood eclipse across the diorama sky.
+    // The worker has no literal DYNASTY_FALL kind (its collapse reads DARK_AGE, its dominance turn
+    // reads DYNASTY), so we honour both plus the era passages. Rides the SAME chronFx channel the 3D
+    // scene already dedups via _fxSeen — scene3d._chronFxSpawn turns kind:"eclipse" into a forceEclipse.
+    // No canvas pass here, so the 2D fallback simply ignores the unknown kind.
+    if ((e.severity || 0) >= 2) chronFx.push({ kind: "eclipse", ticks: 30, t0: now, dur: 1200 });
   }
 }
 /** Drop every cached territory visual so the next frame repaints from the fresh server zone owners
