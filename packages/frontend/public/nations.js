@@ -33,6 +33,7 @@ export const NATION_COUNT = 5;
 
 const FALLBACK_RGB = [176, 142, 86];   // 与 3D 城堡/2D 地图一致的兜底王朝色
 const SEA_SKIP = 0.8;                  // 低于该高度的边境采样段不绘制（海里不画线）
+const SEA_CLIP = -1.5;                 // 深海裁剪：任何采样点低于该高度一律断开（开放海域绝不出现水面带/岸轨）
 const TINT_DEFAULT = 0.28;             // 默认国家 tint 强度
 
 let nationId = null;      // Uint8Array(n) —— 顶点 → 国家 id（assignNationIds 填充）
@@ -179,10 +180,12 @@ export function voronoiEdges(v) {
 // ---- task 25②: border meander post-process ----
 // Every straight Voronoi edge becomes an organic waterway: resampled at ≈8-unit steps, displaced
 // along the edge normal by a per-edge sine (+ a shorter harmonic) with a sin(πt) envelope so shared
-// junction vertices stay welded, then Catmull-Rom resampled at ≈4 units. Edge endpoints that already
-// sit near the coast (heightAt < 1.2) grow an ESTUARY tail: the line continues outward along the
-// original direction until it dives under the sea (heightAt < -1.2); over the tail's last 25% the
-// channel width flares 4.8 → 9 (a trumpet mouth). Point record = [x, z, mouth, width]:
+// junction vertices stay welded, then Catmull-Rom resampled at ≈4 units. Edge endpoints that sit ON
+// the shoreline band (-0.2 ≤ heightAt < 1.2) grow a SHORT ESTUARY tail: the line continues outward
+// along the original direction for at most ≈12 units and stops as soon as the seabed dips under
+// -0.9; over the tail's last 25% the channel width flares 4.8 → 9 (a trumpet mouth). Open-ocean
+// junctions (heightAt < -0.2) grow NO tail — unbounded tails there drew cross/T/L water bands far
+// offshore. Point record = [x, z, mouth, width]:
 //   mouth = 0 inland … 1 at the seaward tip of an estuary tail (floor may drop below sea level).
 // Runs are cached by edge signature: _sculptTerrain (pristine base sampler) builds them first and
 // buildBorderMesh reuses the IDENTICAL lines, so groove and water ribbon can never drift apart.
@@ -243,15 +246,18 @@ export function meanderEdges(edges, heightAtFn) {
     const amp = 5 + 4 * h1;             // 振幅 5–9
     const wl = 45 + 25 * h2;            // 波长 45–70
     const ph = h3 * Math.PI * 2;        // 每边 hash 相位
-    // estuary tail: walk outward from a coastal endpoint until the seabed dips under -1.2
+    // estuary tail: only shoreline-band endpoints (-0.2 ≤ h < 1.2) grow one; the walk caps at
+    // ≈12 units and stops early once the seabed dips under -0.9, so the trumpet hugs the coast
+    // instead of streaking across the shelf into open ocean (cross/T/L artifacts).
     const tail = (px, pz, ox, oz) => {
-      if (hAt(px, pz) >= 1.2) return [];
+      const h0 = hAt(px, pz);
+      if (h0 >= 1.2 || h0 < -0.2) return [];
       const pts = [];
       let x = px, z = pz;
-      for (let s = 0; s < 30; s++) {
-        x += ox * 3; z += oz * 3;
+      for (let s = 0; s < 6; s++) {
+        x += ox * 2; z += oz * 2;
         pts.push([x, z]);
-        if (hAt(x, z) < -1.2) break;
+        if (hAt(x, z) < -0.9) break;
       }
       return pts;
     };
@@ -288,7 +294,8 @@ export function resetMeander() { _meanderSig = ""; _meanderRuns = []; }
 /**
  * 沿蜿蜒边境线生成贴地「运河」水道（task 24 桌面沙盘，task 25② 蜿蜒化）：水面带与岸线轨道都沿
  * meanderEdges 的同一份折线构建，宽度随河口喇叭口 4.8→9 展开；河口段水面不低于海平面读出的
- * 0.08 抬离量，与海自然连通。海面（< SEA_SKIP 且非河口）区段自动断开。返回 THREE.Group。
+ * 0.08 抬离量，与海自然连通。海面（< SEA_SKIP 且非河口）区段自动断开；任何采样点高度
+ * < SEA_CLIP 的深海区段一律断开（开放海域绝不出现水面带/岸轨）。返回 THREE.Group。
  */
 export function buildBorderMesh(v, heightAtFn, WSX, WSZ) {
   const group = new THREE.Group();
@@ -359,7 +366,9 @@ export function buildBorderMesh(v, heightAtFn, WSX, WSZ) {
       run = [];
     };
     for (const p of line) {
-      if (p[2] <= 0 && hAt(p[0], p[1]) < SEA_SKIP) { flush(); continue; }   // 海岸外的陆地段不画
+      const hh = hAt(p[0], p[1]);
+      if (hh < SEA_CLIP) { flush(); continue; }                              // 深海裁剪：开放海域段不画
+      if (p[2] <= 0 && hh < SEA_SKIP) { flush(); continue; }   // 海岸外的陆地段不画
       run.push(p);
     }
     flush();
