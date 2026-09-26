@@ -77,3 +77,13 @@
 
 /i18n-ui.js
   Cache-Control: no-cache, no-store, must-revalidate
+
+# task 48: walk mode module — bare-imported by main.js, needs etag revalidation
+/walkMode.js
+  Cache-Control: no-cache, must-revalidate
+
+/economy.js
+  Cache-Control: no-cache, must-revalidate
+
+/inspector.js
+  Cache-Control: no-cache, must-revalidate

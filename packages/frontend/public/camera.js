@@ -5,6 +5,16 @@ import { deselect, select } from './inspector.js';
 import { hideEpitaph, rebuildGraveField, showEpitaph } from './render2d.js';
 import { initMotes } from './sim.js';
 
+// ================= camera mode (task 48) =================
+// The single authority that decides which driver owns the 3D camera each frame:
+//   "orbit" — OrbitControls (default bird's-eye)
+//   "walk"  — WalkMode (first/third person ground exploration)
+// walkMode.js imports setCameraMode; scene3d.update() reads cameraMode().
+export const CAM_MODE = { value: "orbit" };
+export function cameraMode() { return CAM_MODE.value; }
+export function setCameraMode(m) { CAM_MODE.value = (m === "walk") ? "walk" : "orbit"; return CAM_MODE.value; }
+export function isWalkMode() { return CAM_MODE.value === "walk"; }
+
 // pointer (stirs the swarm) — x/y are WORLD coords (camera-inverted), sx/sy raw SCREEN for zoom anchoring
 export const pointer = { x: 0, y: 0, sx: 0, sy: 0, inside: false, down: false };
 // click-storm guard: cap interaction-driven work

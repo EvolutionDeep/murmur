@@ -1,7 +1,7 @@
 // inspector.js — select/deselect + fillInspector + neural feed + bloom/raster canvas
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, FAP_GLOSS, FAP_ROLE, KIND_COL, STATE_COLOR, TAU, clamp, fapColor, houseOf, mix, paletteAt, rgba, sim } from './shared.js';
-import { t as T } from './i18n.js?v=97';
+import { t as T } from './i18n.js?v=98';
 import { closeHistory, closePredict, closePulse, closeWallets } from './drawers.js';
 import { updateWallet } from './economy.js';
 import { getJSON, synthAgentFor } from './polling.js';

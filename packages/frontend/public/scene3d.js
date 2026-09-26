@@ -11,6 +11,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js';
 import { select as selectFly, deselect as deselectFly } from './inspector.js';
 import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
+import { cameraMode } from './camera.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -117,6 +118,8 @@ export class ThreeScene {
     this._fwd = new THREE.Vector3(); this._v1 = new THREE.Vector3();
     this._fxSeen = new WeakSet();              // chronFx entries already turned into particles
     this.clock = new THREE.Clock();
+    this.walkMode = null;                        // task 48: assigned by main.js after construction
+    this._flyPosScratch = null;                  // task 48: reused by getFlyPosition (zero allocation)
     this._init();
   }
 
@@ -468,6 +471,19 @@ export class ThreeScene {
 
   // bilinear sample of the baked height field (flies ride the relief, settlements sit on the land)
   heightAt(x, z) { return this._sampleH(this._hGrid, x, z); }
+
+  // ---- task 48: fly accessors for walkMode third-person chase ----
+  flyCount() { return this._flyCount | 0; }
+  flyIdAt(i) { const f = this._flyArr[i | 0]; return f ? f.id : null; }
+  flyIndexOf(id) { const n = this._flyCount | 0, a = this._flyArr; for (let i = 0; i < n; i++) { const f = a[i]; if (f && f.id === id) return i; } return -1; }
+  getFlyPosition(i) {
+    const out = this._flyPosScratch || (this._flyPosScratch = { x: 0, y: 0, z: 0 });
+    const body = this.flyBody; const n = this._flyCount | 0; const idx = i | 0;
+    if (!body || !(idx >= 0) || idx >= n) return null;
+    body.getMatrixAt(idx, this._m4);
+    const e = this._m4.elements; out.x = e[12]; out.y = e[13]; out.z = e[14];
+    return out;
+  }
 
   // task 22: the sampler is shared so _sculptTerrain() can read the PRISTINE _hBase while
   // heightAt() keeps reading the live (terraced) grid.
@@ -1815,6 +1831,7 @@ export class ThreeScene {
   // then an empty click clears both. A near-stationary pointerup only — a camera drag is not a tap.
   _onCanvasClick(e) {
     if (!this.renderer || !this.camera) return;
+    if (cameraMode() === "walk") return;   // task 48: walk mode owns the pointer, never pick
     if (Math.hypot(e.clientX - this._downX, e.clientY - this._downY) > 8) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -2013,7 +2030,12 @@ export class ThreeScene {
       nm.offset.x = (nm.offset.x + dt * 0.010) % 1;
       nm.offset.y = (nm.offset.y + dt * 0.016) % 1;
     }
-    this.controls.update();
+    // task 48: walk mode drives the camera; orbit mode uses OrbitControls
+    if (this.walkMode && this.walkMode.active) {
+      try { this.walkMode.update(dt); } catch (e) { console.warn("walkMode", e); }
+    } else {
+      this.controls.update();
+    }
 
     // ---- task 7: the ported 2D layers — each isolated so one bad layer can never veto the frame ----
     try { this._updateSocialLines(sim); } catch (e) { console.warn("socialLines", e); }

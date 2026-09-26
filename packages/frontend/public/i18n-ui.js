@@ -7750,4 +7750,70 @@ Object.assign(es, esTempleX);
 Object.assign(ja, jaTempleX);
 Object.assign(ko, koTempleX);
 Object.assign(ar, arTempleX);
+
+// ---- task 48: walk mode (first/third-person ground exploration) ----
+const enWalk = {
+  "walk.title": "Explore on foot",
+  "walk.aria": "Walk the island",
+  "walk.exitTitle": "Leave walk mode (Esc)",
+  "walk.hint": "WASD move \u00b7 Mouse look \u00b7 Shift run \u00b7 F follow \u00b7 Esc exit",
+  "walk.hintTouch": "Left thumb move \u00b7 Right thumb look \u00b7 Tap \u2716 exit",
+  "walk.follow": "Following fly #{n}",
+};
+const zhWalk = {
+  "walk.title": "\u6f2b\u6e38\u63a2\u7d22",
+  "walk.aria": "\u6b65\u884c\u63a2\u7d22\u5c9b\u5c7f",
+  "walk.exitTitle": "\u9000\u51fa\u6f2b\u6e38 (Esc)",
+  "walk.hint": "WASD \u79fb\u52a8 \u00b7 \u9f20\u6807\u89c6\u89d2 \u00b7 Shift \u52a0\u901f \u00b7 F \u8ddf\u968f \u00b7 Esc \u9000\u51fa",
+  "walk.hintTouch": "\u5de6\u62c7\u6307\u79fb\u52a8 \u00b7 \u53f3\u62c7\u6307\u89c6\u89d2 \u00b7 \u70b9\u51fb \u2716 \u9000\u51fa",
+  "walk.follow": "\u8ddf\u968f\u679c\u8747 #{n}",
+};
+const frWalk = {
+  "walk.title": "Explorer \u00e0 pied",
+  "walk.aria": "Parcourir l\u2019\u00eele",
+  "walk.exitTitle": "Quitter le mode marche (Esc)",
+  "walk.hint": "WASD d\u00e9placer \u00b7 Souris regarder \u00b7 Shift courir \u00b7 F suivre \u00b7 Esc quitter",
+  "walk.hintTouch": "Pouce gauche d\u00e9placer \u00b7 Pouce droit regarder \u00b7 Toucher \u2716 quitter",
+  "walk.follow": "Suit la mouche n\u00b0{n}",
+};
+const esWalk = {
+  "walk.title": "Explorar a pie",
+  "walk.aria": "Recorrer la isla",
+  "walk.exitTitle": "Salir del modo paseo (Esc)",
+  "walk.hint": "WASD mover \u00b7 Rat\u00f3n mirar \u00b7 Shift correr \u00b7 F seguir \u00b7 Esc salir",
+  "walk.hintTouch": "Pulgar izq. mover \u00b7 Pulgar der. mirar \u00b7 Tocar \u2716 salir",
+  "walk.follow": "Siguiendo mosca #{n}",
+};
+const jaWalk = {
+  "walk.title": "\u6b69\u3044\u3066\u63a2\u7d22",
+  "walk.aria": "\u5cf6\u3092\u6b69\u304f",
+  "walk.exitTitle": "\u6563\u7b56\u30e2\u30fc\u30c9\u3092\u7d42\u4e86 (Esc)",
+  "walk.hint": "WASD \u79fb\u52d5 \u00b7 \u30de\u30a6\u30b9 \u8996\u70b9 \u00b7 Shift \u8d70\u308b \u00b7 F \u8ffd\u5f93 \u00b7 Esc \u7d42\u4e86",
+  "walk.hintTouch": "\u5de6\u30b9\u30e9\u30a4\u30c9 \u79fb\u52d5 \u00b7 \u53f3\u30b9\u30e9\u30a4\u30c9 \u8996\u70b9 \u00b7 \u30bf\u30c3\u30d7 \u2716 \u7d42\u4e86",
+  "walk.follow": "\u30cf\u30a8 #{n} \u3092\u8ffd\u5f93\u4e2d",
+};
+const koWalk = {
+  "walk.title": "\u6b65\u884c \ud0d0\uc0c9",
+  "walk.aria": "\uc12c\uc744 \uac78\uc5b4 \ub2e4\ub2c8\uae30",
+  "walk.exitTitle": "\ubc1c \ubaa8\ub4dc \uc885\ub8cc (Esc)",
+  "walk.hint": "WASD \uc774\ub3d9 \u00b7 \ub9c8\uc6b0\uc2a4 \uc2dc\uc810 \u00b7 Shift \ub2ec\ub9ac\uae30 \u00b7 F \ucd94\uc801 \u00b7 Esc \uc885\ub8cc",
+  "walk.hintTouch": "\uc67c\uc190 \uc774\ub3d9 \u00b7 \uc624\ub978\uc190 \uc2dc\uc810 \u00b7 \ud130\uce58 \u2716 \uc885\ub8cc",
+  "walk.follow": "\ud30c\ub9ac #{n} \ucd94\uc801 \uc911",
+};
+const arWalk = {
+  "walk.title": "\u0627\u0633\u062a\u0643\u0634\u0641 \u0633\u064a\u0631\u064b\u0627",
+  "walk.aria": "\u062a\u062c\u0648\u0644 \u0641\u064a \u0627\u0644\u062c\u0632\u064a\u0631\u0629",
+  "walk.exitTitle": "\u062e\u0631\u0648\u062c \u0645\u0646 \u0627\u0644\u062a\u062c\u0648\u0644 (Esc)",
+  "walk.hint": "WASD \u062a\u062d\u0631\u0643 \u00b7 \u0627\u0644\u0641\u0623\u0631\u0629 \u0646\u0638\u0631 \u00b7 Shift \u0631\u0643\u0636 \u00b7 F \u062a\u062a\u0628\u0639 \u00b7 Esc \u062e\u0631\u0648\u062c",
+  "walk.hintTouch": "\u0625\u0628\u0647\u0627\u0645 \u0623\u064a\u0633\u0631 \u062a\u062d\u0631\u0643 \u00b7 \u0625\u0628\u0647\u0627\u0645 \u0623\u064a\u0645\u0646 \u0646\u0638\u0631 \u00b7 \u0644\u0645\u0633 \u2716 \u062e\u0631\u0648\u062c",
+  "walk.follow": "\u064a\u062a\u0628\u0639 \u0627\u0644\u0630\u0628\u0627\u0628\u0629 #{n}",
+};
+Object.assign(en, enWalk);
+Object.assign(zh, zhWalk);
+Object.assign(fr, frWalk);
+Object.assign(es, esWalk);
+Object.assign(ja, jaWalk);
+Object.assign(ko, koWalk);
+Object.assign(ar, arWalk);
+
 export { en, zh, fr, es, ja, ko, ar };

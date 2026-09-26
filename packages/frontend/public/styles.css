@@ -152,6 +152,7 @@
   --dock-h: 66px;     /* both dock pills are built to the same deterministic height */
   --dock-2: calc(var(--dock-1) + var(--dock-h) + 12px);   /* .canary-btn, one 12px air gap up */
   --dock-3: calc(var(--dock-2) + var(--dock-h) + 12px);   /* .temple-btn, one 12px air gap above canary */
+  --dock-4: calc(var(--dock-3) + var(--dock-h) + 12px);   /* .walk-btn, one 12px air gap above temple */
   --dock-w: 172px;    /* shared pill width for chron / canary / temple */
   --zoom-h: 100px;    /* the left-edge zoom cluster: 3 x 28px rungs + 2 x 4px gaps + 2 x 4px pad */
   /* how far panel-temp is lifted off the bottom edge. 0 on desktop; the tablet breakpoint raises it
@@ -2109,7 +2110,112 @@ body.temple-open .temple-btn { opacity: 0; pointer-events: none; }
 body.temple-open .canary-btn, body.temple-open .chron-btn { opacity: 0; pointer-events: none; }
 body.temple-open .panel-pop, body.temple-open .panel-econ, body.temple-open .panel-temp { opacity: 0.1; pointer-events: none; }
 body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
-body.canary-open .temple-btn, body.chron-open .temple-btn, body.ins-open .temple-btn { opacity: 0; pointer-events: none; }
+body.canary-open .temple-btn, body.chron-open .temple-btn, body.ins-open .temple-btn,
+body.canary-open .walk-btn, body.chron-open .walk-btn, body.ins-open .walk-btn { opacity: 0; pointer-events: none; }
+
+/* ============ task 48: WALK MODE — the cartographer's descent ============ */
+.walk-btn {
+  position: fixed; z-index: 6;
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--dock-4) + env(safe-area-inset-bottom, 0px));
+  width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--vellum); border: 1.5px solid rgba(var(--gold-rgb), 0.55);
+  color: var(--gall); cursor: pointer;
+  transition: border-color 0.25s, color 0.25s, box-shadow 0.25s;
+  -webkit-tap-highlight-color: transparent;
+}
+.walk-btn:hover { border-color: var(--gold-lit); color: var(--ink); }
+.walk-btn:focus-visible { box-shadow: var(--ring); }
+.walk-btn.is-on { border-color: var(--rust); color: var(--rust); background: rgba(var(--gold-rgb), 0.06); }
+.walk-glyph { width: 22px; height: 22px; grid-area: 1/1; transition: opacity 0.3s, transform 0.3s; }
+.walk-glyph-globe { opacity: 0; transform: scale(0.7) rotate(-30deg); }
+body.walk-active .walk-glyph-walk { opacity: 0; transform: scale(0.7) rotate(30deg); }
+body.walk-active .walk-glyph-globe { opacity: 1; transform: scale(1) rotate(0deg); }
+
+/* HUD bar: bottom-centre vellum leaf with mono keycaps */
+.walk-hud {
+  position: fixed; z-index: 8;
+  left: 50%; bottom: calc(var(--stack-1) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px;
+  background: var(--vellum); border: 1px solid rgba(var(--gold-rgb), 0.38);
+  border-radius: var(--r-pill);
+  font: 0.72rem/1.4 var(--sans); color: var(--gall);
+  pointer-events: none; white-space: nowrap;
+  animation: walkHudIn 0.35s ease both;
+}
+@keyframes walkHudIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+.walk-hud-orn { font-size: 1.1em; color: var(--gold); opacity: 0.7; }
+.walk-hud-keys { display: flex; gap: 3px; }
+.walk-hud-keys i {
+  font: 600 0.62rem/1 var(--mono); font-style: normal;
+  display: grid; place-items: center;
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1px solid rgba(var(--gold-rgb), 0.45);
+  background: rgba(var(--gold-rgb), 0.06); color: var(--ink);
+}
+.walk-hud-txt-touch { display: none; }
+body.walk-touch .walk-hud-txt:not(.walk-hud-txt-touch) { display: none; }
+body.walk-touch .walk-hud-txt-touch { display: inline; }
+body.walk-touch .walk-hud-keys { display: none; }
+.walk-hud-follow {
+  font: 0.68rem/1 var(--mono); color: var(--gold-deep); padding-left: 6px;
+  border-left: 1px solid rgba(var(--gold-rgb), 0.3);
+}
+
+/* crosshair: a whisper of gilt at dead centre */
+.walk-cross {
+  position: fixed; z-index: 7;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 20px; height: 20px; pointer-events: none;
+}
+.walk-cross::before, .walk-cross::after {
+  content: ""; position: absolute; background: rgba(var(--gold-rgb), 0.6); border-radius: 1px;
+}
+.walk-cross::before { width: 1px; height: 100%; left: 50%; top: 0; }
+.walk-cross::after  { height: 1px; width: 100%; top: 50%; left: 0; }
+body.walk-follow .walk-cross { opacity: 0; }
+
+/* touch joystick */
+.walk-stick {
+  position: fixed; z-index: 9;
+  width: 116px; height: 116px; border-radius: 50%;
+  border: 1.5px solid rgba(var(--gold-rgb), 0.35);
+  background: rgba(var(--vellum), 0.25);
+  pointer-events: none; opacity: 0; transition: opacity 0.2s;
+}
+.walk-stick.on { opacity: 1; }
+.walk-stick-knob {
+  position: absolute; top: 50%; left: 50%;
+  width: 40px; height: 40px; margin: -20px 0 0 -20px;
+  border-radius: 50%;
+  background: rgba(var(--gold-rgb), 0.35); border: 1px solid rgba(var(--gold-rgb), 0.55);
+}
+
+/* WALK-ACTIVE: hide all orbit chrome, leave only the walk UI */
+body.walk-active .topbar,
+body.walk-active .panel-econ,
+body.walk-active .panel-temp,
+body.walk-active .panel-pop,
+body.walk-active .layer-toggles,
+body.walk-active .zoom-controls,
+body.walk-active .hint-select,
+body.walk-active .cron-warn,
+body.walk-active #era-hud,
+body.walk-active .chron-btn,
+body.walk-active .canary-btn,
+body.walk-active .temple-btn,
+body.walk-active .inspector,
+body.walk-active .epitaph,
+body.walk-active .drawer,
+body.walk-active .wallets {
+  opacity: 0 !important; pointer-events: none !important;
+  transition: opacity 0.25s ease;
+}
+html.walk-active { overflow: hidden !important; height: 100% !important; }
+body.walk-active { overflow: hidden !important; }
 
 /* Temple drawer internals */
 .drawer.temple { width: clamp(320px, 38vw, 480px); }
@@ -2381,6 +2487,14 @@ body.canary-open .temple-btn, body.chron-open .temple-btn, body.ins-open .temple
     border-radius: var(--r-pill);
   }
 
+  /* task 48: walk button joins the phone dock — left-bottom corner, clear of the layer tray */
+  .walk-btn {
+    right: auto; left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    width: 44px; height: 44px; z-index: 20;
+  }
+  .walk-hud { bottom: calc(env(safe-area-inset-bottom, 0px) + 66px); font-size: 0.66rem; padding: 6px 12px; }
+
   /* inspector rises above the dock and clears the notch at the bottom */
   .inspector {
     z-index: 22; max-height: 70vh;
@@ -2556,7 +2670,8 @@ html[dir="rtl"] #era-hud { direction: rtl; }
   body[class*="-open"] .layer-toggles,
   body[class*="-open"] .chron-btn,
   body[class*="-open"] .canary-btn,
-  body[class*="-open"] .temple-btn { opacity: 0; pointer-events: none; }
+  body[class*="-open"] .temple-btn,
+  body[class*="-open"] .walk-btn { opacity: 0; pointer-events: none; }
 }
 @media (max-height: 600px) {
   /* short viewports (landscape phones, small monitors): there is no free rung between the econ

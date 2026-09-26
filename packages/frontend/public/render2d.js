@@ -1,7 +1,7 @@
 // render2d.js — 2D fallback 渲染：render 主循环 + drawFly + parchment/frame + 全部世界层绘制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ASH_GREY, BLOSSOM, CIV_SHADOW, COIN_GOLD, COLONY_COLORS, COLONY_NAMES, CONTINENT, CRACK_RED, ECON_EDGE_MS, FAITH_GOLD, FIRE_HOT, FIRE_LO, FIRE_MID, GARDEN, GILT, GILT_HI, GOLD_THREAD, GOOD_COL, GRAVE_CAP, HIST_SAMPLE_MS, HULL, INK, LAW_GOLD, MIND_REBUILD_MS, MONUMENT_MS, MUD, MUD_HI, MUD_SH, PALM, PLAZA, POOL, PROVINCES, RIBBON_WINDOW, RIVER_BLUE, SAIL, SMOKE, SOCIETY_BOND_MIN, SOCIETY_CAP_GAP, SOCIETY_FEUD_MAX, SOCIETY_MINCAP, SOCIETY_PAD, STATE_RGB, TAU, TECH_BRONZE, TERRA, UNCLAIMED, VELLUM, WK_AGE_TICKS, WORK_SLOT, canvas, clamp, fnv1a, graveField, graveUid, houseColor, houseOf, lerp, mix, paletteAt, rgb, rgba, sim, wealthColorAt } from './shared.js';
-import { ct, gl, t as T } from './i18n.js?v=97';
+import { ct, gl, t as T } from './i18n.js?v=98';
 import { applyCam, mw } from './camera.js';
 import { keeperIds, prophetIds } from './economy.js';
 import { refreshInspectorSocial } from './inspector.js';

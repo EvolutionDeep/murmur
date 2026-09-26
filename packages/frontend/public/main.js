@@ -1,7 +1,7 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=97';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=98';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
 import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
@@ -9,6 +9,7 @@ import { bindBloomScale, deselect, fillInspectorFromSim, renderBloom, renderRast
 import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js';
 import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js';
 import { ThreeScene } from './scene3d.js';
+import { WalkMode } from './walkMode.js';
 import { loadDelaunay } from './nations.js';
 import { updateMotes, updateSim } from './sim.js';
 
@@ -111,6 +112,7 @@ export function rerenderAll() {
     if (state.predictOpen && state.predictData) paintPredict();
     if (state.arenaOpen && state.arenaData) paintArena();
     if (state.templeOpen && state.templeData) paintTemple();
+    if (state.walkMode) state.walkMode.paintChrome();   // task 48: re-localise walk button tooltip
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;
@@ -219,6 +221,8 @@ export function bindUI() {
     if (e.key !== "Enter" && e.key !== " ") return;
     const card = e.target.closest(".tp-card"); if (card && !card.classList.contains("disabled")) { e.preventDefault(); templeSelectKind(card.dataset.kind); }
   });
+  // task 48: walk mode button
+  const wkb = $("walk-btn"); if (wkb) wkb.addEventListener("click", () => { if (state.walkMode) state.walkMode.toggle(); });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -250,6 +254,13 @@ export async function boot() {
   // A failed/unreachable CDN leaves it null and simply disables the Voronoi borders (no white screen).
   await loadDelaunay();
   try { state.threeScene = new ThreeScene(); } catch (e) { console.warn("[murmur] Three.js init failed, falling back to 2D:", e); }
+  // task 48: walk mode — ground-level exploration driver
+  if (state.threeScene) {
+    try {
+      state.walkMode = new WalkMode(state.threeScene, state.threeScene.camera, state.threeScene.renderer && state.threeScene.renderer.domElement);
+      state.threeScene.walkMode = state.walkMode;
+    } catch (e) { console.warn("[murmur] WalkMode init failed:", e); }
+  }
   resize();
   bindUI();
   populateLangSelect();

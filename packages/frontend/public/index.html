@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=101" />
+  <link rel="stylesheet" href="./styles.css?v=102" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -130,6 +130,9 @@
 
   <!-- ㉙ THE TEMPLE — standalone golden trigger, docked above canary. Opens the burn-to-intervene drawer. -->
   <button class="temple-btn" id="temple-btn" type="button" data-i18n-aria="temple.aria" data-i18n-title="temple.title" aria-label="The Temple" title="Burn MURMUR to become myth — intervene in the swarm's fate"><span class="temple-orn" aria-hidden="true">⛩</span> <span data-i18n="temple.btn">The Temple</span></button>
+
+  <!-- task 48: walk mode trigger — first/third-person ground exploration of the island -->
+  <button class="walk-btn" id="walk-btn" type="button" data-i18n-title="walk.title" data-i18n-aria="walk.aria" aria-label="Explore on foot" title="Explore on foot" aria-pressed="false"><svg class="walk-glyph walk-glyph-walk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none"/><path d="M11 21l1.5-5.5-2.5-2 1-5 3 2.5 3 .5"/><path d="M9.5 11L7 14"/><path d="M14 12l3 4"/><path d="M7 8V21"/></svg><svg class="walk-glyph walk-glyph-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="3.5" ry="9"/><path d="M3.5 9h17M3.5 15h17"/></svg></button>
 
   <!-- ============ canary trigger (stacked above the chronicle stele) — opens the live x402 settlement board
          as a wide right-side drawer that iframes the standalone /canary page ============ -->
@@ -589,6 +592,16 @@
     <div class="drawer-body" id="laureate-body"></div>
   </aside>
 
+  <!-- task 48: walk mode HUD — shown only while walking the island -->
+  <div id="walk-hud" class="walk-hud" hidden>
+    <span class="walk-hud-orn" aria-hidden="true">❦</span>
+    <span class="walk-hud-keys" aria-hidden="true"><i>W</i><i>A</i><i>S</i><i>D</i></span>
+    <span class="walk-hud-txt" data-i18n="walk.hint">WASD move · Mouse look · Shift run · Esc exit</span>
+    <span class="walk-hud-txt walk-hud-txt-touch" data-i18n="walk.hintTouch">Left thumb move · Right thumb look · F follow</span>
+    <span class="walk-hud-follow" id="walk-follow" hidden></span>
+  </div>
+  <div id="walk-cross" class="walk-cross" hidden aria-hidden="true"></div>
+
   <!-- ============ layer toggles: the ambient social layer (mind aura + isolates ring removed for perf) ============ -->
   <div class="layer-toggles" id="layer-toggles" role="group" aria-label="ambient layers">
     <button type="button" class="layer-btn is-on" data-layer="territory" title="redraw the swarm as a map of house dominions — each family a coloured territory with its borders, name and capital (a visualisation of the live dynasty; no economic change)">territory</button>
@@ -624,6 +637,6 @@
        bottom-right stack is chron-btn → canary-btn → temple-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=132" type="module"></script>
+  <script src="./main.js?v=133" type="module"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // economy.js — applyEconomy/applySnapshot/applyState/applyTopology + HUD 更新
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, shortHash, sim } from './shared.js';
-import { currentLang, gl, t as T } from './i18n.js?v=97';
+import { currentLang, gl, t as T } from './i18n.js?v=98';
 import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js';
 import { fillInspectorFromSim } from './inspector.js';
 import { synthAgents } from './polling.js';
