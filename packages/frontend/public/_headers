@@ -91,3 +91,7 @@
 
 /inspector.js
   Cache-Control: no-cache, must-revalidate
+
+# task 51: procedural terrain splat textures — bare-imported by scene3d.js
+/terrainTex.js
+  Cache-Control: no-cache, must-revalidate

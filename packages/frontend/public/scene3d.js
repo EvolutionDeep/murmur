@@ -13,6 +13,7 @@ import { select as selectFly, deselect as deselectFly } from './inspector.js';
 import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
 import { cameraMode } from './camera.js';
 import { DayNight } from './dayNight.js';
+import { createTerrainTextures } from './terrainTex.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -246,35 +247,97 @@ export class ThreeScene {
     pmrem.dispose();
   }
 
-  // ---- sea: task 18 P0 — one MeshStandardMaterial plane. The Water addon's mirror pass was
-  // already gone, but MeshPhysicalMaterial with transmission>0 still triggers Three.js's extra
-  // transmission render pass (frameMsAvg stayed 36–40ms after the Water removal). Standard
-  // material + scene.environment (the PMREM sky) + a scrolling normal map keeps the living
-  // glitter at ZERO extra passes: transmission is not a Standard property, clearcoat is gone. ----
+  // ---- sea: task 51 upgrade — custom ShaderMaterial with 2-frequency vertex waves,
+  // sun specular, and coastline foam. Still zero extra render passes, depthWrite:false,
+  // renderOrder:1. The old normalMap scrolling is replaced by a time uniform. ----
   _buildWater() {
-    const geo = new THREE.PlaneGeometry(2600, 2600, 1, 1);   // covers the enlarged 720×450 world even at maxDistance 1500
-    const normals = new THREE.TextureLoader().load("./assets/waternormals.jpg", (t) => {
-      t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.repeat.set(16, 16);
-    });
-    normals.wrapS = normals.wrapT = THREE.RepeatWrapping;   // sane wrap/repeat even before the texture streams in
-    normals.repeat.set(16, 16);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x2f93a2,             // diorama teal sea (#2e8b9a~#3a9aad), calm and saturated
+    const SEGS = 48;
+    const geo = new THREE.PlaneGeometry(2600, 2600, SEGS, SEGS);
+    this._waterUniforms = {
+      uTime: { value: 0 },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
+      uSunColor: { value: new THREE.Color(1.0, 0.95, 0.85) },
+      uNightFactor: { value: 0.0 },
+      uSeaColor: { value: new THREE.Color(0.11, 0.42, 0.48) },
+      uFoamColor: { value: new THREE.Color(0.85, 0.92, 0.94) },
+      fogColor: { value: new THREE.Color(0xcfe3e6) },
+      fogDensity: { value: 0.00085 },
+      uCoastTex: { value: null },   // filled after terrain builds
+      uTerrainSize: { value: new THREE.Vector2(720, 450) },
+    };
+    const waterVert = `
+uniform float uTime;
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+varying vec2 vUvW;
+void main() {
+  vUvW = uv;
+  vec3 p = position;
+  // 2-frequency sine waves (gentle diorama swell)
+  float w1 = sin(p.x * 0.012 + uTime * 0.6) * cos(p.y * 0.009 + uTime * 0.4) * 0.45;
+  float w2 = sin(p.x * 0.031 - uTime * 0.9) * sin(p.y * 0.026 + uTime * 0.7) * 0.18;
+  p.z += w1 + w2;
+  // approximate normal from wave derivatives
+  float dx = 0.012 * cos(p.x * 0.012 + uTime * 0.6) * cos(p.y * 0.009 + uTime * 0.4) * 0.45
+           + 0.031 * cos(p.x * 0.031 - uTime * 0.9) * sin(p.y * 0.026 + uTime * 0.7) * 0.18;
+  float dy = -0.009 * sin(p.x * 0.012 + uTime * 0.6) * sin(p.y * 0.009 + uTime * 0.4) * 0.45
+           + 0.026 * sin(p.x * 0.031 - uTime * 0.9) * cos(p.y * 0.026 + uTime * 0.7) * 0.18;
+  vNormal = normalize(vec3(-dx, -dy, 1.0));
+  vec4 wp = modelMatrix * vec4(p, 1.0);
+  vWorldPos = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+    const waterFrag = `
+uniform vec3 uSunDir, uSunColor, uSeaColor, uFoamColor;
+uniform float uNightFactor, uTime, fogDensity;
+uniform vec3 fogColor;
+uniform sampler2D uCoastTex;
+uniform vec2 uTerrainSize;
+varying vec3 vWorldPos, vNormal;
+varying vec2 vUvW;
+void main() {
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(cameraPosition - vWorldPos);
+  vec3 L = normalize(uSunDir);
+  // diffuse + specular
+  float ndl = max(dot(N, L), 0.0);
+  vec3 H = normalize(L + V);
+  float spec = pow(max(dot(N, H), 0.0), 96.0) * 0.6;
+  vec3 col = uSeaColor * (0.35 + ndl * 0.65) + uSunColor * spec;
+  // coastline foam: sample terrain height, foam where h ∈ (-0.8, 1.8)
+  vec2 terrUV = vec2(
+    (vWorldPos.x + uTerrainSize.x * 0.5) / uTerrainSize.x,
+    (vWorldPos.z + uTerrainSize.y * 0.5) / uTerrainSize.y
+  );
+  float foam = 0.0;
+  if (terrUV.x > 0.0 && terrUV.x < 1.0 && terrUV.y > 0.0 && terrUV.y < 1.0) {
+    float th = texture2D(uCoastTex, terrUV).r * 32.0 - 8.0;  // decode: stored as (h+8)/32
+    float coastDist = abs(th);
+    foam = 1.0 - smoothstep(0.0, 2.8, coastDist);
+    // animate foam with a noise-like pattern
+    foam *= 0.5 + 0.5 * sin(vWorldPos.x * 0.3 + uTime * 2.0) * sin(vWorldPos.z * 0.25 - uTime * 1.5);
+    foam = clamp(foam, 0.0, 1.0) * 0.7;
+  }
+  col = mix(col, uFoamColor, foam);
+  // night dimming
+  col *= mix(1.0, 0.15, uNightFactor);
+  // fog
+  float depth = length(vWorldPos - cameraPosition);
+  float fogFactor = 1.0 - exp(-fogDensity * fogDensity * depth * depth);
+  gl_FragColor = vec4(mix(col, fogColor, clamp(fogFactor, 0.0, 1.0)), 0.92);
+}`;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this._waterUniforms,
+      vertexShader: waterVert,
+      fragmentShader: waterFrag,
       transparent: true,
-      opacity: 0.92,
-      roughness: 0.42,             // calm: broad soft sheen, no storm glitter
-      metalness: 0.05,
-      envMapIntensity: 0.8,        // the PMREM sky supplies a gentle sheen (no transmission pass)
-      normalMap: normals,
-      normalScale: new THREE.Vector2(0.22, 0.22),   // barely-there ripple — a still diorama sea
+      depthWrite: false,
       side: THREE.DoubleSide,
-      depthWrite: false,          // task 25③: the sea never writes depth — coastal vertices that
-    });                           // graze y=0 can no longer z-fight the plane (terrain draws first)
+    });
     this.water = new THREE.Mesh(geo, mat);
     this.water.rotation.x = -Math.PI / 2;
-    this.water.position.y = 0.0;   // sea surface at y=0; the beach sand ring rises above it
-    this.water.renderOrder = 1;    // task 25③: opaque terrain → sea(1) → canal water(2) → banks(3)
+    this.water.position.y = 0.0;
+    this.water.renderOrder = 1;
     this.scene.add(this.water);
   }
 
@@ -362,17 +425,113 @@ export class ThreeScene {
     for (let k = 0; k < pos.count; k++) pos.setZ(k, h[k]);   // plane local Z becomes world Y after the -90° X rotation
     geo.computeVertexNormals();
 
-    // task 46: terrain uses MeshStandardMaterial (smooth continuous shading) instead of
-    // MeshToonMaterial (4-step gradientMap) to eliminate visible lighting bands on slopes.
-    this.terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      vertexColors: true, flatShading: false, roughness: 0.88, metalness: 0.0,
-    }));
+    // task 51: wowser-style terrain splatting — 4-layer texture blend + nation tint.
+    // Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
+    const texSet = createTerrainTextures();
+    const repeat = new THREE.Vector2(WSX / 8, WSZ / 8);   // ~90×56 tile repeats
+    this._terrainUniforms = {
+      tGrass: { value: texSet.grass },
+      tRock:  { value: texSet.rock },
+      tSand:  { value: texSet.sand },
+      tSnow:  { value: texSet.snow },
+      uRepeat: { value: repeat },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
+      uSunColor: { value: new THREE.Color(1.0, 0.95, 0.85) },
+      uAmbient: { value: new THREE.Color(0.28, 0.32, 0.36) },
+      uNightFactor: { value: 0.0 },
+      fogColor: { value: new THREE.Color(0xcfe3e6) },
+      fogDensity: { value: 0.00085 },
+    };
+    const terrainVert = `// Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
+attribute vec4 aSplat;
+attribute vec3 aNation;
+varying vec4 vSplat;
+varying vec3 vNation;
+varying vec3 vNormal;
+varying vec3 vWorldPos;
+varying vec2 vUv;
+void main() {
+  vSplat = aSplat;
+  vNation = aNation;
+  vUv = uv;
+  vNormal = normalize(normalMatrix * normal);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+    const terrainFrag = `// Portions adapted from wowserhq/scene (MIT), © Wowser Contributors
+uniform sampler2D tGrass, tRock, tSand, tSnow;
+uniform vec2 uRepeat;
+uniform vec3 uSunDir, uSunColor, uAmbient;
+uniform float uNightFactor;
+uniform vec3 fogColor;
+uniform float fogDensity;
+varying vec4 vSplat;
+varying vec3 vNation;
+varying vec3 vNormal;
+varying vec3 vWorldPos;
+varying vec2 vUv;
+void main() {
+  vec2 uv = vUv * uRepeat;
+  vec4 cGrass = texture2D(tGrass, uv);
+  vec4 cRock  = texture2D(tRock,  uv * 1.31);
+  vec4 cSand  = texture2D(tSand,  uv * 0.79);
+  vec4 cSnow  = texture2D(tSnow,  uv * 1.13);
+  vec3 albedo = cGrass.rgb * vSplat.x + cRock.rgb * vSplat.y
+              + cSand.rgb * vSplat.z + cSnow.rgb * vSplat.w;
+  // nation tint — soft 18% dye so the land still reads natural
+  albedo = mix(albedo, vNation, 0.18);
+  // simple Lambert + ambient
+  vec3 N = normalize(vNormal);
+  float ndl = max(dot(N, normalize(uSunDir)), 0.0);
+  vec3 lit = albedo * (uAmbient + uSunColor * ndl);
+  // night dimming
+  lit *= mix(1.0, 0.12, uNightFactor);
+  // exponential-squared fog (matches Three.js FogExp2)
+  float depth = length(vWorldPos - cameraPosition);
+  float fogFactor = 1.0 - exp(-fogDensity * fogDensity * depth * depth);
+  gl_FragColor = vec4(mix(lit, fogColor, clamp(fogFactor, 0.0, 1.0)), 1.0);
+}`;
+    const terrainMat = new THREE.ShaderMaterial({
+      uniforms: this._terrainUniforms,
+      vertexShader: terrainVert,
+      fragmentShader: terrainFrag,
+    });
+    this.terrain = new THREE.Mesh(geo, terrainMat);
     this.terrain.rotation.x = -Math.PI / 2;
     this.scene.add(this.terrain);
     // nations partition hook (task 6): five-nation Voronoi, ground border ribbons and the nation
     // castles. update() re-runs it whenever the dynasty signature changes.
     this._applyNations();
     this._colorTerrain(null);
+    // task 51: generate coast height texture for the water foam shader
+    this._buildCoastTex();
+  }
+
+  // task 51: bake a small DataTexture of terrain heights for the water shader's foam line.
+  // Encoded as (h + 8) / 32 in the R channel — the shader decodes back to world height.
+  _buildCoastTex() {
+    const N = this._hN, h = this._hGrid;
+    const SZ = 128;
+    const data = new Uint8Array(SZ * SZ);
+    for (let j = 0; j < SZ; j++) {
+      for (let i = 0; i < SZ; i++) {
+        // bilinear sample from the full-res height grid
+        const fi = (i / (SZ - 1)) * (N - 1), fj = (j / (SZ - 1)) * (N - 1);
+        const i0 = fi | 0, j0 = fj | 0;
+        const i1 = Math.min(i0 + 1, N - 1), j1 = Math.min(j0 + 1, N - 1);
+        const tx = fi - i0, ty = fj - j0;
+        const v = (h[j0 * N + i0] * (1 - tx) + h[j0 * N + i1] * tx) * (1 - ty)
+                + (h[j1 * N + i0] * (1 - tx) + h[j1 * N + i1] * tx) * ty;
+        data[j * SZ + i] = Math.max(0, Math.min(255, ((v + 8) / 32 * 255) | 0));
+      }
+    }
+    const tex = new THREE.DataTexture(data, SZ, SZ, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    if (this._waterUniforms) this._waterUniforms.uCoastTex.value = tex;
+    this._coastTex = tex;
   }
 
   // (re)run the five-nation partition off the live dynasty data (task 6): seeds → Voronoi →
@@ -407,79 +566,98 @@ export class ThreeScene {
     this._nationSig = sig;   // mark applied only after the full rebuild: a throw above leaves it unset so the next frame retries
   }
 
-  // ---- the painted land: height bands + slope rock (rivers removed — task 18), then the dominion overlay —
-  // house tints and border lines straight from econDynasty.zoneOwners, the same authority the
-  // 2D dominion map obeys. Repainted only when the ownership signature changes. ----
+  // ---- task 51: wowser-style splat weights + nation tint attributes.
+  // Replaces the old vertex-colour RAMP with per-vertex vec4 layer weights (grass/rock/sand/snow)
+  // computed from height + slope, plus a vec3 nation colour. The fragment shader blends 4
+  // procedural textures by these weights — near-view texture detail, far-view natural gradients. ----
   _colorTerrain(owners) {
-    const N = this._hN, h = this._hGrid, vZone = this._vZone;
+    const N = this._hN, h = this._hGrid;
     const geo = this.terrain.geometry;
     const pos = geo.attributes.position;
-    let colors = geo.attributes.color;
-    if (!colors) {
-      colors = new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3);
-      geo.setAttribute("color", colors);
-    }
-    const arr = colors.array;
+    const count = pos.count;
     const stX = this._hStepX, stZ = this._hStepZ;
     const pn = this._noise;
     const perlinJit = (i, j) => pn.noise(i * 0.31, 5.1, j * 0.31);
-    const mottleN = (i, j) => pn.noise(i * 0.13, 9.4, j * 0.13) + 1;
-    // task 24 diorama colour ramp — teal seabed → beach sand ring → grass (light/dark patches)
-    // → steep rock grey → snow caps. Smooth interpolation between stops, dithered by jitter.
-    const RAMP = [
-      [-3.20, [0.10, 0.34, 0.40]],   // deep seabed — dark teal
-      [-0.60, [0.16, 0.47, 0.52]],   // shelf teal (the task 25③ surf shelf sits exactly here)
-      [ 0.10, [0.22, 0.56, 0.60]],   // surf teal at the waterline
-      [ 0.38, [0.85, 0.75, 0.54]],   // wet beach sand (#d8c08a) — the +0.34 sand step reads sandy
-      [ 2.00, [0.90, 0.82, 0.62]],   // dry sand ring
-      [ 3.00, [0.48, 0.66, 0.35]],   // grass (#7aa858)
-      [ 8.00, [0.53, 0.71, 0.40]],   // grass light (#86b565)
-      [12.00, [0.54, 0.54, 0.52]],   // steep rock grey (#8a8a85)
-      [16.00, [0.95, 0.95, 0.95]],   // snow cap (#f2f2f2)
-    ];
-    const band = (y) => {
-      if (y <= RAMP[0][0]) return RAMP[0][1];
-      for (let s = 1; s < RAMP.length; s++) {
-        if (y < RAMP[s][0]) {
-          const h0 = RAMP[s - 1][0], c0 = RAMP[s - 1][1], h1 = RAMP[s][0], c1 = RAMP[s][1];
-          const t = (y - h0) / (h1 - h0);
-          return [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t, c0[2] + (c1[2] - c0[2]) * t];
-        }
-      }
-      return RAMP[RAMP.length - 1][1];
-    };
     const canal = this._canalMask;
     const cl01 = (t) => t < 0 ? 0 : t > 1 ? 1 : t;
-    for (let k = 0; k < pos.count; k++) {
-      const y = h[k];
-      let c;
-      {
-        const i = k % N, j = (k / N) | 0;
-        const jit = perlinJit(i, j) * 0.88;   // dither the band edges so transitions don't read as contour lines
-        c = band(y + jit);
-        if (i > 0 && i < N - 1 && j > 0 && j < N - 1) {
-          const gx = (h[j * N + i + 1] - h[j * N + i - 1]) / (2 * stX);
-          const gz = (h[(j + 1) * N + i] - h[(j - 1) * N + i]) / (2 * stZ);
-          if (Math.hypot(gx, gz) > 0.6 && y > 2.2) c = [0.54, 0.54, 0.52];   // steep slopes read as bare rock
-        }
-        const m = 0.92 + 0.10 * mottleN(i, j);  // light/dark grass patches, not flat paint
-        c = [c[0] * m, c[1] * m, c[2] * m];
-        // canal (task 24): paint the water core blue and a light-sand shoreline bank around it,
-        // matching the blue water ribbon + bank rails laid by buildBorderMesh.
-        const cm = canal ? canal[k] : 0;
-        if (cm > 0.02) {
-          const bank = [0.91, 0.85, 0.66], wat = [0.20, 0.50, 0.76];
-          const bt = cl01((cm - 0.10) / 0.20);   // 0 land → 1 bank
-          const wt = cl01((cm - 0.45) / 0.30);   // 0 bank → 1 water core
-          const b0 = c[0] + (bank[0] - c[0]) * bt, b1 = c[1] + (bank[1] - c[1]) * bt, b2 = c[2] + (bank[2] - c[2]) * bt;
-          c = [b0 + (wat[0] - b0) * wt, b1 + (wat[1] - b1) * wt, b2 + (wat[2] - b2) * wt];
-        }
-        // five-nation tint (task 6), kept FAINT so the island reads one green landmass (task 24)
-        c = getNationTint(c, getNationId(k), 0.10);
-      }
-      arr[k * 3] = c[0]; arr[k * 3 + 1] = c[1]; arr[k * 3 + 2] = c[2];
+    const ss = (t) => { const x = cl01(t); return x * x * (3 - 2 * x); };
+
+    // allocate splat attribute if needed
+    let splat = geo.attributes.aSplat;
+    if (!splat) {
+      splat = new THREE.BufferAttribute(new Float32Array(count * 4), 4);
+      geo.setAttribute('aSplat', splat);
     }
-    colors.needsUpdate = true;
+    let nation = geo.attributes.aNation;
+    if (!nation) {
+      nation = new THREE.BufferAttribute(new Float32Array(count * 3), 3);
+      geo.setAttribute('aNation', nation);
+    }
+    const sa = splat.array, na = nation.array;
+
+    // normals are already computed by _sculptTerrain
+    const norms = geo.attributes.normal;
+
+    for (let k = 0; k < count; k++) {
+      const i = k % N, j = (k / N) | 0;
+      const y = h[k];
+      const jit = perlinJit(i, j) * 1.2;   // dither layer boundaries
+      const yh = y + jit;   // jittered height for band transitions
+
+      // slope from normal Y component (normal is in local plane space, Z is up before rotation)
+      const ny = norms ? Math.abs(norms.getZ(k)) : 1;   // plane local Z = world Y after rotation
+      const slope = 1 - ny;
+
+      // layer weights: sand(x→z), grass(x), rock(y), sand(z), snow(w)
+      let wGrass = 0, wRock = 0, wSand = 0, wSnow = 0;
+
+      // sand: coastal band, h ∈ [-1.5, 2.5]
+      wSand = ss((2.5 - yh) / 3.0) * (1 - ss((yh - (-1.5)) / 2.0));
+      wSand = yh < 2.5 ? ss((2.5 - yh) / 3.5) : 0;
+      if (yh < -0.5) wSand = 1;   // seabed is all sand
+
+      // snow: h > 14
+      wSnow = ss((yh - 14) / 5);
+
+      // rock: slope-driven + high altitude
+      const slopeRock = ss((slope - 0.25) / 0.35);
+      const altRock = ss((yh - 8) / 5);
+      wRock = Math.max(slopeRock, altRock * 0.7);
+      wRock *= (1 - wSnow);   // snow covers rock at peaks
+
+      // grass: fills the remainder in the mid-band
+      wGrass = Math.max(0, 1 - wSand - wRock - wSnow);
+      if (yh > 3 && yh < 12) wGrass = Math.max(wGrass, (1 - wRock - wSnow) * 0.9);
+
+      // canal override: water core → sand/water, bank → sand
+      const cm = canal ? canal[k] : 0;
+      if (cm > 0.02) {
+        const bank = cl01((cm - 0.10) / 0.20);
+        const water = cl01((cm - 0.45) / 0.30);
+        wSand = Math.max(wSand, bank);
+        wGrass *= (1 - bank);
+        wRock *= (1 - bank);
+        if (water > 0) { wSand = Math.max(wSand, water); wGrass *= (1 - water); wRock *= (1 - water); wSnow *= (1 - water); }
+      }
+
+      // normalize
+      const sum = wGrass + wRock + wSand + wSnow;
+      if (sum > 0.001) { wGrass /= sum; wRock /= sum; wSand /= sum; wSnow /= sum; }
+      else { wGrass = 1; wRock = 0; wSand = 0; wSnow = 0; }
+
+      sa[k * 4]     = wGrass;
+      sa[k * 4 + 1] = wRock;
+      sa[k * 4 + 2] = wSand;
+      sa[k * 4 + 3] = wSnow;
+
+      // nation colour from the Voronoi zone id
+      const nid = getNationId(k);
+      const nc = getNationColor(nid);
+      if (nc) { na[k * 3] = nc.r; na[k * 3 + 1] = nc.g; na[k * 3 + 2] = nc.b; }
+      else { na[k * 3] = 0.5; na[k * 3 + 1] = 0.5; na[k * 3 + 2] = 0.5; }
+    }
+    splat.needsUpdate = true;
+    nation.needsUpdate = true;
   }
 
   // bilinear sample of the baked height field (flies ride the relief, settlements sit on the land)
@@ -1375,11 +1553,19 @@ export class ThreeScene {
       }
     }
     this._treeGroup = new THREE.Group();
+    const tc = new THREE.Color();
     for (const [geo, list] of [[this._broadGeo, broad], [this._coniferGeo, conifer]]) {
       if (!list.length) continue;
       const im = new THREE.InstancedMesh(geo, this._treeMat, list.length);
-      for (let i = 0; i < list.length; i++) im.setMatrixAt(i, list[i]);
+      for (let i = 0; i < list.length; i++) {
+        im.setMatrixAt(i, list[i]);
+        // task 51: per-instance ±12% colour variation so trees don't read as clones
+        const hueShift = 0.88 + rnd() * 0.24;
+        tc.setRGB(hueShift, 0.92 + rnd() * 0.16, 0.85 + rnd() * 0.20);
+        im.setColorAt(i, tc);
+      }
       im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
       im.frustumCulled = false;   // instances spread far beyond the base geometry bounds
       this._treeGroup.add(im);
     }
@@ -2047,12 +2233,8 @@ export class ThreeScene {
     this.villageGroup.visible = state.showCities !== false;
     // task 47: border walls follow territory toggle
     if (this._wallGroup) this._wallGroup.visible = state.showTerritory !== false;
-    // task 12 P0: flow the ocean by scrolling the normal map — no uniforms, no mirror pass
-    if (this.water && this.water.material && this.water.material.normalMap) {
-      const nm = this.water.material.normalMap;
-      nm.offset.x = (nm.offset.x + dt * 0.010) % 1;
-      nm.offset.y = (nm.offset.y + dt * 0.016) % 1;
-    }
+    // task 51: water animation via time uniform (replaces old normalMap scrolling)
+    if (this._waterUniforms) this._waterUniforms.uTime.value += dt;
     // task 48: walk mode drives the camera; orbit mode uses OrbitControls
     if (this.walkMode && this.walkMode.active) {
       try { this.walkMode.update(dt); } catch (e) { console.warn("walkMode", e); }
@@ -2068,6 +2250,7 @@ export class ThreeScene {
     try { this._updateMeshLines(sim); } catch (e) { console.warn("meshLines", e); }
     try { this._updateFaith(now); } catch (e) { console.warn("faith", e); }
     try { this._updateDayNight(now); } catch (e) { console.warn("dayNight", e); }
+    try { this._syncTerrainUniforms(); } catch (e) { /* non-fatal */ }
     try { this._updateEraHud(); } catch (e) { console.warn("eraHud", e); }
     try { this._updateDayPhaseHud(); } catch (e) { console.warn("dayPhaseHud", e); }   // task 49: after era-hud so an era rewrite can't drop the watch glyph
     try { this._updateSwarmAura(now); } catch (e) { console.warn("swarmAura", e); }
@@ -2556,6 +2739,37 @@ export class ThreeScene {
     dn.update(tick, gen, now);
   }
 
+  // task 51: sync the terrain splat shader uniforms with the live dayNight state each frame.
+  _syncTerrainUniforms() {
+    const u = this._terrainUniforms;
+    const wu = this._waterUniforms;
+    const dn = this.dayNight;
+    const fog = this.scene.fog;
+    if (dn) {
+      if (u) {
+        u.uSunDir.value.copy(dn._sunDir);
+        u.uNightFactor.value = dn.nightFactor;
+        if (this.sunLight) u.uSunColor.value.copy(this.sunLight.color).multiplyScalar(this.sunLight.intensity * 0.8);
+        if (this.hemiLight) {
+          const amb = u.uAmbient.value;
+          amb.copy(this.hemiLight.color).multiplyScalar(0.35);
+          amb.r += this.hemiLight.groundColor.r * 0.15;
+          amb.g += this.hemiLight.groundColor.g * 0.15;
+          amb.b += this.hemiLight.groundColor.b * 0.15;
+        }
+      }
+      if (wu) {
+        wu.uSunDir.value.copy(dn._sunDir);
+        wu.uNightFactor.value = dn.nightFactor;
+        if (this.sunLight) wu.uSunColor.value.copy(this.sunLight.color).multiplyScalar(this.sunLight.intensity * 0.7);
+      }
+    }
+    if (fog) {
+      if (u) { u.fogColor.value.copy(fog.color); u.fogDensity.value = fog.density; }
+      if (wu) { wu.fogColor.value.copy(fog.color); wu.fogDensity.value = fog.density; }
+    }
+  }
+
   // task 49: the current watch (☀️/🌅/🌙/🌄, 🌑 under eclipse) rides as a leading glyph INSIDE the
   // existing #era-hud pill — no new positioned element, so the bottom-centre HUD stack is untouched.
   // Mutates the DOM only when the glyph actually changes; _updateEraHud re-adds it after an era rewrite.
@@ -2792,9 +3006,12 @@ export class ThreeScene {
       else if (o.material) killMat(o.material);
       if (o.isInstancedMesh && o.dispose) o.dispose();
     });
-    if (this.water && this.water.material && this.water.material.normalMap) {
-      const wt = this.water.material.normalMap;   // task 12: plane water — explicit normalMap release
-      if (wt && wt.dispose && !seenTex.has(wt)) { seenTex.add(wt); wt.dispose(); }
+    if (this._coastTex && this._coastTex.dispose) { this._coastTex.dispose(); }   // task 51: coast height texture
+    if (this._terrainUniforms) {
+      for (const k of ['tGrass','tRock','tSand','tSnow']) {
+        const t = this._terrainUniforms[k] && this._terrainUniforms[k].value;
+        if (t && t.dispose && !seenTex.has(t)) { seenTex.add(t); t.dispose(); }
+      }
     }
     if (this._castleLib) for (const kk in this._castleLib) {
       const e = this._castleLib[kk];
