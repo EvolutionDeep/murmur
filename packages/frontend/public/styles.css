@@ -1,20 +1,29 @@
 /* ==========================================================================
    murmur — a living population feeling the arc market.
-   Aesthetic: warm paper + ink, gallery / scientific-plot. Nothing neon, no
-   glass cards, no tables. The artwork is the whole page; the UI floats on it.
-   Palette tokens are live: app.js retints --paper / --accent with the market
-   temperature, so the whole scene slowly warms (hot) or cools (cold).
 
-   Performance note: the field canvas repaints every frame, so the floating UI
-   deliberately avoids backdrop-filter and heavy blend modes (they would force a
-   re-blur / re-composite of the whole scene each frame). Panels use a plain
-   translucent fill; the grain overlay is static and normally composited.
+   AESTHETIC (task 26 design system): the DOM chrome is cut from the same cloth as
+   the 3D desktop sandbox — warm vellum leaves, burnished gold-leaf edges, iron-gall
+   ink, gilt capitals. Nothing neon, no glass, no blur, no tables. The artwork is the
+   whole page; the UI is a set of illuminated leaves floating on it.
+
+   PERFORMANCE RED LINES (do not cross):
+     · no backdrop-filter anywhere — the field canvas repaints every frame, so a
+       blurred backdrop would force a re-composite of the whole scene each frame.
+       Every translucent leaf uses a HIGH-alpha rgba fill instead.
+     · no box-shadow on anything animated per frame; shadows are static and sit on
+       the leaves, never on the canvas FX.
+     · zero per-frame JS: every effect here is CSS-only (transitions, one keyframe
+       for the candlelit chronicle knob, one for the live dot).
+
+   Palette tokens are live: shared.applyPaletteToDOM() retints --paper / --panel /
+   --accent / --accent-rgb with the market temperature, so the whole scene slowly
+   warms (hot) or cools (cold). NEVER hardcode those four in a component.
    ========================================================================== */
 
 :root {
-  /* --- live palette (overridden by app.js from the market temperature) --- */
+  /* --- live palette (overridden at runtime from the market temperature) --- */
   --paper: #f2eee6;                 /* warm bone */
-  --panel: rgba(242, 238, 230, 0.88);
+  --panel: rgba(242, 238, 230, 0.94);
   --ink: #1a1a18;
   --ink-rgb: 26, 26, 24;
   --accent: #9a8c6e;                /* regime accent (calm = taupe) */
@@ -28,31 +37,219 @@
   --aggregate: #5b7c8d;
   --rest: #8b9a86;
 
-  /* --- type --- */
-  /* Noto webfont fallbacks (loaded in index.html) keep CJK + Arabic glyphs from tofu-ing when the
-     display/mono latin faces have no coverage; the primary faces are unchanged for LTR latin. */
+  /* --- task 26 · vellum / gilt / iron-gall tokens -------------------------------
+       Constant on purpose: the gilt edges and vellum shades must not drift with the
+       live temperature palette, or the leaves would fight the map they float on. */
+  --vellum:      #f5f0e5;                       /* the leaf itself */
+  --vellum-2:    #ece3d0;                       /* a shaded leaf */
+  --vellum-3:    #ded2b8;                       /* deepest shade — rules, plinths */
+  --vellum-hi:   rgba(255, 253, 246, 0.62);     /* the caught-light top edge of a leaf */
+  --gall:        #211d16;                       /* iron-gall ink at full strength */
+  --gall-2:      #463d2e;                       /* ink at reading distance */
+  --gall-rgb:    33, 29, 22;
+  --gold:        #b08a36;                       /* the leaf's burnished edge */
+  --gold-lit:    #d9b968;                       /* gold with the light on it */
+  --gold-deep:   #7d6020;                       /* gold in shadow */
+  --gold-rgb:    176, 138, 54;
+  --rust:        #9c3b2e;                       /* rubrication red — storms, outrages, warnings */
+  --moss:        #3f5a3a;                       /* verdant green — a proof that passes */
+  --verdigris:   #4a6d78;                       /* cold blue-green — the sea, aggregates */
+
+  /* edge + fill recipes */
+  --edge:        1px solid rgba(122, 96, 58, 0.34);    /* the hairline every leaf carries */
+  --edge-soft:   1px solid rgba(122, 96, 58, 0.20);
+  --edge-gilt:   1px solid rgba(var(--gold-rgb), 0.52);
+  --rule-gold:   linear-gradient(90deg,
+                   rgba(var(--gold-rgb), 0) 0%, rgba(var(--gold-rgb), 0.55) 10%,
+                   rgba(var(--gold-rgb), 0.55) 90%, rgba(var(--gold-rgb), 0) 100%);
+  --leaf-grain:  linear-gradient(178deg,
+                   rgba(255, 253, 246, 0.40) 0%, rgba(255, 253, 246, 0) 34%,
+                   rgba(122, 96, 58, 0.045) 100%);
+
+  /* two-layer soft shadows: a tight contact line under a wide ambient lift */
+  --shadow-1: 0 1px 1px rgba(60, 46, 28, 0.07), 0 4px 12px rgba(60, 46, 28, 0.07);
+  --shadow-2: 0 1px 2px rgba(60, 46, 28, 0.09), 0 12px 30px rgba(60, 46, 28, 0.14);
+  --shadow-3: 0 2px 4px rgba(60, 46, 28, 0.11), 0 26px 60px rgba(60, 46, 28, 0.22);
+  --shadow-leaf: var(--shadow-inset), var(--shadow-2);
+  --shadow-inset: inset 0 1px 0 var(--vellum-hi);
+  --ring: 0 0 0 2px var(--vellum), 0 0 0 4px rgba(var(--gold-rgb), 0.62);
+
+  /* radii */
+  --r-leaf: 12px;
+  --r-card: 8px;
+  --r-chip: 5px;
+  --r-pill: 999px;
+
+  /* 4px spacing scale */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+  /* --- type ---
+       Four voices: gilt capitals for titles & eras (Cinzel), a literary serif for prose that is meant
+       to be read aloud (Fraunces), a humanist sans for the body (Instrument Sans), and the mono for
+       every number, hash and fingerprint (IBM Plex Mono). Noto webfont fallbacks (loaded in
+       index.html) keep CJK + Arabic glyphs from tofu-ing when the latin faces have no coverage. */
+  --title: "Cinzel", "Fraunces", Georgia, "Noto Serif SC", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", serif;
   --display: "Fraunces", "Iowan Old Style", Georgia, "Noto Serif SC", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", serif;
+  --sans: "Instrument Sans", "Segoe UI", "Helvetica Neue", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", monospace;
   --cjk: "PingFang SC", "Hiragino Sans", "Microsoft YaHei", "Yu Gothic", "Malgun Gothic", "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", sans-serif;
 
+  /* type scale — one ladder for the whole chrome */
+  --fs-micro: 8.5px;   /* fingerprint metadata, table heads */
+  --fs-cap: 9.5px;     /* uppercase captions */
+  --fs-body: 11.5px;   /* running text */
+  --fs-lead: 13.5px;   /* a line worth reading */
+  --fs-title: 10.5px;  /* leaf titles (Cinzel, tracked out) */
+  --fs-display: 18px;  /* era names, big figures */
+  --ls-title: 0.20em;  /* Cinzel needs air */
+  --ls-cap: 0.14em;
+  --ls-micro: 0.10em;
+  --num: tabular-nums;
+
+  /* motion — 120ms for a control under the cursor, longer only for a leaf entering the stage */
+  --t-fast: 120ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  --t-med: 220ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  --t-slow: 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* scrollbars — a 4px gilt-brown rod in an 8px transparent well (see the global rules below) */
+  --sb-thumb: rgba(122, 96, 58, 0.40);
+  --sb-thumb-hi: rgba(var(--gold-rgb), 0.78);
+
+  /* layout constants the no-overlap proof is built on.
+     --topbar-h is a FIXED band, so everything below it can be positioned against a known edge
+     instead of guessing the height of a wrapping flex row. */
+  --topbar-h: clamp(56px, 7.2vh, 72px);
   --pad: clamp(14px, 2.4vw, 28px);
+
+  /* ---- the centre channel (task 26②) -------------------------------------------------
+     The two panel columns claim the left and right flanks; whatever is left between them is the
+     "channel" — the only place a bottom-centre or top-centre label may live. Everything that used
+     to guess `left:50%; max-width:90vw` now derives its centre AND its width from the real column
+     edges, so the channel labels can never slide under a corner panel at any viewport width.
+       --col-l  widest left-column leaf   (panel-econ / panel-temp)
+       --col-r  widest right-column leaf  (panel-pop)
+       --chan-l / --chan-r  channel edges, inset 12px from each column
+       --chan-c / --chan-w  channel centre + width (used with translateX(-50%))
+     Overridden per breakpoint below, where the column widths change. */
+  --col-l: clamp(250px, 28vw, 340px);
+  --col-r: clamp(232px, 26vw, 300px);
+  --chan-l: calc(var(--pad) + var(--col-l) + 12px);
+  --chan-r: calc(100vw - var(--pad) - var(--col-r) - 12px);
+  --chan-c: calc((var(--chan-l) + var(--chan-r)) / 2);
+  --chan-w: calc(var(--chan-r) - var(--chan-l));
+
+  /* ---- the bottom-centre stack (task 26②) ---------------------------------------------
+     Two labels share the centre channel, stacked: era-hud sits on --stack-2, the select hint on
+     --stack-1. Both are single-line boxes, so the two offsets alone prove they never touch. */
+  --stack-1: 20px;    /* .hint-select  */
+  --stack-2: 76px;    /* #era-hud      */
+
+  /* ---- the right-edge control stack (task 26②) ----------------------------------------
+     Bottom-right, reading upward: chronicle pill → canary pill → zoom cluster. Each rung is a
+     44px-tall pill (zoom is 92px) plus a 12px air gap, so the three never intersect. */
+  --dock-1: 88px;     /* .chron-btn  bottom offset */
+  --dock-h: 66px;     /* both dock pills are built to the same deterministic height */
+  --dock-2: calc(var(--dock-1) + var(--dock-h) + 12px);   /* .canary-btn, one 12px air gap up */
+  --dock-w: 172px;    /* shared pill width for chron / canary */
+  --zoom-h: 100px;    /* the left-edge zoom cluster: 3 x 28px rungs + 2 x 4px gaps + 2 x 4px pad */
+  /* how far panel-temp is lifted off the bottom edge. 0 on desktop; the tablet breakpoint raises it
+     to clear the layer-toggle dock, and the cap formulas below read it so the arithmetic stays true. */
+  --temp-lift: 0px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
   height: 100%;
-  overflow: hidden;                 /* the field is the page; no scroll */
+  overflow: hidden;                 /* the field IS the page: the browser chrome never gets a scrollbar.
+                                       Every leaf that can overflow scrolls INTERNALLY (see the scrollbar
+                                       system below), so no native bar ever lands on top of the artwork. */
+  overscroll-behavior: none;
   background: var(--paper);
   color: var(--ink);
-  font-family: var(--mono);
+  font-family: var(--sans);         /* task 26: the body voice is a humanist sans, not the mono */
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  font-variant-numeric: var(--num);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
 body { transition: background 1.6s linear; }
 
-::selection { background: rgba(var(--accent-rgb), 0.24); }
+::selection { background: rgba(var(--gold-rgb), 0.28); color: var(--gall); }
+
+/* ============ the scrollbar system (task 26②) ============
+   One recipe for every scrolling leaf: an 8px transparent well carrying a 4px gilt-brown rod
+   (the 2px transparent border + background-clip:padding-box is what thins it inside the well).
+   Firefox gets the equivalent through scrollbar-width/scrollbar-color. Nothing here repaints
+   per frame — scrollbars are composited on their own layer. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border: 2px solid transparent; background-clip: padding-box;
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hi); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* every leaf that can grow past its box scrolls inside itself, never the document */
+.drawer-body, .wallets-list, .inspector, .chron-list, .chron-tabs, .chron-vol.is-on,
+.wallets-social, .chron-dynasty, .chron-culture, .chron-religion, .chron-commons, .chron-war,
+.chron-tech, .chron-cities, .chron-apprentice, .chron-archive, .chron-workshop, .chron-court,
+.chron-games, .chron-guilds, .chron-lexicon, .chron-rumor, .chron-treaty, .chron-works,
+.chron-bourse, .lin-genome-json, .pulse-json, .pb-bets {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ============ the control primitives (task 26③) ============
+   Keyboard focus is a gilt ring, never a browser outline; the ring is a box-shadow so it costs
+   nothing and never shifts layout. :focus-visible (not :focus) so a mouse click stays clean. */
+:focus { outline: none; }
+:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--r-chip);
+}
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  :focus-visible { box-shadow: 0 0 0 3px rgba(var(--gold-rgb), 0.85); }
+}
+
+/* the gilt hairline that closes every leaf header — a fading gold rule painted as a bottom
+   background-image (never an extra element, never a ::after flex child that would disturb the
+   header's own flex row, and it costs no repaint). Applied to .drawer-head / .wallets-head below;
+   .panel-title wraps its rule onto its own flex line instead. */
+.gilt-rule {
+  display: block; height: 1px; width: 100%;
+  background: var(--rule-gold);
+}
+.gilt-edge {
+  border-bottom: 1px solid transparent;
+  background-image: var(--rule-gold);
+  background-size: 100% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+}
+
+/* a shared button reset so every control inherits the same 120ms feel */
+button { font-family: inherit; font-size: inherit; color: inherit; }
+
+/* every number in the chrome is tabular so a live counter never jitters its neighbours */
+dd, .fp, .micro dd, .econ-vol, .temp-value, .wallet-bal b, .ar-vs-big, .pb-amt, .ar-amt {
+  font-variant-numeric: var(--num);
+}
 
 /* ============ the generative field ============ */
 #field {
@@ -79,93 +276,133 @@ body { transition: background 1.6s linear; }
   background: radial-gradient(120% 90% at 50% 45%, transparent 40%, rgba(var(--ink-rgb), 0.07) 100%);
 }
 
-/* ============ top bar ============ */
+/* ============ top bar ============
+   A FIXED-HEIGHT band (--topbar-h) rather than a padding-driven row: every leaf below it is
+   positioned against a known edge, which is what makes the no-overlap proof arithmetic instead
+   of hope. pointer-events:none on the bar itself so the artwork between the two clusters stays
+   draggable; the clusters re-enable it. */
 .topbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: var(--pad);
+  height: var(--topbar-h);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: 0 calc(var(--pad) + env(safe-area-inset-right, 0px)) 0 calc(var(--pad) + env(safe-area-inset-left, 0px));
   pointer-events: none;
 }
 .topbar > * { pointer-events: auto; }
 
-.wordmark { display: flex; align-items: baseline; gap: 9px; }
-.wordmark .mark { fill: var(--accent); opacity: 0.9; transform: translateY(4px); transition: fill 1.6s linear; }
+.wordmark { display: flex; align-items: center; gap: 10px; flex: none; }
+.wordmark .mark { fill: var(--gold); opacity: 0.92; transform: translateY(1px); transition: fill 1.6s linear; }
+/* the colophon: Cinzel Roman capitals, tracked out like a title-page imprint */
 .wordmark .name {
-  font-family: var(--display);
-  font-weight: 400;
-  font-size: clamp(22px, 3vw, 30px);
-  letter-spacing: 0.01em;
-  font-variation-settings: "opsz" 40;
-  color: var(--ink);
+  font-family: var(--title);
+  font-weight: 600;
+  font-size: clamp(17px, 2.1vw, 23px);
+  letter-spacing: var(--ls-title);
+  text-indent: var(--ls-title);      /* optically re-centre the trailing side-bearing */
+  text-transform: uppercase;
+  color: var(--gall);
 }
 
 .topmeta {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; letter-spacing: 0.14em; text-transform: lowercase;
-  color: rgba(26, 26, 24, 0.82);
+  display: flex; align-items: center; gap: 9px;
+  flex: none; max-width: 62vw;
+  font-family: var(--sans);
+  font-size: var(--fs-body); letter-spacing: var(--ls-micro); text-transform: lowercase;
+  color: var(--gall-2);
   background: var(--panel);
-  border: 1px solid rgba(96, 74, 52, 0.38);
-  border-radius: 2px;
-  padding: 7px 12px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 8px 26px rgba(50, 38, 26, 0.2);
+  background-image: var(--leaf-grain);
+  border: var(--edge);
+  border-radius: var(--r-pill);
+  padding: 5px 14px 5px 7px;
+  box-shadow: var(--shadow-leaf);
 }
-.topmeta .sep { opacity: 0.4; }
+.topmeta .sep { opacity: 0.34; }
 .x-link, .gh-link, .api-link {
   display: inline-flex; align-items: center; gap: 5px;
-  color: rgba(26, 26, 24, 0.8); text-decoration: none;
-  transition: color 0.35s ease;
+  color: var(--gall-2); text-decoration: none;
+  border-radius: var(--r-chip);
+  transition: color var(--t-fast) ease, opacity var(--t-fast) ease;
 }
-.x-link:hover, .gh-link:hover, .api-link:hover { color: var(--ink); }
+.x-link:hover, .gh-link:hover, .api-link:hover { color: var(--gold-deep); }
 .x-link .x-glyph, .gh-link .gh-glyph { fill: currentColor; flex: none; }
-.x-link .x-handle { letter-spacing: 0.14em; }
+.x-link .x-handle { letter-spacing: var(--ls-micro); }
 .link-dot {
-  width: 6px; height: 6px; border-radius: 50%;
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
   background: var(--muted);
   box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5);
   transition: background 0.6s ease;
 }
 .link-dot.live { background: var(--accent); animation: breathe 3.4s ease-in-out infinite; }
 .link-dot.off  { background: rgba(var(--ink-rgb), 0.3); }
+/* a 6px dot is the ONE thing allowed to animate a box-shadow: it is 36px² of paint, it is not
+   in the render loop (a CSS animation on a composited layer), and it never grows the layout. */
 @keyframes breathe {
   0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
   50%      { box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0); }
 }
 
-/* --- language switcher (globe dropdown in the top meta) --- */
+/* --- language switcher: same pill family as the layer toggles, seated at the head of .topmeta --- */
 .lang-select {
   appearance: none; -webkit-appearance: none; -moz-appearance: none;
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
-  color: rgba(26, 26, 24, 0.82); background: transparent;
-  border: 1px solid rgba(96, 74, 52, 0.35); border-radius: 2px;
-  padding: 2px 20px 2px 8px; margin-right: 2px; cursor: pointer;
-  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-  background-position: calc(100% - 11px) 55%, calc(100% - 7px) 55%;
+  font-family: var(--sans); font-size: 10.5px; font-weight: 500; letter-spacing: var(--ls-micro);
+  color: var(--gall-2);
+  background-color: rgba(var(--gold-rgb), 0.08);
+  border: 1px solid rgba(var(--gold-rgb), 0.34); border-radius: var(--r-pill);
+  padding: 3px 21px 3px 10px; margin-right: 1px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--gold) 50%), linear-gradient(135deg, var(--gold) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 54%, calc(100% - 8px) 54%;
   background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
-  transition: color 0.35s ease, border-color 0.35s ease;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease,
+              background-color var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.lang-select:hover, .lang-select:focus { color: var(--ink); border-color: var(--accent); outline: none; }
-.lang-select option { color: var(--ink); background: var(--paper); font-family: var(--mono); }
+.lang-select:hover {
+  color: var(--gall); border-color: rgba(var(--gold-rgb), 0.66);
+  background-color: rgba(var(--gold-rgb), 0.17); transform: translateY(-1px);
+}
+.lang-select:active { transform: translateY(0); }
+.lang-select:focus-visible { box-shadow: var(--ring); }
+.lang-select option { color: var(--gall); background: var(--vellum); font-family: var(--sans); }
 /* keep the globe dropdown LTR even under Arabic so the chevron + geometry don't drift */
 [dir="rtl"] .lang-select { direction: ltr; text-align: left; }
 
-/* ============ floating panels ============ */
+/* ============ floating panels — "leaves" laid on the table ============
+   One recipe for every corner leaf: a warm vellum field at high alpha (0.94 — opaque enough to
+   read without a blur pass, which is why there is NO backdrop-filter anywhere in this file), a
+   1px gilt-brown edge, a 12px corner, and a double shadow (a 1px contact line + a soft 30px
+   falloff) so the leaf reads as lifted paper rather than a decal. --panel is live: the palette
+   writer retints it with the market temperature, so it is never hardcoded here. */
 .panel {
   position: fixed; z-index: 10;
   background: var(--panel);
-  border: 1px solid rgba(96, 74, 52, 0.38);
-  border-radius: 2px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 10px 34px rgba(50, 38, 26, 0.22);
+  background-image: var(--leaf-grain);
+  border: var(--edge);
+  border-radius: var(--r-leaf);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow-leaf);
   transition: background 1.6s linear, border-color 1.6s linear, opacity 0.45s ease;
 }
+/* the leaf title: a Cinzel small cap in burnished gold, closing on a fading gilt rule. The rule is
+   a background-image on the flex row itself (no ::after, so the flex children are undisturbed). */
 .panel-title {
-  font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 10px;
+  font-family: var(--title); font-weight: 600;
+  font-size: var(--fs-title); letter-spacing: var(--ls-title); text-indent: var(--ls-title);
+  text-transform: uppercase;
+  color: var(--gold-deep);
+  margin-bottom: var(--sp-3); padding-bottom: var(--sp-2);
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  background-image: var(--rule-gold);
+  background-size: 100% 1px; background-position: 0 100%; background-repeat: no-repeat;
 }
 
-/* --- temperature panel (bottom-left) --- */
-.panel-temp { left: var(--pad); bottom: var(--pad); width: clamp(250px, 28vw, 340px); }
+/* --- temperature panel (bottom-left) ---
+   The left flank is a three-storey column: panel-econ on top, the zoom cluster in the middle,
+   panel-temp at the bottom. Both leaves are hard-capped to the space above / below the zoom band
+   (see the responsive block), so the column can never pinch the controls. */
+.panel-temp {
+  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+  bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+  width: var(--col-l);
+}
 .regime-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .regime {
   font-family: var(--display); font-weight: 600;
@@ -205,7 +442,11 @@ body { transition: background 1.6s linear; }
 .temp-history { display: block; width: 100%; height: 40px; margin-top: 12px; opacity: 0.95; }
 
 /* --- population panel (top-right) --- */
-.panel-pop { right: var(--pad); top: calc(var(--pad) + 46px); width: clamp(232px, 26vw, 300px); }
+.panel-pop {
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  top: calc(var(--topbar-h) + 44px);
+  width: var(--col-r);
+}
 .pop-size { font-family: var(--display); font-size: 13px; font-style: italic; color: var(--accent); opacity: 0.9; }
 .dist { display: flex; height: 8px; gap: 2px; margin-bottom: 10px; }
 .dist-seg { height: 100%; border-radius: 1px; transition: flex-grow 1s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s; min-width: 0; }
@@ -219,35 +460,48 @@ body { transition: background 1.6s linear; }
 .dist-legend .sw { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .dist-legend b { margin-left: auto; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* ============ fly inspector ============ */
+/* ============ fly inspector ============
+   A leaf like any other, but it floats above the right flank (z 12 > the panels' 10) and slides in
+   14px from the edge. When it is on stage the right-edge control stack bows out (see the group
+   rule under .zoom-controls) so nothing is ever trapped underneath it. */
 .inspector {
   position: fixed; z-index: 12;
-  right: var(--pad); top: 50%; transform: translateY(-50%) translateX(14px);
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px)); top: 50%;
+  transform: translateY(-50%) translateX(14px);
   width: clamp(250px, 27vw, 300px);
-  max-height: 84vh; overflow-y: auto;
+  max-height: 84vh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--panel);
-  border: 1px solid var(--hair); border-radius: 2px;
-  padding: 16px;
-  box-shadow: 0 14px 50px rgba(var(--ink-rgb), 0.1);
+  background-image: var(--leaf-grain);
+  border: var(--edge); border-radius: var(--r-leaf);
+  padding: var(--sp-5) var(--sp-4) var(--sp-4);
+  box-shadow: var(--shadow-3);
   opacity: 0; pointer-events: none;
-  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), background 1.6s linear;
+  transition: opacity var(--t-slow) ease, transform var(--t-slow), background 1.6s linear;
 }
 .inspector.open { opacity: 1; pointer-events: auto; transform: translateY(-50%) translateX(0); }
 /* when a fly is selected, recede the other floating panels so the inspector is the focus */
 body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-events: none; }
 .ins-close {
-  position: absolute; top: 8px; right: 10px;
-  background: none; border: none; cursor: pointer;
-  font-size: 20px; line-height: 1; color: var(--muted);
-  transition: color 0.2s, transform 0.2s;
+  position: absolute; top: 7px; right: 8px;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  background: none; border: 0; border-radius: var(--r-pill); cursor: pointer;
+  font-family: var(--mono); font-size: 17px; line-height: 1; color: var(--muted);
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.ins-close:hover { color: var(--ink); transform: rotate(90deg); }
-.ins-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.ins-id { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
-.ins-id b { font-family: var(--display); font-size: 17px; font-weight: 600; color: var(--ink); letter-spacing: 0; }
+.ins-close:hover { color: var(--rust); background-color: rgba(var(--gold-rgb), 0.12); transform: rotate(90deg); }
+.ins-close:focus-visible { box-shadow: var(--ring); }
+.ins-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin-bottom: var(--sp-3); padding-bottom: var(--sp-2); padding-right: 28px;
+  background-image: var(--rule-gold);
+  background-size: 100% 1px; background-position: 0 100%; background-repeat: no-repeat;
+}
+.ins-id { font-size: var(--fs-cap); letter-spacing: var(--ls-cap); text-transform: uppercase; color: var(--muted); }
+.ins-id b { font-family: var(--title); font-size: 15px; font-weight: 700; color: var(--gall); letter-spacing: 0.06em; }
 .ins-state {
-  font-family: var(--display); font-weight: 600; font-size: 14px; letter-spacing: 0.02em; text-transform: lowercase;
-  padding: 2px 9px; border-radius: 2px; color: var(--paper);
+  font-family: var(--title); font-weight: 600; font-size: 11px;
+  letter-spacing: var(--ls-cap); text-transform: uppercase;
+  padding: 2px 10px; border-radius: var(--r-pill); color: var(--vellum);
   background: var(--accent); transition: background 0.6s;
 }
 
@@ -278,43 +532,95 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em; vertical-align: 1px;
 }
 
-/* layer toggles (top-centre): switch the two ambient 10x layers — the swarm-mind aura + the isolate ring */
+/* ============ layer toggles: a segmented pill group (task 26③) ============
+   One vellum tray with the switches set into it as segments; the lit segment is burnished gold leaf
+   (a gradient + an inner highlight, NOT a box-shadow bloom — nothing here animates per frame).
+   GEOMETRY: the tray sits in its own 26px band directly under the topbar, and it is nowrap so it
+   can never grow a second row into the corner panels that begin 44px under the topbar.
+   Band = [topbar-h + 8, topbar-h + 34]; panels start at topbar-h + 44 ⇒ a standing 10px gap. */
 .layer-toggles {
-  position: fixed; z-index: 9; left: 50%; top: calc(var(--pad) + 26px); transform: translateX(-50%);
-  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; max-width: 62vw;
-  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  position: fixed; z-index: 9; left: 50%; top: calc(var(--topbar-h) + 8px);
+  transform: translateX(-50%);
+  display: flex; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 2px;
+  max-width: calc(100vw - 2 * var(--pad));
+  padding: 3px; line-height: 1.2;
+  background: var(--panel);
+  background-image: var(--leaf-grain);
+  border: var(--edge-soft); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1);
+  font-family: var(--sans); font-size: var(--fs-cap);
+  letter-spacing: var(--ls-cap); text-transform: uppercase;
 }
 .layer-toggles .layer-btn {
-  font: inherit; letter-spacing: 0.1em; padding: 3px 9px; border-radius: 999px;
-  border: 1px solid var(--hair); background: rgba(var(--paper-rgb, 242, 238, 230), 0.4); color: var(--muted);
-  cursor: pointer; backdrop-filter: blur(3px);
-  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+  flex: none; white-space: nowrap;
+  font: inherit; letter-spacing: var(--ls-micro);
+  padding: 4px 11px; border: 0; border-radius: var(--r-pill);
+  background: transparent; background-color: transparent; color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease,
+              opacity var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.layer-toggles .layer-btn:hover { color: var(--ink); }
+.layer-toggles .layer-btn:hover {
+  color: var(--gall); background-color: rgba(var(--gold-rgb), 0.14); transform: translateY(-1px);
+}
+.layer-toggles .layer-btn:active { transform: translateY(0); }
+.layer-toggles .layer-btn:focus-visible { box-shadow: var(--ring); }
+.layer-toggles .layer-btn:not(.is-on) { opacity: 0.6; }
 .layer-toggles .layer-btn.is-on {
-  color: var(--ink); border-color: rgba(var(--accent-rgb), 0.7); background: rgba(var(--accent-rgb), 0.14);
+  opacity: 1; color: #2a2114;
+  background-image: linear-gradient(180deg, var(--gold-lit) 0%, var(--gold) 58%, var(--gold-deep) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 249, 230, 0.6), 0 1px 2px rgba(60, 46, 28, 0.26);
 }
 
-/* camera controls: a compact vertical +/−/reset cluster pinned to the free LEFT-MIDDLE edge
-   (econ top-left, temp bottom-left, territory legend right-middle, era HUD top-centre — all avoided).
+/* ============ camera controls: a vertical pill stack on the free LEFT-MIDDLE edge ============
+   Why the left flank: render2d.drawTerritoryLegend() paints the map key on the CANVAS at the right
+   flank, vertically centred (bx = VW-194, by = (VH-136)/2), so the right-middle is spoken for even
+   though no DOM element owns it. The left-middle is the one band that is free — and it is kept free
+   arithmetically: panel-econ is capped to end 12px above the cluster and panel-temp to start 12px
+   below it (see the responsive block), so the three storeys of the left column never touch.
+   Cluster box = 100px tall, centred on 50vh ⇒ it owns [50vh-50, 50vh+50].
    Buttons only; the field itself also takes wheel / drag / pinch. */
 .zoom-controls {
-  position: fixed; z-index: 9; left: var(--pad); top: 50%; transform: translateY(-50%);
-  display: flex; flex-direction: column; gap: 5px;
+  position: fixed; z-index: 9;
+  left: calc(var(--pad) + env(safe-area-inset-left, 0px)); top: 50%;
+  transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 4px; padding: 4px;
+  background: var(--panel);
+  background-image: var(--leaf-grain);
+  border: var(--edge-soft); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1);
+  transition: opacity var(--t-med) ease;
 }
 .zoom-controls .zoom-btn {
-  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
-  font-family: var(--mono); font-size: 15px; line-height: 1; cursor: pointer;
-  border: 1px solid var(--hair); background: rgba(var(--paper-rgb, 242, 238, 230), 0.5); color: var(--muted);
-  backdrop-filter: blur(3px); transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  width: 28px; height: 28px; border-radius: var(--r-pill); display: grid; place-items: center;
+  font-family: var(--mono); font-size: 14px; line-height: 1; cursor: pointer;
+  border: 0; background: transparent; color: var(--gall-2);
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.zoom-controls .zoom-btn:hover { color: var(--ink); border-color: rgba(var(--accent-rgb), 0.6); }
-.zoom-controls .zoom-reset { font-size: 16px; }
+.zoom-controls .zoom-btn:hover {
+  color: var(--gall); background-color: rgba(var(--gold-rgb), 0.18); transform: translateY(-1px);
+}
+.zoom-controls .zoom-btn:active { transform: translateY(0); }
+.zoom-controls .zoom-btn:focus-visible { box-shadow: var(--ring); }
+.zoom-controls .zoom-reset { font-size: 13px; }
 @media (max-width: 680px), (max-height: 600px) {
   /* touch devices get pinch + drag directly on the field; drop the chrome to keep the column clean */
   .zoom-controls { display: none; }
 }
-.layer-toggles .layer-btn:not(.is-on) { opacity: 0.5; }
+/* the whole right-edge + left-edge control furniture bows out whenever a sheet or the inspector
+   takes the stage, so no pill is ever buried under an opaque leaf it cannot escape from. */
+body.ins-open .zoom-controls,
+body.chron-open .zoom-controls,
+body.canary-open .zoom-controls,
+body.wallets-open .zoom-controls,
+body.history-open .zoom-controls,
+body.proofs-open .zoom-controls,
+body.brain-open .zoom-controls,
+body.lineage-open .zoom-controls,
+body.pulse-open .zoom-controls,
+body.predict-open .zoom-controls,
+body.arena-open .zoom-controls,
+body.laureate-open .zoom-controls { opacity: 0; pointer-events: none; }
 
 /* the fly's live spike raster: 10,800 neurons firing over time (newest on the right) */
 .raster-wrap { margin-bottom: 14px; }
@@ -373,15 +679,20 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 .ins-meta .fp { font-size: 9.5px; letter-spacing: 0.02em; opacity: 0.6; max-width: 62%; word-break: break-all; overflow-wrap: anywhere; text-align: right; }
 .ins-foot { margin-top: 12px; font-size: 9px; letter-spacing: 0.08em; color: var(--muted); opacity: 0.7; text-align: center; }
 
-/* ============ select hint + footer ============ */
+/* ============ select hint ============
+   The bottom-centre stack is now exactly two labels (task 26① removed the third): #era-hud on
+   --stack-2 (76px) and this hint on --stack-1 (20px). Both are centred on --chan-c and both are
+   clamped to --chan-w, so they share the centre channel and can touch neither each other nor a
+   corner panel. Deliberately faint — it is furniture, not content. */
 .hint-select {
-  /* task 20⑦: lifted clear of the bottom stack — chron-ticker (0–44px) → era-hud (~50–76px) → this
-     hint (82px+). The old bottom:calc(var(--pad)+6px) parked it INSIDE the 44px ticker, and the
-     `.chron-ticker ~ .hint-select` hide-rule never fired (hint precedes ticker, so `~` matched nothing). */
-  position: fixed; z-index: 9; left: 50%; bottom: 82px; transform: translateX(-50%);
-  font-size: 10px; letter-spacing: 0.16em; text-transform: lowercase; color: var(--muted);
-  opacity: 0.55; pointer-events: none; transition: opacity 0.8s; text-align: center;
-  max-width: 90vw;
+  position: fixed; z-index: 9;
+  left: var(--chan-c); bottom: calc(var(--stack-1) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  max-width: min(var(--chan-w), 540px);
+  font-size: 10px; line-height: 1.45;
+  letter-spacing: var(--ls-cap); text-transform: lowercase; color: var(--muted);
+  opacity: 0.5; pointer-events: none;
+  transition: opacity 0.8s ease; text-align: center;
 }
 .hint-select.hide { opacity: 0; }
 
@@ -412,7 +723,11 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 .ep-val { flex: 1 1 auto; }
 
 /* --- agent economy panel (top-left): the x402 swarm ledger --- */
-.panel-econ { left: var(--pad); top: calc(var(--pad) + 44px); width: clamp(250px, 28vw, 340px); }
+.panel-econ {
+  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+  top: calc(var(--topbar-h) + 44px);
+  width: var(--col-l);
+}
 .econ-mode {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: lowercase;
   color: var(--accent); border: 1px solid rgba(var(--accent-rgb), 0.4);
@@ -441,6 +756,7 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 .econ-feed {
   margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--hair);
   display: flex; flex-direction: column; gap: 5px;
+  max-height: 92px; overflow: hidden;      /* ~6 settled lines, so the leaf never outgrows its cap */
 }
 .econ-line {
   display: flex; align-items: baseline; gap: 7px;
@@ -473,55 +789,122 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 }
 .econ-foot.stale { color: #9c3b2e; opacity: 0.9; }
 
-/* ============ cron heartbeat watchdog banner ============ */
+/* ============ cron heartbeat watchdog banner ============
+   Shares the corner panels' top line (topbar-h + 44) but is clamped to the centre channel, so the
+   rust banner and the two top leaves are separated horizontally by the same 12px the channel is
+   inset by. Hidden by default; when it does appear it never covers a panel. */
 .cron-warn {
-  position: fixed; top: calc(var(--pad) + 40px); left: 50%; transform: translateX(-50%);
-  z-index: 30; pointer-events: none; max-width: 90vw;
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; text-align: center;
-  color: #f2eee6; background: rgba(156, 59, 46, 0.92);
-  border: 1px solid #9c3b2e; border-radius: 3px;
-  padding: 5px 12px; box-shadow: 0 4px 16px rgba(26, 26, 24, 0.18);
+  position: fixed; top: calc(var(--topbar-h) + 44px);
+  left: var(--chan-c); transform: translateX(-50%);
+  max-width: min(var(--chan-w), 540px);
+  z-index: 30; pointer-events: none;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.45; letter-spacing: 0.04em; text-align: center;
+  color: var(--vellum); background: rgba(156, 59, 46, 0.94);
+  border: 1px solid var(--rust); border-radius: var(--r-card);
+  padding: 5px 13px; box-shadow: var(--shadow-2);
   animation: breathe 2.6s ease-in-out infinite;
 }
 .cron-warn[hidden] { display: none; }
 
-/* --- "all agent wallets" toggle (in the economy panel) --- */
-.wallets-btn {
-  margin-top: 10px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
+/* ============ the leaf action buttons (task 26③) ============
+   ONE recipe shared by all seven panel toggles — wallets · history · proofs · brain (+ its
+   lineage / laureate variants) · pulse · predict · arena. A hairline gilt chip on vellum that
+   warms toward the gold and lifts 1px under the cursor. 120ms everywhere: fast enough to feel
+   wired, slow enough to read as paper. The old seven copies of this rule drifted apart (border
+   alpha 0.32 vs 0.34, margin 6px vs 10px); they are collapsed here and only their vertical rhythm
+   is left at each call site. */
+.wallets-btn, .hist-btn, .proofs-btn, .brain-btn, .pulse-btn, .predict-btn, .arena-btn {
+  width: 100%;
+  font-family: var(--sans); font-size: var(--fs-cap); font-weight: 500;
+  letter-spacing: var(--ls-cap); text-transform: uppercase; text-align: center;
+  color: var(--gold-deep);
+  background-color: rgba(var(--gold-rgb), 0.07);
+  border: 1px solid rgba(var(--gold-rgb), 0.30); border-radius: var(--r-chip);
+  padding: 8px 10px; cursor: pointer;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease,
+              border-color var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.wallets-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.wallets-btn:hover, .hist-btn:hover, .proofs-btn:hover, .brain-btn:hover,
+.pulse-btn:hover, .predict-btn:hover, .arena-btn:hover {
+  background-color: rgba(var(--gold-rgb), 0.17);
+  border-color: rgba(var(--gold-rgb), 0.56);
+  color: var(--gall); transform: translateY(-1px);
+}
+.wallets-btn:active, .hist-btn:active, .proofs-btn:active, .brain-btn:active,
+.pulse-btn:active, .predict-btn:active, .arena-btn:active { transform: translateY(0); }
+.wallets-btn:focus-visible, .hist-btn:focus-visible, .proofs-btn:focus-visible,
+.brain-btn:focus-visible, .pulse-btn:focus-visible, .predict-btn:focus-visible,
+.arena-btn:focus-visible { box-shadow: var(--ring); }
 
-/* --- all-agent wallets drawer (slides in from the right edge) --- */
-.wallets {
-  position: fixed; z-index: 11; right: 0; top: 0; bottom: 0;
-  width: clamp(280px, 30vw, 372px);
+/* --- "all agent wallets" toggle (in the economy panel) --- */
+.wallets-btn { margin-top: 10px; }
+
+/* ============ the right-edge sheets (task 26③) ============
+   Wallets · Chronicle · History · Proofs · Brain · Lineage · Pulse · Predict · Arena · Laureate ·
+   Canary all share ONE chrome: a vellum leaf hinged on the right edge, a gilt spine instead of a
+   hairline, a Cinzel head closing on a fading gold rule, and a round close chip that turns rust
+   under the cursor. The body is the ONLY scroller — the sheet itself is height-locked to the
+   viewport (top:0; bottom:0), which is the structural half of the overlap fix: a sheet scrollbar
+   can no longer run underneath the bottom dock or out through the browser chrome.
+   --paper stays the field so the palette writer keeps retinting the sheets with market temperature. */
+.wallets, .drawer {
+  position: fixed; right: 0; top: 0; bottom: 0;
   display: flex; flex-direction: column;
-  background: var(--paper); border-left: 1px solid var(--hair);
-  box-shadow: -10px 0 34px rgba(var(--ink-rgb), 0.07);
+  background-color: var(--paper);
+  background-image: var(--leaf-grain);
+  border-left: var(--edge-gilt);
+  box-shadow: var(--shadow-3);
   transform: translateX(100%); opacity: 0.999;
-  transition: transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--t-slow);
   pointer-events: none;
 }
-.wallets.open { transform: translateX(0); pointer-events: auto; }
+.wallets { z-index: 11; width: clamp(280px, 30vw, 372px); }
+.drawer  { z-index: 12; width: clamp(300px, 34vw, 440px); }
+.wallets.open, .drawer.open { transform: translateX(0); pointer-events: auto; }
 body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
-.wallets-head {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: calc(var(--pad) * 0.85) var(--pad); border-bottom: 1px solid var(--hair);
+
+/* --- the shared sheet head: Cinzel small caps on a fading gilt rule --- */
+.wallets-head, .drawer-head {
+  flex: none;
+  display: flex; align-items: baseline; gap: 10px;
+  padding: calc(var(--sp-4) + 2px) var(--sp-3) var(--sp-3) var(--sp-4);
+  background-image: var(--rule-gold);
+  background-size: 100% 1px; background-position: 0 100%; background-repeat: no-repeat;
 }
-.wallets-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
-.wallets-sub { flex: 1; font-size: 9.5px; letter-spacing: 0.04em; color: var(--accent); }
-.wallets-close {
-  background: none; border: none; cursor: pointer; flex: none;
-  font-size: 20px; line-height: 1; color: var(--muted); transition: color 0.2s, transform 0.2s;
+.wallets-title, .drawer-title {
+  flex: none;
+  font-family: var(--title); font-weight: 600;
+  font-size: var(--fs-title); letter-spacing: var(--ls-title); text-indent: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep);
 }
-.wallets-close:hover { color: var(--ink); transform: rotate(90deg); }
+.wallets-sub, .drawer-sub {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--sans); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
+  color: var(--accent); text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wallets-close, .drawer-close {
+  flex: none; align-self: center;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-pill);
+  font-family: var(--mono); font-size: 17px; line-height: 1; color: var(--muted); cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease,
+              border-color var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.wallets-close:hover, .drawer-close:hover {
+  color: var(--rust); background-color: rgba(var(--gold-rgb), 0.13);
+  border-color: rgba(var(--gold-rgb), 0.34); transform: rotate(90deg);
+}
+.wallets-close:focus-visible, .drawer-close:focus-visible { box-shadow: var(--ring); }
+
+/* --- the shared sheet body: the one and only scroller --- */
+.wallets-list, .drawer-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.drawer-body { padding: var(--sp-4) var(--sp-4) calc(var(--sp-6) + env(safe-area-inset-bottom, 0px)); }
 .wallets-list {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain;
-  padding: 9px var(--pad) calc(var(--pad) + 6px);
+  padding: var(--sp-3) var(--sp-4) calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
   display: flex; flex-direction: column; gap: 6px;
 }
 .wallet-row {
@@ -846,34 +1229,14 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .econ-line.netted .econ-line-txt { color: var(--ink); opacity: 0.9; }
 
 /* --- "swarm history" toggle (in the temperature panel) --- */
-.hist-btn {
-  margin-top: 10px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.hist-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.hist-btn { margin-top: 10px; }
 
 /* --- "neural proofs" toggle (in the economy panel, under the wallets toggle) --- */
-.proofs-btn {
-  margin-top: 6px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.proofs-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.proofs-btn { margin-top: 6px; }
 
 /* --- "prove the brain" toggle (in the population panel) + its connectome-manifest drawer --- */
-.brain-btn {
-  margin-top: 10px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.brain-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.brain-btn { margin-top: 10px; }
+.brain-btn.lineage-btn, .brain-btn.laureate-btn { margin-top: 6px; }
 body.brain-open .panel-pop { opacity: 0.1; pointer-events: none; }
 body.lineage-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .br-table { margin-top: 4px; }
@@ -969,86 +1332,124 @@ body.lineage-open .panel-pop { opacity: 0.1; pointer-events: none; }
 }
 .tca-ex:hover { color: var(--ink); }
 
-/* --- generic right-side drawer (swarm history) — mirrors the wallets drawer --- */
-.drawer {
-  position: fixed; z-index: 12; right: 0; top: 0; bottom: 0;
-  width: clamp(300px, 34vw, 440px);
-  display: flex; flex-direction: column;
-  background: var(--paper); border-left: 1px solid var(--hair);
-  box-shadow: -10px 0 34px rgba(var(--ink-rgb), 0.07);
-  transform: translateX(100%); opacity: 0.999;
-  transition: transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
-  pointer-events: none;
-}
-.drawer.open { transform: translateX(0); pointer-events: auto; }
+/* --- generic right-side drawer ---
+   The chrome itself now lives with .wallets above (one recipe for every sheet); only the width and
+   the stacking order differ, and those are declared there too. */
 body.history-open .panel-pop, body.chron-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
-/* ============ the chronicle drawer (bottom-right button → full-height sheet) ============
+/* ============ the chronicle drawer (right-edge pill → full-height sheet) ============
    The historian's home: era badge, "prove no LLM" verdict, the narrative timeline, the ledger
    of relationships (bonds / reputation / grudges) and the houses & monuments blocks.
    No longer a permanent panel — the corner carries a dark stone stele: open the chronicle. */
 .drawer.panel-chron .drawer-body { display: flex; flex-direction: column; overflow: hidden; }
-/* the trigger as a stele: deep-ink slab, arched top, double-engraved gilt rule, Fraunces capitals */
+
+/* ---- the trigger (task 26②: REPOSITIONED) --------------------------------------------
+   It used to be a 212px-wide stele bolted to the bottom-right corner, which is exactly what the
+   bottom-centre era HUD, the select hint and the sheet scrollbars kept colliding with. It is now a
+   compact 172 x 66 ink-and-gilt pill riding the right edge at --dock-1, one 12px air gap below the
+   canary pill: the bottom-right is a two-rung stack, and the bottom-centre is left entirely to the
+   era HUD + hint. Both pills are built to the SAME deterministic height (--dock-h) with a one-line
+   ellipsised badge, so the stack offsets stay arithmetic rather than hopeful.
+   The old candlelight was a box-shadow keyframe — that is a full repaint of a 34px blur radius
+   every frame of a 5.5s loop, which the task's performance red line forbids. The ember now lives on
+   the fleur-de-lis as a plain opacity fade (composited, zero paint). */
 .chron-btn {
-  position: fixed; z-index: 6; right: var(--pad); bottom: var(--pad);
-  display: flex; flex-direction: column; align-items: center;
-  min-width: 212px; padding: 14px 28px 12px;
+  position: fixed; z-index: 6;
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--dock-1) + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: var(--dock-w); min-height: var(--dock-h);
+  padding: 9px 14px 8px;
   font-family: var(--mono);
-  color: var(--paper); background: var(--ink);
-  border: 1px solid rgba(var(--accent-rgb), 0.85);
-  border-radius: 18px 18px 3px 3px;              /* arched stele on a squared plinth */
-  box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4);
+  color: var(--vellum);
+  background-color: var(--gall);
+  background-image: linear-gradient(180deg, rgba(255, 250, 236, 0.11) 0%, rgba(255, 250, 236, 0) 44%, rgba(0, 0, 0, 0.24) 100%);
+  border: var(--edge-gilt);
+  border-radius: var(--r-leaf);
+  box-shadow: var(--shadow-2);
   cursor: pointer;
-  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.25s ease;
-  animation: chron-breathe 5.5s ease-in-out infinite;   /* candlelight, not a blink */
+  transition: transform var(--t-fast) ease, filter var(--t-fast) ease,
+              box-shadow var(--t-fast) ease, opacity var(--t-med) ease;
 }
 .chron-btn::before {                              /* the inner engraved rule of the double frame */
-  content: ""; position: absolute; inset: 5px 5px 6px;
-  border: 1px solid rgba(242, 238, 230, 0.16);
-  border-radius: 13px 13px 2px 2px;
+  content: ""; position: absolute; inset: 4px;
+  border: 1px solid rgba(245, 240, 229, 0.15);
+  border-radius: calc(var(--r-leaf) - 4px);
   pointer-events: none;
 }
-.chron-btn:hover { transform: translateY(-1px); filter: brightness(1.14); }
-.chron-btn:active { transform: translateY(1px); }
-.chron-orn { font-size: 15px; line-height: 1; color: var(--accent); text-indent: 0.42em; margin-left: 0.42em; }   /* fleur-de-lis, the dynastic crest */
+.chron-btn:hover { transform: translateY(-2px); filter: brightness(1.16); box-shadow: var(--shadow-3); }
+.chron-btn:active { transform: translateY(0); }
+.chron-btn:focus-visible { box-shadow: var(--ring); }
+.chron-orn {
+  font-size: 12px; line-height: 1; color: var(--gold-lit);
+  text-indent: 0.42em; margin-left: 0.42em;
+  animation: chron-ember 5.5s ease-in-out infinite;   /* candlelight, not a blink */
+}
 .chron-word {
-  font-family: var(--display); font-weight: 600; font-size: 23px; line-height: 1.2;
-  letter-spacing: 0.16em; text-transform: uppercase; text-indent: 0.16em; margin-top: 1px;
+  font-family: var(--title); font-weight: 600; font-size: 12.5px; line-height: 1.15;
+  letter-spacing: var(--ls-title); text-transform: uppercase; text-indent: var(--ls-title);
+  margin-top: 3px; color: var(--vellum);
 }
 .chron-badge {
-  width: 100%; margin-top: 9px; padding-top: 8px;
-  border-top: 1px solid rgba(242, 238, 230, 0.18);   /* hairline carve beneath the title */
-  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; text-align: center;
-  color: rgba(242, 238, 230, 0.66);
+  width: 100%; margin-top: 6px; padding-top: 5px;
+  border-top: 1px solid rgba(245, 240, 229, 0.17);   /* hairline carve beneath the title */
+  font-family: var(--sans); font-size: var(--fs-micro); line-height: 1.3;
+  letter-spacing: var(--ls-micro); text-transform: uppercase; text-align: center;
+  color: rgba(245, 240, 229, 0.62);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;   /* one line, always ⇒ fixed height */
 }
-@keyframes chron-breathe {
-  0%, 100% { box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4), 0 0 0 0 rgba(var(--accent-rgb), 0.25); }
-  55%      { box-shadow: 0 12px 34px rgba(var(--ink-rgb), 0.4), 0 0 26px 7px rgba(var(--accent-rgb), 0.3); }
-}
-@media (prefers-reduced-motion: reduce) { .chron-btn { animation: none; } }
-/* the trigger bows out while the drawer is on stage, or when the inspector claims the bottom edge */
+.chron-badge[hidden] { display: none; }
+@keyframes chron-ember { 0%, 100% { opacity: 0.68; } 55% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chron-orn { animation: none; } }
+/* the trigger bows out while the drawer is on stage, or when the inspector claims the right edge */
 body.chron-open .chron-btn, body.ins-open .chron-btn { opacity: 0; pointer-events: none; }
 
 /* ============ the Arc x402 Canary trigger + drawer ============
-   The trigger is an accent pill stacked directly above the dark chronicle stele (bottom-right), so the live
-   settlement board is one obvious tap away instead of buried behind /developers. It reads as "live telemetry"
-   (a blipping gem + a breathing label) — visually secondary to the chronicle, but unmistakably present. */
+   The trigger is a gilt-tinted pill stacked one 12px air gap above the dark chronicle stele
+   (--dock-2), so the live settlement board is one obvious tap away instead of buried behind
+   /developers. It reads as "live telemetry" (a blipping gem + a breathing label) — visually
+   secondary to the chronicle, but unmistakably present. Same box as the stele, same one-line
+   ellipsised badge, so the two rungs of the dock can never meet.
+   The old blur() is gone: a vellum field at high alpha reads just as well and costs no filter pass. */
 .canary-btn {
-  position: fixed; z-index: 6; right: var(--pad); bottom: calc(var(--pad) + 118px);
-  display: flex; flex-direction: column; align-items: center; gap: 1px;
-  min-width: 212px; padding: 11px 24px 10px;
-  font-family: var(--mono); color: var(--ink);
-  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.22), rgba(var(--accent-rgb), 0.09));
-  border: 1px solid rgba(var(--accent-rgb), 0.85); border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(var(--ink-rgb), 0.16);
-  backdrop-filter: blur(3px); cursor: pointer;
-  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease, opacity 0.25s ease;
+  position: fixed; z-index: 6;
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--dock-2) + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: var(--dock-w); min-height: var(--dock-h);
+  padding: 9px 14px 8px;
+  font-family: var(--mono); color: var(--gall);
+  background-color: rgba(var(--gold-rgb), 0.13);
+  background-image: linear-gradient(180deg, rgba(255, 253, 246, 0.55) 0%, rgba(255, 253, 246, 0) 52%, rgba(var(--gold-rgb), 0.10) 100%);
+  border: var(--edge-gilt); border-radius: var(--r-leaf);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  transition: transform var(--t-fast) ease, background-color var(--t-fast) ease,
+              box-shadow var(--t-fast) ease, opacity var(--t-med) ease;
 }
-.canary-btn:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 10px 28px rgba(var(--ink-rgb), 0.22); }
-.canary-btn:active { transform: translateY(1px); }
-.canary-orn { font-size: 13px; line-height: 1; color: var(--accent); animation: canary-blip 2.6s ease-in-out infinite; }
-.canary-word { font-family: var(--display); font-weight: 600; font-size: 19px; line-height: 1.15; letter-spacing: 0.14em; text-transform: uppercase; }
-.canary-badge { font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-top: 3px; }
+.canary-btn:hover {
+  transform: translateY(-2px); background-color: rgba(var(--gold-rgb), 0.22);
+  box-shadow: var(--shadow-2);
+}
+.canary-btn:active { transform: translateY(0); }
+.canary-btn:focus-visible { box-shadow: var(--ring); }
+.canary-orn {
+  font-size: 12px; line-height: 1; color: var(--gold-deep);
+  animation: canary-blip 2.6s ease-in-out infinite;
+}
+.canary-word {
+  font-family: var(--title); font-weight: 600; font-size: 12.5px; line-height: 1.15;
+  letter-spacing: var(--ls-title); text-indent: var(--ls-title);
+  text-transform: uppercase; color: var(--gall); margin-top: 3px;
+}
+.canary-badge {
+  width: 100%; margin-top: 6px; padding-top: 5px;
+  border-top: 1px solid rgba(var(--gold-rgb), 0.30);
+  font-family: var(--sans); font-size: var(--fs-micro); line-height: 1.3;
+  letter-spacing: var(--ls-micro); text-transform: uppercase; text-align: center;
+  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 @keyframes canary-blip { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .canary-orn { animation: none; } }
 /* the trigger bows out while the canary sheet, the chronicle, or the inspector owns the stage; the chronicle
@@ -1216,18 +1617,8 @@ body.canary-open .panel-pop, body.canary-open .panel-econ, body.canary-open .pan
 .chron-item.kind-birth       .chron-icon { color: #4f7a3a; }
 .chron-item.kind-record_conc .chron-icon,
 .chron-item.kind-lead_change .chron-icon { color: #8a6a1c; }
-.drawer-head {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: calc(var(--pad) * 0.85) var(--pad); border-bottom: 1px solid var(--hair);
-}
-.drawer-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
-.drawer-sub { flex: 1; font-size: 9.5px; letter-spacing: 0.02em; color: var(--accent); text-align: right; }
-.drawer-close {
-  background: none; border: none; cursor: pointer; flex: none;
-  font-size: 20px; line-height: 1; color: var(--muted); transition: color 0.2s, transform 0.2s;
-}
-.drawer-close:hover { color: var(--ink); transform: rotate(90deg); }
-.drawer-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 12px var(--pad) calc(var(--pad) + 8px); }
+/* the sheet head / title / sub / close / body recipe now lives once, up with the .wallets chrome
+   (see "the right-edge sheets" near the top of the file). Nothing sheet-specific here any more. */
 
 .hist-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); }
 .hist-summary > div { display: flex; flex-direction: column; gap: 2px; }
@@ -1395,25 +1786,11 @@ body.laureate-open .panel-pop { opacity: 0.1; pointer-events: none; }
 /* ============ arc pulse drawer ============
    The x402 paid-signal product + trustless PnL leaderboard. Reuses the generic
    .drawer chrome; these are its innards. */
-.pulse-btn {
-  margin-top: 6px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.pulse-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.pulse-btn { margin-top: 6px; }
 body.pulse-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 /* --- "prediction market" toggle (in the temperature panel, under arc pulse) --- */
-.predict-btn {
-  margin-top: 6px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.predict-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.predict-btn { margin-top: 6px; }
 body.predict-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 .pulse-loading, .pulse-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.8; text-align: center; padding: 18px 6px; }
@@ -1569,14 +1946,7 @@ a.pl-addr:hover { opacity: 1; text-decoration: underline; }
    MURMUR-denominated, non-custodial head-to-head: a holder bets UP/DOWN on the SAME temperature move
    the fly swarm bets, into a parimutuel book the PredictionArena contract escrows and pays out itself.
    Reuses the generic .drawer chrome and the predict drawer's visual language; these are its innards. */
-.arena-btn {
-  margin-top: 6px; width: 100%;
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--accent); background: rgba(var(--accent-rgb), 0.07);
-  border: 1px solid rgba(var(--accent-rgb), 0.32); border-radius: 2px;
-  padding: 7px 8px; cursor: pointer; transition: background 0.2s ease, color 0.2s ease;
-}
-.arena-btn:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--ink); }
+.arena-btn { margin-top: 6px; }
 body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 .ar-loading, .ar-empty { font-size: 10px; line-height: 1.6; color: var(--muted); opacity: 0.85; text-align: center; padding: 18px 6px; }
@@ -1699,31 +2069,43 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .ar-last b { font-weight: 600; }
 
 /* ============ responsive ============
-   The piece is four floating corner panels over a full-bleed field. That reads
-   beautifully on a desktop, but the corners collide once the viewport narrows
-   (left+right panels meet around ~520px). So we step down in tiers:
-     · ≤820px  tablet  — keep the corners, shrink them, drop the tallest content
-     · ≤680px  phone   — the corners can't sit side-by-side, so the panels leave
-                         the corners and become ONE scrollable column; the field
-                         stays a fixed full-bleed background behind the stack
-     · ≤560px tall     — landscape phones / short windows: hide the tallest bits
-   Panel fills stay var(--panel) so app.js can keep retinting them with the market
+   The piece is four floating corner leaves over a full-bleed field. That reads beautifully on a
+   desktop, but the corners collide once the viewport narrows (left+right leaves meet around
+   ~520px). So we step down in tiers:
+     · ≤820px  tablet  — keep the corners, shrink them, dock the layer tray at the bottom, lift the
+                         era HUD up into the vacated band under the topbar
+     · ≤680px  phone   — the corners can't sit side-by-side, so the leaves leave the corners and
+                         become ONE scrollable column over the fixed field; the bottom becomes a
+                         three-rung dock (chronicle · canary · layers)
+     · ≤600px tall     — landscape phones / short windows: same stacked column
+   Panel fills stay var(--panel) so the palette writer can keep retinting them with the market
    temperature at every breakpoint — never hardcode the panel background here.
    ========================================================================== */
 
-/* --- height-aware trims (corner layout only): on short viewports the top+bottom panels in each
-       column must not collide. Progressively drop the tallest blocks, and cap every corner panel
-       to a viewport fraction with internal scroll as a hard no-overlap guarantee (2*42vh + the
-       top/bottom offsets always <= 100vh, so a column pair can never intersect). Scoped to
-       min-height:601px so the stacked fallback below is unaffected. --- */
+/* ---- the no-overlap caps (corner layout only) -------------------------------------------
+   Every cap below is derived, not guessed. With Z = --zoom-h (100), the zoom cluster owns
+   [50vh-50, 50vh+50] on the left edge; the canvas map key (render2d.drawTerritoryLegend) owns
+   [50vh-68, 50vh+68] x [VW-194, VW-14] on the right; and the right dock owns the bottom 232px.
+     panel-econ  top = topbar-h + 44,   must end 12px above the cluster
+                 ⇒ max-height = 50vh - topbar-h - 106
+     panel-temp  bottom = VH - pad - temp-lift, must start 12px below the cluster
+                 ⇒ max-height = 50vh - pad - temp-lift - 62
+     panel-pop   top = topbar-h + 44,   must end 12px above the canvas map key
+                 ⇒ max-height = 50vh - topbar-h - 124
+                 (this is always tighter than the canary-pill constraint VH - topbar-h - 288 for
+                  any VH > 328, so one cap covers the whole right column)
+   Each leaf scrolls internally past its cap, so a pair can never intersect at any viewport size.
+   Scoped to min-height:601px so the stacked fallback below is unaffected.
+   .panel-chron is intentionally excluded: it is a full-height right-edge sheet (top:0; bottom:0),
+   not a corner leaf. Capping it would break chronicle browsing on laptop-sized viewports. */
+@media (min-width: 681px) and (min-height: 601px) {
+  .panel-econ { max-height: calc(50vh - var(--topbar-h) - 106px); }
+  .panel-temp { max-height: calc(50vh - var(--pad) - var(--temp-lift) - 62px); }
+  .panel-pop  { max-height: calc(50vh - var(--topbar-h) - 124px); }
+  .panel-econ, .panel-temp, .panel-pop { overflow-y: auto; overscroll-behavior: contain; }
+}
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 900px) {
   .econ-feed { display: none; }
-  .panel-econ, .panel-temp, .panel-pop {
-    max-height: 42vh; overflow-y: auto; scrollbar-width: thin;
-  }
-  /* .panel-chron is intentionally excluded: it is a full-height right-edge sheet (top:0; bottom:0),
-     not a corner panel. Constraining it to 42vh would break the chronicle browsing experience on
-     laptop-sized viewports (601px–900px height). */
 }
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 800px) {
   .temp-history { display: none; }
@@ -1736,61 +2118,118 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 /* --- tablet & small phones in the corner layout: tighten, drop the feed --- */
 @media (max-width: 820px) {
+  /* the columns narrow, so the centre channel widens — recompute it from the new column widths.
+     --col-l stays the WIDEST left leaf (panel-temp) so the channel can never cut into a corner. */
+  :root {
+    --col-l: clamp(180px, 46vw, 240px);
+    --col-r: clamp(150px, 40vw, 200px);
+    --temp-lift: 34px;        /* clear the bottom-docked layer tray */
+  }
   .bloom-wrap { display: none; }
   .x-link .x-handle { display: none; }
-  .panel-pop { width: clamp(150px, 40vw, 200px); }
-  .panel-temp { width: clamp(180px, 46vw, 240px); }
+  .panel-pop  { width: var(--col-r); }
+  .panel-temp { width: var(--col-l); }
   .panel-econ { width: clamp(150px, 40vw, 200px); }
   .econ-feed { display: none; }
   .wallets { width: min(86vw, 372px); }
   .drawer { width: min(90vw, 440px); }
   .hist-btn { margin-top: 8px; }
   .proofs-btn { margin-top: 5px; }
+
+  /* the bottom band now belongs to the layer tray, so panel-temp rides 34px higher */
+  .panel-temp { bottom: calc(var(--pad) + var(--temp-lift) + env(safe-area-inset-bottom, 0px)); }
+
+  /* the era HUD moves UP into the band the layer tray just vacated — the bottom-centre is dock
+     territory now. Same channel, same 28px box, so it still touches nothing. */
+  #era-hud { top: calc(var(--topbar-h) + 8px); bottom: auto; }
+
   .inspector {
-    right: var(--pad); left: var(--pad); width: auto; top: auto; bottom: var(--pad);
+    right: var(--pad); left: var(--pad); width: auto; top: auto;
+    bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
     transform: translateY(14px); max-height: 62vh; overflow-y: auto;
   }
   .inspector.open { transform: translateY(0); }
   .hint-select { display: none; }
-  .layer-toggles { top: auto; bottom: calc(var(--pad) + 4px); }
+
+  .layer-toggles {
+    top: auto; bottom: calc(var(--pad) + 4px + env(safe-area-inset-bottom, 0px));
+    flex-wrap: wrap; max-width: calc(100vw - 2 * var(--pad));
+    transition: opacity var(--t-med) ease;
+  }
+  /* the inspector becomes a full-width bottom bar here, so the tray bows out instead of being
+     buried under an opaque leaf */
+  body.ins-open .layer-toggles { opacity: 0; pointer-events: none; }
 }
 
-/* --- phones OR short viewports: stack the three corner panels into one scrollable column over the
-       fixed field. The document itself scrolls now (it was overflow:hidden before). Triggered by narrow
-       width OR insufficient height, so low-resolution / small monitors never collide either.
+/* --- phones OR short viewports: stack the three corner leaves into one scrollable column over the
+       fixed field. The document itself scrolls now (it is overflow:hidden on desktop). Triggered by
+       narrow width OR insufficient height, so low-resolution / small monitors never collide either.
        The Chronicle is NOT part of this column — it stays a true fixed right-edge sheet (see below),
-       so its 8-volume tab rail opens as an overlay instead of exploding inline. --- */
+       so its 20-volume tab rail opens as an overlay instead of exploding inline. ---
+       Bottom dock, reading upward, with a standing 8-12px air gap between rungs:
+         chronicle pill   bottom safe+12, 44 tall  ⇒ [VH-56,  VH-12]
+         canary pill      bottom safe+64, 44 tall  ⇒ [VH-108, VH-64]
+         layer tray       bottom safe+116, ≤88 tall ⇒ [VH-204, VH-116]
+       and body padding-bottom safe+224 keeps the scrolling column's last pixel 20px below the tray. */
 @media (max-width: 680px), (max-height: 600px) {
   /* clip (not just hidden) so the off-canvas fixed sheets can never add horizontal scroll width; the
      page still scrolls vertically. Safe-area aware because viewport-fit=cover is set. */
   html { height: auto; min-height: 100%; overflow-x: clip; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   body { height: auto; min-height: 100%; overflow-x: clip; overflow-y: visible; }
 
+  /* there are no corner columns any more, so the channel is simply the column the leaves flow in */
+  :root { --chan-c: 50vw; --chan-w: min(92vw, 460px); }
+
   /* the field / grain / vignette / topbar stay fixed — they're the backdrop.
      panel-chron deliberately omitted: it keeps its .drawer fixed + translateX(100%) behaviour. */
   .panel-econ, .panel-temp, .panel-pop {
     position: relative; left: auto; right: auto; top: auto; bottom: auto;
-    width: auto; max-width: min(90vw, 460px);
+    width: auto; max-width: min(90vw, 460px); max-height: none;
     margin: 0 auto 12px;
   }
-  /* first panel clears the (wrapping) pinned topbar and leaves a band of artwork above it */
-  .panel-econ { margin-top: clamp(96px, 20vh, 220px); }
-  /* last panel in the column must clear the fixed bottom dock (Chronicle pill + layer toggles) */
-  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 160px); }
+  /* first leaf clears the (wrapping) pinned topbar + the era HUD + the watchdog banner, and leaves
+     a band of artwork above it */
+  .panel-econ { margin-top: clamp(120px, 24vh, 260px); }
+  /* last leaf in the column must clear the fixed bottom dock (three rungs, 204px + a 20px margin) */
+  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 224px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
 
   /* topbar: honour the notch, and let the meta wrap onto its own line instead of clipping on 360px */
   .topbar {
+    height: auto;
     padding-top: calc(var(--pad) + env(safe-area-inset-top, 0px));
+    padding-bottom: var(--sp-2);
     padding-left: calc(var(--pad) + env(safe-area-inset-left, 0px));
     padding-right: calc(var(--pad) + env(safe-area-inset-right, 0px));
     flex-wrap: wrap; align-items: flex-start; gap: 8px;
   }
-  .topmeta { margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; row-gap: 5px; gap: 6px; font-size: 10px; letter-spacing: 0.1em; }
+  .topmeta {
+    margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end;
+    row-gap: 5px; gap: 6px; font-size: 10px; letter-spacing: var(--ls-micro);
+    border-radius: var(--r-leaf);
+  }
   .wordmark { gap: 7px; }
-  .wordmark .name { font-size: 20px; }
+  .wordmark .name { font-size: 17px; }
+  /* the layer tray is docked at the bottom here, so the band under the topbar is free for the era
+     HUD and (rarely) the watchdog banner — stacked, never side by side */
+  #era-hud {
+    top: calc(env(safe-area-inset-top, 0px) + 104px); bottom: auto;
+    max-width: min(92vw, 420px);
+  }
+  .cron-warn {
+    top: calc(env(safe-area-inset-top, 0px) + 146px);
+    max-width: min(92vw, 460px);
+  }
+  .layer-toggles {
+    left: 0; right: 0; margin-inline: auto; transform: none; top: auto;
+    width: max-content; max-width: 94vw;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 116px);
+    z-index: 20; justify-content: center; flex-wrap: wrap;
+    transition: opacity var(--t-med) ease;
+  }
+  body.ins-open .layer-toggles { opacity: 0; pointer-events: none; }
 
   /* right-side drawers widen toward near-full-width sheets on a narrow screen (Chronicle included) */
   .wallets { width: min(94vw, 372px); }
@@ -1798,46 +2237,52 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   .drawer.panel-canary { width: min(98vw, 1040px); }
   .panel-canary .drawer-sub { display: none; }
   .panel-canary .canary-pop { margin-left: auto; }
-  .drawer-head { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); }
+  .drawer-head, .wallets-head { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); }
 
-  /* the Chronicle trigger becomes a compact centred pill docked above the safe area — always
-     tappable (z above the panels), auto-hidden by body.chron-open / body.ins-open as before */
+  /* the Chronicle trigger becomes a compact centred row pill docked above the safe area — always
+     tappable (z above the leaves), auto-hidden by body.chron-open / body.ins-open as before */
   .chron-btn {
     left: 0; right: 0; margin-inline: auto; width: max-content; max-width: 92vw;
-    min-width: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    min-height: 44px; padding: 10px 22px; z-index: 20;
     flex-direction: row; align-items: center; justify-content: center; gap: 10px;
-    padding: 11px 22px; z-index: 20;
+    border-radius: var(--r-pill);
   }
-  .chron-btn .chron-word { font-size: 16px; margin-top: 0; letter-spacing: 0.12em; }
-  .chron-btn .chron-orn { margin-left: 0; }
+  .chron-btn::before { border-radius: calc(var(--r-pill) - 4px); }
+  .chron-btn .chron-word { font-size: 13px; margin-top: 0; }
+  .chron-btn .chron-orn { margin-left: 0; text-indent: 0.42em; }
   .chron-btn .chron-badge { display: none; }
 
-  /* the Canary trigger joins the bottom dock as a compact centred pill directly above the Chronicle pill
-     (dock order, bottom → top: Chronicle +12 · Canary +58 · layer toggles +104) */
+  /* the Canary trigger joins the bottom dock as a compact centred row pill above the Chronicle pill */
   .canary-btn {
     left: 0; right: 0; margin-inline: auto; width: max-content; max-width: 92vw;
-    min-width: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 58px);
-    flex-direction: row; align-items: center; justify-content: center; gap: 8px;
-    padding: 10px 20px; z-index: 20; border-radius: 999px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+    min-height: 44px; padding: 10px 22px; z-index: 20;
+    flex-direction: row; align-items: center; justify-content: center; gap: 9px;
+    border-radius: var(--r-pill);
   }
-  .canary-btn .canary-word { font-size: 15px; letter-spacing: 0.1em; }
+  .canary-btn .canary-word { font-size: 13px; margin-top: 0; }
   .canary-btn .canary-badge { display: none; }
 
-  /* ambient layer switches dock as a single centred row directly above the Chronicle pill */
-  .layer-toggles {
-    left: 0; right: 0; margin-inline: auto; transform: none; top: auto;
-    width: max-content; max-width: 94vw;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 104px);
-    z-index: 20; justify-content: center;
-  }
-  .layer-toggles .layer-btn { padding: 7px 12px; }
-
   /* inspector rises above the dock and clears the notch at the bottom */
-  .inspector { z-index: 22; max-height: 70vh; bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px)); }
+  .inspector {
+    z-index: 22; max-height: 70vh;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 216px);
+  }
 
-  /* comfortable ≥40px touch targets on every drawer's close control */
+  /* ---- touch targets: nothing tappable is smaller than 40px on a phone ---- */
   .drawer-close, .wallets-close, .ins-close, .epitaph-close {
-    min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; font-size: 22px;
+    min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; font-size: 20px;
+  }
+  .layer-toggles { padding: 4px; gap: 3px; }
+  .layer-toggles .layer-btn { min-height: 40px; padding: 10px 14px; font-size: 10px; }
+  .wallets-btn, .hist-btn, .proofs-btn, .brain-btn,
+  .pulse-btn, .predict-btn, .arena-btn { min-height: 40px; padding: 11px 12px; }
+  .lang-select { min-height: 40px; padding: 10px 24px 10px 12px; font-size: 11px; }
+  .chron-tab { min-height: 40px; padding: 10px 12px; }
+  .wallet-row { min-height: 44px; }
+  .canary-pop, .tca-copy, .tca-ex, .chron-prove, .lr-verify, .lr-expand, .pb-call {
+    min-height: 40px;
   }
 }
 
@@ -1899,77 +2344,63 @@ html[dir="rtl"] .wk-row {
   direction: rtl; text-align: right;
 }
 
-/* ============ era HUD (task 20⑥): the reigning era as a FIXED bottom-centre banner ============
+/* ============ era HUD (task 20⑥, refined in task 26③): the reigning era as a FIXED gilt pill ============
    Replaces the old camera-riding 3D Sprite (which floated over the terrain and drifted with every
-   orbit). Pinned to the screen, stacked just above the chronicle ticker. pointer-events:none so it
+   orbit). Pinned to the screen on --stack-2 in the bottom-centre channel. pointer-events:none so it
    never blocks canvas drag/orbit/tap. display:flex is the shown state — scene3d._updateEraHud() sets
    inline display:"none" when there is no era and display:"" (⇒ flex) when there is; :empty guards the
-   first paint so an empty pill never flashes before the chronicle boots. */
+   first paint so an empty pill never flashes before the chronicle boots.
+   The blur() is gone (a 0.96-alpha vellum fill reads cleaner over the artwork and costs no filter
+   pass), and the pill now sits on the centre channel (--chan-c / --chan-w) so it can never slide
+   under panel-temp or panel-pop at any viewport width. */
 #era-hud {
-  position: fixed; z-index: 11; left: 50%; bottom: 50px; transform: translateX(-50%);
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 4px 16px; pointer-events: none;
-  font-family: var(--display); color: var(--ink);
-  background: linear-gradient(180deg, rgba(238, 230, 210, 0.92), rgba(226, 214, 188, 0.92));
-  border: 1px solid rgba(176, 138, 54, 0.5); border-radius: 999px;
-  box-shadow: 0 4px 18px rgba(26, 26, 24, 0.22), inset 0 0 0 1px rgba(214, 178, 92, 0.35);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  white-space: nowrap; max-width: 90vw;
+  position: fixed; z-index: 11;
+  left: var(--chan-c); bottom: calc(var(--stack-2) + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 5px 18px; pointer-events: none;
+  font-family: var(--title); color: var(--gall);
+  background-color: var(--vellum-2);
+  background-image: linear-gradient(180deg, rgba(255, 253, 246, 0.72) 0%, rgba(255, 253, 246, 0) 48%, rgba(122, 96, 58, 0.09) 100%);
+  border: var(--edge-gilt); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.20);
+  white-space: nowrap;
+  max-width: min(var(--chan-w), 460px);
+  line-height: 1.2;
 }
 #era-hud:empty { display: none; }
 #era-hud .era-hud-num {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #8a6a1f;
+  flex: none;
+  font-family: var(--title); font-size: 12.5px; font-weight: 700;
+  letter-spacing: var(--ls-title); text-transform: uppercase; color: var(--gold-deep);
 }
-#era-hud .era-hud-sep { font-size: 12px; color: #b08a36; opacity: 0.7; }
+/* scene3d writes a plain middle dot (U+00B7) into this span and scene3d.js is off-limits for this
+   task, so the manuscript divider is swapped in purely in CSS: the dot is zeroed out and a floral
+   heart is painted in its place. No DOM change, no JS, no layout shift. */
+#era-hud .era-hud-sep { flex: none; font-size: 0; line-height: 0; color: transparent; }
+#era-hud .era-hud-sep::before {
+  content: "\2766";                                  /* ❦ floral heart, a rubricator's divider */
+  display: inline-block; vertical-align: baseline;
+  font-size: 11px; line-height: 1; color: var(--gold);
+}
 #era-hud .era-hud-name {
-  font-size: 13px; letter-spacing: 0.04em; color: var(--ink); opacity: 0.85;
+  flex: 0 1 auto; min-width: 0;
+  font-family: var(--display); font-size: 12.5px; font-weight: 400; font-style: italic;
+  letter-spacing: 0.03em; color: var(--gall-2);
   overflow: hidden; text-overflow: ellipsis;
 }
 html[dir="rtl"] #era-hud { direction: rtl; }
 
-/* ============ chronicle ticker: a persistent bottom bar with auto-scrolling annals ============ */
-.chron-ticker {
-  position: fixed; z-index: 10; left: 0; right: 0; bottom: 0;
-  height: 44px; display: flex; align-items: center; gap: 8px;
-  background: rgba(242, 238, 230, 0.92);
-  border-top: 1px solid rgba(176, 138, 54, 0.25);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  font-family: var(--display); color: var(--ink);
-  overflow: hidden; cursor: pointer;
-  transition: opacity 0.4s;
-}
-.chron-ticker:empty, .chron-ticker[hidden] { display: none; }
-.chron-ticker-label {
-  flex-shrink: 0; padding: 0 6px 0 12px;
-  font-size: 14px; color: #b08a36; opacity: 0.8;
-}
-.chron-ticker-track {
-  flex: 1; overflow: hidden; white-space: nowrap; position: relative;
-  mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 92%, transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 92%, transparent 100%);
-}
-.chron-ticker-inner {
-  display: inline-flex; gap: 28px; animation: ticker-scroll 60s linear infinite;
-  padding: 0 8px;
-}
-.chron-ticker-item {
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  font-size: 11px; letter-spacing: 0.04em; color: var(--ink); opacity: 0.78;
-}
-.chron-ticker-item .tick-icon { font-size: 10px; opacity: 0.6; }
-.chron-ticker-item .tick-era {
-  font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: #b08a36; opacity: 0.7; padding: 1px 4px;
-  border: 1px solid rgba(176, 138, 54, 0.3); border-radius: 2px;
-}
-.chron-ticker-item .tick-text { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-.chron-ticker-item .tick-time { font-size: 9px; color: var(--muted); opacity: 0.55; }
-.chron-ticker:hover .chron-ticker-inner { animation-play-state: paused; }
-@keyframes ticker-scroll {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-/* task 20⑦: the bottom stack is now explicit — chron-ticker (bottom:0, 44px), #era-hud (bottom:50px),
-   .hint-select (bottom:82px). All three are bottom-centre, none overlap, and the old dead rule
-   `.chron-ticker ~ .hint-select{display:none}` (which never matched — hint precedes ticker) is gone:
-   the hint now stays visible, lifted clear of the ticker. */
+/* ============ chronicle ticker: REMOVED (task 26①) ============
+   The persistent bottom marquee (#chron-ticker) is gone from index.html, from every wiring point
+   (main.js bindUI, polling.js pollChron, drawers.js renderChronTicker) and from this stylesheet —
+   the whole .chron-ticker / -label / -track / -inner / -item rule set, the .tick-* sub-rules and
+   @keyframes ticker-scroll are deleted rather than commented out, so no stray class can resurrect
+   a 44px bar under the artwork.
+   The bottom-centre stack is therefore exactly two labels now:
+       #era-hud      bottom: --stack-2 (76px), 28px tall  ⇒ owns [VH-104, VH-76]
+       .hint-select  bottom: --stack-1 (20px), ≤2 lines   ⇒ owns [VH-49,  VH-20]
+   a standing 27px air gap between them, and both are clamped to the centre channel so neither can
+   reach panel-temp (which ends 12px left of --chan-l) or panel-pop (which starts 12px right of
+   --chan-r). The chronicle itself is untouched: pollChron() still fills state.chronRows /
+   state.chronMeta and renderChron() still paints the #panel-chron sheet. */

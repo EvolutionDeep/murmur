@@ -10,8 +10,7 @@ import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js';
 import { select as selectFly, deselect as deselectFly } from './inspector.js';
-import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint } from './nations.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -52,9 +51,11 @@ export class ThreeScene {
     this.nationBorderGroup = null;  // nations border mesh group (mounted by _applyNations — task 6)
     this.villageGroup = new THREE.Group();   // KayKit village buildings (task 6, _rebuildVillages)
     this._villageSig = "";
-    this._castleLib = {};           // name → { geometry, material } GLB kit cache (task 6)
+    this._castleLib = {};           // legacy GLB kit cache (task 24: procedural castles, never filled)
     this._castleLibLoading = false;
     this._castleLibReady = false;
+    this._treeGroup = null;         // task 24: clustered instanced trees (broadleaf + conifer)
+    this._canalMask = null;         // task 24: canal proximity field, filled by _sculptTerrain
     this._nationData = null;        // last updateNations() result { nationSeeds, voronoi, … }
     this._nationSig = "";           // applied partition signature — rebuild only on change
     this._terrSig = "";             // territory signature (zone owners + top-5 house rank)
@@ -62,6 +63,8 @@ export class ThreeScene {
     // ---- task 7: pre-allocated pools for the ported 2D layers (built in _initOverlays) ----
     this._socLineCap = 64;                     // max bond/feud segments on the social web
     this._socLines = null; this._socGrudge = null;
+    this._socSig = "";                         // task 25④: ribbon rebuild signature (pairs + quantised ends)
+    this._socRibbonPts = 18;                   // max sample points per bond ribbon (≈12-unit steps)
     this._graveGroup = null; this._graveSprites = []; this._graveSig = "";   // necropolis (one Sprite per stone)
     this._payPool = [];                        // 20 pre-built gold payment arcs (tube + comet head)
     this._parts = []; this._partMesh = null; this._partCursor = 0;   // 200 instanced chron-fx particles
@@ -98,7 +101,7 @@ export class ThreeScene {
 
   _init() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0xdfe8ef, 0.0010);   // faint haze so the horizon melts into the sky (denser: the world rect grew 1.5×)
+    this.scene.fog = new THREE.FogExp2(0xcfe3e6, 0.00085);   // diorama: faint teal haze so the horizon melts into the sea
 
     // H1: ThreeScene is constructed in boot() BEFORE resize() runs, so state.VW/state.VH are still
     // their 0 init here. Seed them from the viewport so the camera aspect (VW/VH), renderer.setSize
@@ -110,7 +113,7 @@ export class ThreeScene {
     }
     const aspect = state.VW / state.VH;
     this.camera = new THREE.PerspectiveCamera(50, aspect, 0.5, 12000);
-    this.camera.position.set(0, 320, 440);      // the whole (enlarged) landmass framed edge-to-edge, sea only a margin
+    this.camera.position.set(0, 470, 430);      // diorama: high 3/4 bird's-eye so the island fills the frame
 
     this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('field'), antialias: true, alpha: true });
     this.renderer.setSize(state.VW, state.VH);
@@ -126,17 +129,17 @@ export class ThreeScene {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI / 2.15;   // never dip below the sea plane
-    this.controls.minDistance = 60;
-    this.controls.maxDistance = 1500;               // task 18: the enlarged continent must stay fully frameable
-    this.controls.target.set(0, 4, 0);
-    this.controls.autoRotate = true;          // slow turntable until the reader touches the model
+    this.controls.minDistance = 90;
+    this.controls.maxDistance = 1200;              // diorama island: keep it frameable but never lost
+    this.controls.target.set(0, 2, 0);
+    this.controls.autoRotate = false;         // diorama: hold the composed 3/4 view steady for the reader
     this.controls.autoRotateSpeed = 0.3;
     this.controls.addEventListener("start", () => { this.controls.autoRotate = false; });
 
     // Sun-aligned key light + sky/ground bounce — the official ocean example's lighting recipe
-    this.hemiLight = new THREE.HemisphereLight(0xbfd9ec, 0xc9b18c, 0.5);
+    this.hemiLight = new THREE.HemisphereLight(0xbfe3ea, 0xd8c08a, 0.6);   // diorama: teal sky bounce + warm sand ground
     this.scene.add(this.hemiLight);
-    this.sunLight = new THREE.DirectionalLight(0xfff0d6, 1.5);
+    this.sunLight = new THREE.DirectionalLight(0xffe0b0, 1.6);             // soft warm key light
     this.scene.add(this.sunLight);
     this.castleGroup = new THREE.Group();
     this.scene.add(this.castleGroup);
@@ -156,7 +159,6 @@ export class ThreeScene {
       [this._buildLabels, 'labels'],
       [this._buildFlies, 'flies'],
       [() => this.scene.add(this.villageGroup), 'villageGroup'],
-      [this._loadCastleAssets, 'castles'],   // GLB kit loads async → _rebuildCastles() once ready (task 6)
       [this._initOverlays, 'overlays'],       // task 7: pre-allocate every ported 2D layer (social web, necropolis, payments, …)
     ];
     for (const [fn, name] of steps) {
@@ -205,29 +207,31 @@ export class ThreeScene {
     normals.wrapS = normals.wrapT = THREE.RepeatWrapping;   // sane wrap/repeat even before the texture streams in
     normals.repeat.set(16, 16);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x2e7186,             // deep blue-green, a touch lighter than the old 0x1a5060 so it never reads as a dead slab
+      color: 0x2f93a2,             // diorama teal sea (#2e8b9a~#3a9aad), calm and saturated
       transparent: true,
-      opacity: 0.85,
-      roughness: 0.22,             // crisp sun glitter from scene.environment without mirror sharpness
-      metalness: 0.08,
-      envMapIntensity: 1.1,        // the PMREM sky supplies the sheen the transmission pass used to fake
+      opacity: 0.92,
+      roughness: 0.42,             // calm: broad soft sheen, no storm glitter
+      metalness: 0.05,
+      envMapIntensity: 0.8,        // the PMREM sky supplies a gentle sheen (no transmission pass)
       normalMap: normals,
-      normalScale: new THREE.Vector2(0.5, 0.5),   // gentle ripple relief, not a storm
+      normalScale: new THREE.Vector2(0.22, 0.22),   // barely-there ripple — a still diorama sea
       side: THREE.DoubleSide,
-    });
+      depthWrite: false,          // task 25③: the sea never writes depth — coastal vertices that
+    });                           // graze y=0 can no longer z-fight the plane (terrain draws first)
     this.water = new THREE.Mesh(geo, mat);
     this.water.rotation.x = -Math.PI / 2;
-    this.water.position.y = -1.1;
+    this.water.position.y = 0.0;   // sea surface at y=0; the beach sand ring rises above it
+    this.water.renderOrder = 1;    // task 25③: opaque terrain → sea(1) → canal water(2) → banks(3)
     this.scene.add(this.water);
   }
 
   // ---- the land: a model piece with a readable coastline, cliff sides and crisp painted height bands ----
   _buildTerrain() {
-    const WSX = 720, WSZ = 450, N = 321;   // task 18: continent enlarged 480×300 → 720×450 (+50%) — same vertex count, open land instead of crowded clutter
+    const WSX = 720, WSZ = 450, N = 321;
     this._WSX = WSX; this._WSZ = WSZ;
     const geo = new THREE.PlaneGeometry(WSX, WSZ, N - 1, N - 1);
 
-    // three.js official ImprovedNoise (Perlin) — the exact noise of the webgl_terrain example
+    // three.js official ImprovedNoise (Perlin)
     const perlin = new ImprovedNoise();
     const fbm = (x, z, s) => {
       let v = 0, amp = 1, freq = 1;
@@ -235,33 +239,36 @@ export class ThreeScene {
       return v / 1.875;                       // ≈ [-1, 1]
     };
     const ridge = (x, z) => 1 - Math.abs(perlin.noise(x, 7.3, z));   // ridged noise → sharp mountain crests
-    const inContinent = (nx0, nz0) => {
-      // stretch the coastline polygon until the continent fills the whole world rectangle —
-      // the sea survives only as a thin margin, this is a landmass, not an island dot
-      const nx = (nx0 - 0.5) * 0.66 + 0.5, nz = (nz0 - 0.5) * 0.84 + 0.5;
-      if (nx < 0.14 || nx > 0.76 || nz < 0.09 || nz > 0.91) return false;
-      let inside = false;
-      for (let i = 0, j = CONTINENT.length - 1; i < CONTINENT.length; j = i++) {
-        const xi = CONTINENT[i][0], zi = CONTINENT[i][1];
-        const xj = CONTINENT[j][0], zj = CONTINENT[j][1];
-        if ((zi > nz) !== (zj > nz) && nx < (xj - xi) * (nz - zi) / (zj - zi) + xi) inside = !inside;
-      }
-      return inside;
+    const ss = (t) => t * t * (3 - 2 * t);
+    const cl01 = (t) => t < 0 ? 0 : t > 1 ? 1 : t;
+
+    // ---- diorama ISLAND mask (task 24): an organic rounded island with a wobbly coastline
+    // (peninsulas & bays from angular noise), open teal sea outside. Returns signed inlandness:
+    // >0 on land, <0 in the sea; the edge falls below sea level so the beach ring reads clean. ----
+    const islandE = (nx, nz) => {
+      const dx = (nx - 0.5) * 2, dz = (nz - 0.5) * 2;
+      const ang = Math.atan2(dz, dx);
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const w = 1 + 0.20 * perlin.noise(ca * 1.35 + 11.1, 4.4, sa * 1.35 - 7.7)
+                  + 0.10 * perlin.noise(ca * 2.9 - 3.3, 9.1, sa * 2.9 + 2.2);
+      return 0.90 * w - Math.hypot(dx, dz);
     };
 
-    // raw height field: a land plateau inside the coastline, seabed outside
+    const PLATEAU = 3.0;
     const raw = new Float32Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const x = -WSX / 2 + (i / (N - 1)) * WSX;
       const z = -WSZ / 2 + (j / (N - 1)) * WSZ;
-      const inside = inContinent((x + WSX / 2) / WSX, (z + WSZ / 2) / WSZ);
-      if (!inside) { raw[j * N + i] = -5.7; continue; }
-      const plains = (fbm(x * 0.0071 + 11.3, z * 0.0071 - 4.1, 0) + 0.55) * 5.7;   // rolling lowland
-      const rm = Math.max(0, ridge(x * 0.0094 + 9.2, z * 0.0094 - 3.7) - 0.52);    // crest mask
-      const range = 0.35 + 0.65 * (0.5 + 0.5 * fbm(x * 0.0033, z * 0.0033, 77));   // where the ranges live
-      raw[j * N + i] = 2.9 + plains + rm * rm * 78 * range;                       // peaks up to ~30
+      const e = islandE((x + WSX / 2) / WSX, (z + WSZ / 2) / WSZ);
+      if (e <= 0) { raw[j * N + i] = -3.2 * ss(cl01(-e / 0.35)); continue; }   // seabed dips away from shore
+      const beach = 1.5 * ss(cl01(e / 0.12));                       // sand ring at the waterline
+      const inland = ss(cl01((e - 0.08) / 0.40));                   // 0 at coast → 1 well inland
+      const plains = (fbm(x * 0.0071 + 11.3, z * 0.0071 - 4.1, 0) + 0.55) * 2.2;   // rolling lowland
+      const rm = Math.max(0, ridge(x * 0.010 + 9.2, z * 0.010 - 3.7) - 0.45);      // crest mask
+      const gate = Math.pow(cl01(0.5 + 0.5 * fbm(x * 0.0035, z * 0.0035, 77)), 1.6);   // snow-mountain clusters
+      raw[j * N + i] = beach + inland * ((PLATEAU - 1.5) + plains + rm * rm * 62 * gate);
     }
-    // two blur passes: the 0/1 coastline becomes a steep cliff band (readable shore, no jaggies)
+    // two blur passes: soften the coastline into a readable beach, no jaggies
     let h = raw.slice();
     for (let p = 0; p < 2; p++) {
       const out = h.slice();
@@ -274,13 +281,8 @@ export class ThreeScene {
       h = out;
     }
     this._hGrid = h; this._hN = N; this._hStepX = WSX / (N - 1); this._hStepZ = WSZ / (N - 1);
-    this._hBase = h.slice();   // task 22: keep an untouched copy — _sculptTerrain() always re-cuts
-    //                            the terraces from this, so a dynasty reshuffle can never grind the
-    //                            land progressively flatter.
-
-    // task 18: the two rivers are gone (user: “两条河太丑”). Their valley carving ran an
-    // O(N²·82) distance sweep at build time and fed _colorTerrain / forest / grass placement —
-    // all removed with them.
+    this._hBase = h.slice();   // pristine field — _sculptTerrain() always re-cuts from this (idempotent)
+    this._canalMask = new Float32Array(N * N);   // canal proximity (water core→bank), filled by _sculptTerrain
     this._noise = perlin;
 
     // territory cells: every vertex belongs to its nearest zone anchor (the same 4×4 grid the
@@ -343,6 +345,7 @@ export class ThreeScene {
       this.scene.add(this.nationBorderGroup);
     }
     this._rebuildCastles();
+    this._buildTrees();
     this._nationSig = sig;   // mark applied only after the full rebuild: a throw above leaves it unset so the next frame retries
   }
 
@@ -363,20 +366,18 @@ export class ThreeScene {
     const pn = this._noise;
     const perlinJit = (i, j) => pn.noise(i * 0.31, 5.1, j * 0.31);
     const mottleN = (i, j) => pn.noise(i * 0.13, 9.4, j * 0.13) + 1;
-    // task 5 colour ramp — smooth interpolation between stops (no hard band edges), with a golden
-    // sand ring around the waterline: wet gold nearest the water → dry gold → blend into grass.
-    // Then grass lowland → dark meadow → ochre foothills → grey bare rock → snow caps.
+    // task 24 diorama colour ramp — teal seabed → beach sand ring → grass (light/dark patches)
+    // → steep rock grey → snow caps. Smooth interpolation between stops, dithered by jitter.
     const RAMP = [
-      [-5.70, [0.13, 0.28, 0.36]],   // deep seabed
-      [-1.30, [0.16, 0.32, 0.40]],   // seabed shelf
-      [-0.45, [0.80, 0.66, 0.37]],   // wet golden sand — the ring closest to the waterline
-      [ 0.60, [0.91, 0.82, 0.60]],   // dry golden sand ring
-      [ 2.80, [0.54, 0.65, 0.34]],   // sand → grass blend
-      [ 7.00, [0.44, 0.62, 0.30]],   // grass lowland — the kingdom's green
-      [10.60, [0.34, 0.51, 0.26]],   // dark meadow / forest floor
-      [14.50, [0.57, 0.48, 0.30]],   // ochre foothill scrub
-      [19.40, [0.50, 0.45, 0.41]],   // grey bare mountain rock
-      [24.00, [0.96, 0.97, 0.98]],   // snow caps
+      [-3.20, [0.10, 0.34, 0.40]],   // deep seabed — dark teal
+      [-0.60, [0.16, 0.47, 0.52]],   // shelf teal (the task 25③ surf shelf sits exactly here)
+      [ 0.10, [0.22, 0.56, 0.60]],   // surf teal at the waterline
+      [ 0.38, [0.85, 0.75, 0.54]],   // wet beach sand (#d8c08a) — the +0.34 sand step reads sandy
+      [ 2.00, [0.90, 0.82, 0.62]],   // dry sand ring
+      [ 3.00, [0.48, 0.66, 0.35]],   // grass (#7aa858)
+      [ 8.00, [0.53, 0.71, 0.40]],   // grass light (#86b565)
+      [12.00, [0.54, 0.54, 0.52]],   // steep rock grey (#8a8a85)
+      [16.00, [0.95, 0.95, 0.95]],   // snow cap (#f2f2f2)
     ];
     const band = (y) => {
       if (y <= RAMP[0][0]) return RAMP[0][1];
@@ -389,35 +390,34 @@ export class ThreeScene {
       }
       return RAMP[RAMP.length - 1][1];
     };
+    const canal = this._canalMask;
+    const cl01 = (t) => t < 0 ? 0 : t > 1 ? 1 : t;
     for (let k = 0; k < pos.count; k++) {
       const y = h[k];
       let c;
       {
         const i = k % N, j = (k / N) | 0;
-        const jit = perlinJit(i, j) * 0.88;   // dither the band edges — stronger now: the ramp interpolates smoothly, the jitter keeps the transitions from reading as contour lines
+        const jit = perlinJit(i, j) * 0.88;   // dither the band edges so transitions don't read as contour lines
         c = band(y + jit);
         if (i > 0 && i < N - 1 && j > 0 && j < N - 1) {
           const gx = (h[j * N + i + 1] - h[j * N + i - 1]) / (2 * stX);
           const gz = (h[(j + 1) * N + i] - h[(j - 1) * N + i]) / (2 * stZ);
-          if (Math.hypot(gx, gz) > 0.6 && y > 0.9) c = [0.47, 0.42, 0.38];   // steep slopes read as bare rock
+          if (Math.hypot(gx, gz) > 0.6 && y > 2.2) c = [0.54, 0.54, 0.52];   // steep slopes read as bare rock
         }
-        const m = 0.96 + 0.05 * mottleN(i, j);  // mottle so plains aren't flat paint
+        const m = 0.92 + 0.10 * mottleN(i, j);  // light/dark grass patches, not flat paint
         c = [c[0] * m, c[1] * m, c[2] * m];
-        // dominion overlay: tint each zone toward its holding house, line the borders
-        const z = vZone[k];
-        if (owners && z >= 0) {
-          const o = owners.get(z);
-          if (o) {
-            const hc = houseColor(o.name);
-            if (hc) c = [c[0] * 0.72 + (hc[0] / 255) * 0.28, c[1] * 0.72 + (hc[1] / 255) * 0.28, c[2] * 0.72 + (hc[2] / 255) * 0.28];
-          }
-          if (i > 0 && i < N - 1 && j > 0 && j < N - 1 &&
-              (vZone[k + 1] !== z || vZone[k - 1] !== z || vZone[k + N] !== z || vZone[k - N] !== z)) {
-            c = [c[0] * 0.55, c[1] * 0.52, c[2] * 0.50];   // border line between zones
-          }
+        // canal (task 24): paint the water core blue and a light-sand shoreline bank around it,
+        // matching the blue water ribbon + bank rails laid by buildBorderMesh.
+        const cm = canal ? canal[k] : 0;
+        if (cm > 0.02) {
+          const bank = [0.91, 0.85, 0.66], wat = [0.20, 0.50, 0.76];
+          const bt = cl01((cm - 0.10) / 0.20);   // 0 land → 1 bank
+          const wt = cl01((cm - 0.45) / 0.30);   // 0 bank → 1 water core
+          const b0 = c[0] + (bank[0] - c[0]) * bt, b1 = c[1] + (bank[1] - c[1]) * bt, b2 = c[2] + (bank[2] - c[2]) * bt;
+          c = [b0 + (wat[0] - b0) * wt, b1 + (wat[1] - b1) * wt, b2 + (wat[2] - b2) * wt];
         }
-        // five-nation tint (task 6): blend the biome colour toward the holding nation's colour
-        c = getNationTint(c, getNationId(k));
+        // five-nation tint (task 6), kept FAINT so the island reads one green landmass (task 24)
+        c = getNationTint(c, getNationId(k), 0.10);
       }
       arr[k * 3] = c[0]; arr[k * 3 + 1] = c[1]; arr[k * 3 + 2] = c[2];
     }
@@ -490,6 +490,7 @@ export class ThreeScene {
     const stX = this._hStepX, stZ = this._hStepZ;
     h.set(base);
     const LAND = 0.2;      // below this the vertex is seabed/surf and must not be dragged up
+    const ss = (t) => t * t * (3 - 2 * t);
 
     const press = (cx, cz, rIn, rOut) => {
       if (!isFinite(cx) || !isFinite(cz)) return;           // a NaN seed must never poison the grid
@@ -528,9 +529,52 @@ export class ThreeScene {
       const za = zoneAnchor(z);
       press((za.x / VW - 0.5) * WSX, (za.y / VH - 0.5) * WSZ, 26, 40);
     }
-    // ② the nation capitals — plinth 19.7 + drawbridge ≈26 units out at S=4.8
+    // ② the nation capitals — the monochrome castle footprint (wall R13 + towers ≈16)
     const seeds = nat && Array.isArray(nat.nationSeeds) ? nat.nationSeeds : null;
     if (seeds) for (const s of seeds) if (s && isFinite(s.x) && isFinite(s.z)) press(s.x, s.z, 24, 36);
+
+    // ③ diorama CANALS (task 24, meandered task 25②): carve the waterway groove along the SAME
+    // meander runs buildBorderMesh lays its ribbon on (nations.js caches them by edge signature).
+    // Inland groove floor never drops below CANAL_MIN; estuary (mouth>0) segments may dive under
+    // the sea so the canal connects to the ocean naturally. canalMask feeds _colorTerrain banks.
+    const mask = this._canalMask || (this._canalMask = new Float32Array(N * N));
+    mask.fill(0);
+    const CANAL_D = 1.6, CANAL_R = 4.0, CANAL_MIN = 0.3;
+    const mRuns = meanderEdges(voronoiEdges(nat && nat.voronoi ? nat.voronoi : null), (x, z) => this._sampleH(base, x, z));
+    for (const line of mRuns) for (const pt of line) {
+      const cx = pt[0], cz = pt[1], mouth = pt[2];
+      if (mouth <= 0 && this._sampleH(base, cx, cz) < 1.0) continue;   // never cut a land canal through beach/sea
+      const R = CANAL_R + mouth * 2.6;                                 // the trumpet mouth widens the groove
+      const i0 = Math.max(0, Math.floor((cx - R + WSX / 2) / stX));
+      const i1 = Math.min(N - 1, Math.ceil((cx + R + WSX / 2) / stX));
+      const j0 = Math.max(0, Math.floor((cz - R + WSZ / 2) / stZ));
+      const j1 = Math.min(N - 1, Math.ceil((cz + R + WSZ / 2) / stZ));
+      for (let j = j0; j <= j1; j++) {
+        const dzc = -WSZ / 2 + j * stZ - cz;
+        for (let i = i0; i <= i1; i++) {
+          const dxc = -WSX / 2 + i * stX - cx;
+          const dd = Math.sqrt(dxc * dxc + dzc * dzc);
+          if (dd > R) continue;
+          const k = j * N + i;
+          if (mouth <= 0 && base[k] < 1.0) continue;
+          const w = 1 - ss(dd / R);
+          const floor = mouth > 0 ? -1.7 : CANAL_MIN;   // estuary floor may sit below sea level
+          h[k] = Math.max(floor, h[k] - (CANAL_D + mouth * 2.2) * w);
+          if (w > mask[k]) mask[k] = w;
+        }
+      }
+    }
+
+    // ③ (task 25) SURF STEP: the sea plane lives at y=0, so any terrain vertex grazing 0 z-fights
+    // it (the flickering shoals). Push the whole coplanar band (−0.55, 0.30) out to two flat
+    // shelves — a +0.34 sand step above the waterline and a −0.60 surf shelf below — with a
+    // smoothstep-eased lip; the coastline contour keeps its shape, the coplanar band is gone.
+    for (let k = 0; k < h.length; k++) {
+      const vv = h[k];
+      if (vv >= 0.30 || vv <= -0.55) continue;
+      if (vv >= 0) { const t = ss(vv / 0.30); h[k] = 0.34 + t * t * 0.06; }
+      else { const t = ss(-vv / 0.55); h[k] = -0.60 - t * t * 0.06; }
+    }
 
     // commit: geometry Z (plane-local Z becomes world Y after the −90° X rotation), then the
     // normals the toon ramp reads and the sphere the frustum culls with.
@@ -615,35 +659,11 @@ export class ThreeScene {
   // both the frame cost and the "block" clutter; the enlarged continent reads as open
   // painted land instead — relief bands, nation tints and borders carry the detail. ----
 
-  // ---- castle kit (task 6): load the Kenney castle + KayKit building GLBs once, merging each
-  // part into a single non-indexed geometry (position/normal/uv) cached by name in _castleLib.
-  // All castle pieces share one colormap atlas and all buildings share hexagons_medieval —
-  // so one cloned material per nation tint group can dress a whole castle. ----
+  // ---- castle kit (legacy, task 24): the Kenney/KayKit GLB pipeline is retired — castles and
+  // villages are now fully procedural (see _rebuildCastles / _rebuildVillages), so no asset is
+  // ever fetched. Kept as a no-op because the field names (_castleLib*) survive in the ctor. ----
   _loadCastleAssets() {
-    if (this._castleLibLoading || this._castleLibReady) return;
-    this._castleLibLoading = true;
-    const PARTS = [
-      "tower-square-base", "tower-square-mid", "tower-square-top", "tower-square-roof",
-      "tower-hexagon-base", "tower-hexagon-mid", "tower-hexagon-top", "tower-hexagon-roof",
-      "wall", "wall-half", "gate", "metal-gate", "bridge-straight", "flag", "flag-pennant",
-      "building_home_A_blue", "building_market_blue", "building_tower_A_blue",
-      "building_windmill_blue", "building_well_blue",
-    ];
-    const loader = new GLTFLoader();
-    let left = PARTS.length;
-    const done = () => {
-      if (--left > 0) return;
-      this._castleLibLoading = false;
-      this._castleLibReady = true;
-      this._villageSig = "";      // let _rebuildVillages() re-evaluate on the next frame
-      this._rebuildCastles();     // castles requested before the kit finished loading
-    };
-    for (const name of PARTS) {
-      loader.load("./assets/castles/" + name + ".glb",
-        (gltf) => { this._castleLib[name] = this._extractCastlePart(gltf.scene); done(); },
-        undefined,
-        (err) => { console.warn("[scene3d] castle part failed to load:", name, err); done(); });
-    }
+    return;
   }
 
   // merge every mesh of one GLB part into a single non-indexed geometry with just
@@ -669,137 +689,192 @@ export class ThreeScene {
     return { geometry: geos.length === 1 ? geos[0] : mergeGeometries(geos, false), material: mat };
   }
 
-  // ---- the five nation castles (task 18 rework): one grand keep per nation seed, assembled
-  // from the Kenney kit on a strict 1-unit grid — a five-storey square citadel, four TALL hex
-  // corner towers (base + three mid rings + battlement + spire + pennant), five un-scaled
-  // curtain wall segments per side (the old 1.1×/1.3× stretch left gaps at the towers), a
-  // timber gate + iron portcullis, a two-span drawbridge and banners. The whole kit merges
-  // ONCE into a shared geometry (all five castles instance it); only roofs/banners carry the
-  // nation colour — the stonework stays a clean limestone so the castles never read as dirty
-  // colour blocks. A two-tier round plinth buries the footprint so nothing floats or clips
-  // into sloped terrain. ----
+  // ---- the five nation castles (task 24 diorama, task 25① detail pass): fully procedural
+  // MONOCHROME castles — one palette per nation. Against the desktop-diorama reference each kit
+  // now carries: a gatehouse (twin flanking towers + dark recessed passage + half-cylinder arch),
+  // crenellation teeth on the curtain wall and every flat tower top, four tall corner towers and
+  // four low wall towers plus four keep turrets (cones seated on cornice rings), three courtyard
+  // cottages with gabled prism roofs, and triangular pennant flags on the tall towers + keep.
+  // Stonework vertex colours carry a ±6% same-hue mottle so walls read as dressed masonry.
+  // Merged into FOUR shared geometries (stone / roof / wood / flag) → 4 meshes per castle,
+  // 5 castles = 20 draw calls. Footprint ≈32 units, embedded in its own pressed mesa. ----
   _rebuildCastles() {
     for (const child of [...this.castleGroup.children]) {
       this.castleGroup.remove(child);
-      // per-nation roof materials are clones; stone geo/mat + plinth are shared caches released in dispose()
-      child.traverse((o) => { if (o.material && o.material !== this._castleStoneMat && o.material !== this._plinthMat) o.material.dispose(); });
+      // per-nation toon materials are disposable (the shared caches live on this._castle*Geo)
+      child.traverse((o) => { if (o.material) o.material.dispose(); });
     }
-    const lib = this._castleLib;
     const nat = this._nationData;
-    if (!this._castleLibReady || !nat || !Array.isArray(nat.nationSeeds) || !nat.nationSeeds.length) return;
-    const srcMat = lib["tower-square-base"] && lib["tower-square-base"].material;
-    if (!srcMat) return;
+    if (!nat || !Array.isArray(nat.nationSeeds) || !nat.nationSeeds.length) return;
 
-    const S = 4.8;              // castle scale: ~30 world units across the walls, ~33 to the banner tip
-    const PI2 = Math.PI / 2;
-
-    if (!this._castleStoneGeo || !this._castleStrongGeo) {
-      const YAX = new THREE.Vector3(0, 1, 0);
-      // local placement transform for one kit instance (position + yaw + scale)
-      const at = (x, y, z, ry, sx, sy, sz) => new THREE.Matrix4().compose(
-        new THREE.Vector3(x, y, z),
-        new THREE.Quaternion().setFromAxisAngle(YAX, ry || 0),
-        new THREE.Vector3(sx || 1, sy || 1, sz || 1));
-      // merge a set of placed kit instances into one geometry
-      const assemble = (parts) => {
-        const geos = [];
-        for (const p of parts) {
-          const rec = lib[p.name];
-          if (!rec || !rec.geometry || !rec.geometry.attributes.position) continue;
-          const g = rec.geometry.clone();
-          g.applyMatrix4(p.m);
-          geos.push(g);
+    if (!this._castleStoneGeo) {
+      // vertex-colour fill; mottle = ±6% same-hue light/dark perturbation baked per vertex
+      const solid = (g, rgb, mottle) => {
+        const gi = g.index ? g.toNonIndexed() : g;
+        const pos = gi.attributes.position;
+        const n = pos.count;
+        const arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          let m = 1;
+          if (mottle) {
+            const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+            m = 1 + mottle * (0.62 * Math.sin(x * 2.7 + y * 4.3 + z * 1.9) + 0.38 * Math.sin(x * 0.9 - z * 3.7 + y * 1.3));
+          }
+          arr[i * 3] = rgb[0] * m; arr[i * 3 + 1] = rgb[1] * m; arr[i * 3 + 2] = rgb[2] * m;
         }
-        return geos.length ? mergeGeometries(geos, false) : null;
+        gi.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+        return gi;
       };
-
-      // castle plan in kit units (wall pitch 1.0, corner towers at ±2.5, gate on +z):
-      // the keep stacks base + two mid rings + battlement + spire + flag (top ≈ 5.2);
-      // corner towers stack base + three mid rings + battlement + spire + pennant (top ≈ 4.1).
-      const C = 2.5;
-      const stone = [];
-      const accent = [];   // roofs + banners — the only nation-tinted pieces
-      // central keep
-      stone.push({ name: "tower-square-base", m: at(0, 0, 0) });
-      stone.push({ name: "tower-square-mid", m: at(0, 1.01, 0) });
-      stone.push({ name: "tower-square-mid", m: at(0, 2.02, 0) });
-      stone.push({ name: "tower-square-top", m: at(0, 3.03, 0) });
-      accent.push({ name: "tower-square-roof", m: at(0, 3.33, 0) });
-      accent.push({ name: "flag", m: at(0, 5.2, 0, PI2) });
-      // four corner towers
-      for (const cx of [-C, C]) for (const cz of [-C, C]) {
-        stone.push({ name: "tower-hexagon-base", m: at(cx, 0, cz) });
-        stone.push({ name: "tower-hexagon-mid", m: at(cx, 1.31, cz) });
-        stone.push({ name: "tower-hexagon-mid", m: at(cx, 1.77, cz) });
-        stone.push({ name: "tower-hexagon-mid", m: at(cx, 2.23, cz) });
-        stone.push({ name: "tower-hexagon-top", m: at(cx, 2.69, cz) });
-        accent.push({ name: "tower-hexagon-roof", m: at(cx, 2.82, cz) });
-        accent.push({ name: "flag-pennant", m: at(cx, 3.55, cz, PI2) });
+      const W = [1, 1, 1];              // stonework (nation palette multiplies it)
+      const BASE = [0.78, 0.76, 0.72];  // plinth: a touch darker dressed stone
+      const LITE = [0.97, 0.95, 0.90];  // courtyard cottage plaster
+      const WOOD = [0.42, 0.30, 0.20];  // doors / flag poles
+      const DARK = [0.20, 0.14, 0.10];  // the recessed gate passage
+      const stone = [], roof = [], wood = [], flag = [];
+      const merlonRing = (cx, cz, r, y, count, mw, mh, md) => {
+        for (let i = 0; i < count; i++) {
+          const a = (i / count) * Math.PI * 2;
+          const b = new THREE.BoxGeometry(mw, mh, md);
+          b.rotateY(-a);
+          b.translate(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r);
+          stone.push(solid(b, W, 0.06));
+        }
+      };
+      // plinth + curtain wall + battlement ring + crenellation teeth
+      const plinth = new THREE.CylinderGeometry(15.5, 16.2, 2.0, 40); plinth.translate(0, -1.6, 0);
+      stone.push(solid(plinth, BASE, 0.05));
+      const wall = new THREE.CylinderGeometry(13, 14.2, 6, 28, 1, true); wall.translate(0, 2.4, 0);
+      stone.push(solid(wall, W, 0.06));
+      const batt = new THREE.CylinderGeometry(13.5, 13.5, 1.2, 28); batt.translate(0, 6.1, 0);
+      stone.push(solid(batt, W, 0.06));
+      merlonRing(0, 0, 13.5, 7.05, 28, 1.0, 0.9, 0.8);
+      // four TALL corner towers: shaft + cornice ring + conical roof; three carry pennants
+      const flagTops = [];
+      for (let t = 0; t < 4; t++) {
+        const a = Math.PI * (0.25 + 0.5 * t);
+        const tx = Math.cos(a) * 13, tz = Math.sin(a) * 13;
+        const tw = new THREE.CylinderGeometry(2.6, 3.0, 13, 12); tw.translate(tx, 5.9, tz);
+        stone.push(solid(tw, W, 0.06));
+        const cor = new THREE.CylinderGeometry(3.3, 3.4, 0.55, 12); cor.translate(tx, 12.6, tz);
+        stone.push(solid(cor, W, 0.06));
+        const tr = new THREE.ConeGeometry(3.2, 5.2, 12); tr.translate(tx, 15.5, tz);
+        roof.push(solid(tr, W, 0.04));
+        if (t < 3) flagTops.push([tx, 18.1, tz, a]);
       }
-      // curtain walls — five full 1-unit segments per side, ends meeting the corner towers
-      for (const t of [-2, -1, 0, 1, 2]) {
-        stone.push({ name: "wall", m: at(t, 0, -C) });         // north run
-        stone.push({ name: "wall", m: at(C, 0, t, PI2) });     // east run
-        stone.push({ name: "wall", m: at(-C, 0, t, PI2) });    // west run
+      // three LOW wall towers: shaft + cap + crenellation ring (the 4th low tower is the gate tower)
+      for (let t = 0; t < 3; t++) {
+        const a = Math.PI * (0.5 + 0.5 * t);
+        const tx = Math.cos(a) * 13, tz = Math.sin(a) * 13;
+        const tw = new THREE.CylinderGeometry(2.2, 2.6, 8, 10); tw.translate(tx, 3.4, tz);
+        stone.push(solid(tw, W, 0.06));
+        const cap = new THREE.CylinderGeometry(2.5, 2.5, 0.5, 10); cap.translate(tx, 7.6, tz);
+        stone.push(solid(cap, W, 0.06));
+        merlonRing(tx, tz, 2.2, 8.2, 8, 0.7, 0.7, 0.6);
       }
-      for (const t of [-2, -1, 1, 2]) stone.push({ name: "wall", m: at(t, 0, C) });   // south run, gate bay at x=0
-      stone.push({ name: "gate", m: at(0, 0, C, PI2) });                  // closed timber gate leaves
-      stone.push({ name: "metal-gate", m: at(0, 0.02, C + 0.11, PI2) });  // iron portcullis
-      stone.push({ name: "bridge-straight", m: at(0, 0.14, C + 0.97, PI2) });  // drawbridge span 1 (rides the terrace top)
-      stone.push({ name: "bridge-straight", m: at(0, 0.14, C + 1.9, PI2) });   // drawbridge span 2
-
-      this._castleStoneGeo = assemble(stone);
-      this._castleStrongGeo = assemble(accent);
-      if (!this._castleStoneMat) {
-        // clean pale limestone — identical for every nation, the tint lives only on roofs/banners
-        this._castleStoneMat = srcMat.clone();
-        this._castleStoneMat.color.setRGB(1.0, 0.98, 0.93);
-        this._plinthMat = this._toon(0xcfc3a8);   // the foundation terrace reads as dressed stone
+      // GATEHOUSE: twin flanking towers with conical caps + dark recessed passage + stone arch
+      for (const sz of [-3.6, 3.6]) {
+        const gt = new THREE.CylinderGeometry(2.0, 2.4, 9, 10); gt.translate(12.2, 3.9, sz);
+        stone.push(solid(gt, W, 0.06));
+        const gc = new THREE.ConeGeometry(2.5, 3.2, 10); gc.translate(12.2, 9.9, sz);
+        roof.push(solid(gc, W, 0.04));
       }
+      const recess = new THREE.BoxGeometry(3.4, 3.6, 2.8); recess.translate(13.2, 1.8, 0);
+      wood.push(solid(recess, DARK, 0));
+      const arch = new THREE.CylinderGeometry(1.7, 1.7, 4.6, 10, 1, true, 0, Math.PI);
+      arch.rotateZ(Math.PI / 2);   // axis → X (gate depth); the half tube spans the passage top
+      arch.translate(13.2, 3.5, 0);
+      stone.push(solid(arch, W, 0.06));
+      // gate tower (4th low tower) crowning the arch, with its own crenellation ring
+      const gtw = new THREE.CylinderGeometry(2.3, 2.6, 5.5, 10); gtw.translate(11.6, 8.2, 0);
+      stone.push(solid(gtw, W, 0.06));
+      merlonRing(11.6, 0, 2.3, 11.2, 8, 0.7, 0.7, 0.6);
+      // central keep: shaft + cornice + spire + four corner turrets on cornice rings
+      const keep = new THREE.CylinderGeometry(4.6, 5.2, 15, 16); keep.translate(0, 6.9, 0);
+      stone.push(solid(keep, W, 0.06));
+      const kcor = new THREE.CylinderGeometry(5.5, 5.6, 0.6, 16); kcor.translate(0, 14.5, 0);
+      stone.push(solid(kcor, W, 0.06));
+      const keepRoof = new THREE.ConeGeometry(5.4, 7, 16); keepRoof.translate(0, 18.3, 0);
+      roof.push(solid(keepRoof, W, 0.04));
+      flagTops.push([0, 21.8, 0, 0]);
+      for (const [qx, qz] of [[3.4, 3.4], [-3.4, 3.4], [3.4, -3.4], [-3.4, -3.4]]) {
+        const ts = new THREE.CylinderGeometry(1.2, 1.4, 7, 8); ts.translate(qx, 13.2, qz);
+        stone.push(solid(ts, W, 0.06));
+        const tc = new THREE.CylinderGeometry(1.7, 1.8, 0.35, 8); tc.translate(qx, 16.9, qz);
+        stone.push(solid(tc, W, 0.06));
+        const tr = new THREE.ConeGeometry(1.7, 2.6, 8); tr.translate(qx, 18.4, qz);
+        roof.push(solid(tr, W, 0.04));
+      }
+      // courtyard: three plaster cottages (box body + gabled prism roof + door) fill the ward
+      for (let i = 0; i < 3; i++) {
+        const a = 1.75 + i * 1.91;
+        const hx = Math.cos(a) * 8.2, hz = Math.sin(a) * 8.2;
+        const body = new THREE.BoxGeometry(3.6, 2.8, 3.0);
+        body.rotateY(-a);
+        body.translate(hx, 1.4, hz);
+        stone.push(solid(body, LITE, 0.05));
+        const rg = new THREE.CylinderGeometry(1.9, 1.9, 4.2, 3, 1);   // triangular prism = gable
+        rg.rotateZ(Math.PI / 2); rg.rotateX(-Math.PI / 2); rg.scale(1, 0.8, 1);
+        rg.rotateY(-a);
+        rg.translate(hx, 3.7, hz);
+        roof.push(solid(rg, W, 0.04));
+        const door = new THREE.BoxGeometry(0.25, 1.5, 1.0);
+        door.rotateY(-a);
+        door.translate(hx + Math.cos(a) * 1.85, 0.75, hz + Math.sin(a) * 1.85);
+        wood.push(solid(door, WOOD, 0));
+      }
+      // FLAGS: triangular pennants (PlaneGeometry, double-sided) on poles at 3 tall towers + keep
+      for (const [fx, fy, fz, fa] of flagTops) {
+        const pole = new THREE.CylinderGeometry(0.14, 0.14, 3.4, 6); pole.translate(fx, fy + 1.7, fz);
+        wood.push(solid(pole, WOOD, 0));
+        const pg = new THREE.PlaneGeometry(2.6, 1.2, 3, 1);
+        const pp = pg.attributes.position;
+        for (let k = 0; k < pp.count; k++) {
+          const x = pp.getX(k);
+          if (x > 1.2) pp.setY(k, 0);                     // collapse the fly end → a triangle pennant
+          pp.setZ(k, 0.22 * Math.sin((x + 1.3) * 1.8));   // a whisper of cloth wave
+        }
+        pg.computeVertexNormals();
+        pg.rotateY(-fa);
+        pg.translate(fx + Math.cos(fa) * 1.35, fy + 2.9, fz + Math.sin(fa) * 1.35);
+        flag.push(solid(pg, W, 0));
+      }
+      this._castleStoneGeo = mergeGeometries(stone, false);
+      this._castleRoofGeo = mergeGeometries(roof, false);
+      this._castleWoodGeo = mergeGeometries(wood, false);
+      this._castleFlagGeo = mergeGeometries(flag, false);
     }
-    if (!this._castleStoneGeo || !this._castleStrongGeo) return;
 
-    // shared two-tier plinth (kit units): the inner disc's top ends 0.25 above the floor line
-    // (y=0) — wall/tower bases stand ON the dressed-stone terrace instead of floating or
-    // sinking; the outer, deeper tier shoulders into the slope side of the site.
-    // Smooth 44-gon drums, not boxes.
-    if (!this._plinthGeo) {
-      const t1 = new THREE.CylinderGeometry(3.95, 4.1, 1.4, 44);
-      t1.translate(0, -1.35, 0);
-      const t2 = new THREE.CylinderGeometry(3.35, 3.5, 0.8, 44);
-      t2.translate(0, -0.55, 0);
-      this._plinthGeo = mergeGeometries([t1.toNonIndexed(), t2.toNonIndexed()], false);
-    }
-
+    // nation id → monochrome palette { s: stonework, r: roofs } — amber / gold / cream / grey / crimson
+    const PAL = [
+      { s: 0xd98a2b, r: 0xa85f14 },
+      { s: 0xe0b23c, r: 0xb98a1c },
+      { s: 0xece4d2, r: 0xcfc4a8 },
+      { s: 0x9a9a96, r: 0x666662 },
+      { s: 0xb03040, r: 0x7e1c2a },
+    ];
     for (let i = 0; i < nat.nationSeeds.length; i++) {
       const seed = nat.nationSeeds[i];
-      const col = nat.nationColors[i] || new THREE.Color(0.7, 0.58, 0.34);
-      // task 22 — ground the keep on the HIGHEST point of its own footprint, not the lowest. The
-      // old min-of-a-ring sank the plinth into every dip and left each ridge INSIDE the curtain
-      // wall free to rise up through the courtyard and the towers. _sculptTerrain() has already
-      // pressed a flat mesa under every capital, so this max over the plinth radius (4.1·S ≈ 19.7)
-      // is just the mesa top; the −0.95 embed still buries the deep outer tier (kit-local −2.05
-      // ≈ −9.8 world) and lands the dressed-stone terrace ≈0.25 above the ground line.
-      const baseY = this.groundY(seed.x, seed.z, 4.1 * S) - 0.95;
-
+      const pal = PAL[i % PAL.length];
+      // _sculptTerrain has already pressed a flat mesa under every capital — groundY over the
+      // plinth radius (16.2) reads the mesa top; the −0.4 embed sinks just the plinth skirt.
+      const baseY = this.groundY(seed.x, seed.z, 17) - 0.4;
       const group = new THREE.Group();
       group.position.set(seed.x, baseY, seed.z);
-      group.scale.setScalar(S);
-      group.add(new THREE.Mesh(this._plinthGeo, this._plinthMat));
-      group.add(new THREE.Mesh(this._castleStoneGeo, this._castleStoneMat));
-      // roofs + banners in the nation colour (full saturation, no mud-dirty wash)
-      const strongMat = srcMat.clone();
-      strongMat.color.setRGB(0.35 + 0.65 * col.r, 0.35 + 0.65 * col.g, 0.35 + 0.65 * col.b);
-      group.add(new THREE.Mesh(this._castleStrongGeo, strongMat));
+      group.rotation.y = (i * 1.7) % (Math.PI * 2);   // vary the orientation so the five read distinct
+      // 4 meshes per castle (stone / roof / wood / flag) → 5 castles = 20 draw calls
+      group.add(new THREE.Mesh(this._castleStoneGeo, this._toon(pal.s, { vertexColors: true })));
+      group.add(new THREE.Mesh(this._castleRoofGeo, this._toon(pal.r, { vertexColors: true })));
+      group.add(new THREE.Mesh(this._castleWoodGeo, this._toon(0xffffff, { vertexColors: true })));
+      group.add(new THREE.Mesh(this._castleFlagGeo, this._toon(pal.s, { vertexColors: true, side: THREE.DoubleSide })));
       this.castleGroup.add(group);
     }
   }
 
-  // ---- villages (task 6): a KayKit building ring around every town/city settlement, one
-  // InstancedMesh per building type (shared geometry + atlas material). Deterministic per-zone
-  // layout, rebuilt only when the census signature changes; the ring clears the mud town. ----
+  // ---- villages (task 24 diorama rework): fully procedural house clusters + windmills around
+  // every town/city settlement — two InstancedMeshes total (shared vertex-coloured geometry,
+  // one toon material), brown/tan diorama cottages. Deterministic per-zone layout, rebuilt only
+  // when the census signature changes; the GLB kit dependency is gone. ----
   _rebuildVillages(econCities) {
-    if (!this._castleLibReady) return;
     const sets = econCities && Array.isArray(econCities.settlements) ? econCities.settlements : null;
     let sig = "";
     if (sets) {
@@ -814,23 +889,40 @@ export class ThreeScene {
 
     for (const child of [...this.villageGroup.children]) {
       this.villageGroup.remove(child);
-      if (child.isInstancedMesh) child.dispose();   // geometry/material are shared kit resources
+      if (child.isInstancedMesh) child.dispose();   // geometry/material are shared caches released in dispose()
     }
     if (!sig || !sets) return;
 
-    const lib = this._castleLib;
-    const TYPES = [
-      // task 18: the world rect grew 1.5× and the camera sits further back — buildings scale
-      // up ~12% to hold their presence, and with the mud-brick town gone the village ring moves
-      // in and grows (cities 6+2, towns 4+1) so the continent reads open, not empty.
-      { key: "home", name: "building_home_A_blue", sc: 5.0 },
-      { key: "windmill", name: "building_windmill_blue", sc: 4.1 },
-      { key: "tower", name: "building_tower_A_blue", sc: 4.5 },
-      { key: "market", name: "building_market_blue", sc: 3.7 },
-      { key: "well", name: "building_well_blue", sc: 4.3 },
-    ];
-    const buckets = {};
-    for (const t of TYPES) buckets[t.key] = [];
+    // shared geometry, built once: a cottage (box + pyramid roof) and a windmill (tapered tower +
+    // cap + cross blades), all vertex-coloured so one toon material dresses every instance.
+    if (!this._houseGeo || !this._millGeo) {
+      const solid = (g, rgb) => {
+        const gi = g.index ? g.toNonIndexed() : g;
+        const n = gi.attributes.position.count;
+        const arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) { arr[i * 3] = rgb[0]; arr[i * 3 + 1] = rgb[1]; arr[i * 3 + 2] = rgb[2]; }
+        gi.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+        return gi;
+      };
+      const hb = solid(new THREE.BoxGeometry(2.4, 1.7, 2.0), [0.62, 0.45, 0.28]);
+      hb.translate(0, 0.85, 0);
+      const hr = solid(new THREE.ConeGeometry(1.9, 1.3, 4), [0.42, 0.26, 0.16]);
+      hr.rotateY(Math.PI / 4);
+      hr.translate(0, 2.35, 0);
+      this._houseGeo = mergeGeometries([hb, hr], false);
+      const mt = solid(new THREE.CylinderGeometry(1.0, 1.4, 3.2, 10), [0.80, 0.68, 0.48]);
+      mt.translate(0, 1.6, 0);
+      const mc = solid(new THREE.ConeGeometry(1.3, 1.2, 10), [0.45, 0.28, 0.17]);
+      mc.translate(0, 3.8, 0);
+      const b1 = solid(new THREE.BoxGeometry(0.16, 3.4, 0.5), [0.50, 0.33, 0.20]);
+      b1.translate(0, 2.6, 1.1);
+      const b2 = solid(new THREE.BoxGeometry(3.4, 0.16, 0.5), [0.50, 0.33, 0.20]);
+      b2.translate(0, 2.6, 1.1);
+      this._millGeo = mergeGeometries([mt, mc, b1, b2], false);
+    }
+    if (!this._villageMat) this._villageMat = this._toon(0xffffff, { vertexColors: true });
+
+    const buckets = { house: [], mill: [] };
     const YAX = new THREE.Vector3(0, 1, 0);
     const put = (kind, x, y, z, sc, yaw) => {
       buckets[kind].push(new THREE.Matrix4().compose(
@@ -838,11 +930,9 @@ export class ThreeScene {
         new THREE.Quaternion().setFromAxisAngle(YAX, (yaw || 0) * Math.PI * 2),
         new THREE.Vector3(sc, sc, sc)));
     };
-    // task 22 — every building is grounded on the MAX of a 5×5 sample spanning its own footprint
-    // (±0.8·scale ≈ its half-width) and embedded 0.4, so the terrace lip or any slope can no longer
-    // slice through a roof. A plot that lands in the sea is hauled halfway back toward the anchor;
+    // every building is grounded on the MAX of a 5×5 sample spanning its own footprint and
+    // embedded 0.3; a plot that lands in the sea is hauled halfway back toward the anchor, and
     // if it is still wet the building is dropped rather than built on stilts.
-    // (Declared per-zone below: it closes over that zone's wx/wz and its deterministic rnd stream.)
     for (const s of sets) {
       const r = String(s.rank || "").toUpperCase();
       if (r !== "TOWN" && r !== "CITY") continue;
@@ -854,44 +944,121 @@ export class ThreeScene {
       const rnd = () => { rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0; return rs / 4294967296; };
       const plot = (kind, a, rr, sc) => {
         let bx = wx + Math.cos(a) * rr, bz = wz + Math.sin(a) * rr;
-        let gy = this.groundY(bx, bz, sc * 0.8);
-        if (gy < 0.2) {
+        let gy = this.groundY(bx, bz, sc * 1.2);
+        if (gy < 0.4) {
           bx = wx + Math.cos(a) * rr * 0.55; bz = wz + Math.sin(a) * rr * 0.55;
-          gy = this.groundY(bx, bz, sc * 0.8);
-          if (gy < 0.2) return;
+          gy = this.groundY(bx, bz, sc * 1.2);
+          if (gy < 0.4) return;
         }
-        put(kind, bx, gy - 0.4, bz, sc, rnd());
+        put(kind, bx, gy - 0.3, bz, sc, rnd());
       };
-      const ring = r === "CITY" ? 17 + rnd() * 9 : 12 + rnd() * 6;
-      const nB = r === "CITY" ? 6 : 4;   // plus the civic anchors below
-      const kinds = ["home", "windmill", "tower", "home"];
-      for (let b = 0; b < nB; b++) {
-        const a = rnd() * Math.PI * 2;
-        const rr = ring + rnd() * 7;
-        const kind = kinds[(rnd() * kinds.length) | 0];
-        const sc = TYPES.find((t) => t.key === kind).sc * (0.85 + rnd() * 0.3);
-        plot(kind, a, rr, sc);
+      const ring = r === "CITY" ? 15 + rnd() * 8 : 10 + rnd() * 5;
+      const nH = r === "CITY" ? 6 : 4;
+      for (let b = 0; b < nH; b++) {
+        plot("house", rnd() * Math.PI * 2, ring + rnd() * 6, 1.6 + rnd() * 0.7);
       }
-      const nCivic = r === "CITY" ? 2 : 1;
-      for (let q = 0; q < nCivic; q++) {
-        const civic = rnd() < 0.55 ? "well" : "market";
-        const ca = rnd() * Math.PI * 2;
-        const cr = Math.max(ring - 5.5, 8) + rnd() * 3;
-        const csc = (civic === "well" ? 4.3 : 3.7) * (0.9 + rnd() * 0.2);
-        plot(civic, ca, cr, csc);
-      }
+      plot("mill", rnd() * Math.PI * 2, ring * 0.7 + rnd() * 3, 1.7 + rnd() * 0.4);
     }
 
-    for (const t of TYPES) {
-      const list = buckets[t.key];
-      const rec = lib[t.name];
-      if (!list.length || !rec || !rec.geometry.attributes.position || !rec.material) continue;
-      const im = new THREE.InstancedMesh(rec.geometry, rec.material, list.length);
+    for (const [kind, geo] of [["house", this._houseGeo], ["mill", this._millGeo]]) {
+      const list = buckets[kind];
+      if (!list.length) continue;
+      const im = new THREE.InstancedMesh(geo, this._villageMat, list.length);
       for (let i = 0; i < list.length; i++) im.setMatrixAt(i, list[i]);
       im.instanceMatrix.needsUpdate = true;
       im.frustumCulled = false;   // instances spread far beyond the base geometry bounds
       this.villageGroup.add(im);
     }
+  }
+
+  // ---- trees (task 24 diorama): clustered broadleaf + conifer instanced trees — exactly two
+  // InstancedMeshes (≤600 instances total, 2 draw calls). Clusters seed on dry inland grass away
+  // from the canals (canalMask) and the castle mesas (nation seeds), so the land reads as a
+  // model piece dotted with tree clumps, never a uniform forest. Deterministic layout; rebuilt
+  // only when the nation partition changes (the canals move with it). ----
+  _buildTrees() {
+    if (this._treeGroup) {
+      this.scene.remove(this._treeGroup);
+      this._treeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); });
+      this._treeGroup = null;
+    }
+    if (!this._broadGeo || !this._coniferGeo) {
+      const solid = (g, rgb) => {
+        const gi = g.index ? g.toNonIndexed() : g;
+        const n = gi.attributes.position.count;
+        const arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) { arr[i * 3] = rgb[0]; arr[i * 3 + 1] = rgb[1]; arr[i * 3 + 2] = rgb[2]; }
+        gi.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+        return gi;
+      };
+      // broadleaf: short trunk + rounded low-poly canopy
+      const bt = solid(new THREE.CylinderGeometry(0.35, 0.5, 2.2, 7), [0.45, 0.32, 0.20]);
+      bt.translate(0, 1.1, 0);
+      const bc = solid(new THREE.IcosahedronGeometry(2.4, 0), [0.36, 0.58, 0.28]);
+      bc.translate(0, 3.4, 0);
+      this._broadGeo = mergeGeometries([bt, bc], false);
+      // conifer: slender trunk + deep-green cone
+      const ct = solid(new THREE.CylinderGeometry(0.3, 0.45, 1.8, 7), [0.40, 0.28, 0.18]);
+      ct.translate(0, 0.9, 0);
+      const cc = solid(new THREE.ConeGeometry(1.7, 4.6, 8), [0.16, 0.38, 0.20]);
+      cc.translate(0, 4.1, 0);
+      this._coniferGeo = mergeGeometries([ct, cc], false);
+    }
+    if (!this._treeMat) this._treeMat = this._toon(0xffffff, { vertexColors: true });
+
+    const N = this._hN, mask = this._canalMask;
+    const WSX = this._WSX, WSZ = this._WSZ;
+    const seeds = this._nationData && Array.isArray(this._nationData.nationSeeds) ? this._nationData.nationSeeds : [];
+    let rs = 0x5eed24 ^ (seeds.length * 2654435761);
+    const rnd = () => { rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0; return rs / 4294967296; };
+    // a spot is plantable when it is dry inland grass (not beach, not ridge, not sea), off the
+    // canal banks, and clear of every castle mesa
+    const okSpot = (x, z) => {
+      const y = this.heightAt(x, z);
+      if (!(y > 2.0 && y < 11.0)) return false;
+      if (mask) {
+        const i = Math.round((x + WSX / 2) / this._hStepX), j = Math.round((z + WSZ / 2) / this._hStepZ);
+        if (i < 0 || j < 0 || i >= N || j >= N || mask[j * N + i] > 0.2) return false;
+      }
+      for (const s of seeds) {
+        const dx = s.x - x, dz = s.z - z;
+        if (dx * dx + dz * dz < 26 * 26) return false;
+      }
+      return true;
+    };
+    const d = this._dummy;
+    const broad = [], conifer = [];
+    const CAP_B = 320, CAP_C = 280;
+    for (let c = 0; c < 26 && (broad.length < CAP_B || conifer.length < CAP_C); c++) {
+      const cx = (rnd() - 0.5) * WSX * 0.86, cz = (rnd() - 0.5) * WSZ * 0.86;
+      if (!okSpot(cx, cz)) continue;
+      const n = 8 + ((rnd() * 14) | 0);
+      const spread = 9 + rnd() * 10;
+      const coniferClump = rnd() < 0.45;   // a clump is one species, like the reference diorama
+      for (let t = 0; t < n; t++) {
+        const x = cx + (rnd() - 0.5) * 2 * spread, z = cz + (rnd() - 0.5) * 2 * spread;
+        if (!okSpot(x, z)) continue;
+        const y = this.heightAt(x, z);
+        const sc = 0.9 + rnd() * 0.8;
+        d.position.set(x, y - 0.3, z);
+        d.rotation.set(0, rnd() * Math.PI * 2, 0);
+        d.scale.set(sc, sc * (0.85 + rnd() * 0.35), sc);
+        d.updateMatrix();
+        const bucket = coniferClump ? conifer : broad;
+        const cap = coniferClump ? CAP_C : CAP_B;
+        if (bucket.length < cap) bucket.push(d.matrix.clone());
+      }
+    }
+    this._treeGroup = new THREE.Group();
+    for (const [geo, list] of [[this._broadGeo, broad], [this._coniferGeo, conifer]]) {
+      if (!list.length) continue;
+      const im = new THREE.InstancedMesh(geo, this._treeMat, list.length);
+      for (let i = 0; i < list.length; i++) im.setMatrixAt(i, list[i]);
+      im.instanceMatrix.needsUpdate = true;
+      im.frustumCulled = false;   // instances spread far beyond the base geometry bounds
+      this._treeGroup.add(im);
+    }
+    this.scene.add(this._treeGroup);
   }
 
   // ---- province names floating over the land — the atlas's own labels ----
@@ -927,21 +1094,29 @@ export class ThreeScene {
   // only rewrite buffers / matrices / opacities — never `new`.
   // =====================================================================================
   _initOverlays() {
-    // ---- ① social web: alliance lines + grudge dashed lines (LineSegments, drawRange) ----
-    const mkSeg = (color, dashed, opacity) => {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this._socLineCap * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
-      const mat = dashed
-        ? new THREE.LineDashedMaterial({ color, dashSize: 9, gapSize: 6.5, transparent: true, opacity, depthWrite: false })
-        : new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
-      const line = new THREE.LineSegments(geo, mat);
-      line.frustumCulled = false;
-      line.renderOrder = 6;
-      this.scene.add(line);
-      return line;
-    };
-    this._socLines = mkSeg(0x6a94e0, false, 0.55);    // ① alliance — blue thread (matches the blue alliance particles)
-    this._socGrudge = mkSeg(0xc63c2c, true, 0.6);     // ① feud — red dashed rift
+    // ---- ① social web (task 25④): alliance bonds are GROUND-HUGGING RIBBONS (per-vertex crest
+    // lift, nation-blended vertex colours) instead of 1px LineSegments the terrain used to swallow;
+    // feuds stay dashed lines but densified to the same 12-unit sampling. Both rebuild ONLY when
+    // the bond signature changes — zero per-frame geometry cost. ----
+    const RIB_B = this._socLineCap, RIB_P = this._socRibbonPts;
+    const rgeo = new THREE.BufferGeometry();
+    rgeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(RIB_B * RIB_P * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    rgeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(RIB_B * RIB_P * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    rgeo.setIndex(new THREE.BufferAttribute(new Uint16Array(RIB_B * (RIB_P - 1) * 6), 1).setUsage(THREE.DynamicDrawUsage));
+    rgeo.setDrawRange(0, 0);
+    this._socLines = new THREE.Mesh(rgeo, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    this._socLines.frustumCulled = false;
+    this._socLines.renderOrder = 6;
+    this.scene.add(this._socLines);
+    const ggeo = new THREE.BufferGeometry();
+    ggeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(RIB_B * (RIB_P - 1) * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    ggeo.setDrawRange(0, 0);
+    this._socGrudge = new THREE.LineSegments(ggeo, new THREE.LineDashedMaterial({ color: 0xc63c2c, dashSize: 9, gapSize: 6.5, transparent: true, opacity: 0.6, depthWrite: false }));
+    this._socGrudge.frustumCulled = false;
+    this._socGrudge.renderOrder = 6;
+    this.scene.add(this._socGrudge);
 
     // ---- ② necropolis: one Sprite per stone, GRAVE_CAP slots, canvas texture each ----
     this._graveGroup = new THREE.Group();
@@ -1332,13 +1507,11 @@ export class ThreeScene {
       const x = (f.x / state.VW - 0.5) * this._WSX;
       const z = (f.y / state.VH - 0.5) * this._WSZ;
       const balN = f.balN != null ? f.balN : 0.5;
-      const sz = (0.7 + balN * 0.6) * 7.2;   // task 20③: ×1.8 for the 480×300→720×450 continent so the swarm reads at a glance
-      // task 22 — a fly is NOT a point: at instance scale sz its belly hangs 0.5·sz below the origin
-      // and its nose reaches 0.75·sz ahead, so the old single centre sample + a flat 7 left the
-      // fatter flies (sz up to 9.4 → a 4.7-unit half-height) belly-down in any slope, i.e. the
-      // terrain ate half the swarm. Ride the MAX ground under the whole body, then lift by its own
-      // half-height + 2.6 — never below sea level, and the ±2 hover bob rides on top of that.
-      const y = Math.max(this.groundY(x, z, sz * 0.8), 0) + sz * 0.5 + 2.6 + Math.sin(now * 0.004 + (f.phase || 0)) * 2.0;
+      const sz = (0.7 + balN * 0.6) * 2.3;   // task 24: diorama insects — the swarm shrinks to ≈1/5 of a castle so the island reads as a tabletop model
+      // task 24 — the shrunken flies patrol the SKY above the island, not the grass: lift them a
+      // fixed 14 units over the highest ground under the body so they read as insects buzzing over
+      // the diorama (never below sea level), with the ±2 hover bob riding on top.
+      const y = Math.max(this.groundY(x, z, sz * 0.8), 0) + sz * 0.5 + 14 + Math.sin(now * 0.004 + (f.phase || 0)) * 2.0;
       d.position.set(x, y, z);
       d.rotation.set(Math.sin(now * 0.002 + (f.phase || 0)) * 0.12, -(f.heading || 0), 0, "YXZ");
       d.scale.setScalar(sz);
@@ -1395,54 +1568,120 @@ export class ThreeScene {
 
   // ============================ task 7 — layer implementations ============================
 
-  // ① social web — blue alliance threads + red dashed feud rifts between live flies
+  // ① social web — alliance ribbons + red dashed feud rifts between live flies (task 25④).
+  // Ribbons sample every ≈12 world units and lift EACH vertex onto the local ground crest +4.5
+  // (grudges +6), so no ridge can swallow a thread; colours blend the two endpoint nation hues.
+  // Geometry rebuilds only when the signature (pairs + 12-unit-quantised endpoints) changes.
+  _nationRGBAt(x, z) {
+    const nd = this._nationData;
+    const vor = nd && nd.voronoi;
+    let id = -1;
+    if (vor) {
+      if (typeof vor.find === "function") id = vor.find(x, z);
+      else if (vor.delaunay && typeof vor.delaunay.find === "function") id = vor.delaunay.find(x, z);
+    }
+    if (id < 0 && nd && Array.isArray(nd.nationSeeds) && nd.nationSeeds.length) {
+      let bd = 1e18; id = 0;
+      for (let i = 0; i < nd.nationSeeds.length; i++) {
+        const sdx = nd.nationSeeds[i].x - x, sdz = nd.nationSeeds[i].z - z;
+        const d2 = sdx * sdx + sdz * sdz;
+        if (d2 < bd) { bd = d2; id = i; }
+      }
+    }
+    const c = id >= 0 ? getNationColor(id) : null;
+    return c ? [c.r, c.g, c.b] : [0.42, 0.58, 0.88];
+  }
   _updateSocialLines(sim) {
     const s = state.econSocial;
     const show = !!state.showSocieties && !!s;
     const bonds = (show && Array.isArray(s.bonds)) ? s.bonds : null;
     const grudges = (show && Array.isArray(s.grudges)) ? s.grudges : null;
     const W = this._WSX, H = this._WSZ, VW = state.VW, VH = state.VH;
-    // task 22 — a thread is ONE straight segment, so lifting each end by its own ground height still
-    // buried the middle wherever a ridge ran between the two flies. Both ends now ride the highest
-    // ground along the whole span (+5 clears the bodies), so the thread never dives into the land.
-    const span = (fa, fb, arr, k) => {
-      const ax = (fa.x / VW - 0.5) * W, az = (fa.y / VH - 0.5) * H;
-      const bx = (fb.x / VW - 0.5) * W, bz = (fb.y / VH - 0.5) * H;
-      const y = this.spanY(ax, az, bx, bz) + 5;
-      arr[k] = ax; arr[k + 1] = y; arr[k + 2] = az;
-      arr[k + 3] = bx; arr[k + 4] = y; arr[k + 5] = bz;
-    };
-    // alliances — a single blue segment per bond
-    let nl = 0;
-    const la = this._socLines.geometry.attributes.position.array;
+    const liveB = [], liveG = [];
+    let sig = "";
     if (bonds) for (const b of bonds) {
-      if (nl >= this._socLineCap) break;
+      if (liveB.length >= this._socLineCap) break;
       if (!b || b.a == null || b.b == null || b.a === b.b) continue;
       const fa = sim.get(b.a), fb = sim.get(b.b);
       if (!fa || fa.dying || !fb || fb.dying) continue;
-      span(fa, fb, la, nl * 6);
-      nl++;
+      liveB.push([fa, fb]);
+      sig += "b" + b.a + "." + b.b + "@" + ((fa.x / 12) | 0) + "," + ((fa.y / 12) | 0) + "," + ((fb.x / 12) | 0) + "," + ((fb.y / 12) | 0) + ";";
     }
-    if (nl) this._socLines.geometry.attributes.position.needsUpdate = true;
-    this._socLines.geometry.setDrawRange(0, nl * 2);
-    this._socLines.visible = nl > 0;
-    // feuds — a red dashed rift per grudge
-    let nf = 0;
-    const ga = this._socGrudge.geometry.attributes.position.array;
+    sig += "|";
     if (grudges) for (const g of grudges) {
-      if (nf >= this._socLineCap) break;
+      if (liveG.length >= this._socLineCap) break;
       if (!g || g.buyerId == null || g.sellerId == null || g.buyerId === g.sellerId) continue;
       const fa = sim.get(g.buyerId), fb = sim.get(g.sellerId);
       if (!fa || fa.dying || !fb || fb.dying) continue;
-      span(fa, fb, ga, nf * 6);
-      nf++;
+      liveG.push([fa, fb]);
+      sig += "g" + g.buyerId + "." + g.sellerId + "@" + ((fa.x / 12) | 0) + "," + ((fa.y / 12) | 0) + "," + ((fb.x / 12) | 0) + "," + ((fb.y / 12) | 0) + ";";
     }
-    if (nf) {
-      this._socGrudge.geometry.attributes.position.needsUpdate = true;
-      this._socGrudge.computeLineDistances();     // dash distances must follow the moved endpoints
+    if (sig === this._socSig) return;   // nothing moved a 12-unit cell → zero per-frame cost
+    this._socSig = sig;
+    const PTS = this._socRibbonPts;
+    // ---- alliance ribbons: two vertices per sample, triangle strip indices, nation-blended colour ----
+    const rgeo = this._socLines.geometry;
+    const P = rgeo.attributes.position.array, C = rgeo.attributes.color.array, I = rgeo.index.array;
+    let vCount = 0, iCount = 0;
+    for (const [fa, fb] of liveB) {
+      if (vCount + PTS * 2 > P.length / 3) break;
+      const ax = (fa.x / VW - 0.5) * W, az = (fa.y / VH - 0.5) * H;
+      const bx = (fb.x / VW - 0.5) * W, bz = (fb.y / VH - 0.5) * H;
+      const dist = Math.hypot(bx - ax, bz - az);
+      const m = Math.max(2, Math.min(PTS, Math.ceil(dist / 12) + 1));
+      const ca = this._nationRGBAt(ax, az), cb = this._nationRGBAt(bx, bz);
+      const base = vCount;
+      for (let i = 0; i < m; i++) {
+        const t = m > 1 ? i / (m - 1) : 0;
+        const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+        const y = this.groundY(x, z, 6) + 4.5;      // per-vertex crest lift (task 25④)
+        const t0 = m > 1 ? Math.max(0, i - 1) / (m - 1) : 0, t1 = m > 1 ? Math.min(m - 1, i + 1) / (m - 1) : 1;
+        let tx = (bx - ax) * (t1 - t0), tz = (bz - az) * (t1 - t0);
+        const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+        const nx = -tz * 0.45, nz = tx * 0.45;      // ribbon half-width 0.45 (total 0.9)
+        const k3 = vCount * 3;
+        P[k3] = x - nx; P[k3 + 1] = y; P[k3 + 2] = z - nz;
+        P[k3 + 3] = x + nx; P[k3 + 4] = y; P[k3 + 5] = z + nz;
+        const r = ca[0] + (cb[0] - ca[0]) * t, gg = ca[1] + (cb[1] - ca[1]) * t, bb = ca[2] + (cb[2] - ca[2]) * t;
+        C[k3] = r; C[k3 + 1] = gg; C[k3 + 2] = bb;
+        C[k3 + 3] = r; C[k3 + 4] = gg; C[k3 + 5] = bb;
+        vCount += 2;
+      }
+      for (let i = 0; i < m - 1; i++) {
+        const a = base + i * 2;
+        I[iCount++] = a; I[iCount++] = a + 2; I[iCount++] = a + 1;
+        I[iCount++] = a + 1; I[iCount++] = a + 2; I[iCount++] = a + 3;
+      }
     }
-    this._socGrudge.geometry.setDrawRange(0, nf * 2);
-    this._socGrudge.visible = nf > 0;
+    rgeo.attributes.position.needsUpdate = true;
+    rgeo.attributes.color.needsUpdate = true;
+    rgeo.index.needsUpdate = true;
+    rgeo.setDrawRange(0, iCount);
+    this._socLines.visible = iCount > 0;
+    // ---- feuds: red dashed rift, densified to the same 12-unit sampling, per-vertex crest +6 ----
+    const ggeo = this._socGrudge.geometry;
+    const G = ggeo.attributes.position.array;
+    let gv = 0;
+    for (const [fa, fb] of liveG) {
+      const ax = (fa.x / VW - 0.5) * W, az = (fa.y / VH - 0.5) * H;
+      const bx = (fb.x / VW - 0.5) * W, bz = (fb.y / VH - 0.5) * H;
+      const dist = Math.hypot(bx - ax, bz - az);
+      const m = Math.max(2, Math.min(PTS, Math.ceil(dist / 12) + 1));
+      if (gv + (m - 1) * 2 > G.length / 3) break;
+      for (let i = 0; i < m - 1; i++) {
+        for (let e = 0; e < 2; e++) {
+          const t = m > 1 ? (i + e) / (m - 1) : 0;
+          G[gv * 3] = ax + (bx - ax) * t;
+          G[gv * 3 + 1] = this.groundY(ax + (bx - ax) * t, az + (bz - az) * t, 6) + 6;
+          G[gv * 3 + 2] = az + (bz - az) * t;
+          gv++;
+        }
+      }
+    }
+    ggeo.attributes.position.needsUpdate = true;
+    this._socGrudge.computeLineDistances();     // dash distances must follow the moved endpoints
+    ggeo.setDrawRange(0, gv);
+    this._socGrudge.visible = gv > 0;
   }
 
   // ② necropolis — one sprite per grave, laid out deterministically in the atlas's southern band
@@ -1990,11 +2229,11 @@ export class ThreeScene {
       if (e.geometry && e.geometry.dispose) e.geometry.dispose();
       if (e.material) { const ms = Array.isArray(e.material) ? e.material : [e.material]; for (const m of ms) killMat(m); }
     }
-    // task 18: shared castle caches (merged kit geometry, limestone, plinth)
-    for (const k of ["_castleStoneGeo", "_castleStrongGeo", "_plinthGeo"]) {
+    // task 24: shared procedural caches (castle stonework/roofs, plinth, cottages, mills, trees)
+    for (const k of ["_castleStoneGeo", "_castleRoofGeo", "_castleWoodGeo", "_castleFlagGeo", "_plinthGeo", "_houseGeo", "_millGeo", "_broadGeo", "_coniferGeo"]) {
       if (this[k] && this[k].dispose) this[k].dispose();
     }
-    for (const k of ["_castleStoneMat", "_plinthMat"]) {
+    for (const k of ["_plinthMat", "_villageMat", "_treeMat"]) {
       if (this[k]) killMat(this[k]);
     }
     if (this.scene.environment && this.scene.environment.dispose) this.scene.environment.dispose();

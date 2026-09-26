@@ -48,3 +48,11 @@
 
 /camera.js
   Cache-Control: no-cache, must-revalidate
+
+# task 26 touched these two bare-imported modules (renderChronTicker deleted, pollChron rewired)
+# — same etag-revalidation treatment so returning readers never run stale bytes.
+/drawers.js
+  Cache-Control: no-cache, must-revalidate
+
+/polling.js
+  Cache-Control: no-cache, must-revalidate

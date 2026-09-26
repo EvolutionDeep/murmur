@@ -1,7 +1,7 @@
 // polling.js — 全部 pollXxx + getJSON + load* + offline 合成
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, API, FAP_ROLE, FETCH_TIMEOUT_MS, OFFLINE_BACKOFF_MS, clamp, readLineageHead } from './shared.js';
-import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLaureate, paintPredict, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronTicker, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderTechSection, renderTreatySection, renderWarSection, renderWorksSection, renderWorkshopSection, updateSinceLaunch, verifyBrain } from './drawers.js';
+import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLaureate, paintPredict, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderTechSection, renderTreatySection, renderWarSection, renderWorksSection, renderWorkshopSection, updateSinceLaunch, verifyBrain } from './drawers.js';
 import { applyEconAgents, applyEconomy, applySnapshot, applyState, applyTopology, setStatusKind, updateCronWatchdog } from './economy.js';
 import { spawnChronFx } from './render2d.js';
 
@@ -44,13 +44,11 @@ export async function pollChron() {
         civPhase: r.civPhase || null };
       // the chronicle made visible: hand every entry newer than the last-shown seq to the canvas FX
       if (state.chronSeenSeq > 0) for (const e of state.chronRows) { if ((e.seq || 0) <= state.chronSeenSeq) break; spawnChronFx(e); }
-      renderChron();
-      renderChronTicker();
+      renderChron();          // task 26①: the bottom ticker is gone; the drawer is the only read-out
       if (state.chronVerifyState) renderChronVerdict();
     } else {
       state.chronEnabled = false;
       renderChron();
-      renderChronTicker();
     }
   } catch { /* best-effort: the chronicle is a nicety, never block the scene */ }
 }

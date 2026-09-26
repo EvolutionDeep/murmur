@@ -8,12 +8,12 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=95" />
+  <link rel="stylesheet" href="./styles.css?v=96" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300&family=IBM+Plex+Mono:wght@300;400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
   <!-- CJK + Arabic webfonts so every UI language has real glyphs (no tofu). Weights kept lean. -->
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600&family=Noto+Sans+JP:wght@400;600&family=Noto+Sans+KR:wght@400;600&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet" />
 
@@ -604,16 +604,14 @@
 
   <!-- ============ era HUD (task 20⑥): the reigning era as a FIXED screen label, no longer a Sprite
        riding the 3D camera (which floated over the terrain and drifted with every orbit). Pinned
-       bottom-centre, stacked above the chronicle ticker; text is rewritten by scene3d._updateEraHud(). ============ -->
+       bottom-centre in the free band below the artwork; text is rewritten by scene3d._updateEraHud(). ============ -->
   <div id="era-hud" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- ============ chronicle ticker: a persistent bottom bar showing the latest annals entries ============ -->
-  <div class="chron-ticker" id="chron-ticker" role="marquee" aria-label="latest chronicle entries">
-    <span class="chron-ticker-label">⚜</span>
-    <div class="chron-ticker-track" id="chron-ticker-track"></div>
-  </div>
+  <!-- task 26①: the bottom chronicle ticker (#chron-ticker) is REMOVED — the chronicle is read only
+       through the right-edge drawer. The bottom-centre stack is now era-hud → hint-select, and the
+       bottom-right stack is chron-btn → canary-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=123" type="module"></script>
+  <script src="./main.js?v=125" type="module"></script>
 </body>
 </html>

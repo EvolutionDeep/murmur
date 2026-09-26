@@ -1711,32 +1711,11 @@ export function renderChron() {
 export function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 }
-// ================= chronicle ticker: the persistent bottom bar with auto-scrolling annals =================
-// Reads chronRows (already desc by seq) and renders the latest 10 entries as a horizontally scrolling ribbon.
-// The track is duplicated for a seamless CSS infinite scroll. Click opens the chronicle drawer.
-export function renderChronTicker() {
-  const track = document.getElementById("chron-ticker-track");
-  const ticker = document.getElementById("chron-ticker");
-  if (!track || !ticker) return;
-  if (!state.chronEnabled || !state.chronRows.length) { ticker.hidden = true; return; }
-  ticker.hidden = false;
-  // Take the 10 most recent entries (chronRows is newest-first)
-  const items = state.chronRows.slice(0, 10);
-  const roman = (n) => {
-    if (!n || n <= 0) return String(n || "");
-    const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
-    let out = "", rest = n; for (const [v, s] of m) while (rest >= v) { out += s; rest -= v; } return out;
-  };
-  const html = items.map((e) => {
-    const icon = CHRON_ICONS[e.kind] || "✦";
-    const era = e.era ? roman(e.era) : "";
-    const text = escapeHtml(e.text || "");
-    const time = e.ts ? chronTimeAgo(e.ts) : "";
-    return `<span class="chron-ticker-item"><span class="tick-icon">${icon}</span><span class="tick-era">era ${era}</span><span class="tick-text">${text}</span><span class="tick-time">${time}</span></span>`;
-  }).join("");
-  // Duplicate the items for seamless CSS infinite scroll
-  track.innerHTML = `<span class="chron-ticker-inner">${html}${html}</span>`;
-}
+// ================= chronicle ticker: REMOVED (task 26①) =================
+// The persistent bottom marquee (#chron-ticker) is gone from index.html, styles.css and every wiring
+// point (main.js bindUI, polling.js pollChron). renderChronTicker() is deliberately deleted rather than
+// left as a no-op so no caller can silently resurrect it. The chronicle itself is untouched: pollChron()
+// still fills state.chronRows / state.chronMeta and renderChron() still paints the #panel-chron drawer.
 export function chronRoman(n) {
   if (n <= 0) return String(n);
   const m = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
