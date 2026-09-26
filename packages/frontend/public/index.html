@@ -602,6 +602,11 @@
     <div class="epitaph-body" id="epitaph-body"></div>
   </aside>
 
+  <!-- ============ era HUD (task 20⑥): the reigning era as a FIXED screen label, no longer a Sprite
+       riding the 3D camera (which floated over the terrain and drifted with every orbit). Pinned
+       bottom-centre, stacked above the chronicle ticker; text is rewritten by scene3d._updateEraHud(). ============ -->
+  <div id="era-hud" aria-live="polite" aria-atomic="true"></div>
+
   <!-- ============ chronicle ticker: a persistent bottom bar showing the latest annals entries ============ -->
   <div class="chron-ticker" id="chron-ticker" role="marquee" aria-label="latest chronicle entries">
     <span class="chron-ticker-label">⚜</span>
@@ -609,6 +614,6 @@
   </div>
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=121" type="module"></script>
+  <script src="./main.js?v=122" type="module"></script>
 </body>
 </html>

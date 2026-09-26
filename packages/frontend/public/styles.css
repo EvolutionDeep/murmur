@@ -375,9 +375,13 @@ body.ins-open .panel-pop, body.ins-open .panel-econ { opacity: 0.1; pointer-even
 
 /* ============ select hint + footer ============ */
 .hint-select {
-  position: fixed; z-index: 9; left: 50%; bottom: calc(var(--pad) + 6px); transform: translateX(-50%);
+  /* task 20⑦: lifted clear of the bottom stack — chron-ticker (0–44px) → era-hud (~50–76px) → this
+     hint (82px+). The old bottom:calc(var(--pad)+6px) parked it INSIDE the 44px ticker, and the
+     `.chron-ticker ~ .hint-select` hide-rule never fired (hint precedes ticker, so `~` matched nothing). */
+  position: fixed; z-index: 9; left: 50%; bottom: 82px; transform: translateX(-50%);
   font-size: 10px; letter-spacing: 0.16em; text-transform: lowercase; color: var(--muted);
   opacity: 0.55; pointer-events: none; transition: opacity 0.8s; text-align: center;
+  max-width: 90vw;
 }
 .hint-select.hide { opacity: 0; }
 
@@ -1895,6 +1899,34 @@ html[dir="rtl"] .wk-row {
   direction: rtl; text-align: right;
 }
 
+/* ============ era HUD (task 20⑥): the reigning era as a FIXED bottom-centre banner ============
+   Replaces the old camera-riding 3D Sprite (which floated over the terrain and drifted with every
+   orbit). Pinned to the screen, stacked just above the chronicle ticker. pointer-events:none so it
+   never blocks canvas drag/orbit/tap. display:flex is the shown state — scene3d._updateEraHud() sets
+   inline display:"none" when there is no era and display:"" (⇒ flex) when there is; :empty guards the
+   first paint so an empty pill never flashes before the chronicle boots. */
+#era-hud {
+  position: fixed; z-index: 11; left: 50%; bottom: 50px; transform: translateX(-50%);
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 16px; pointer-events: none;
+  font-family: var(--display); color: var(--ink);
+  background: linear-gradient(180deg, rgba(238, 230, 210, 0.92), rgba(226, 214, 188, 0.92));
+  border: 1px solid rgba(176, 138, 54, 0.5); border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(26, 26, 24, 0.22), inset 0 0 0 1px rgba(214, 178, 92, 0.35);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  white-space: nowrap; max-width: 90vw;
+}
+#era-hud:empty { display: none; }
+#era-hud .era-hud-num {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #8a6a1f;
+}
+#era-hud .era-hud-sep { font-size: 12px; color: #b08a36; opacity: 0.7; }
+#era-hud .era-hud-name {
+  font-size: 13px; letter-spacing: 0.04em; color: var(--ink); opacity: 0.85;
+  overflow: hidden; text-overflow: ellipsis;
+}
+html[dir="rtl"] #era-hud { direction: rtl; }
+
 /* ============ chronicle ticker: a persistent bottom bar with auto-scrolling annals ============ */
 .chron-ticker {
   position: fixed; z-index: 10; left: 0; right: 0; bottom: 0;
@@ -1937,5 +1969,7 @@ html[dir="rtl"] .wk-row {
   0% { transform: translateX(0); }
   100% { transform: translateX(-50%); }
 }
-/* hide the old hint line when ticker is present */
-.chron-ticker ~ .hint-select { display: none; }
+/* task 20⑦: the bottom stack is now explicit — chron-ticker (bottom:0, 44px), #era-hud (bottom:50px),
+   .hint-select (bottom:82px). All three are bottom-centre, none overlap, and the old dead rule
+   `.chron-ticker ~ .hint-select{display:none}` (which never matched — hint precedes ticker) is gone:
+   the hint now stays visible, lifted clear of the ticker. */

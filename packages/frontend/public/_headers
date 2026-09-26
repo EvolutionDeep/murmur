@@ -45,3 +45,6 @@
 
 /render2d.js
   Cache-Control: no-cache, must-revalidate
+
+/camera.js
+  Cache-Control: no-cache, must-revalidate

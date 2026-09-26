@@ -1,12 +1,15 @@
-// scene3d.js — ThreeScene：3D 场景（地形/海面/Sky/森林/果蝇/定居点/城堡/河流/省标签）
+// scene3d.js — ThreeScene：3D 场景（地形/海面/Sky/果蝇/KayKit村庄/城堡/省标签）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
+// 任务18：删程序化泥砖定居点/河流/森林/草丛（方块感 + 性能），海面改轻量材质，
+// 大陆 480×300 → 720×450，城堡重装为完整主堡+角塔+城墙+城门+吊桥+旗帜。
 import { state, CONTINENT, PROVINCES, houseColor, wealthColorAt, clamp, lerp, mix, fnv1a, GOLD_THREAD, CRACK_RED, LAW_GOLD, FAITH_GOLD, COIN_GOLD, TECH_BRONZE, ASH_GREY, GOOD_COL, ECON_EDGE_MS, GRAVE_CAP, graveUid } from './shared.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { zoneAnchor, chronFx, showEpitaph, glyphFor, politySeat, cofferAnchor, houseSeat, chronCofferNow } from './render2d.js';
+import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js';
+import { select as selectFly, deselect as deselectFly } from './inspector.js';
 import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint } from './nations.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -14,8 +17,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
 // - Procedural terrain from CONTINENT data (parchment toon shader)
 // - InstancedMesh flies (3D boids from updateSim positions)
-// - Settlement groups (3D mudbrick buildings)
-// - River TubeGeometry with animated water shader
+// - KayKit village rings + Kenney castle keeps (GLB kit)
 // - Fog + lighting for atmosphere
 
 export class ThreeScene {
@@ -25,7 +27,7 @@ export class ThreeScene {
     this.renderer = null;
     this.controls = null;
     this.terrain = null;
-    this.water = null;              // deep-sea plane: MeshPhysicalMaterial + scrolling normal map (no mirror pass)
+    this.water = null;              // deep-sea plane: MeshStandardMaterial + scrolling normal map (no transmission, no mirror pass)
     this.sky = null;                // three.js official Sky (Preetham model)
     this.sun = new THREE.Vector3();
     this.flyBody = null;            // instanced drosophila bodies (striped, wealth-tinted)
@@ -36,15 +38,15 @@ export class ThreeScene {
     this._eyeR = new THREE.Matrix4().makeTranslation(0.92, 0.06, -0.24);
     this._hingeL = new THREE.Matrix4().makeTranslation(0.42, 0.30, 0.16);
     this._hingeR = new THREE.Matrix4().makeTranslation(0.42, 0.30, -0.16);
-    this.settlementGroup = new THREE.Group();
-    this.settlementSig = "";
     this._hGrid = null; this._hN = 0; this._hStepX = 1; this._hStepZ = 1;   // height field for terrain sampling
-    this._WSX = 480; this._WSZ = 300;
+    this._WSX = 720; this._WSZ = 450;   // task 18: continent enlarged 480×300 → 720×450 (+50%)
     this._ramp = null;
-    this._mats = null;
     this._dummy = new THREE.Object3D();
     this._color = new THREE.Color();
-    this.grassField = null;         // instanced grass tufts (visible only below camera distance 200)
+    // task 18: per-frame scratch containers — allocated once, never re-created inside update()
+    this._ownerMap = new Map(); this._ownerPairs = []; this._rankArr = []; this._flyArr = [];
+    this._flyCount = 0;                            // task 20⑤: live fly instance count (for picking)
+    this._meshList = []; this._faithSeen = new Set(); this._terrParts = [];
     this.nationBorderGroup = null;  // nations border mesh group (mounted by _applyNations — task 6)
     this.villageGroup = new THREE.Group();   // KayKit village buildings (task 6, _rebuildVillages)
     this._villageSig = "";
@@ -64,12 +66,10 @@ export class ThreeScene {
     this._fxRings = []; this._ringCursor = 0;  // 8 pooled expanding rings (law/holy/coin shockwaves)
     this._meshLines = null; this._meshLineCap = 2000;   // murmuration mesh (LineSegments, drawRange)
     this._faithGroup = null; this._prophetSprites = []; this._holySprites = [];
-    this._chronGroup = null; this._totemSprites = []; this._chronBoxes = null; this._chronSig = "";
-    this._chronAnchor = { x: 0, z: 0 }; this._chronAnchorT = -1e9;
-    this._eraSprite = null; this._eraSig = "";
     this._auraMesh = null;                     // swarm neural aura (one breathing sphere)
-    this._rippleRings = [];                    // 5 pooled pointer ripples (RingGeometry)
     this._shardRings = []; this._shardGuide = null;
+    this._graveHits = [];                      // task 20②: invisible ×3 hit proxies, one per necropolis sprite
+    this._eraHudEl = null; this._eraSig = "";  // task 20⑥: era label is a fixed DOM HUD, not a camera-riding Sprite
     this._legendEl = null; this._legendSig = ""; this._legendT = -1e9;   // territory legend DOM
     this._raycaster = null; this._ndc = null; this._downX = 0; this._downY = 0;
     this._fwd = new THREE.Vector3(); this._v1 = new THREE.Vector3();
@@ -96,7 +96,7 @@ export class ThreeScene {
 
   _init() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0xdfe8ef, 0.00075);   // faint haze so the horizon melts into the sky
+    this.scene.fog = new THREE.FogExp2(0xdfe8ef, 0.0010);   // faint haze so the horizon melts into the sky (denser: the world rect grew 1.5×)
 
     // H1: ThreeScene is constructed in boot() BEFORE resize() runs, so state.VW/state.VH are still
     // their 0 init here. Seed them from the viewport so the camera aspect (VW/VH), renderer.setSize
@@ -108,11 +108,14 @@ export class ThreeScene {
     }
     const aspect = state.VW / state.VH;
     this.camera = new THREE.PerspectiveCamera(50, aspect, 0.5, 12000);
-    this.camera.position.set(0, 210, 290);      // the whole landmass framed edge-to-edge, sea only a margin
+    this.camera.position.set(0, 320, 440);      // the whole (enlarged) landmass framed edge-to-edge, sea only a margin
 
     this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('field'), antialias: true, alpha: true });
     this.renderer.setSize(state.VW, state.VH);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // task 18: full-bleed fill is the main per-frame cost — cap the backing-store resolution
+    // (desktop ≤1.5, small-screen/mobile ≤1.25) instead of the old devicePixelRatio cap of 2.
+    this._dprCap = state.VW < 768 ? 1.25 : 1.5;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this._dprCap));
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.8;
@@ -122,7 +125,7 @@ export class ThreeScene {
     this.controls.dampingFactor = 0.06;
     this.controls.maxPolarAngle = Math.PI / 2.15;   // never dip below the sea plane
     this.controls.minDistance = 60;
-    this.controls.maxDistance = 1100;
+    this.controls.maxDistance = 1500;               // task 18: the enlarged continent must stay fully frameable
     this.controls.target.set(0, 4, 0);
     this.controls.autoRotate = true;          // slow turntable until the reader touches the model
     this.controls.autoRotateSpeed = 0.3;
@@ -136,27 +139,20 @@ export class ThreeScene {
     this.castleGroup = new THREE.Group();
     this.scene.add(this.castleGroup);
 
-    this._mats = {
-      mud: this._toon(0xc6aa80), mudHi: this._toon(0xe4cea6),
-      terra: this._toon(0xb0603c), mudSh: this._toon(0x9e805e),
-      fieldA: this._toon(0xd8b84a), fieldB: this._toon(0x7fa044), fieldC: this._toon(0x8a6a44),
-      road: this._toon(0xc9b183),
-    };
-
     // C2: isolate each build step in its own try/catch. The WebGLRenderer above has already claimed the
     // #field canvas, so a throw anywhere in this sequence can no longer fall back to 2D — without isolation
     // one failing step (e.g. a missing asset) would abort the rest and leave a blank scene. Now every step
     // that succeeds still renders; a failure is logged and skipped.
+    // task 18: rivers / forest / grass / procedural mud-brick settlements all REMOVED —
+    // the user read them as "莫名其妙的方块", they crowded the continent and the river +
+    // sea transmission materials were the last hidden extra-render cost. The land now
+    // carries only: terrain, nation borders, KayKit villages, Kenney castles, flies, overlays.
     const steps = [
       [this._buildSky, 'sky'],
       [this._buildWater, 'water'],
       [this._buildTerrain, 'terrain'],
-      [this._buildRivers, 'rivers'],
-      [this._buildForest, 'forest'],
-      [this._buildGrass, 'grass'],
       [this._buildLabels, 'labels'],
       [this._buildFlies, 'flies'],
-      [() => this.scene.add(this.settlementGroup), 'settlementGroup'],
       [() => this.scene.add(this.villageGroup), 'villageGroup'],
       [this._loadCastleAssets, 'castles'],   // GLB kit loads async → _rebuildCastles() once ready (task 6)
       [this._initOverlays, 'overlays'],       // task 7: pre-allocate every ported 2D layer (social web, necropolis, payments, …)
@@ -182,7 +178,7 @@ export class ThreeScene {
     this.sun.setFromSphericalCoords(1, phi, theta);
     u["sunPosition"].value.copy(this.sun);
     this.sunLight.position.copy(this.sun).multiplyScalar(1000);
-    // PMREM bake of the sky → scene.environment: the MeshPhysicalMaterial river surface takes its
+    // PMREM bake of the sky → scene.environment: the MeshStandardMaterial sea takes its
     // sheen from this (the webgl_shaders_ocean recipe). fromScene detaches the sky, so re-add it.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
@@ -193,29 +189,28 @@ export class ThreeScene {
     pmrem.dispose();
   }
 
-  // ---- sea: task 12 P0 — one MeshPhysicalMaterial plane instead of the official Water addon.
-  // Water.onBeforeRender mirrored the whole scene into a 512² RT every frame (213 draw calls /
-  // 1.37M tris → frameMsAvg 73ms on Iris Xe); this single plane keeps the deep-ocean look with
-  // clearcoat sheen + a slowly scrolling waternormals map at zero extra render passes. ----
+  // ---- sea: task 18 P0 — one MeshStandardMaterial plane. The Water addon's mirror pass was
+  // already gone, but MeshPhysicalMaterial with transmission>0 still triggers Three.js's extra
+  // transmission render pass (frameMsAvg stayed 36–40ms after the Water removal). Standard
+  // material + scene.environment (the PMREM sky) + a scrolling normal map keeps the living
+  // glitter at ZERO extra passes: transmission is not a Standard property, clearcoat is gone. ----
   _buildWater() {
-    const geo = new THREE.PlaneGeometry(2000, 2000, 1, 1);   // task 5: 7600 → 2000 — the sea is a margin, the landmass fills the frame
+    const geo = new THREE.PlaneGeometry(2600, 2600, 1, 1);   // covers the enlarged 720×450 world even at maxDistance 1500
     const normals = new THREE.TextureLoader().load("./assets/waternormals.jpg", (t) => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.repeat.set(12, 12);
+      t.repeat.set(16, 16);
     });
     normals.wrapS = normals.wrapT = THREE.RepeatWrapping;   // sane wrap/repeat even before the texture streams in
-    normals.repeat.set(12, 12);
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0x1a5060,             // deep blue-green, kin to the old shader's 0x1d4f66
+    normals.repeat.set(16, 16);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2e7186,             // deep blue-green, a touch lighter than the old 0x1a5060 so it never reads as a dead slab
       transparent: true,
-      opacity: 0.88,
-      roughness: 0.24,             // crisp sun glitter without mirror sharpness
-      metalness: 0.0,
-      transmission: 0.28,          // env-lit: scene.environment is the PMREM sky from _buildSky(), same as the river
-      clearcoat: 0.6,
-      clearcoatRoughness: 0.25,
+      opacity: 0.85,
+      roughness: 0.22,             // crisp sun glitter from scene.environment without mirror sharpness
+      metalness: 0.08,
+      envMapIntensity: 1.1,        // the PMREM sky supplies the sheen the transmission pass used to fake
       normalMap: normals,
-      normalScale: new THREE.Vector2(0.4, 0.4),   // gentle ripple relief, not a storm
+      normalScale: new THREE.Vector2(0.5, 0.5),   // gentle ripple relief, not a storm
       side: THREE.DoubleSide,
     });
     this.water = new THREE.Mesh(geo, mat);
@@ -226,7 +221,7 @@ export class ThreeScene {
 
   // ---- the land: a model piece with a readable coastline, cliff sides and crisp painted height bands ----
   _buildTerrain() {
-    const WSX = 480, WSZ = 300, N = 321;   // world rectangle at screen aspect — the landmass fills it coast to coast
+    const WSX = 720, WSZ = 450, N = 321;   // task 18: continent enlarged 480×300 → 720×450 (+50%) — same vertex count, open land instead of crowded clutter
     this._WSX = WSX; this._WSZ = WSZ;
     const geo = new THREE.PlaneGeometry(WSX, WSZ, N - 1, N - 1);
 
@@ -278,26 +273,10 @@ export class ThreeScene {
     }
     this._hGrid = h; this._hN = N; this._hStepX = WSX / (N - 1); this._hStepZ = WSZ / (N - 1);
 
-    // carve river valleys so the painted ribbons sit in real channels, not on ridges
-    const rPts = [];
-    for (let r = 0; r < 2; r++) for (let i = 0; i <= 40; i++) {
-      const t = 0.16 + (i / 40) * 0.68;
-      rPts.push([(t - 0.5) * WSX, this._riverZ(r, t)]);
-    }
-    const rDist = new Float32Array(N * N).fill(1e9);
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const x = -WSX / 2 + (i / (N - 1)) * WSX, z = -WSZ / 2 + (j / (N - 1)) * WSZ;
-      let best = 1e9;
-      for (let p = 0; p < rPts.length; p++) {
-        const dx = x - rPts[p][0], dz = z - rPts[p][1];
-        const dd = dx * dx + dz * dz;
-        if (dd < best) best = dd;
-      }
-      best = Math.sqrt(best);
-      rDist[j * N + i] = best;
-      if (best < 7.7 && h[j * N + i] > -1.2) h[j * N + i] -= (1 - best / 7.7) * 2.6;
-    }
-    this._rDist = rDist; this._noise = perlin;
+    // task 18: the two rivers are gone (user: “两条河太丑”). Their valley carving ran an
+    // O(N²·82) distance sweep at build time and fed _colorTerrain / forest / grass placement —
+    // all removed with them.
+    this._noise = perlin;
 
     // territory cells: every vertex belongs to its nearest zone anchor (the same 4×4 grid the
     // 2D dominion map and the settlement anchors use) — conquests recolour the land itself
@@ -357,11 +336,11 @@ export class ThreeScene {
     this._nationSig = sig;   // mark applied only after the full rebuild: a throw above leaves it unset so the next frame retries
   }
 
-  // ---- the painted land: height bands + rivers + slope rock, then the dominion overlay —
+  // ---- the painted land: height bands + slope rock (rivers removed — task 18), then the dominion overlay —
   // house tints and border lines straight from econDynasty.zoneOwners, the same authority the
   // 2D dominion map obeys. Repainted only when the ownership signature changes. ----
   _colorTerrain(owners) {
-    const N = this._hN, h = this._hGrid, rDist = this._rDist, vZone = this._vZone;
+    const N = this._hN, h = this._hGrid, vZone = this._vZone;
     const geo = this.terrain.geometry;
     const pos = geo.attributes.position;
     let colors = geo.attributes.color;
@@ -403,9 +382,7 @@ export class ThreeScene {
     for (let k = 0; k < pos.count; k++) {
       const y = h[k];
       let c;
-      if (rDist[k] < 3.4 && y > -2.6) {
-        c = [0.26, 0.47, 0.60];             // painted river water in the carved channel
-      } else {
+      {
         const i = k % N, j = (k / N) | 0;
         const jit = perlinJit(i, j) * 0.88;   // dither the band edges — stronger now: the ramp interpolates smoothly, the jitter keeps the transitions from reading as contour lines
         c = band(y + jit);
@@ -450,48 +427,8 @@ export class ThreeScene {
     return top + (bot - top) * fv;
   }
 
-  // river centreline (shared by the valley carving and the ribbon mesh)
-  _riverZ(r, t) {
-    const WS = this._WSZ || 300;
-    const zb = (r === 0 ? 0.34 : 0.66) * WS - WS / 2;
-    return zb + Math.sin(t * 5 + r) * 22.4 + Math.sin(t * 13) * 6.4;
-  }
-
-  // ---- rivers: flat blue ribbons sitting in the carved channels ----
-  _buildRivers() {
-    // task 5: the river surface is now a translucent MeshPhysicalMaterial — transmission lets the
-    // carved channel read through, low roughness keeps it glassy-calm (replaces the old toon paint).
-    // The PMREM sky environment (baked in _buildSky) supplies the sheen.
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0x4a7f9c, transparent: true, opacity: 0.82,
-      transmission: 0.62, roughness: 0.16, metalness: 0.0,
-      side: THREE.DoubleSide, depthWrite: false,
-    });
-    for (let r = 0; r < 2; r++) {
-      const SEG = 64, W = 6.0;
-      const verts = [], idx = [];
-      const cz = (t) => this._riverZ(r, t);
-      for (let i = 0; i <= SEG; i++) {
-        const t = 0.16 + (i / SEG) * 0.68;          // stay on the landmass
-        const x = (t - 0.5) * this._WSX, z = cz(t);
-        const y = Math.max(this.heightAt(x, z) + 0.4, -1.8);
-        const t2 = t + 0.01;
-        let dx = (t2 - t) * this._WSX, dz = cz(t2) - z;
-        const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
-        const px = -dz * W / 2, pz = dx * W / 2;
-        verts.push(x - px, y, z - pz, x + px, y, z + pz);
-      }
-      for (let i = 0; i < SEG; i++) {
-        const a = i * 2;
-        idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-      geo.setIndex(idx);
-      geo.computeVertexNormals();
-      this.scene.add(new THREE.Mesh(geo, mat));
-    }
-  }
+  // task 18: _riverZ + _buildRivers removed with the rivers (user: “两条河太丑，可以不要”).
+  // The valley carving in _buildTerrain is gone too — no channel, no ribbon, no MeshPhysicalMaterial.
 
   // ---- flies: procedural drosophila. Striped abdomen + thorax + head merged into one
   // vertex-coloured geometry, instanced once for the whole swarm and tinted per fly by the
@@ -524,12 +461,18 @@ export class ThreeScene {
       new THREE.MeshToonMaterial({ gradientMap: this._toonRamp(), vertexColors: true }), 120);
     this.flyBody.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.flyBody.count = 0;
+    // task 20③: instances scatter across the whole 720×450 continent, far beyond the base geometry's
+    // tiny origin-centred bounds — exactly like the building InstancedMeshes. Without this the swarm's
+    // lazily-cached boundingSphere can frustum-cull EVERY fly at once (the social lines, which set
+    // frustumCulled=false, stayed visible at the same coordinates — the tell that culling was the bug).
+    this.flyBody.frustumCulled = false;
     this.scene.add(this.flyBody);
 
     // eyes: the signature red of drosophila — fixed colour, two instances per fly
     this.flyEye = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 8), this._toon(0xc22a1e), 240);
     this.flyEye.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.flyEye.count = 0;
+    this.flyEye.frustumCulled = false;   // task 20③
     this.scene.add(this.flyEye);
 
     // wings: narrow translucent blades, hinge at the origin, swept back; mirrored per side
@@ -547,232 +490,15 @@ export class ThreeScene {
     for (const w of [this.flyWingL, this.flyWingR]) {
       w.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       w.count = 0;
+      w.frustumCulled = false;   // task 20③
       this.scene.add(w);
     }
   }
 
-  // bilinear sample of the river-distance field (keeps forests and farms out of the channels)
-  _rDistAt(x, z) {
-    const g = this._rDist; if (!g) return 1e9;
-    const N = this._hN;
-    const u = Math.max(0, Math.min(N - 1.001, (x + this._WSX / 2) / this._hStepX));
-    const v = Math.max(0, Math.min(N - 1.001, (z + this._WSZ / 2) / this._hStepZ));
-    const i0 = u | 0, j0 = v | 0, fu = u - i0, fv = v - j0;
-    const i1 = i0 + 1, j1 = j0 + 1;
-    const a = g[j0 * N + i0], b = g[j0 * N + i1], c = g[j1 * N + i0], d = g[j1 * N + i1];
-    const top = a + (b - a) * fu, bot = c + (d - c) * fu;
-    return top + (bot - top) * fv;
-  }
-
-  // ---- forests: Polyworld-style instanced low-poly trees (pines + broadleaf clumps),
-  // scattered by a noise mask over the meadow band, clear of rivers and sea ----
-  _buildForest() {
-    const flat = (geo, col) => {
-      const n = geo.attributes.position.count;
-      const arr = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { arr[i * 3] = col[0]; arr[i * 3 + 1] = col[1]; arr[i * 3 + 2] = col[2]; }
-      geo.setAttribute("color", new THREE.BufferAttribute(arr, 3));
-      return geo;
-    };
-    const nidx = (g) => (g.index ? g.toNonIndexed() : g);   // mergeGeometries demands uniform indexedness (Icosahedron is non-indexed)
-    const pineGeo = mergeGeometries([
-      nidx(flat(new THREE.CylinderGeometry(0.09, 0.14, 0.9, 6), [0.42, 0.30, 0.18]).translate(0, 0.45, 0)),
-      nidx(flat(new THREE.ConeGeometry(0.62, 1.3, 7), [0.19, 0.40, 0.20]).translate(0, 1.5, 0)),
-      nidx(flat(new THREE.ConeGeometry(0.45, 1.0, 7), [0.24, 0.47, 0.24]).translate(0, 2.25, 0)),
-    ], false);
-    const broadGeo = mergeGeometries([
-      nidx(flat(new THREE.CylinderGeometry(0.10, 0.15, 1.1, 6), [0.40, 0.28, 0.16]).translate(0, 0.55, 0)),
-      nidx(flat(new THREE.IcosahedronGeometry(0.7, 0), [0.30, 0.52, 0.24]).scale(1, 0.85, 1).translate(0, 1.6, 0)),
-    ], false);
-
-    let s = 987654321 >>> 0;
-    const rand = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-    const pines = [], broads = [];
-    // task 12 P2: 2600 → 800 trees (500 pine + 300 broad). The clump mask is tightened
-    // (0.10 → 0.24) so the survivors concentrate in dense woodland belts instead of thinning
-    // out evenly, and each tree grows ~10% (4.0 → 4.4) to hold the canopy mass.
-    for (let k = 0; k < 60000 && (pines.length < 500 || broads.length < 300); k++) {
-      const x = (rand() - 0.5) * this._WSX * 0.94, z = (rand() - 0.5) * this._WSZ * 0.94;
-      const y = this.heightAt(x, z);
-      if (y < 2.2 || y > 11.9) continue;
-      if (this._rDistAt(x, z) < 9) continue;
-      if (this._noise.noise(x * 0.011 + 40.2, 12.3, z * 0.011 - 18.7) < 0.24) continue;   // tighter forest clumps
-      const pine = pines.length >= 500 ? false : (broads.length >= 300 ? true : rand() < 0.62);
-      (pine ? pines : broads).push([x, y, z, (0.75 + rand() * 0.7) * 4.4, rand() * Math.PI * 2]);
-    }
-    const put = (list, mesh) => {
-      for (let i = 0; i < list.length; i++) {
-        const t = list[i];
-        this._dummy.position.set(t[0], t[1] - 0.4, t[2]);
-        this._dummy.rotation.set(0, t[4], 0);
-        this._dummy.scale.setScalar(t[3]);
-        this._dummy.updateMatrix();
-        mesh.setMatrixAt(i, this._dummy.matrix);
-      }
-      mesh.count = list.length;
-      mesh.instanceMatrix.needsUpdate = true;
-    };
-    const treeMat = this._toon(0xffffff, { vertexColors: true });
-    this.forestPine = new THREE.InstancedMesh(pineGeo, treeMat, 500);
-    this.forestBroad = new THREE.InstancedMesh(broadGeo, treeMat, 300);
-    put(pines, this.forestPine); put(broads, this.forestBroad);
-    this.scene.add(this.forestPine, this.forestBroad);
-  }
-
-  // ---- grass: instanced tufts over the meadow band, visible only when the camera is close
-  // (< 200 world units — see update()); three crossed blades per tuft, one draw call ----
-  _buildGrass() {
-    const mkBlade = (ang) => {
-      const g = new THREE.PlaneGeometry(0.16, 0.9, 1, 2);   // 1×2 segments: a cheap bend suggestion
-      g.translate(0, 0.45, 0);
-      g.rotateY(ang);
-      const p = g.attributes.position;
-      const col = new Float32Array(p.count * 3);
-      for (let i = 0; i < p.count; i++) {
-        const t = p.getY(i) / 0.9;                          // 0 root → 1 tip: darker base, lighter tip
-        col[i * 3] = 0.22 + 0.20 * t;
-        col[i * 3 + 1] = 0.40 + 0.22 * t;
-        col[i * 3 + 2] = 0.18 + 0.09 * t;
-      }
-      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-      return g;
-    };
-    const tuftGeo = mergeGeometries([mkBlade(0), mkBlade(Math.PI / 3), mkBlade(2 * Math.PI / 3)], false);
-    let s = 13572468 >>> 0;
-    const rand = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-    const tufts = [];
-    for (let k = 0; k < 60000 && tufts.length < 6000; k++) {
-      const x = (rand() - 0.5) * this._WSX * 0.96, z = (rand() - 0.5) * this._WSZ * 0.96;
-      const y = this.heightAt(x, z);
-      if (y < 2.6 || y > 10.2) continue;                  // grass band: meadows, not beaches or peaks
-      if (this._rDistAt(x, z) < 4.2) continue;            // stay out of the carved river channels
-      if (this._noise.noise(x * 0.017 + 55.5, 3.3, z * 0.017 + 8.8) < -0.08) continue;   // patchy, like real meadows
-      tufts.push([x, y, z, 0.7 + rand() * 0.9, rand() * Math.PI * 2]);
-    }
-    if (!tufts.length) return;
-    const d = this._dummy;
-    this.grassField = new THREE.InstancedMesh(tuftGeo,
-      new THREE.MeshToonMaterial({ gradientMap: this._toonRamp(), vertexColors: true, side: THREE.DoubleSide }), tufts.length);
-    for (let i = 0; i < tufts.length; i++) {
-      const t = tufts[i];
-      d.position.set(t[0], t[1] - 0.25, t[2]);
-      d.rotation.set(0, t[4], 0);
-      d.scale.setScalar(t[3]);
-      d.updateMatrix();
-      this.grassField.setMatrixAt(i, d.matrix);
-    }
-    this.grassField.count = tufts.length;
-    this.grassField.instanceMatrix.needsUpdate = true;
-    this.grassField.visible = false;                      // hidden until the camera comes close (update())
-    this.scene.add(this.grassField);
-  }
-
-  // ---- settlements: mud-brick model towns, rebuilt only when the census signature changes ----
-  _rebuildSettlements(econCities) {
-    // task 12 P1: signature check BEFORE clearing — the old order wiped the group first and
-    // then bailed on an unchanged signature, so towns rendered for one frame and vanished.
-    // Same early-exit pattern as _rebuildVillages() below.
-    const sets = econCities && Array.isArray(econCities.settlements) ? econCities.settlements : null;
-    let sig = "";
-    if (sets) {
-      for (const s of sets) sig += s.zone + ":" + s.rank + ":" + ((s.pop | 0) >> 2) + ":" + (s.houseName || "") + ",";
-    }
-    if (sig === this.settlementSig) return;
-    this.settlementSig = sig;
-    for (const child of [...this.settlementGroup.children]) {
-      this.settlementGroup.remove(child);
-      child.traverse((o) => { if (o.geometry) o.geometry.dispose(); });   // materials are shared singletons
-    }
-    if (!sets || !sets.length) return;
-    const M = this._mats;
-
-    for (const s of sets) {
-      const za = zoneAnchor(s.zone);
-      const wx = (za.x / state.VW - 0.5) * this._WSX, wz = (za.y / state.VH - 0.5) * this._WSZ;
-      const g = new THREE.Group();
-      g.position.set(wx, this.heightAt(wx, wz) - 1.0, wz);
-      g.scale.setScalar(4.0);
-      const city = s.rank === "CITY", town = s.rank === "TOWN";
-      const nB = city ? 14 : town ? 7 : 3;
-      const spread = city ? 7 : town ? 4.2 : 2.4;
-      const hMax = city ? 4.6 : town ? 3.0 : 1.7;
-      for (let b = 0; b < nB; b++) {
-        const bw = 1.0 + Math.random() * 1.3, bh = 1.0 + Math.random() * hMax, bd = 1.0 + Math.random() * 1.3;
-        const bm = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), Math.random() > 0.35 ? M.mud : M.mudHi);
-        const ox = (Math.random() - 0.5) * spread, oz = (Math.random() - 0.5) * spread;
-        bm.position.set(ox, bh / 2, oz);
-        bm.rotation.y = Math.random() * 0.6 - 0.3;
-        g.add(bm);
-        if (Math.random() > 0.45) {   // terracotta pyramid roof
-          const rf = new THREE.Mesh(new THREE.ConeGeometry(Math.max(bw, bd) * 0.72, 1.1, 4), M.terra);
-          rf.position.set(ox, bh + 0.55, oz);
-          rf.rotation.y = Math.PI / 4 + bm.rotation.y;
-          g.add(rf);
-        }
-      }
-      if (city || town) {   // curtain wall + capped towers
-        const wr = spread * 0.78;
-        const wall = new THREE.Mesh(new THREE.TorusGeometry(wr, city ? 0.5 : 0.34, 6, 28), M.mudSh);
-        wall.rotation.x = -Math.PI / 2;
-        wall.position.y = city ? 1.1 : 0.7;
-        g.add(wall);
-        const nt = city ? 4 : 2;
-        for (let t = 0; t < nt; t++) {
-          const a = (t / nt) * Math.PI * 2 + 0.4;
-          const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, city ? 3.4 : 2.2, 8), M.mudSh);
-          tw.position.set(Math.cos(a) * wr, city ? 1.7 : 1.1, Math.sin(a) * wr);
-          g.add(tw);
-          const cap = new THREE.Mesh(new THREE.ConeGeometry(1.0, 1.2, 8), M.terra);
-          cap.position.set(Math.cos(a) * wr, city ? 3.9 : 2.7, Math.sin(a) * wr);
-          g.add(cap);
-        }
-      }
-      // the castle seats now come from the nation layer (_rebuildCastles) — no double keep here
-      // farm plots ringing the settlement — the kingdom feeds itself
-      const nF = city ? 8 : town ? 5 : 3;
-      const gy = this.heightAt(wx, wz) - 1.0;
-      for (let q = 0; q < nF; q++) {
-        const a = Math.random() * Math.PI * 2;
-        const rr = spread + 2 + Math.random() * 3.5;
-        const ox = Math.cos(a) * rr, oz = Math.sin(a) * rr;
-        const gq = new THREE.PlaneGeometry(2.4 + Math.random() * 1.8, 1.6 + Math.random() * 1.2);
-        gq.rotateX(-Math.PI / 2);
-        gq.rotateY(Math.random() * Math.PI);
-        const mesh = new THREE.Mesh(gq, [M.fieldA, M.fieldB, M.fieldC][(Math.random() * 3) | 0]);
-        mesh.position.set(ox, (this.heightAt(wx + ox * 4.0, wz + oz * 4.0) - gy) / 4.0 + 0.05, oz);
-        g.add(mesh);
-      }
-      this.settlementGroup.add(g);
-    }
-
-    // the king's road: a tan ribbon linking the settlements in census order
-    if (sets.length > 1) {
-      const pts = sets.map((s) => {
-        const za = zoneAnchor(s.zone);
-        return [(za.x / state.VW - 0.5) * this._WSX, (za.y / state.VH - 0.5) * this._WSZ];
-      });
-      const verts = [], idx = [];
-      for (let p = 0; p < pts.length - 1; p++) {
-        const ax = pts[p][0], az = pts[p][1], bx = pts[p + 1][0], bz = pts[p + 1][1];
-        const SEG = 48, W = 3.5;
-        const base = verts.length / 3;
-        for (let i = 0; i <= SEG; i++) {
-          const t = i / SEG;
-          const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
-          const y = this.heightAt(x, z) + 0.25;
-          let dx = bx - ax, dz = bz - az; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
-          const px = -dz * W / 2, pz = dx * W / 2;
-          verts.push(x - px, y, z - pz, x + px, y, z + pz);
-        }
-        for (let i = 0; i < SEG; i++) { const a = base + i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-      geo.setIndex(idx);
-      geo.computeVertexNormals();
-      this.settlementGroup.add(new THREE.Mesh(geo, M.road));
-    }
-  }
+  // ---- task 18: _rDistAt / _buildForest / _buildGrass all removed. The 800 merged-geometry
+  // trees (~100k verts) and 6000 grass tufts (~108k verts) were the user's prime suspect for
+  // both the frame cost and the "block" clutter; the enlarged continent reads as open
+  // painted land instead — relief bands, nation tints and borders carry the detail. ----
 
   // ---- castle kit (task 6): load the Kenney castle + KayKit building GLBs once, merging each
   // part into a single non-indexed geometry (position/normal/uv) cached by name in _castleLib.
@@ -828,14 +554,20 @@ export class ThreeScene {
     return { geometry: geos.length === 1 ? geos[0] : mergeGeometries(geos, false), material: mat };
   }
 
-  // ---- the five nation castles (task 6): one gorgeous keep per nation seed, assembled from the
-  // Kenney kit — square citadel, four hex corner towers, curtain walls, gate + iron portcullis,
-  // a two-span drawbridge and banners. Each nation gets two tinted material clones: a light
-  // "wash" on the stonework and a strong tint on roofs + banners. ----
+  // ---- the five nation castles (task 18 rework): one grand keep per nation seed, assembled
+  // from the Kenney kit on a strict 1-unit grid — a five-storey square citadel, four TALL hex
+  // corner towers (base + three mid rings + battlement + spire + pennant), five un-scaled
+  // curtain wall segments per side (the old 1.1×/1.3× stretch left gaps at the towers), a
+  // timber gate + iron portcullis, a two-span drawbridge and banners. The whole kit merges
+  // ONCE into a shared geometry (all five castles instance it); only roofs/banners carry the
+  // nation colour — the stonework stays a clean limestone so the castles never read as dirty
+  // colour blocks. A two-tier round plinth buries the footprint so nothing floats or clips
+  // into sloped terrain. ----
   _rebuildCastles() {
     for (const child of [...this.castleGroup.children]) {
       this.castleGroup.remove(child);
-      child.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      // per-nation roof materials are clones; stone geo/mat + plinth are shared caches released in dispose()
+      child.traverse((o) => { if (o.material && o.material !== this._castleStoneMat && o.material !== this._plinthMat) o.material.dispose(); });
     }
     const lib = this._castleLib;
     const nat = this._nationData;
@@ -843,81 +575,111 @@ export class ThreeScene {
     const srcMat = lib["tower-square-base"] && lib["tower-square-base"].material;
     if (!srcMat) return;
 
-    const S = 4.2;              // castle scale: ~21 world units across the walls, ~18 to the banner
+    const S = 4.8;              // castle scale: ~30 world units across the walls, ~33 to the banner tip
     const PI2 = Math.PI / 2;
-    const YAX = new THREE.Vector3(0, 1, 0);
-    // local placement transform for one kit instance (position + yaw + scale)
-    const at = (x, y, z, ry, sx, sy, sz) => new THREE.Matrix4().compose(
-      new THREE.Vector3(x, y, z),
-      new THREE.Quaternion().setFromAxisAngle(YAX, ry || 0),
-      new THREE.Vector3(sx || 1, sy || 1, sz || 1));
-    // merge a set of placed kit instances into one geometry
-    const assemble = (parts) => {
-      const geos = [];
-      for (const p of parts) {
-        const rec = lib[p.name];
-        if (!rec || !rec.geometry || !rec.geometry.attributes.position) continue;
-        const g = rec.geometry.clone();
-        g.applyMatrix4(p.m);
-        geos.push(g);
-      }
-      return geos.length ? mergeGeometries(geos, false) : null;
-    };
 
-    // castle plan in kit units: keep at the origin (roof top y≈4.33), walls at ±2.1, gate on +z
-    const C = 2.1;
-    const wash = [
-      { name: "tower-square-base", m: at(0, 0, 0) },
-      { name: "tower-square-mid", m: at(0, 1.01, 0) },
-    ];
-    const strong = [
-      { name: "tower-square-top", m: at(0, 2.02, 0) },
-      { name: "tower-square-roof", m: at(0, 2.32, 0) },
-      { name: "flag", m: at(0, 4.2, 0, PI2) },
-    ];
-    for (const cx of [-C, C]) for (const cz of [-C, C]) {
-      wash.push({ name: "tower-hexagon-base", m: at(cx, 0, cz) });
-      strong.push({ name: "tower-hexagon-top", m: at(cx, 1.31, cz) });
-      strong.push({ name: "tower-hexagon-roof", m: at(cx, 1.44, cz) });
-      strong.push({ name: "flag-pennant", m: at(cx, 2.17, cz, PI2) });
+    if (!this._castleStoneGeo || !this._castleStrongGeo) {
+      const YAX = new THREE.Vector3(0, 1, 0);
+      // local placement transform for one kit instance (position + yaw + scale)
+      const at = (x, y, z, ry, sx, sy, sz) => new THREE.Matrix4().compose(
+        new THREE.Vector3(x, y, z),
+        new THREE.Quaternion().setFromAxisAngle(YAX, ry || 0),
+        new THREE.Vector3(sx || 1, sy || 1, sz || 1));
+      // merge a set of placed kit instances into one geometry
+      const assemble = (parts) => {
+        const geos = [];
+        for (const p of parts) {
+          const rec = lib[p.name];
+          if (!rec || !rec.geometry || !rec.geometry.attributes.position) continue;
+          const g = rec.geometry.clone();
+          g.applyMatrix4(p.m);
+          geos.push(g);
+        }
+        return geos.length ? mergeGeometries(geos, false) : null;
+      };
+
+      // castle plan in kit units (wall pitch 1.0, corner towers at ±2.5, gate on +z):
+      // the keep stacks base + two mid rings + battlement + spire + flag (top ≈ 5.2);
+      // corner towers stack base + three mid rings + battlement + spire + pennant (top ≈ 4.1).
+      const C = 2.5;
+      const stone = [];
+      const accent = [];   // roofs + banners — the only nation-tinted pieces
+      // central keep
+      stone.push({ name: "tower-square-base", m: at(0, 0, 0) });
+      stone.push({ name: "tower-square-mid", m: at(0, 1.01, 0) });
+      stone.push({ name: "tower-square-mid", m: at(0, 2.02, 0) });
+      stone.push({ name: "tower-square-top", m: at(0, 3.03, 0) });
+      accent.push({ name: "tower-square-roof", m: at(0, 3.33, 0) });
+      accent.push({ name: "flag", m: at(0, 5.2, 0, PI2) });
+      // four corner towers
+      for (const cx of [-C, C]) for (const cz of [-C, C]) {
+        stone.push({ name: "tower-hexagon-base", m: at(cx, 0, cz) });
+        stone.push({ name: "tower-hexagon-mid", m: at(cx, 1.31, cz) });
+        stone.push({ name: "tower-hexagon-mid", m: at(cx, 1.77, cz) });
+        stone.push({ name: "tower-hexagon-mid", m: at(cx, 2.23, cz) });
+        stone.push({ name: "tower-hexagon-top", m: at(cx, 2.69, cz) });
+        accent.push({ name: "tower-hexagon-roof", m: at(cx, 2.82, cz) });
+        accent.push({ name: "flag-pennant", m: at(cx, 3.55, cz, PI2) });
+      }
+      // curtain walls — five full 1-unit segments per side, ends meeting the corner towers
+      for (const t of [-2, -1, 0, 1, 2]) {
+        stone.push({ name: "wall", m: at(t, 0, -C) });         // north run
+        stone.push({ name: "wall", m: at(C, 0, t, PI2) });     // east run
+        stone.push({ name: "wall", m: at(-C, 0, t, PI2) });    // west run
+      }
+      for (const t of [-2, -1, 1, 2]) stone.push({ name: "wall", m: at(t, 0, C) });   // south run, gate bay at x=0
+      stone.push({ name: "gate", m: at(0, 0, C, PI2) });                  // closed timber gate leaves
+      stone.push({ name: "metal-gate", m: at(0, 0.02, C + 0.11, PI2) });  // iron portcullis
+      stone.push({ name: "bridge-straight", m: at(0, 0.14, C + 0.97, PI2) });  // drawbridge span 1 (rides the terrace top)
+      stone.push({ name: "bridge-straight", m: at(0, 0.14, C + 1.9, PI2) });   // drawbridge span 2
+
+      this._castleStoneGeo = assemble(stone);
+      this._castleStrongGeo = assemble(accent);
+      if (!this._castleStoneMat) {
+        // clean pale limestone — identical for every nation, the tint lives only on roofs/banners
+        this._castleStoneMat = srcMat.clone();
+        this._castleStoneMat.color.setRGB(1.0, 0.98, 0.93);
+        this._plinthMat = this._toon(0xcfc3a8);   // the foundation terrace reads as dressed stone
+      }
     }
-    for (const t of [-1.1, 0, 1.1]) {
-      wash.push({ name: "wall", m: at(t, 0, -C, 0, 1.1, 1, 1) });      // north run
-      wash.push({ name: "wall", m: at(C, 0, t, PI2, 1.1, 1, 1) });     // east run
-      wash.push({ name: "wall", m: at(-C, 0, t, PI2, 1.1, 1, 1) });    // west run
+    if (!this._castleStoneGeo || !this._castleStrongGeo) return;
+
+    // shared two-tier plinth (kit units): the inner disc's top ends 0.25 above the floor line
+    // (y=0) — wall/tower bases stand ON the dressed-stone terrace instead of floating or
+    // sinking; the outer, deeper tier shoulders into the slope side of the site.
+    // Smooth 44-gon drums, not boxes.
+    if (!this._plinthGeo) {
+      const t1 = new THREE.CylinderGeometry(3.95, 4.1, 1.4, 44);
+      t1.translate(0, -1.35, 0);
+      const t2 = new THREE.CylinderGeometry(3.35, 3.5, 0.8, 44);
+      t2.translate(0, -0.55, 0);
+      this._plinthGeo = mergeGeometries([t1.toNonIndexed(), t2.toNonIndexed()], false);
     }
-    wash.push({ name: "wall", m: at(-1.0, 0, C, 0, 1.3, 1, 1) });      // south run, gate left
-    wash.push({ name: "wall", m: at(1.0, 0, C, 0, 1.3, 1, 1) });       // south run, gate right
-    wash.push({ name: "gate", m: at(0, 0, C, PI2) });                  // timber gate leaves
-    wash.push({ name: "metal-gate", m: at(0, 0.02, C + 0.11, PI2) });  // iron portcullis
-    wash.push({ name: "bridge-straight", m: at(0, 0, C + 0.97, PI2) });  // drawbridge span 1
-    wash.push({ name: "bridge-straight", m: at(0, 0, C + 1.9, PI2) });   // drawbridge span 2
 
     for (let i = 0; i < nat.nationSeeds.length; i++) {
       const seed = nat.nationSeeds[i];
       const col = nat.nationColors[i] || new THREE.Color(0.7, 0.58, 0.34);
-      // ground the castle: sit it at the lowest terrain sample under the footprint
+      // ground the castle: sink the plinth below the LOWEST terrain sample under the footprint
       let baseY = this.heightAt(seed.x, seed.z);
-      for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2;
-        const yy = this.heightAt(seed.x + Math.cos(a) * 2.75 * S, seed.z + Math.sin(a) * 2.75 * S);
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const yy = this.heightAt(seed.x + Math.cos(a) * 3.7 * S, seed.z + Math.sin(a) * 3.7 * S);
         if (yy < baseY) baseY = yy;
       }
-      baseY -= 0.6;
+      // terrace top is kit-local +0.25 (≈1.2 world units at S=4.8); sinking the group 0.95
+      // below the lowest ground sample lands the terrace ≈0.25 above it — walls embed in the
+      // drum, the deep outer tier (kit-local −2.05 ≈ −9.8 world) always stays buried
+      baseY -= 0.95;
 
       const group = new THREE.Group();
       group.position.set(seed.x, baseY, seed.z);
       group.scale.setScalar(S);
-
-      const washMat = srcMat.clone();
-      washMat.color.setRGB(0.7 + 0.3 * col.r, 0.7 + 0.3 * col.g, 0.7 + 0.3 * col.b);
+      group.add(new THREE.Mesh(this._plinthGeo, this._plinthMat));
+      group.add(new THREE.Mesh(this._castleStoneGeo, this._castleStoneMat));
+      // roofs + banners in the nation colour (full saturation, no mud-dirty wash)
       const strongMat = srcMat.clone();
-      strongMat.color.setRGB(0.38 + 0.62 * col.r, 0.38 + 0.62 * col.g, 0.38 + 0.62 * col.b);
-
-      const washGeo = assemble(wash);
-      const strongGeo = assemble(strong);
-      if (washGeo) group.add(new THREE.Mesh(washGeo, washMat));
-      if (strongGeo) group.add(new THREE.Mesh(strongGeo, strongMat));
+      strongMat.color.setRGB(0.35 + 0.65 * col.r, 0.35 + 0.65 * col.g, 0.35 + 0.65 * col.b);
+      group.add(new THREE.Mesh(this._castleStrongGeo, strongMat));
       this.castleGroup.add(group);
     }
   }
@@ -947,11 +709,14 @@ export class ThreeScene {
 
     const lib = this._castleLib;
     const TYPES = [
-      { key: "home", name: "building_home_A_blue", sc: 4.4 },
-      { key: "windmill", name: "building_windmill_blue", sc: 3.6 },
-      { key: "tower", name: "building_tower_A_blue", sc: 4.0 },
-      { key: "market", name: "building_market_blue", sc: 3.2 },
-      { key: "well", name: "building_well_blue", sc: 3.8 },
+      // task 18: the world rect grew 1.5× and the camera sits further back — buildings scale
+      // up ~12% to hold their presence, and with the mud-brick town gone the village ring moves
+      // in and grows (cities 6+2, towns 4+1) so the continent reads open, not empty.
+      { key: "home", name: "building_home_A_blue", sc: 5.0 },
+      { key: "windmill", name: "building_windmill_blue", sc: 4.1 },
+      { key: "tower", name: "building_tower_A_blue", sc: 4.5 },
+      { key: "market", name: "building_market_blue", sc: 3.7 },
+      { key: "well", name: "building_well_blue", sc: 4.3 },
     ];
     const buckets = {};
     for (const t of TYPES) buckets[t.key] = [];
@@ -971,8 +736,8 @@ export class ThreeScene {
       // deterministic per-zone layout: a rebuild paints the same village again
       let rs = (Math.imul((s.zone | 0) + 1, 2654435761) ^ 0x9e3779b9) >>> 0;
       const rnd = () => { rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0; return rs / 4294967296; };
-      const ring = r === "CITY" ? 30 + rnd() * 10 : 19 + rnd() * 7;
-      const nB = 2 + (rnd() < 0.5 ? 1 : 0);   // 2–3 buildings, plus one civic anchor below
+      const ring = r === "CITY" ? 17 + rnd() * 9 : 12 + rnd() * 6;
+      const nB = r === "CITY" ? 6 : 4;   // plus the civic anchors below
       const kinds = ["home", "windmill", "tower", "home"];
       for (let b = 0; b < nB; b++) {
         const a = rnd() * Math.PI * 2;
@@ -982,12 +747,15 @@ export class ThreeScene {
         const sc = TYPES.find((t) => t.key === kind).sc * (0.85 + rnd() * 0.3);
         put(kind, bx, this.heightAt(bx, bz) - 0.5, bz, sc, rnd());
       }
-      const civic = rnd() < 0.55 ? "well" : "market";
-      const ca = rnd() * Math.PI * 2;
-      const cr = Math.max(ring - 6.5, 10) + rnd() * 3;
-      const cx = wx + Math.cos(ca) * cr, cz = wz + Math.sin(ca) * cr;
-      const csc = (civic === "well" ? 3.8 : 3.2) * (0.9 + rnd() * 0.2);
-      put(civic, cx, this.heightAt(cx, cz) - 0.5, cz, csc, rnd());
+      const nCivic = r === "CITY" ? 2 : 1;
+      for (let q = 0; q < nCivic; q++) {
+        const civic = rnd() < 0.55 ? "well" : "market";
+        const ca = rnd() * Math.PI * 2;
+        const cr = Math.max(ring - 5.5, 8) + rnd() * 3;
+        const cx = wx + Math.cos(ca) * cr, cz = wz + Math.sin(ca) * cr;
+        const csc = (civic === "well" ? 4.3 : 3.7) * (0.9 + rnd() * 0.2);
+        put(civic, cx, this.heightAt(cx, cz) - 0.5, cz, csc, rnd());
+      }
     }
 
     for (const t of TYPES) {
@@ -1060,6 +828,15 @@ export class ThreeScene {
       sp.scale.set(0, 0, 0);
       this._graveSprites.push(sp);
       this._graveGroup.add(sp);
+      // task 20②: an invisible ×3 hit proxy rides each stone — the 7.2×9.6 sprite is a hair-thin
+      // target at continent scale, so picking raycasts this fatter billboard instead (three r160
+      // raycasts invisible objects; a screen-space fallback in _pickGrave covers the rest).
+      const hit = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
+      hit.visible = false;
+      hit.scale.set(0, 0, 0);
+      hit.userData.grave = null;
+      this._graveHits.push(hit);
+      this._graveGroup.add(hit);
     }
     this.scene.add(this._graveGroup);
     // 3D stone picking — see _onCanvasClick (the click event fires after camera.js's tap)
@@ -1129,31 +906,14 @@ export class ThreeScene {
     }
     this.scene.add(this._faithGroup);
 
-    // ---- ⑦ chronicle ambient: totem stele sprites + school/bourse boxes (InstancedMesh) ----
-    this._chronGroup = new THREE.Group();
-    const totemTex = this._mkTotemTexture();
-    for (let i = 0; i < 8; i++) {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: totemTex, transparent: true, depthWrite: false, opacity: 0.92 }));
-      sp.visible = false; sp.scale.set(7, 14, 1);
-      this._chronGroup.add(sp); this._totemSprites.push(sp);
-    }
-    this._chronBoxes = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95 }), 17);
-    this._chronBoxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this._chronBoxes.count = 0; this._chronBoxes.frustumCulled = false;
-    this._chronGroup.add(this._chronBoxes);
-    this.scene.add(this._chronGroup);
+    // ---- ⑦ chronicle ambient: REMOVED (task 20①). The totem steles + school/lost-art/coffer
+    // plaques read as "莫名其妙的方块" scattered over the terrain. The chronicle drawer (#panel-chron)
+    // and the bottom ticker are DOM read-outs and stay — only the map decoration is gone. ----
 
-    // ---- ⑨ era banner: one screen-anchored Sprite, redrawn only when the era changes ----
-    const ecv = document.createElement("canvas");
-    ecv.width = 1024; ecv.height = 144;
-    this._eraSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(ecv), transparent: true, depthWrite: false, depthTest: false, opacity: 0.96,
-    }));
-    this._eraSprite.scale.set(160, 22.5, 1);
-    this._eraSprite.renderOrder = 999;
-    this._eraSprite.visible = false;
-    this.scene.add(this._eraSprite);
+    // ---- ⑨ era label: task 20⑥ moved it off the camera-riding Sprite (which floated over the
+    // terrain and drifted with every orbit) onto a fixed DOM HUD (#era-hud in index.html). We only
+    // cache the element here; _updateEraHud() rewrites its text when chronMeta.era/eraName changes.
+    this._eraHudEl = document.getElementById("era-hud");
 
     // ---- ⑩ swarm neural aura: one breathing sphere over the swarm centroid ----
     this._auraMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14),
@@ -1162,14 +922,8 @@ export class ThreeScene {
     this._auraMesh.visible = false;
     this.scene.add(this._auraMesh);
 
-    // ---- ⑬ pointer ripples: 5 pooled ground rings ----
-    for (let i = 0; i < 5; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color: 0x787468, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
-      const m = new THREE.Mesh(ringGeo, mat);
-      m.visible = false; m.frustumCulled = false; m.renderOrder = 5;
-      this.scene.add(m);
-      this._rippleRings.push(m);
-    }
+    // ---- ⑬ pointer ripples: REMOVED (task 20④). The tap stimulus rings are gone; camera.js no
+    // longer pushes to state.ripples either. Drag / zoom / tap-select all survive. ----
 
     // ---- ⑭ shard topology ring: guide circle + up to 32 node rings ----
     const guideGeo = new THREE.TorusGeometry(1, 0.008, 6, 96);
@@ -1207,36 +961,6 @@ export class ThreeScene {
     gr.addColorStop(1, "rgba(255,228,160,0)");
     c.fillStyle = gr;
     c.fillRect(0, 0, 128, 128);
-    return new THREE.CanvasTexture(cv);
-  }
-
-  // the totem stele texture: a narrow standing stone with carved sigils (chronicle ambient ⑦)
-  _mkTotemTexture() {
-    const cv = document.createElement("canvas");
-    cv.width = 96; cv.height = 192;
-    const c = cv.getContext("2d");
-    c.clearRect(0, 0, 96, 192);
-    // ground shadow
-    c.fillStyle = "rgba(40,34,26,0.18)";
-    c.beginPath(); c.ellipse(48, 176, 30, 8, 0, 0, Math.PI * 2); c.fill();
-    // standing stone
-    c.beginPath();
-    c.moveTo(30, 172); c.lineTo(26, 40);
-    c.quadraticCurveTo(48, 18, 70, 40);
-    c.lineTo(66, 172); c.closePath();
-    c.fillStyle = "rgb(126,110,88)"; c.fill();
-    c.lineWidth = 2.5; c.strokeStyle = "rgba(40,32,26,0.55)"; c.stroke();
-    // gilt rim + carved sigils
-    c.strokeStyle = "rgba(214,178,92,0.6)"; c.lineWidth = 2.4;
-    c.beginPath(); c.moveTo(30, 168); c.lineTo(26, 40); c.quadraticCurveTo(48, 18, 70, 40); c.stroke();
-    c.fillStyle = "rgba(226,186,96,0.9)";
-    c.font = "600 26px ui-monospace, SFMono-Regular, Menlo, monospace";
-    c.textAlign = "center"; c.textBaseline = "middle";
-    c.fillText("✵", 48, 62);
-    c.font = "600 16px ui-monospace, SFMono-Regular, Menlo, monospace";
-    c.fillStyle = "rgba(40,32,26,0.6)";
-    c.fillText("†", 48, 100);
-    c.fillText("◇", 48, 128);
     return new THREE.CanvasTexture(cv);
   }
 
@@ -1326,21 +1050,92 @@ export class ThreeScene {
     c.restore();
   }
 
-  // 3D necropolis picking: the canvas `click` fires AFTER camera.js's pointerup tap (whose
-  // handleTap() begins with hideEpitaph()) — so an epitaph opened here survives the frame.
+  // 3D picking (task 20②+⑤). The canvas `click` fires AFTER camera.js's pointerup tap; camera.js now
+  // bows out in 3D mode (state.threeScene guard), so this handler owns every click semantic here.
+  // Order: flies first (primary target), then headstones (only while the necropolis layer is on),
+  // then an empty click clears both. A near-stationary pointerup only — a camera drag is not a tap.
   _onCanvasClick(e) {
-    if (!state.showGraves || !this._graveGroup || !this._graveGroup.visible) return;
-    if (Math.hypot(e.clientX - this._downX, e.clientY - this._downY) > 8) return;   // a camera drag is not a tap
+    if (!this.renderer || !this.camera) return;
+    if (Math.hypot(e.clientX - this._downX, e.clientY - this._downY) > 8) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
-    this._ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    if (!rect.width || !rect.height) return;
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;   // screen px, canvas-relative
+    this._ndc.set((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
     this._raycaster.setFromCamera(this._ndc, this.camera);
-    const live = [];
-    for (const sp of this._graveSprites) if (sp.visible && sp.userData.grave) live.push(sp);
-    if (!live.length) return;
-    const hits = this._raycaster.intersectObjects(live, false);
-    if (!hits.length) return;
-    const g = hits[0].object.userData.grave;
-    if (g) showEpitaph({ ...g, uid: graveUid(g.id, g.bornTick) });
+
+    // ① flies — double insurance (raycast InstancedMesh, then <28px screen-space nearest)
+    const fly = this._pickFly(px, py, rect);
+    if (fly != null) { selectFly(fly); return; }
+
+    // ② a headstone, but only while the necropolis layer is showing
+    if (state.showGraves && this._graveGroup && this._graveGroup.visible) {
+      const g = this._pickGrave(px, py, rect);
+      if (g) { showEpitaph({ ...g, uid: graveUid(g.id, g.bornTick) }); return; }
+    }
+
+    // ③ empty click — clear both selections
+    deselectFly();
+    hideEpitaph();
+  }
+
+  // task 20⑤ — pick a live fly. ① standard raycast against the flyBody InstancedMesh, using NDC from
+  // the canvas boundingRect (not window — the renderer need not fill the viewport). ② screen-space
+  // fallback: project every live fly and take the nearest within 28px. Returns a fly id or null.
+  _pickFly(px, py, rect) {
+    const body = this.flyBody;
+    const n = this._flyCount | 0;
+    if (!body || n <= 0) return null;
+    // ① raycast — refresh the instance bounds first. The swarm moves every frame but an InstancedMesh's
+    // boundingSphere is cached on first raycast, so a stale sphere can reject live flies outright.
+    body.computeBoundingSphere();
+    const hits = this._raycaster.intersectObject(body, false);
+    if (hits.length && hits[0].instanceId != null) {
+      const f = this._flyArr[hits[0].instanceId];
+      if (f && f.id != null) return f.id;
+    }
+    // ② screen-space fallback — nearest live fly within 28px of the click
+    const v = this._v1;
+    let best = null, bestD = 28;
+    const VW = state.VW, VH = state.VH;
+    for (let i = 0; i < n; i++) {
+      const f = this._flyArr[i];
+      if (!f || f.id == null) continue;
+      const x = (f.x / VW - 0.5) * this._WSX;
+      const z = (f.y / VH - 0.5) * this._WSZ;
+      const y = Math.max(this.heightAt(x, z), 0) + 7;
+      v.set(x, y, z).project(this.camera);
+      if (v.z < -1 || v.z > 1) continue;                 // behind camera / outside depth range
+      const sx = (v.x * 0.5 + 0.5) * rect.width;
+      const sy = (-v.y * 0.5 + 0.5) * rect.height;
+      const dd = Math.hypot(sx - px, sy - py);
+      if (dd < bestD) { bestD = dd; best = f.id; }
+    }
+    return best;
+  }
+
+  // task 20② — pick a headstone via its ×3 invisible proxy (raycast), with a screen-space fallback.
+  _pickGrave(px, py, rect) {
+    const sprites = this._graveSprites;
+    if (!sprites || !sprites.length) return null;
+    this._graveGroup.updateMatrixWorld(true);            // proxies must be current before raycasting
+    const proxies = [];
+    for (const h of this._graveHits) if (h && h.userData.grave) proxies.push(h);
+    if (proxies.length) {
+      const hits = this._raycaster.intersectObjects(proxies, false);
+      if (hits.length && hits[0].object.userData.grave) return hits[0].object.userData.grave;
+    }
+    const v = this._v1;
+    let best = null, bestD = 28;
+    for (const sp of sprites) {
+      if (!sp.visible || !sp.userData.grave) continue;
+      v.setFromMatrixPosition(sp.matrixWorld).project(this.camera);
+      if (v.z < -1 || v.z > 1) continue;
+      const sx = (v.x * 0.5 + 0.5) * rect.width;
+      const sy = (-v.y * 0.5 + 0.5) * rect.height;
+      const dd = Math.hypot(sx - px, sy - py);
+      if (dd < bestD) { bestD = dd; best = sp.userData.grave; }
+    }
+    return best;
   }
 
   update(sim, econCities, now) {
@@ -1348,37 +1143,49 @@ export class ThreeScene {
     this._simRef = sim;   // task 7: chron-fx spawns read the live swarm
 
     // the dominion overlay obeys econDynasty.zoneOwners — the same authority the 2D map uses;
-    // a conquest recolours the land and raises the new house's castle on the next frame
-    const owners = new Map();
+    // a conquest recolours the land and raises the new house's castle on the next frame.
+    // task 18: every scratch container here is preallocated in the constructor — update() never
+    // creates a Map/Array/Set per frame any more.
+    const owners = this._ownerMap;
+    owners.clear();
     if (state.econDynasty && Array.isArray(state.econDynasty.zoneOwners)) {
       for (const zo of state.econDynasty.zoneOwners) if (zo && zo.zone != null) owners.set(zo.zone | 0, zo);
     }
-    let tsig = "";
-    for (const [z, o] of [...owners].sort((a, b) => a[0] - b[0])) tsig += z + ":" + (o.name || "") + ",";
+    const pairs = this._ownerPairs;
+    pairs.length = 0;
+    for (const e of owners) pairs.push(e);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const tp = this._terrParts;
+    tp.length = 0;
+    for (const pr of pairs) tp.push(pr[0], ":", pr[1].name || "", ",");
     // dynasty rank signature (top-5 houses by live population): a reshuffle re-partitions too
     if (state.econDynasty && Array.isArray(state.econDynasty.houses)) {
-      const rank = state.econDynasty.houses
-        .filter((h) => h && h.id != null)
-        .sort((a, b) => ((b.live | 0) - (a.live | 0)) || ((b.capitalShare || 0) - (a.capitalShare || 0)) || ((a.id > b.id) ? 1 : -1))
-        .slice(0, 5);
-      for (const h of rank) tsig += "#" + h.id;
+      const rank = this._rankArr;
+      rank.length = 0;
+      for (const h of state.econDynasty.houses) if (h && h.id != null) rank.push(h);
+      rank.sort((a, b) => ((b.live | 0) - (a.live | 0)) || ((b.capitalShare || 0) - (a.capitalShare || 0)) || ((a.id > b.id) ? 1 : -1));
+      const top = rank.length < 5 ? rank.length : 5;
+      for (let i = 0; i < top; i++) tp.push("#", rank[i].id);
     }
+    const tsig = tp.join("");
     if (tsig !== this._terrSig) {
       this._terrSig = tsig;
       this._applyNations();      // five-nation partition first — _colorTerrain reads the new nation ids
       this._colorTerrain(owners);
     }
 
-    const flies = [...sim.values()].filter(f => !f.dying);
+    const flies = this._flyArr;
+    flies.length = 0;
+    for (const f of sim.values()) if (!f.dying) flies.push(f);
     const d = this._dummy, c = this._color;
     const n = Math.min(flies.length, 120);
     for (let i = 0; i < n; i++) {
       const f = flies[i];
       const x = (f.x / state.VW - 0.5) * this._WSX;
       const z = (f.y / state.VH - 0.5) * this._WSZ;
-      const y = Math.max(this.heightAt(x, z), 0) + 5 + Math.sin(now * 0.004 + (f.phase || 0)) * 1.6;   // ride the relief, never below sea level
+      const y = Math.max(this.heightAt(x, z), 0) + 7 + Math.sin(now * 0.004 + (f.phase || 0)) * 2.0;   // ride the relief, never below sea level (task 20③: +7 clears the fatter body)
       const balN = f.balN != null ? f.balN : 0.5;
-      const sz = (0.7 + balN * 0.6) * 4.0;
+      const sz = (0.7 + balN * 0.6) * 7.2;   // task 20③: ×1.8 for the 480×300→720×450 continent so the swarm reads at a glance
       d.position.set(x, y, z);
       d.rotation.set(Math.sin(now * 0.002 + (f.phase || 0)) * 0.12, -(f.heading || 0), 0, "YXZ");
       d.scale.setScalar(sz);
@@ -1400,6 +1207,7 @@ export class ThreeScene {
       this.flyWingR.setMatrixAt(i, this._m4.multiply(this._m5));
     }
     this.flyBody.count = n;
+    this._flyCount = n;   // task 20⑤: live instance count for _pickFly (instanceId → this._flyArr[id])
     this.flyEye.count = n * 2;
     this.flyWingL.count = n;
     this.flyWingR.count = n;
@@ -1409,10 +1217,7 @@ export class ThreeScene {
     this.flyWingR.instanceMatrix.needsUpdate = true;
     if (this.flyBody.instanceColor) this.flyBody.instanceColor.needsUpdate = true;
 
-    this._rebuildSettlements(econCities);
-    this._rebuildVillages(econCities);   // KayKit village ring per town/city (task 6)
-    // grass shows only up close: the tuft field is ~108k verts — pointless (and noisy) at map zoom
-    if (this.grassField) this.grassField.visible = this.camera.position.distanceTo(this.controls.target) < 200;
+    this._rebuildVillages(econCities);   // KayKit village ring per town/city (task 6; the mud-brick town is gone — task 18)
     // task 12 P0: flow the ocean by scrolling the normal map — no uniforms, no mirror pass
     if (this.water && this.water.material && this.water.material.normalMap) {
       const nm = this.water.material.normalMap;
@@ -1428,11 +1233,9 @@ export class ThreeScene {
     try { this._updateChronFx(now, dt); } catch (e) { console.warn("chronFx", e); }
     try { this._updateMeshLines(sim); } catch (e) { console.warn("meshLines", e); }
     try { this._updateFaith(now); } catch (e) { console.warn("faith", e); }
-    try { this._updateChronAmbient(now); } catch (e) { console.warn("chronAmbient", e); }
     try { this._updateDayNight(now); } catch (e) { console.warn("dayNight", e); }
-    try { this._updateEraLabel(); } catch (e) { console.warn("eraLabel", e); }
+    try { this._updateEraHud(); } catch (e) { console.warn("eraHud", e); }
     try { this._updateSwarmAura(now); } catch (e) { console.warn("swarmAura", e); }
-    try { this._updateRipples(now); } catch (e) { console.warn("ripples", e); }
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
     try { this._updateLegend(sim, now); } catch (e) { console.warn("legend", e); }
   }
@@ -1528,7 +1331,12 @@ export class ThreeScene {
     const span = Math.max(1, maxTick - minTick);
     for (let i = 0; i < GRAVE_CAP; i++) {
       const sp = this._graveSprites[i];
-      if (i >= n) { sp.visible = false; sp.scale.set(0, 0, 0); sp.userData.grave = null; continue; }
+      const hit = this._graveHits[i];                       // task 20②: the invisible ×3 pick proxy
+      if (i >= n) {
+        sp.visible = false; sp.scale.set(0, 0, 0); sp.userData.grave = null;
+        if (hit) { hit.visible = false; hit.scale.set(0, 0, 0); hit.userData.grave = null; }
+        continue;
+      }
       const g = ordered[i], r = (i / cols) | 0, cI = i % cols;
       const hh = fnv1a("grave:" + g.id + ":" + (g.bornTick == null ? 0 : g.bornTick));   // a recycled id scatters to its OWN plot
       const jx = ((hh % 1000) / 1000 - 0.5), jy = (((hh >>> 10) % 1000) / 1000 - 0.5);
@@ -1546,7 +1354,17 @@ export class ThreeScene {
       sp.scale.set(7.2, 9.6, 1);
       sp.visible = true;
       sp.userData.grave = g;
+      // task 20②: park the ×3 billboard on the same stone so picking has a fat target. It stays
+      // visible=false (three r160 raycasts invisible objects) so it never draws, only receives hits.
+      if (hit) {
+        hit.position.copy(sp.position);
+        hit.scale.set(7.2 * 3, 9.6 * 3, 1);
+        hit.visible = false;
+        hit.userData.grave = g;
+      }
     }
+    // matrixWorld must be current before the pick raycast walks these proxies (task 20②)
+    this._graveGroup.updateMatrixWorld(true);
   }
 
   // ③ x402 payment arcs — pooled gold quad-bezier tubes + comet heads, fading with age
@@ -1716,7 +1534,8 @@ export class ThreeScene {
       if (this._meshLines.visible) { this._meshLines.visible = false; this._meshLines.geometry.setDrawRange(0, 0); }
       return;
     }
-    const list = [];
+    const list = this._meshList;
+    list.length = 0;
     for (const f of sim.values()) if (!f.dying) list.push(f);
     const n = Math.min(list.length, 120);
     const R = (74 + state.cohSmoothed * 46) * (this._WSX / state.VW);   // the 2D capture radius, in world units
@@ -1756,7 +1575,8 @@ export class ThreeScene {
     // prophet halos — live prophet ids collected from the sects (the same set renderFaithFx walks)
     let np = 0;
     if (rel && Array.isArray(rel.sects) && sim) {
-      const seen = new Set();
+      const seen = this._faithSeen;
+      seen.clear();
       for (const s of rel.sects) {
         if (np >= this._prophetSprites.length) break;
         const id = s && s.prophetId;
@@ -1790,65 +1610,8 @@ export class ThreeScene {
     }
   }
 
-  // ⑦ chronicle ambient — totem steles, school benches, lost-art scars and the bourse coffer (chronicle layer only)
-  _updateChronAmbient(now) {
-    const grp = this._chronGroup;
-    if (!state.showChron) { grp.visible = false; return; }
-    grp.visible = true;
-    const W = this._WSX, H = this._WSZ, VW = state.VW, VH = state.VH;
-    const cof = chronCofferNow(now);                 // 400ms-cached alongside the 2D path
-    const seatFor = (houseName, seed) => {
-      const s = houseSeat(houseName);
-      if (s) return s;
-      const px = (fnv1a(seed) % 1000) / 1000, py = (fnv1a(seed + ":y") % 1000) / 1000;
-      return { x: cof.x + (px - 0.5) * 96, y: cof.y + (py - 0.5) * 72 };
-    };
-    // ⑪ totem steles — one per adopted ladder rung, near the capital the chronicle credits
-    const t = state.econTech;
-    let nt = 0;
-    if (t && Array.isArray(t.rungs)) for (const r of t.rungs) {
-      if (nt >= this._totemSprites.length) break;
-      const s = seatFor(r.houseName, "rung:" + r.rung + ":" + (r.name || ""));
-      const jx = s.x + ((fnv1a("j" + r.rung) % 40) - 20), jy = s.y + 20 + ((fnv1a("k" + r.rung) % 26) - 13);
-      const x = (jx / VW - 0.5) * W, z = (jy / VH - 0.5) * H;
-      const sp = this._totemSprites[nt++];
-      sp.position.set(x, Math.max(this.heightAt(x, z), 0) + 7, z);
-      sp.visible = true;
-    }
-    for (let i = nt; i < this._totemSprites.length; i++) this._totemSprites[i].visible = false;
-    // ⑬⑯⑲ schools, lost arts and the gold coffer share one instanced box pool
-    const mesh = this._chronBoxes, d = this._dummy, col = this._color;
-    let nb = 0;
-    const putBox = (fx, fy, sx, sy, sz, col3) => {
-      if (nb >= 17) return;
-      const x = (fx / VW - 0.5) * W, z = (fy / VH - 0.5) * H;
-      d.position.set(x, Math.max(this.heightAt(x, z), 0) + sy * 0.5 + 1, z);
-      d.rotation.set(0, 0, 0);
-      d.scale.set(sx, sy, sz);
-      d.updateMatrix();
-      mesh.setMatrixAt(nb, d.matrix);
-      col.setRGB(col3[0] / 255, col3[1] / 255, col3[2] / 255, THREE.SRGBColorSpace);
-      mesh.setColorAt(nb, col);
-      nb++;
-    };
-    const b = state.econBourse;
-    if (b && b.enabled) {
-      const dim = b.climate && Number(b.climate.quietCrons) > 0;
-      putBox(cof.x, cof.y, 10, 7, 10, dim ? ASH_GREY : COIN_GOLD);   // ⑲ the treasury coffer (cools to ash in silence)
-    }
-    const a = state.econApprentice;
-    if (a && Array.isArray(a.schools)) for (const sc of a.schools) {
-      const s = seatFor(sc.houseName || sc.name, "school:" + (sc.name || ""));
-      putBox(s.x, s.y - 26, 6.5, 5, 6.5, TECH_BRONZE);
-    }
-    if (t && Array.isArray(t.lost)) for (const l of t.lost) {
-      const s = seatFor(null, "lost:" + l.rung + ":" + (l.name || ""));
-      putBox(s.x + ((fnv1a("lj" + l.rung) % 40) - 20), s.y + 20 + ((fnv1a("lk" + l.rung) % 26) - 13), 5, 3.5, 5, ASH_GREY);
-    }
-    mesh.count = nb;
-    if (nb) { mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; }
-    mesh.visible = nb > 0;
-  }
+  // ⑦ chronicle ambient — REMOVED (task 20①). The totem steles / school / lost-art / coffer map
+  // decoration read as scattered grey blocks; the chronicle drawer + bottom ticker (DOM) remain.
 
   // ⑧ day/night — the ≈7-min light cycle drives the key light's colour & level; tempSmoothed grades the hue
   _updateDayNight(now) {
@@ -1869,64 +1632,36 @@ export class ThreeScene {
     this.hemiLight.intensity = 0.2 + 0.4 * dayness;         // the 2D ambient: 0.2 night → 0.6 day
   }
 
-  // ⑨ era banner — a screen-anchored gilt cartouche riding the camera (texture repainted only when the era changes)
-  _updateEraLabel() {
+  // ⑨ era label — task 20⑥: a FIXED DOM HUD (#era-hud), no longer a Sprite riding the camera (which
+  // floated over the terrain and drifted with every orbit). It pins to the screen and rewrites its text
+  // only when chronMeta.era/eraName changes — the same source the chronicle panel + 2D HUD read.
+  _updateEraHud() {
+    const el = this._eraHudEl;
+    if (!el) return;
     const m = state.chronMeta;
-    const sp = this._eraSprite;
-    if (!m || (m.era == null && !m.eraName)) { sp.visible = false; return; }
+    if (!m || (m.era == null && !m.eraName)) { el.style.display = "none"; return; }
     const sig = String(m.era == null ? "" : m.era) + "|" + String(m.eraName || "");
-    if (sig !== this._eraSig) { this._eraSig = sig; this._paintEraSprite(m); }
-    const cam = this.camera, tgt = this.controls.target;
-    const D = clamp(cam.position.distanceTo(tgt), 140, 1000);
-    this._fwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
-    sp.position.copy(cam.position).addScaledVector(this._fwd, D * 0.95);
-    sp.position.y -= D * 0.30;                              // ≈68% of the half-view-height below the axis
-    sp.scale.set(D * 0.34, D * 0.0478, 1);                  // keeps the cartouche's 1024:144 ratio at any zoom
-    sp.visible = true;
-  }
-
-  // paint the era banner texture: vellum plate, double gilt rule, side flourishes, the titulus in gilt-edged ink
-  _paintEraSprite(m) {
-    const cv = this._eraSprite.material.map.image;
-    const c = cv.getContext("2d");
-    const W = cv.width, H = cv.height;
-    c.clearRect(0, 0, W, H);
+    if (sig === this._eraSig) { el.style.display = ""; return; }
+    this._eraSig = sig;
     const rn = (n) => {
       if (!n || n <= 0) return String(n == null ? "" : n);
       const rom = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
       let out = "", rest = n; for (const [v, s] of rom) while (rest >= v) { out += s; rest -= v; } return out;
     };
-    const name = String(m.eraName || "").trim().toUpperCase();
-    const label = name ? "ERA " + rn(m.era) + " \u00b7 " + name : "ERA " + rn(m.era);
-    const cx = W / 2, cy = H / 2;
-    c.save();
-    c.textAlign = "center"; c.textBaseline = "middle";
-    c.font = "700 58px Cinzel, Fraunces, Georgia, serif";
-    try { c.letterSpacing = "9px"; } catch (e) { /* older engines */ }
-    const tw = c.measureText(label).width;
-    const bw = Math.min(W - 70, tw + 220), bh = 104;
-    const bx = cx - bw / 2, by = cy - bh / 2;
-    c.beginPath();
-    if (c.roundRect) c.roundRect(bx, by, bw, bh, 10); else c.rect(bx, by, bw, bh);
-    c.fillStyle = "rgba(248,244,236,0.74)"; c.fill();
-    c.lineWidth = 4; c.strokeStyle = "rgba(186,148,64,0.8)"; c.stroke();
-    c.lineWidth = 2.4; c.strokeStyle = "rgba(226,196,110,0.55)"; c.strokeRect(bx + 10, by + 10, bw - 20, bh - 20);
-    c.strokeStyle = "rgba(186,148,64,0.65)"; c.lineWidth = 3; c.fillStyle = "rgba(186,148,64,0.75)";
-    for (const s of [-1, 1]) {
-      const x0 = cx + s * (bw / 2 + 24), x1 = cx + s * (bw / 2 + 150);
-      c.beginPath(); c.moveTo(x0, cy); c.lineTo(x1, cy); c.stroke();
-      c.beginPath(); c.moveTo(x1 + s * 14, cy); c.lineTo(x1, cy - 11); c.lineTo(x1 - s * 14, cy); c.lineTo(x1, cy + 11); c.closePath(); c.fill();
+    const name = String(m.eraName || "").trim();
+    el.textContent = "";
+    const num = document.createElement("span");
+    num.className = "era-hud-num";
+    num.textContent = "ERA " + rn(m.era);
+    el.appendChild(num);
+    if (name) {
+      const sep = document.createElement("span");
+      sep.className = "era-hud-sep"; sep.textContent = "\u00b7";
+      const nm = document.createElement("span");
+      nm.className = "era-hud-name"; nm.textContent = name;
+      el.appendChild(sep); el.appendChild(nm);
     }
-    c.font = "600 34px Georgia, serif"; c.fillStyle = "rgba(186,148,64,0.85)";
-    c.fillText("\u2766", bx + 44, cy + 2); c.fillText("\u2766", bx + bw - 44, cy + 2);
-    c.font = "700 58px Cinzel, Fraunces, Georgia, serif";
-    c.lineJoin = "round"; c.miterLimit = 2;
-    c.strokeStyle = "rgba(226,196,110,0.8)"; c.lineWidth = 9;
-    c.strokeText(label, cx, cy + 2);
-    c.fillStyle = "rgba(56,42,24,0.97)";
-    c.fillText(label, cx, cy + 2);
-    c.restore();
-    this._eraSprite.material.map.needsUpdate = true;
+    el.style.display = "";
   }
 
   // ⑩ swarm neural aura — one breathing sphere over the collective's centroid (cohesion sizes it, arousal reddens it)
@@ -1950,35 +1685,8 @@ export class ThreeScene {
     mesh.visible = true;
   }
 
-  // ⑬ pointer ripples — the 2D stimulus rings, pooled (the newest five bind the pool)
-  _updateRipples(now) {
-    const R = state.ripples;
-    const rings = this._rippleRings;
-    let n = 0;
-    if (Array.isArray(R) && R.length) {
-      const VW = state.VW, VH = state.VH;
-      const k = this._WSX / (VW || 1), span = Math.min(VW, VH) * 0.55;
-      for (let i = R.length - 1; i >= 0; i--) {
-        const r = R[i];
-        const age = (now - r.t0) / 1700;
-        if (age >= 1) { R.splice(i, 1); continue; }    // the 2D path's own cleanup — it never runs in 3D mode
-        if (n >= rings.length) continue;
-        const a = age < 0 ? 0 : age;                   // sub-frame clock skew (see the 2D comment)
-        const rad = a * span * k;
-        if (rad <= 0.01) continue;
-        const mesh = rings[n];
-        const x = (r.x / VW - 0.5) * this._WSX, z = (r.y / VH - 0.5) * this._WSZ;
-        mesh.position.set(x, Math.max(this.heightAt(x, z), 0) + 1.2, z);
-        mesh.scale.set(rad, 1, rad);
-        const cc = Array.isArray(r.color) ? r.color : [120, 116, 108];
-        mesh.material.color.setRGB(cc[0] / 255, cc[1] / 255, cc[2] / 255, THREE.SRGBColorSpace);
-        mesh.material.opacity = (1 - a) * 0.42;
-        mesh.visible = true;
-        n++;
-      }
-    }
-    for (let i = n; i < rings.length; i++) rings[i].visible = false;
-  }
+  // ⑬ pointer ripples — REMOVED (task 20④). camera.js no longer pushes to state.ripples, so the pool
+  // and this per-frame update are gone; drag / zoom / tap-select are untouched.
 
   // ⑭ shard topology ring — the compute-ring read-out (societies layer, per the port spec)
   _updateShardRings(now) {
@@ -2071,6 +1779,8 @@ export class ThreeScene {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    // task 18: re-apply the resolution cap on every resize (window moves between screens/DPRs)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this._dprCap || 1.5));
   }
 
   // release every GPU resource and DOM hook this scene owns (teardown / hot-reload)
@@ -2103,6 +1813,13 @@ export class ThreeScene {
       if (!e) continue;
       if (e.geometry && e.geometry.dispose) e.geometry.dispose();
       if (e.material) { const ms = Array.isArray(e.material) ? e.material : [e.material]; for (const m of ms) killMat(m); }
+    }
+    // task 18: shared castle caches (merged kit geometry, limestone, plinth)
+    for (const k of ["_castleStoneGeo", "_castleStrongGeo", "_plinthGeo"]) {
+      if (this[k] && this[k].dispose) this[k].dispose();
+    }
+    for (const k of ["_castleStoneMat", "_plinthMat"]) {
+      if (this[k]) killMat(this[k]);
     }
     if (this.scene.environment && this.scene.environment.dispose) this.scene.environment.dispose();
     if (this._ramp && this._ramp.dispose) this._ramp.dispose();

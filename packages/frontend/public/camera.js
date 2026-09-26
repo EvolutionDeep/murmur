@@ -1,6 +1,6 @@
 // camera.js — cam 状态 + zoomAt/clampCam/resetView + pointer/touch + resize
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, STIR_COL, canvas, clamp, graveField, paletteAt, rgb, sim } from './shared.js';
+import { state, $, canvas, clamp, graveField, paletteAt, rgb, sim } from './shared.js';
 import { deselect, select } from './inspector.js';
 import { hideEpitaph, rebuildGraveField, showEpitaph } from './render2d.js';
 import { initMotes } from './sim.js';
@@ -96,6 +96,7 @@ export function bindPointer() {
   };
   // a tap (press that never travelled far) on empty ground stirs the swarm; on a fly it selects; on a stone it opens the epitaph
   const handleTap = () => {
+    if (state.threeScene) return;   // task 20⑤: in 3D mode scene3d._onCanvasClick owns tap-select — 2D world coords are meaningless here
     hideEpitaph();
     let best = null, bd = Infinity;
     for (const f of sim.values()) {
@@ -107,7 +108,7 @@ export function bindPointer() {
       if (best.id !== state.selectedId) select(best.id);   // debounce: never restart the feed on the same fly
     } else {
       if (state.selectedId != null) deselect();
-      spawnRippleAt(pointer.x, pointer.y, STIR_COL);  // a little stir where you tapped (world coords)
+      // task 20④: the tap stimulus ripple is gone — an empty tap now just clears the selection.
     }
   };
   canvas.addEventListener("pointermove", (e) => {
@@ -133,7 +134,7 @@ export function bindPointer() {
     toLocal(e);
     pointer.inside = true; pointer.down = true;
     // a headstone under the press owns the gesture immediately (never pans or stirs)
-    if (state.showGraves) {
+    if (state.showGraves && !state.threeScene) {   // task 20②: 3D stone picking lives in scene3d._onCanvasClick
       let gg = null, gd = 16 / state.cam.z;
       for (const g of graveField) { const d = Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y); if (d < gd) { gd = d; gg = g; } }
       if (gg) { showEpitaph(gg); ptrs.delete(e.pointerId); return; }
@@ -184,7 +185,6 @@ export function bindZoomControls() {
   if (zo) zo.addEventListener("click", () => zoomAt(state.VW / 2, state.VH / 2, 1 / 1.28));
   if (zr) zr.addEventListener("click", () => resetView());
 }
-export function spawnRippleAt(x, y, color) {
-  if (state.ripples.length >= 10) state.ripples.shift();   // cap: rapid clicking can't pile up unbounded arcs
-  state.ripples.push({ x, y, t0: performance.now(), color });
-}
+// task 20④: spawnRippleAt removed — the tap stimulus rings are gone. state.ripples is never pushed to,
+// so the 2D fallback's ripple draw and the (already-deleted) 3D ripple pool both stay inert. Drag /
+// zoom / tap-select are untouched.
