@@ -95,9 +95,16 @@ export function arcNetworkTag(isTestnet: boolean): string {
  *    failure — the netting ledger never moves without a mined receipt, and the next cron re-reads the
  *    authoritative on-chain balance before signing, so no double-spend is possible.
  *  · registry commits (best-effort mirrors): a shorter bound; they must never eat the cron budget.
+ *
+ * P3 tail-latency: Arc finality is ~0.51s/block and a healthy tx confirms in 1–3s, so the old 45s/30s ceilings
+ * only ever bit on a genuinely stalled tx — and then held the serial input queue for the whole window, eating the
+ * cron budget that caused the 史官 freeze. Tightened to 15s/10s: still ~5× a normal confirm, but a stall now frees
+ * the queue fast. Safety is UNCHANGED — the netting ledger only moves on a MINED receipt, so a timeout reports
+ * failure without moving money and the next cron's resyncChainHeadFromRegistry re-reads the authoritative on-chain
+ * state (no double-spend, no wedge). Only the wait ceiling changed, never the settlement semantics.
  */
-export const RECEIPT_TIMEOUT_MS = 45_000;
-export const REGISTRY_RECEIPT_TIMEOUT_MS = 30_000;
+export const RECEIPT_TIMEOUT_MS = 15_000;
+export const REGISTRY_RECEIPT_TIMEOUT_MS = 10_000;
 
 // ============================== EIP-3009 (real settlement) ==============================
 //

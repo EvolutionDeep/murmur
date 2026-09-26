@@ -173,6 +173,11 @@ const KEY_WAR = "war:v1";
 const KEY_LINEAGE = "lineage:v1";
 const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
+/** P2 watchdog: how long after a cron ENDS its DO alarm fires (a short, cheap health/heartbeat beat). */
+const ALARM_WATCHDOG_MS = 90_000;
+/** P2 watchdog: a cron whose guard has been held past this (the ~900s DO wall) is presumed killed or silently
+ *  hung, so the alarm releases the reentrancy guard. Comfortably above a healthy post-P0 (<60s) cron. */
+const CRON_WEDGE_MS = 900_000;
 const MAX_STIMULI = 200;
 /** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage.
  *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash).
@@ -332,6 +337,9 @@ export class FlyStateDO {
   private pendingStimuli: StimulusEvent[] = [];
   /** Reentrancy guard so overlapping crons never drive the population concurrently. */
   private cronRunning = false;
+  /** P2: wall-clock ms when the in-flight cron was accepted (null while idle). The alarm watchdog compares
+   *  now − cronStartedAt against CRON_WEDGE_MS to detect a cron killed/hung past the DO wall and release the guard. */
+  private cronStartedAt: number | null = null;
   /** Set once the D1 archival table has been ensured this DO lifetime (avoids re-running DDL per cron). */
   private d1SchemaReady = false;
   /** The deterministic historian (era/record trackers) + its hot recent-chronicle buffer, lazily loaded. */
@@ -1176,7 +1184,7 @@ export class FlyStateDO {
     economy: AgentEconomy,
     entries: LineageEntry[],
     rows: LeaderRow[],
-    maxCommits = 6,
+    maxCommits = 3,
   ): Promise<number> {
     if (!this.cfg.lineageAddress || !this.cfg.economy.enabled) return 0;
     const addrById = new Map<number, string>();
@@ -2374,6 +2382,16 @@ export class FlyStateDO {
       return;
     }
     this.cronRunning = true;
+    // P2 heartbeat: stamp lastCron + cronStartedAt the INSTANT the cron is accepted, before any fan-out, so the
+    // frontend's "age since last cron" never doubles across a slow tick (the banner that read as a dead 史官 while
+    // the cron was merely busy). persist() rewrites the completion value at the end; this only makes the clock
+    // look alive during the tick. Best-effort — a storage hiccup here must never block the cron itself.
+    this.cronStartedAt = Date.now();
+    try {
+      await this.state.storage.put(KEY_LAST_CRON, this.cronStartedAt);
+    } catch (e) {
+      console.warn("[DO] cron start heartbeat failed (non-fatal):", (e as Error).message);
+    }
     try {
       await this.cronInner();
     } catch (e) {
@@ -2392,6 +2410,50 @@ export class FlyStateDO {
       }
     } finally {
       this.cronRunning = false;
+      this.cronStartedAt = null;
+      // P2 watchdog: arm the DO alarm 90s out. In the healthy path it just confirms the heartbeat; if the NEXT
+      // cron hangs and is killed at the ~900s wall (its finally never runs, so the guard stays stuck), the alarm
+      // — a separate invocation on this same warm isolate — detects it and releases the guard so the swarm can't
+      // freeze forever. Best-effort; setAlarm is not a fan-out (no subrequest), so it can't add cron latency.
+      try {
+        await this.state.storage.setAlarm(Date.now() + ALARM_WATCHDOG_MS);
+      } catch (e) {
+        console.warn("[DO] cron watchdog alarm arm failed (non-fatal):", (e as Error).message);
+      }
+    }
+  }
+
+  /**
+   * P2 DO alarm watchdog — 极简, no fan-out (never touches the swarm, shards or chain). Armed at the end of every
+   * cron (setAlarm now+ALARM_WATCHDOG_MS). Three cases:
+   *  · the guard is held AND the cron has been running past CRON_WEDGE_MS (the ~900s DO wall) ⇒ it was killed or
+   *    silently hung and never ran its finally, so RELEASE the reentrancy guard + re-stamp the heartbeat; the next
+   *    scheduled cron then runs instead of being skipped forever (the production freeze).
+   *  · the guard is held but the cron is still inside its budget ⇒ a legitimate in-flight tick: refresh the
+   *    heartbeat (so the age banner stays quiet) and RE-ARM, so the watchdog keeps polling until it either
+   *    finishes or crosses the wedge threshold.
+   *  · the guard is clear ⇒ the last cron finished cleanly and persist already stamped lastCron; do nothing and do
+   *    NOT re-arm, so a genuine all-stop is never masked by a synthetic heartbeat.
+   */
+  async alarm(): Promise<void> {
+    try {
+      const now = Date.now();
+      const runningFor = this.cronStartedAt != null ? now - this.cronStartedAt : null;
+      if (this.cronRunning && runningFor != null && runningFor > CRON_WEDGE_MS) {
+        console.error(
+          `[DO] alarm watchdog: cron wedged for ${Math.round(runningFor / 1000)}s (> ${CRON_WEDGE_MS / 1000}s) — releasing the reentrancy guard`,
+        );
+        this.cronRunning = false;
+        this.cronStartedAt = null;
+        await this.state.storage.put(KEY_LAST_CRON, now);
+        return;
+      }
+      if (this.cronRunning) {
+        await this.state.storage.put(KEY_LAST_CRON, now);
+        await this.state.storage.setAlarm(now + ALARM_WATCHDOG_MS);
+      }
+    } catch (e) {
+      console.warn("[DO] alarm watchdog failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2402,12 +2464,31 @@ export class FlyStateDO {
 
     // 1) Observe Arc whole-chain activity → market temperature. A flaky RPC must NOT kill the tick:
     //    on failure we hold the previous temperature so the population keeps a steady, calm state.
+    // P1: prefetch the two READ-ONLY chain samples CONCURRENTLY (Promise.allSettled) — sampleArcActivity's 64
+    //    getBlock and driveBourse's getLogs are independent RPC reads with NO signing, no nonce and no chain-head
+    //    dependency, so overlapping their latency carries none of the settlement-safety concerns that keep the
+    //    on-chain BROADCAST lanes strictly serial (see the flush/registry note in cronInner). Each leg keeps its
+    //    own best-effort guard and degrades exactly as before: an arc failure holds the previous temperature, a
+    //    bourse failure only means no coin reading this cron (this.bourseSignals stays null).
     let market: MarketState | null = null;
-    try {
-      const sample = await sampleArcActivity(this.cfg);
-      market = meter.update(sample);
-    } catch (e) {
-      console.warn("[DO] arc sample failed, holding last temperature:", (e as Error).message);
+    this.bourseSignals = null;
+    const [arcR, bourseR] = await Promise.allSettled([
+      sampleArcActivity(this.cfg),
+      this.cfg.bourse.enabled ? this.driveBourse() : Promise.resolve(null),
+    ]);
+    if (arcR.status === "fulfilled") {
+      try {
+        market = meter.update(arcR.value);
+      } catch (e) {
+        console.warn("[DO] meter update failed, holding last temperature:", (e as Error).message);
+      }
+    } else {
+      console.warn("[DO] arc sample failed, holding last temperature:", (arcR.reason as Error).message);
+    }
+    if (bourseR.status === "fulfilled") {
+      this.bourseSignals = bourseR.value ?? null;
+    } else {
+      console.warn("[DO] bourse sample failed (non-fatal):", (bourseR.reason as Error).message);
     }
 
     const temperature = market?.temperature ?? prevTemp;
@@ -2432,19 +2513,10 @@ export class FlyStateDO {
         };
     this.prevTemperature = temperature;
 
-    // 2b) ⑲ THE BOURSE — read the MURMUR tape (read-only getLogs, no signing) and fold it into the meter.
-    //     The signals feed BOTH legs: the historian's four coin detectors (step 7's ctx.bourse) and, below,
-    //     the coin-climate stimulus fold. Gated behind BOURSE_ENABLED (default OFF ⇒ bourseSignals stays
-    //     null and nothing anywhere changes). Best-effort: an RPC failure only means this cron has no coin
-    //     reading; the tick itself never blocks (lastBlock does not advance, so nothing is skipped).
-    this.bourseSignals = null;
-    if (this.cfg.bourse.enabled) {
-      try {
-        this.bourseSignals = await this.driveBourse();
-      } catch (e) {
-        console.warn("[DO] bourse sample failed (non-fatal):", (e as Error).message);
-      }
-    }
+    // 2b) ⑲ THE BOURSE — its read-only getLogs sample now runs CONCURRENTLY with the arc sample in the P1
+    //     prefetch at step 1 (this.bourseSignals is already set there). The signals feed BOTH legs: the
+    //     historian's four coin detectors (step 7's ctx.bourse) and, below, the coin-climate stimulus fold.
+    //     Gated behind BOURSE_ENABLED (default OFF ⇒ bourseSignals stays null and nothing anywhere changes).
 
     // 3) Collect the visitor stimuli queued since the last tick (injected on the first sub-tick only).
     const stimuli = this.pendingStimuli.splice(0, this.pendingStimuli.length);
@@ -2542,16 +2614,26 @@ export class FlyStateDO {
       }
     }
 
+    // P0-A: ONE merged fan-out advances all `subTicks` sub-ticks (each shard deserialises its brain ONCE, not
+    // once per sub-tick, and empty shards are skipped — P0-B) and returns one reduced snapshot per sub-tick,
+    // byte-for-byte the snapshots the old sequential swarm.step() loop produced (same per-sub-tick reduce, same
+    // vitality/decoder threading, same tickIndex = base+st+1). The heavy brain advance is a PURE read-out source
+    // for the culture/religion/rumor/economy folds below (none writes back into the connectome), so running all
+    // advances first and then folding each sub-tick's read-out is behaviour-identical to interleaving them.
+    const snapshots = await swarm.stepBatch(pulse, regime, stimuli, subSteps, subTicks, true);
     for (let st = 0; st < subTicks; st++) {
-      // commit on the final sub-tick so a sharded swarm persists its shards' brains once per cron
-      // (LocalSwarm ignores the flag — FlyStateDO.persist() writes its single population blob below).
-      snapshot = await swarm.step(pulse, regime, st === 0 ? stimuli : [], subSteps, st === subTicks - 1);
+      snapshot = snapshots[st] ?? null;
+      // Use the SNAPSHOT's own tickIndex (base+st+1), NOT swarm.getTickIndex() — after the merged batch the
+      // backend counter already sits at base+subTicks, so reading it here would stamp every fold with the final
+      // tick and break EIP-3009 nonce uniqueness + the culture/religion/rumor cadence. snapshot.tickIndex is the
+      // exact value the old per-sub-tick swarm.getTickIndex() returned at this point in the loop.
+      const tick = snapshot?.tickIndex ?? swarm.getTickIndex();
       // 4a-culture) Fashion moves at feeding speed: ONE contact round per cron (the st===0 cohort of
       // feeders/huddlers catches creeds, TTLs burn), then the creed override re-applies to EVERY
       // sub-tick's readings BEFORE the snapshot or the economy sees them. Only fap/role on the read-out
       // line are rewritten — bouts, fingerprints and the connectome never notice (same layer as computeBands).
       if (culture && snapshot) {
-        if (st === 0) culture.contagion(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null);
+        if (st === 0) culture.contagion(tick, snapshot.flies, (id) => economy?.houseOf(id) ?? null);
         culture.apply(snapshot.flies);
       }
       // 4a-religion) Faith moves at worship speed: ONE ritual round per cron (the st===0 cohort of huddlers/
@@ -2559,21 +2641,21 @@ export class FlyStateDO {
       // prophets and the four events), then the holy-day rest override re-applies to EVERY sub-tick's readings
       // — inert on a plain cron. Applied AFTER culture so the holy rest is the last word on the read-out line.
       if (religion && snapshot) {
-        if (st === 0) religion.ritual(swarm.getTickIndex(), snapshot.flies, (id) => economy?.houseOf(id) ?? null, regime);
-        religion.apply(snapshot.flies, swarm.getTickIndex());
+        if (st === 0) religion.ritual(tick, snapshot.flies, (id) => economy?.houseOf(id) ?? null, regime);
+        religion.apply(snapshot.flies, tick);
       }
       // 4a-rumor) ㉔ THE RUMOR MILL — the telling-day echo: on every RM_TELL_EVERYth tick the flies that
       // have heard the live tale are READ as what hearing looks like (GROOM — the whispering that IS
       // gossip in every market square; or HALT, the listening freeze, when the tale is heard gravely).
       // The religion contract: read-out line only, rare by construction, inert on every other cron.
-      if (rumorMill && snapshot) rumorMill.apply(snapshot.flies, swarm.getTickIndex());
+      if (rumorMill && snapshot) rumorMill.apply(snapshot.flies, tick);
       // 4b) Settle x402 micropayments from the drives this sub-tick produced. One-directional read-out
       //     of the neural layer — it never feeds back into the connectome.
       if (economy && snapshot && econBudget > 0) {
         const made = await economy.step(
           snapshot.flies,
           snapshot.collective,
-          swarm.getTickIndex(),
+          tick,
           econBudget,
           st === 0,   // cron boundary: the per-cron RAID gate rolls only on the first sub-tick, not all 6
         );
@@ -2586,6 +2668,14 @@ export class FlyStateDO {
       // NETTING flush (onchain only; no-op in simulated mode): broadcast the accumulated bilateral nets
       // whose |net| cleared the min-broadcast threshold or aged past the forced-flush bound. Real txs
       // happen HERE — once per cron at most — instead of one per micropay, amortising gas over many trades.
+      //
+      // P1 NONCE SAFETY — this broadcast stays STRICTLY SERIAL and is NOT run in a parallel lane alongside the
+      // arena/war/evolution commits below. flush() interleaves each USDC settle with a commitToRegistry() on the
+      // SHARED facilitator wallet AND threads a sequential proof-chain head (every net receipt embeds prevChain =
+      // proofChainHead, then advances it), so two concurrent broadcasts would both draw the same wallet nonce and
+      // the same prevChain — a nonce collision + a BadPrevHead revert that could wedge the registry chain. The
+      // safe P1 win is therefore the READ-ONLY parallel prefetch at step 1 (allSettled, no signing) + bounding this
+      // serial chain's length (anchorLineage maxCommits 6→3), not parallelising the money path.
       const flushed = await economy.flush(swarm.getTickIndex());
       cronSettlements.push(...flushed);
       deals += flushed.filter((s) => s.valid).length;

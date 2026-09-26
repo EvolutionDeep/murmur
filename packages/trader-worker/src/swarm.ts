@@ -93,6 +93,23 @@ export interface SwarmBackend {
     simSteps: number,
     commit: boolean,
   ): Promise<PopulationSnapshot>;
+  /**
+   * P0-A/B: advance `subTicks` sub-ticks in ONE merged fan-out and return one reduced snapshot per sub-tick
+   * (length === subTicks, ascending tickIndex). A sharded backend ships subTicks to each shard so a shard
+   * deserialises its brains ONCE per cron instead of once per sub-tick, and only calls shards that host a LIVE
+   * fly (an empty shard's read-outs were always ignored by the id-aligned reduce, so skipping it is behaviour-
+   * preserving). The LIGHT global reduce still runs here once per sub-tick with the SAME vitality + roster-
+   * decoder threading as sequential step() calls, so the returned snapshots are byte-for-byte what `subTicks`
+   * step() calls would have produced — the sub-tick data the coordinator folds is unchanged.
+   */
+  stepBatch(
+    pulse: MarketPulse,
+    regime: Regime,
+    stimuli: StimulusEvent[],
+    simSteps: number,
+    subTicks: number,
+    commit: boolean,
+  ): Promise<PopulationSnapshot[]>;
   getTickIndex(): number;
   getVitality(): number;
   size(): number;
@@ -181,6 +198,24 @@ export class LocalSwarm implements SwarmBackend {
     simSteps: number,
   ): Promise<PopulationSnapshot> {
     return this.population.step(pulse, regime, stimuli, simSteps);
+  }
+
+  async stepBatch(
+    pulse: MarketPulse,
+    regime: Regime,
+    stimuli: StimulusEvent[],
+    simSteps: number,
+    subTicks: number,
+  ): Promise<PopulationSnapshot[]> {
+    // Single-DO path: no fan-out to merge, so just run the SAME population.step() `subTicks` times (stimuli on
+    // the first only), exactly as the coordinator's old sequential loop did. Population.step threads vitality +
+    // decoders internally, so the snapshots are identical to the interleaved path.
+    const n = Math.max(1, Math.floor(subTicks));
+    const out: PopulationSnapshot[] = [];
+    for (let s = 0; s < n; s++) {
+      out.push(this.population.step(pulse, regime, s === 0 ? stimuli : [], simSteps));
+    }
+    return out;
   }
 
   getTickIndex(): number { return this.population.getTickIndex(); }
@@ -491,22 +526,58 @@ export class ShardedSwarm implements SwarmBackend {
     simSteps: number,
     commit: boolean,
   ): Promise<PopulationSnapshot> {
-    this.tickIndex++;
-    // Fan the HEAVY advance out to every shard IN PARALLEL — each runs in its own isolate with its own
-    // 128 MB + CPU budget, which is the whole point. Only the compact read-outs come back.
-    //
-    // NOTE on the fan-out width: a Worker invocation may have at most 6 subrequests simultaneously
-    // "waiting for response headers", but Cloudflare QUEUES (never rejects) any beyond the 6th until a
-    // slot frees. So firing all `shardCount` fetches at once is safe for any shard count — the runtime
-    // runs them in ~ceil(N/6) transparent waves. Each shard /advance is its OWN DO invocation, so it gets
-    // a fresh 30 s CPU budget and only integrates ONE sub-tick (simSteps), not the whole cron — which is
-    // why sharding also lifts the single-isolate CPU ceiling, not just the 128 MB memory one.
-    const body = JSON.stringify({ pulse, stimuli, simSteps, persist: commit });
-    // One misbehaving shard (e.g. its storage write timing out and the DO resetting) must NOT abort the
-    // whole cron: a rejected Promise.all here would skip the coordinator's persist() and freeze lastCron.
-    // So each shard gets ONE bounded retry, then degrades to "no read-outs this sub-tick" — that shard's
-    // flies simply hold still for this cron and catch up on the next, instead of stalling the clock.
-    const advanceOne = async (stub: (typeof this.stubs)[number], k: number): Promise<{ readOuts: FlyReadOut[] }> => {
+    // A single sub-tick is just a batch of one — one fan-out code path (and it inherits P0-B's empty-shard skip).
+    const [snap] = await this.stepBatch(pulse, regime, stimuli, simSteps, 1, commit);
+    return snap;
+  }
+
+  /**
+   * P0-B: the shard indices that host at least one LIVE roster fly. An empty shard has no fly to advance, so its
+   * /advance always returned read-outs the id-aligned reduce ignores (and its state never changes, so the commit
+   * persist is a no-op) — skipping it is behaviour-preserving and cuts the ~38 dead RPCs/cron at the current
+   * 100-shard × 1-fly layout. Derived from the coordinator's OWN roster via the SAME stable shardOf() the routing
+   * uses (never guessed shard-side), so the reduce still sees every live fly exactly once.
+   */
+  private activeStubIndices(): number[] {
+    const active = new Set<number>();
+    for (const r of this.roster) {
+      active.add(shardOf(this.cfg.maxLivePopulation, this.cfg.shardCount, r.id));
+    }
+    return Array.from(active).sort((a, b) => a - b);
+  }
+
+  async stepBatch(
+    pulse: MarketPulse,
+    regime: Regime,
+    stimuli: StimulusEvent[],
+    simSteps: number,
+    subTicks: number,
+    commit: boolean,
+  ): Promise<PopulationSnapshot[]> {
+    const n = Math.max(1, Math.floor(subTicks));
+    // P0-A: ONE merged fan-out carries all `n` sub-ticks, so each shard deserialises its brains ONCE per cron
+    // instead of `n` times. P0-B: only shards with a live fly are called. Fan the HEAVY advance out IN PARALLEL
+    // — each shard runs in its own isolate with its own 128 MB + CPU budget. A Worker invocation may have at most
+    // 6 subrequests awaiting headers, but Cloudflare QUEUES (never rejects) the rest, so firing every active
+    // shard at once is safe for any shard count (the runtime runs them in ~ceil(active/6) transparent waves).
+    const active = this.activeStubIndices();
+    // P0-A/B observable evidence: one line per cron showing the merged fan-out width — `active` live shards out
+    // of `stubs.length` total (empty shards skipped), each carrying all `n` sub-ticks in ONE /advance. The old path
+    // fired stubs.length × n RPCs/cron; this fires active.length, so the wave count drops ~n × (total/active).
+    console.log(
+      `[swarm] stepBatch fan-out: ${active.length}/${this.stubs.length} shards (empty skipped) × ${n} sub-tick(s) merged, commit=${commit}`,
+    );
+    // A merged advance integrates n segments in ONE isolate, so its ceiling scales with n — bounded well inside
+    // the 55s index.ts backstop (6 segments ⇒ 40s). Every signal is created at t=0 and the whole fan-out is
+    // hard-bounded by this one ceiling, so a wedged shard still degrades instead of hanging the cron.
+    const advanceTimeoutMs = n > 1 ? Math.min(45000, ADVANCE_TIMEOUT_MS * n + 10000) : ADVANCE_TIMEOUT_MS;
+    const body = JSON.stringify({ pulse, stimuli, simSteps, persist: commit, subTicks: n });
+    // One misbehaving shard must NOT abort the whole cron: a rejected Promise.all would skip the coordinator's
+    // persist() and freeze lastCron. So each shard gets ONE bounded retry (skipped on a timeout — a saturated
+    // shard won't recover within this cron), then degrades to "no read-outs" for ALL n segments: its flies hold
+    // still this cron and catch up on the next, instead of stalling the clock.
+    const advanceOne = async (stub: DurableObjectStub, k: number): Promise<FlyReadOut[][]> => {
+      const empty: FlyReadOut[][] = Array.from({ length: n }, () => []);
       for (let attempt = 0; ; attempt++) {
         try {
           const r = await stub.fetch(
@@ -514,38 +585,58 @@ export class ShardedSwarm implements SwarmBackend {
               method: "POST",
               headers: { "content-type": "application/json" },
               body,
-              // The ceiling that keeps a wedged shard from hanging the cron forever (see ADVANCE_TIMEOUT_MS).
-              signal: AbortSignal.timeout(ADVANCE_TIMEOUT_MS),
+              // The ceiling that keeps a wedged shard from hanging the cron forever (see advanceTimeoutMs).
+              signal: AbortSignal.timeout(advanceTimeoutMs),
             }),
           );
           if (!r.ok) throw new Error(`shard advance failed: HTTP ${r.status}`);
-          return (await r.json()) as { readOuts: FlyReadOut[] };
+          const parsed = (await r.json()) as { readOuts?: FlyReadOut[]; readOutsBySubTick?: FlyReadOut[][] };
+          if (Array.isArray(parsed.readOutsBySubTick) && parsed.readOutsBySubTick.length === n) {
+            return parsed.readOutsBySubTick;
+          }
+          // Tolerate an older shard that only returns the flat `readOuts` (single segment): valid when n===1.
+          if (n === 1 && Array.isArray(parsed.readOuts)) return [parsed.readOuts];
+          return empty;
         } catch (e) {
-          // A timeout means the shard is saturated, not briefly glitching — do NOT burn a second window
-          // retrying it this sub-tick; degrade immediately so 6 sub-ticks stay inside the 60s cadence. Any
-          // other error (e.g. a one-off storage reset) still gets the single retry the old design intended.
           const timedOut = (e as Error)?.name === "TimeoutError" || (e as Error)?.name === "AbortError";
           if (attempt === 0 && !timedOut) continue;
-          console.warn(`[swarm] shard ${k} advance ${timedOut ? "timed out" : "failed twice"}; skipping its read-outs this sub-tick:`, (e as Error).message);
-          return { readOuts: [] };
+          console.warn(`[swarm] shard ${k} advance ${timedOut ? "timed out" : "failed twice"}; skipping its read-outs this cron:`, (e as Error).message);
+          return empty;
         }
       }
     };
-    const results = await Promise.all(this.stubs.map((stub, k) => advanceOne(stub, k)));
-    const readOuts: FlyReadOut[] = [];
-    for (const res of results) readOuts.push(...res.readOuts);
+    const results = await Promise.all(
+      active.map((k) => {
+        const stub = this.stubs[k];
+        return stub ? advanceOne(stub, k) : Promise.resolve(Array.from({ length: n }, () => [] as FlyReadOut[]));
+      }),
+    );
 
-    // LIGHT global reduce here in the coordinator (the population bands need every fly at once).
-    const { readings, collective, behaviors, vitality } = reduceReadOuts(readOuts, this.roster, {
-      pulse,
-      regime,
-      vitality: this.vitality,
-    });
-    this.lastBehavior.clear();
-    for (let i = 0; i < this.roster.length; i++) this.lastBehavior.set(this.roster[i].id, behaviors[i]);
-    this.vitality = vitality;
+    // Gather each sub-tick's read-outs across shards: allSegs[s] = every live fly's read-out at sub-tick s.
+    const allSegs: FlyReadOut[][] = Array.from({ length: n }, () => []);
+    for (const segs of results) {
+      for (let s = 0; s < n; s++) allSegs[s].push(...(segs[s] ?? []));
+    }
 
-    return { tickIndex: this.tickIndex, collective, flies: readings };
+    // LIGHT global reduce per sub-tick, threading vitality + the roster decoders EXACTLY as sequential step()
+    // calls did (tickIndex++ then reduce with the prior vitality), so the returned snapshots are byte-for-byte
+    // identical to the old interleaved loop — the heavy advance is a pure read-out source for the coordinator's
+    // culture/religion/economy folds (none writes back into the connectome), so reducing all n segments after
+    // the merged advance is equivalent to reducing each between advances.
+    const snapshots: PopulationSnapshot[] = [];
+    for (let s = 0; s < n; s++) {
+      this.tickIndex++;
+      const { readings, collective, behaviors, vitality } = reduceReadOuts(allSegs[s], this.roster, {
+        pulse,
+        regime,
+        vitality: this.vitality,
+      });
+      this.lastBehavior.clear();
+      for (let i = 0; i < this.roster.length; i++) this.lastBehavior.set(this.roster[i].id, behaviors[i]);
+      this.vitality = vitality;
+      snapshots.push({ tickIndex: this.tickIndex, collective, flies: readings });
+    }
+    return snapshots;
   }
 
   async snapshotFly(flyId: number): Promise<FlyNeuralSnapshot | null> {

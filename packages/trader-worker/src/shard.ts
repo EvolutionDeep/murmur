@@ -193,8 +193,15 @@ export class FlyShardDO {
   /**
    * HEAVY half of the tick for this slice: drive every fly with the shared pulse (+ stimuli) and advance
    * its spiking net, returning only the compact read-outs. The coordinator reduces them globally. Brains
-   * persist on the cron's commit sub-tick (persist=true), not on every sub-tick — mirroring the
-   * single-DO path's once-per-cron write.
+   * persist on the cron's commit (persist=true), not on every sub-tick — mirroring the single-DO path's
+   * once-per-cron write.
+   *
+   * P0-A (merged sub-ticks): the coordinator now ships the WHOLE cron's `subTicks` in ONE invocation, so this
+   * isolate deserialises its ~1 MB/fly brains exactly ONCE (ensureFlies caches this.flies) instead of once per
+   * sub-tick — that brain I/O, not the arithmetic, was the fan-out's dominant cost. Each segment still runs the
+   * identical advanceFlies over the SAME cached brains in sequence and collects its OWN read-outs (stimuli land
+   * only on the first segment, mirroring the coordinator's st===0 injection), and the brains persist ONCE at the
+   * end. subTicks defaults to 1 ⇒ the legacy single-segment shape, so an unchanged coordinator still works.
    */
   private async advance(req: Request): Promise<Response> {
     const body = (await req.json()) as {
@@ -202,11 +209,19 @@ export class FlyShardDO {
       stimuli?: StimulusEvent[];
       simSteps: number;
       persist?: boolean;
+      subTicks?: number;
     };
     const flies = await this.ensureFlies();
-    const readOuts: FlyReadOut[] = advanceFlies(flies, body.pulse, body.stimuli ?? [], body.simSteps);
+    const subTicks = Math.max(1, Math.floor(body.subTicks ?? 1));
+    const segs: FlyReadOut[][] = [];
+    for (let s = 0; s < subTicks; s++) {
+      segs.push(advanceFlies(flies, body.pulse, s === 0 ? (body.stimuli ?? []) : [], body.simSteps));
+    }
     if (body.persist) await this.persistFlies();
-    return json({ shardIndex: this.shardIndex, readOuts });
+    // readOutsBySubTick carries every segment (length === subTicks) for the coordinator's local per-sub-tick
+    // reduce; readOuts stays the LAST segment so a coordinator that only reads the legacy field still sees a
+    // valid single-tick read-out.
+    return json({ shardIndex: this.shardIndex, readOuts: segs[segs.length - 1], readOutsBySubTick: segs });
   }
 
   /**
