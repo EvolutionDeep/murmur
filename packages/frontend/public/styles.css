@@ -857,12 +857,20 @@ body.laureate-open .zoom-controls { opacity: 0; pointer-events: none; }
   border-left: var(--edge-gilt);
   box-shadow: var(--shadow-3);
   transform: translateX(100%); opacity: 0.999;
-  transition: transform var(--t-slow);
+  /* parked off-screen the sheet must paint NOTHING: its 60px-blur shadow used to bleed left over
+     the viewport's right edge as a dark band on the ocean. visibility:hidden kills the paint (and
+     the tab-order leak) while the delayed flip keeps the shadow alive through the slide-out. */
+  visibility: hidden;
+  transition: transform var(--t-slow), visibility 0s linear var(--t-slow);
   pointer-events: none;
 }
 .wallets { z-index: 11; width: clamp(280px, 30vw, 372px); }
 .drawer  { z-index: 12; width: clamp(300px, 34vw, 440px); }
-.wallets.open, .drawer.open { transform: translateX(0); pointer-events: auto; }
+.wallets.open, .drawer.open {
+  transform: translateX(0); pointer-events: auto;
+  visibility: visible;
+  transition: transform var(--t-slow), visibility 0s linear 0s;
+}
 body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 
 /* --- the shared sheet head: Cinzel small caps on a fading gilt rule --- */
