@@ -146,12 +146,13 @@
   --stack-2: 76px;    /* #era-hud      */
 
   /* ---- the right-edge control stack (task 26②) ----------------------------------------
-     Bottom-right, reading upward: chronicle pill → canary pill → zoom cluster. Each rung is a
-     44px-tall pill (zoom is 92px) plus a 12px air gap, so the three never intersect. */
+     Bottom-right, reading upward: chronicle pill → canary pill → temple pill → zoom cluster.
+     Each rung is a 66px-tall pill plus a 12px air gap, so they never intersect. */
   --dock-1: 88px;     /* .chron-btn  bottom offset */
   --dock-h: 66px;     /* both dock pills are built to the same deterministic height */
   --dock-2: calc(var(--dock-1) + var(--dock-h) + 12px);   /* .canary-btn, one 12px air gap up */
-  --dock-w: 172px;    /* shared pill width for chron / canary */
+  --dock-3: calc(var(--dock-2) + var(--dock-h) + 12px);   /* .temple-btn, one 12px air gap above canary */
+  --dock-w: 172px;    /* shared pill width for chron / canary / temple */
   --zoom-h: 100px;    /* the left-edge zoom cluster: 3 x 28px rungs + 2 x 4px gaps + 2 x 4px pad */
   /* how far panel-temp is lifted off the bottom edge. 0 on desktop; the tablet breakpoint raises it
      to clear the layer-toggle dock, and the cap formulas below read it so the arithmetic stays true. */
@@ -2074,23 +2075,30 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
    never a per-frame layer, so it stays off the render hot path). The drawer itself is quiet
    vellum + gold, in keeping with the codex. Font tokens map to this codebase's --sans / --mono. */
 .temple-btn {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; margin-top: 6px;
-  padding: 8px 14px;
+  position: fixed; z-index: 6;
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--dock-3) + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: var(--dock-w); min-height: var(--dock-h);
+  padding: 8px 10px;
   border: 1px solid var(--gold);
-  border-radius: var(--r-chip, 6px);
-  background: linear-gradient(135deg, rgba(var(--gold-rgb), 0.20), rgba(var(--gold-rgb), 0.07));
+  border-radius: var(--r-leaf);
+  background: linear-gradient(135deg, rgba(var(--gold-rgb), 0.24), rgba(var(--gold-rgb), 0.09));
   color: var(--gold-lit);
-  font: 600 0.82rem/1 var(--sans);
-  letter-spacing: 0.04em; text-transform: uppercase; text-align: center;
+  font: 600 0.78rem/1 var(--sans);
+  letter-spacing: 0.05em; text-transform: uppercase; text-align: center;
+  box-shadow: var(--shadow-1);
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  transition: transform var(--t-fast) ease, border-color 0.2s ease, color 0.2s ease,
+              box-shadow var(--t-fast) ease, opacity var(--t-med) ease;
   animation: temple-glow 2.4s ease-in-out infinite;
-  position: relative;
-  z-index: 7;
 }
 .temple-btn .temple-orn { font-size: 1.05em; filter: drop-shadow(0 0 3px rgba(var(--gold-rgb), 0.55)); }
-.temple-btn:hover { transform: scale(1.03); border-color: var(--gold-lit); color: #fff; }
+.temple-btn:hover {
+  transform: translateY(-2px); border-color: var(--gold-lit); color: #fff;
+  box-shadow: var(--shadow-2);
+}
+.temple-btn:active { transform: translateY(0); }
 .temple-btn:focus-visible { box-shadow: var(--ring); }
 @keyframes temple-glow {
   0%, 100% { box-shadow: 0 0 8px rgba(217,185,104,0.30), inset 0 0 4px rgba(217,185,104,0.10); }
@@ -2098,8 +2106,10 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 }
 @media (prefers-reduced-motion: reduce) { .temple-btn { animation: none; box-shadow: 0 0 12px rgba(217,185,104,0.35); } }
 body.temple-open .temple-btn { opacity: 0; pointer-events: none; }
-body.temple-open .panel-pop { opacity: 0.1; pointer-events: none; }
+body.temple-open .canary-btn, body.temple-open .chron-btn { opacity: 0; pointer-events: none; }
+body.temple-open .panel-pop, body.temple-open .panel-econ, body.temple-open .panel-temp { opacity: 0.1; pointer-events: none; }
 body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
+body.canary-open .temple-btn, body.chron-open .temple-btn, body.ins-open .temple-btn { opacity: 0; pointer-events: none; }
 
 /* Temple drawer internals */
 .drawer.temple { width: clamp(320px, 38vw, 480px); }
@@ -2266,8 +2276,9 @@ body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
        Bottom dock, reading upward, with a standing 8-12px air gap between rungs:
          chronicle pill   bottom safe+12, 44 tall  ⇒ [VH-56,  VH-12]
          canary pill      bottom safe+64, 44 tall  ⇒ [VH-108, VH-64]
-         layer tray       bottom safe+116, ≤88 tall ⇒ [VH-204, VH-116]
-       and body padding-bottom safe+224 keeps the scrolling column's last pixel 20px below the tray. */
+         temple pill      bottom safe+120, 44 tall ⇒ [VH-164, VH-120]
+         layer tray       bottom safe+176, ≤88 tall ⇒ [VH-264, VH-176]
+       and body padding-bottom safe+284 keeps the scrolling column's last pixel 20px below the tray. */
 @media (max-width: 680px), (max-height: 600px) {
   /* clip (not just hidden) so the off-canvas fixed sheets can never add horizontal scroll width; the
      page still scrolls vertically. Safe-area aware because viewport-fit=cover is set. */
@@ -2287,8 +2298,8 @@ body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
   /* first leaf clears the (wrapping) pinned topbar + the era HUD + the watchdog banner, and leaves
      a band of artwork above it */
   .panel-econ { margin-top: clamp(120px, 24vh, 260px); }
-  /* last leaf in the column must clear the fixed bottom dock (three rungs, 204px + a 20px margin) */
-  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 224px); }
+  /* last leaf in the column must clear the fixed bottom dock (four rungs, 264px + a 20px margin) */
+  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 284px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
@@ -2322,7 +2333,7 @@ body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
   .layer-toggles {
     left: 0; right: 0; margin-inline: auto; transform: none; top: auto;
     width: max-content; max-width: 94vw;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 116px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
     z-index: 20; justify-content: center; flex-wrap: wrap;
     transition: opacity var(--t-med) ease;
   }
@@ -2361,10 +2372,19 @@ body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
   .canary-btn .canary-word { font-size: 13px; margin-top: 0; }
   .canary-btn .canary-badge { display: none; }
 
+  /* the Temple trigger joins the dock as a golden centred row pill above the Canary pill */
+  .temple-btn {
+    left: 0; right: 0; margin-inline: auto; width: max-content; max-width: 92vw;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 120px);
+    min-height: 44px; padding: 10px 22px; z-index: 20;
+    flex-direction: row; align-items: center; justify-content: center; gap: 9px;
+    border-radius: var(--r-pill);
+  }
+
   /* inspector rises above the dock and clears the notch at the bottom */
   .inspector {
     z-index: 22; max-height: 70vh;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 216px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 276px);
   }
 
   /* ---- touch targets: nothing tappable is smaller than 40px on a phone ---- */
@@ -2375,7 +2395,6 @@ body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
   .layer-toggles .layer-btn { min-height: 40px; padding: 10px 14px; font-size: 10px; }
   .wallets-btn, .hist-btn, .proofs-btn, .brain-btn,
   .pulse-btn, .predict-btn, .arena-btn { min-height: 40px; padding: 11px 12px; }
-  .temple-btn { min-height: 40px; padding: 11px 12px; }
   .lang-select { min-height: 40px; padding: 10px 24px 10px 12px; font-size: 11px; }
   .chron-tab { min-height: 40px; padding: 10px 12px; }
   .wallet-row { min-height: 44px; }
@@ -2536,7 +2555,8 @@ html[dir="rtl"] #era-hud { direction: rtl; }
      content — the sheet has its 40x40 close button, so the dock steps aside instead */
   body[class*="-open"] .layer-toggles,
   body[class*="-open"] .chron-btn,
-  body[class*="-open"] .canary-btn { opacity: 0; pointer-events: none; }
+  body[class*="-open"] .canary-btn,
+  body[class*="-open"] .temple-btn { opacity: 0; pointer-events: none; }
 }
 @media (max-height: 600px) {
   /* short viewports (landscape phones, small monitors): there is no free rung between the econ
