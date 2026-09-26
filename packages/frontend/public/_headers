@@ -103,3 +103,10 @@
 # task 52: the eight chronicle institution landmarks — bare-imported by scene3d.js
 /institutions.js
   Cache-Control: no-cache, must-revalidate
+
+# task 55: land pixel system — bare-imported by main.js
+/landLayer.js
+  Cache-Control: no-cache, must-revalidate
+
+/landDrawer.js
+  Cache-Control: no-cache, must-revalidate

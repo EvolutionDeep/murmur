@@ -590,13 +590,17 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     HERO_SUMMONING: "From the flame, hero {heroName} was summoned by {address} — marked by destiny.",
     EPOCH_SHAPING: "The temple forged a new epoch: '{epochName}' under the {regime} regime — history bends to divine will.",
     WONDER_FOUNDATION: "The wonder '{wonderName}' was founded in {nationName} by {address} — an eternal monument to sacrifice.",
+    // ㉟ LAND — burn-to-claim pixel parcels. Byte-for-byte the server chronicler TEMPLATES
+    //     (a single drifted char and every visitor's "prove no LLM" banner goes red on these lines).
+    LAND_SOLD: "Parcel {parcel} claimed by {owner} for {price} MURMUR, burned forever.",
+    LAND_OVERRIDDEN: "Parcel {parcel} seized by {owner} \u2014 image overridden ({n}th time) for {price} MURMUR.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60, WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120, WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60, ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60, ORACLE_WHISPER: 3, CULTURAL_SEED: 6, DIRECTED_MUTATION: 12, MIRACLE_HARVEST: 12, MIRACLE_PLAGUE: 24, MIRACLE_REVELATION: 18, MIRACLE_MIGRATION: 12, NATION_BLESSING: 24, DIVINE_DECREE: 60, HERO_SUMMONING: 120, EPOCH_SHAPING: 200, WONDER_FOUNDATION: 500 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60, WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120, WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60, ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60, ORACLE_WHISPER: 3, CULTURAL_SEED: 6, DIRECTED_MUTATION: 12, MIRACLE_HARVEST: 12, MIRACLE_PLAGUE: 24, MIRACLE_REVELATION: 18, MIRACLE_MIGRATION: 12, NATION_BLESSING: 24, DIVINE_DECREE: 60, HERO_SUMMONING: 120, EPOCH_SHAPING: 200, WONDER_FOUNDATION: 500, LAND_SOLD: 6, LAND_OVERRIDDEN: 6 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -845,6 +849,12 @@ export const state = {
   templeSelected: null,    // { kind, tier, params }
   templeBal: null,         // connected wallet's MURMUR balance (atomic BigInt)
   lastTemplePoll: 0,
+  // ㉟ Land — pixel parcel purchase system (task 55)
+  landOpen: false,
+  landLayer: null,          // LandLayer instance
+  landParcelId: -1,         // currently viewed parcel
+  landInfo: null,           // { parcel, landMeta, price, isOverride, overrides }
+  landBusy: false,
   synthPhase: Math.random() * 100,
   synthTick: 0,
 };

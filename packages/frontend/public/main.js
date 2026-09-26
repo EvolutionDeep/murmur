@@ -10,6 +10,8 @@ import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory
 import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js';
 import { ThreeScene } from './scene3d.js';
 import { WalkMode } from './walkMode.js';
+import { LandLayer } from './landLayer.js';
+import { openLand, closeLand, paintLand } from './landDrawer.js';
 import { loadDelaunay } from './nations.js';
 import { updateMotes, updateSim } from './sim.js';
 
@@ -120,10 +122,16 @@ export function rerenderAll() {
     if (state.predictOpen && state.predictData) paintPredict();
     if (state.arenaOpen && state.arenaData) paintArena();
     if (state.templeOpen && state.templeData) paintTemple();
+    if (state.landOpen) paintLand();
     if (state.walkMode) state.walkMode.paintChrome();   // task 48: re-localise walk button tooltip
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;
+// task 55: expose close fns on window so landDrawer.js can call them without circular imports
+window.__closeChron = closeChron;
+window.__closeCanary = closeCanary;
+window.__closeTemple = closeTemple;
+window.__closeWallets = closeWallets;
 export function bindUI() {
   $("ins-close").addEventListener("click", deselect);
   const lsel = $("lang-select");
@@ -229,6 +237,8 @@ export function bindUI() {
     if (e.key !== "Enter" && e.key !== " ") return;
     const card = e.target.closest(".tp-card"); if (card && !card.classList.contains("disabled")) { e.preventDefault(); templeSelectKind(card.dataset.kind); }
   });
+  // task 55: land drawer close button
+  const ldc = $("land-close"); if (ldc) ldc.addEventListener("click", closeLand);
   // task 48: walk mode button
   const wkb = $("walk-btn"); if (wkb) wkb.addEventListener("click", () => { if (state.walkMode) state.walkMode.toggle(); });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
@@ -248,7 +258,7 @@ export function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else deselect();
+    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else deselect();
   });
 }
 // ================= boot =================
@@ -270,6 +280,19 @@ export async function boot() {
       // task 52: clicking a chronicle institution landmark opens the codex on that volume
       state.threeScene.onInstitutionClick = (vol) => { try { openChron(); openChronVol(vol); } catch (e) { console.warn("[murmur] openChronVol", e); } };
     } catch (e) { console.warn("[murmur] WalkMode init failed:", e); }
+  }
+  // task 55: land pixel layer — 3D grid visualization + purchase drawer trigger
+  if (state.threeScene) {
+    try {
+      state.landLayer = new LandLayer(state.threeScene);
+      state.landLayer.onParcelClick = (parcelId) => { try { openLand(parcelId); } catch (e) { console.warn("[murmur] openLand", e); } };
+      // hook into the scene update loop
+      const origUpdate = state.threeScene.update.bind(state.threeScene);
+      state.threeScene.update = function (sim, econCities, now) {
+        origUpdate(sim, econCities, now);
+        try { if (state.landLayer) state.landLayer.update(0, now); } catch (e) { /* non-fatal */ }
+      };
+    } catch (e) { console.warn("[murmur] LandLayer init failed:", e); }
   }
   resize();
   bindUI();

@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=104" />
+  <link rel="stylesheet" href="./styles.css?v=105" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -582,6 +582,16 @@
     <div class="drawer-body" id="temple-body"></div>
   </aside>
 
+  <!-- ============ ㉟ THE LAND (right drawer) — burn MURMUR to claim a pixel parcel ============ -->
+  <aside class="drawer land-drawer" id="land-drawer" hidden data-i18n-aria="land.aria" aria-label="Land purchase">
+    <div class="drawer-head">
+      <span class="drawer-title" data-i18n="land.title">Land Purchase</span>
+      <span class="drawer-sub" id="land-sub" data-i18n="land.sub">burn MURMUR · claim a pixel</span>
+      <button class="drawer-close" id="land-close" data-i18n-aria="land.close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body" id="land-body"></div>
+  </aside>
+
   <!-- ============ the Laureate (right drawer) — the swarm's own poet: neural activity + on-chain reality decoded into verifiable verse ============ -->
   <aside class="drawer laureate" id="laureate" hidden data-i18n-aria="laureate.aria" aria-label="the Laureate: the swarm's own poet">
     <div class="drawer-head">
@@ -637,6 +647,6 @@
        bottom-right stack is chron-btn → canary-btn → temple-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=137" type="module"></script>
+  <script src="./main.js?v=138" type="module"></script>
 </body>
 </html>
