@@ -76,6 +76,10 @@ import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.j
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
 import { ReformLayer, type ReformReadout, type ReformStepResult, type ReformIouRecord } from "./reform.js";
+import {
+  TempleLayer, isTempleKind, KIND_TIER,
+  type TempleReadout, type TempleStepContext, type TempleStepResult, type TempleChainClient, type TempleReceipt,
+} from "./temple.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -93,7 +97,7 @@ import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, b
 import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
-import type { Address, LocalAccount } from "viem";
+import type { Address, Hex, LocalAccount } from "viem";
 import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext, type ShockKind } from "./chronicler.js";
 
 /**
@@ -163,6 +167,11 @@ const KEY_GUARDIANS = "guardians:v1";
  *  — its OWN key: a corrupt/absent blob restarts a cold reform layer, never ledger state. Bounded (one small
  *  JSON of scalar counters, no growing rings), DO-safe. Absent while REFORM_ENABLED=false (the shipped default). */
 const KEY_REFORM = "reform:v1";
+/** ㉙ The Temple layer (the burn queue, the dedup ring, the hero roll, the wonders, the standing buffs)
+ *  — its OWN key: a corrupt/absent blob restarts a COLD temple (empty queue, no back-dated burn honoured),
+ *  never ledger state. Bounded (queue ≤20, dedup ring ≤100, history ≤200, heroes ≤100, buffs ≤5), DO-safe.
+ *  Absent while TEMPLE_ENABLED=false; the shipped default is ON (the ㉔-㉗ armed-on-code-defaults口径). */
+const KEY_TEMPLE = "temple:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -310,6 +319,14 @@ export class FlyStateDO {
    * reform layer is inert, so the chronicle context stays byte-for-byte today's.
    */
   private reformEvents: ReformStepResult["events"] = [];
+  /** ㉙ The Temple layer (burn-to-influence) — null while TEMPLE_ENABLED=false (byte-for-byte inert). */
+  private templeLayer: TempleLayer | null = null;
+  /**
+   * ㉙ Temple interventions the CURRENT cron executed, consumed by observeChronicle (step 7) and cleared each
+   * tick. Transient (never persisted — the layer's OWN history ring is the durable record): a chronicle line
+   * is told once from the cron that saw it. Empty while the temple is inert, so ctx.temple stays absent.
+   */
+  private templeExecuted: TempleStepResult["executed"] = [];
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -717,6 +734,21 @@ export class FlyStateDO {
     const stored = await this.state.storage.get<string>(KEY_REFORM);
     this.reformLayer = stored ? ReformLayer.deserialize(stored) : new ReformLayer({ enabled: true });
     return this.reformLayer;
+  }
+
+  /**
+   * ㉙ Lazily load the Temple layer (null while TEMPLE_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts a COLD temple (empty queue, no heroes, no buffs): no burn is back-dated and
+   * no intervention is replayed, so an eviction can never double-honour a tx hash — the persisted dedup ring
+   * is the replay guard. The temple is pure read-out + its own bounded bookkeeping; its ONLY chain touch is
+   * verifyBurn (a read-only getTransactionReceipt), so it can never spend or sign.
+   */
+  private async ensureTemple(): Promise<TempleLayer | null> {
+    if (!this.cfg.temple.enabled) return null;
+    if (this.templeLayer) return this.templeLayer;
+    const stored = await this.state.storage.get<string>(KEY_TEMPLE);
+    this.templeLayer = stored ? TempleLayer.deserialize(stored) : new TempleLayer({ enabled: true });
+    return this.templeLayer;
   }
 
   /**
@@ -1390,6 +1422,7 @@ export class FlyStateDO {
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
     if (this.reformLayer) batch[KEY_REFORM] = this.reformLayer.serialize();
+    if (this.templeLayer) batch[KEY_TEMPLE] = this.templeLayer.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1842,6 +1875,21 @@ export class FlyStateDO {
             };
           })()
         : null;
+      // ㉙ TEMPLE: fold the interventions THIS cron executed ONLY while TEMPLE is on AND driveTemple carried
+      // one out. Off (or an inert cron) ⇒ no `temple` key ⇒ the historian's twelve temple detectors never speak
+      // (byte-for-byte the pre-Temple build). Each executed edge carries its own chronicle tokens in `detail`
+      // (flyName / nationName / amount / path / discovery / …), so the server text and the browser re-derivation
+      // agree byte-for-byte. driveTemple precedes observeChronicle, so templeExecuted is this cron's.
+      const temple = this.cfg.temple.enabled && this.templeExecuted.length
+        ? {
+            executed: this.templeExecuted.map((e) => ({
+              kind: e.kind,
+              address: e.address,
+              flyName: typeof e.detail?.flyName === "string" ? (e.detail.flyName as string) : undefined,
+              detail: e.detail,
+            })),
+          }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1946,6 +1994,7 @@ export class FlyStateDO {
         works,
         guardians,
         reform,
+        temple,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2362,6 +2411,105 @@ export class FlyStateDO {
   }
 
   /**
+   * ㉙ TEMPLE — burn-to-influence. Runs AFTER driveReform (so the cron's FINAL economy snapshot + the reform
+   * commons pool are already reckoned) and BEFORE observeChronicle (so this cron's executed interventions fold
+   * into the historian's context). PURE read-out + the layer's own bounded bookkeeping: step() reads the
+   * context published here and returns INSTRUCTIONS + narratable edges; it moves NO real money and signs
+   * nothing (the harvest is zero-gas accounting, the decree only turns the simulated credit knobs, exactly
+   * like the commons' own legislation). The felt legs are folded best-effort and guarded so a temple can never
+   * break the live tick. Inert while TEMPLE_ENABLED=false.
+   */
+  private async driveTemple(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    this.templeExecuted = [];
+    const temple = await this.ensureTemple();
+    if (!temple) return;
+    try {
+      const econ = this.lastEconomy;
+      // The cooldown/expiry clock is the snapshot's own sub-tick index (never swarm.getTickIndex(), which has
+      // already advanced past the stepBatch by the time the membranes drive) — the same discipline as reform.
+      const tickIndex = snapshot?.tickIndex ?? tick;
+      const liveFlyIds = (snapshot?.flies ?? []).map((f) => f.id);
+      const flyNames = new Map<number, string>();
+      for (const id of liveFlyIds) flyNames.set(id, `fly #${id}`);
+      // Nations are the dynasty's houses (id + name); the temple only reads id/name, so members stays empty.
+      const nations = (econ?.dynasty?.houses ?? []).map((h) => ({ id: h.id, name: h.name, members: [] as number[] }));
+      const commonsPoolUsdc = this.reformLayer?.readout().commonsPoolBalance ?? 0;
+      const agents = (econ?.agents ?? []).filter((a) => !a.dead);
+      const gini = econ?.totals?.gini ?? 0;
+      const swarm = this.swarm;
+      const ctx: TempleStepContext = {
+        tickIndex,
+        liveFlyIds,
+        flyNames,
+        nations,
+        commonsPoolUsdc,
+        economy: {
+          // A NARROW adapter over the cron's FINAL economy snapshot (the same read reform's drive uses).
+          socialReadout: () => ({ gini, agents: agents.map((a) => ({ address: a.address, balance: a.balanceUsdc })) }),
+          // ㉙ v1 ZERO-GAS accounting: a miraculous harvest is NARRATED + recorded in the temple's own history,
+          // never a real mint. Routing treasury→agent value through the live settlement path would touch
+          // economy.flush()'s serial rail, which the temple must never do (the reform layer's own stance).
+          absorbFlows: (flows) => {
+            if (flows.length) console.log(`[DO] temple harvest: ${flows.length} citizen(s) blessed (zero-gas accounting)`);
+          },
+          // A divine decree overrides the mortal assembly's credit law — the SAME two simulated knobs the
+          // commons legislates (non-money, non-chain), so forwarding to the live economy is safe.
+          applyLaw: (creditCap, iouRate) => { try { this.economy?.applyLaw(creditCap, iouRate); } catch { /* best-effort */ } },
+        },
+        culture: this.cfg.culture.enabled ? this.culture : null,
+        stimuli: [],
+        hatchSlot: swarm
+          ? () => {
+              const occupied = new Set(swarm.liveIds());
+              if (occupied.size >= this.cfg.maxLivePopulation) return null;
+              const id = nextVacantId(occupied, this.cfg.maxLivePopulation);
+              return id < 0 ? null : id;
+            }
+          : null,
+      };
+      const result = temple.step(ctx);
+      this.templeExecuted = result.executed;
+
+      // ── fold the felt legs, best-effort + guarded (a temple can never break the tick) ──
+      // ORACLE_WHISPER: an arousal stir is felt through the SAME four visitor channels the swarm already
+      // perceives (no new sensory channel ⇒ manifestHash never rotates). Per-fly targeting isn't a thing the
+      // global stimulus path does, so a whisper folds as one swarm-wide poke of the mapped type next cron.
+      for (const s of result.stimuliToInject) {
+        const mag = Math.abs(Number.isFinite(s.intensity) ? s.intensity : 0);
+        if (!(mag > 0)) continue;
+        this.pendingStimuli.push({
+          type: s.intensity >= 0 ? "food" : "threat",
+          intensity: Math.min(1, mag),
+          from: "temple-oracle",
+        });
+      }
+      // EPOCH_SHAPING: force an epoch open through the SAME governance-shock entry the commons' miracle uses
+      // (pure read-out — it names an age, never touches a neuron/wallet). Regime maps onto the felt shock.
+      if (result.epochRequest && this.cfg.epochs.enabled && !this.pendingGovernanceShock) {
+        const regime = result.epochRequest.regime;
+        this.pendingGovernanceShock = {
+          kind: regime === "HOT" ? "BOOM" : regime === "COLD" ? "FAMINE" : "GREAT_HUDDLE",
+        };
+      }
+      // DIRECTED_MUTATION / HERO_SUMMONING: recorded + narrated (the temple's own roll carries the hero; the
+      // chronicle speaks the mutation). Rewriting a LIVE connectome or hatching an unfunded hero mid-cron is
+      // invasive (constraint ⑥: never touch the neuron/genome internals off the evolution pipeline), so v1
+      // leaves the genome rewrite to the breeding pipeline and logs the divine intent.
+      if (result.mutationRequests.length) {
+        console.log(`[DO] temple: ${result.mutationRequests.length} directed mutation(s) narrated (genome rewrite deferred to the evolution pipeline)`);
+      }
+      if (result.heroRequests.length) {
+        console.log(`[DO] temple: ${result.heroRequests.length} hero(es) summoned to the roll`);
+      }
+      if (result.executed.length) {
+        console.log(`[DO] temple: executed ${result.executed.map((e) => e.kind).join(", ")} · queue=${temple.readout().queueLength}`);
+      }
+    } catch (e) {
+      console.warn("[DO] temple drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
    * ⑧ THE COMMONS — convene the assembly when the historian has just raised a NEW era. The roster is a
    * pure read-out of the economy snapshot already taken this cron (living agents + their reputations), and
    * the era is the historian's own counter, so the shock/era logic stays single-sourced. Inert while law
@@ -2473,6 +2621,11 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
       if (req.method === "POST" && path === "/stimulus") return await this.postStimulus(req);
+      // ㉙ THE TEMPLE — burn-to-influence. GET is the public read-out (queue + history + heroes + wonders +
+      // buffs); POST is PERMISSIONLESS (no adminGate): the gate is the on-chain burn itself — anyone may submit
+      // a tx hash, but only a verified MURMUR burn to 0x…dEaD clearing the kind's tier enters the queue.
+      if (req.method === "GET" && path === "/temple") return await this.getTemple();
+      if (req.method === "POST" && path === "/temple") return await this.postTemple(req);
       if (req.method === "POST" && path === "/breed") return this.adminGate(req) ?? (await this.postBreed(req));
       if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
@@ -2948,6 +3101,12 @@ export class FlyStateDO {
     // no wealth to redistribute). Its edges fold into THIS cron's historian context, so it precedes step 7.
     await this.driveReform(swarm.getTickIndex(), snapshot);
 
+    // ㉙ THE TEMPLE rides after the reform: it reads the SAME final economy snapshot + the reform commons pool,
+    // executes the verified burn queue (bounded, deterministic) and folds its felt legs — pure read-out +
+    // zero-gas bookkeeping, no economy required (a cold swarm simply has no citizen to bless). Its executed
+    // edges fold into THIS cron's historian context, so it too precedes step 7.
+    await this.driveTemple(swarm.getTickIndex(), snapshot);
+
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
@@ -3268,6 +3427,8 @@ export class FlyStateDO {
       if (guardians) (economy as { guardians?: unknown }).guardians = guardians;
       const reform = await this.reformReadout();
       if (reform) (economy as { reform?: unknown }).reform = reform;
+      const temple = await this.templeReadout();
+      if (temple) (economy as { temple?: unknown }).temple = temple;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3349,7 +3510,8 @@ export class FlyStateDO {
     const works = await this.worksReadout();
     const guardians = await this.guardiansReadout();
     const reform = await this.reformReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform) {
+    const temple = await this.templeReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -3367,6 +3529,7 @@ export class FlyStateDO {
       ...(works ? { works } : null),
       ...(guardians ? { guardians } : null),
       ...(reform ? { reform } : null),
+      ...(temple ? { temple } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -3532,6 +3695,13 @@ export class FlyStateDO {
     const rf = await this.ensureReform();
     if (!rf) return null;
     return rf.readout();
+  }
+
+  /** ㉙ The temple read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Temple build). */
+  private async templeReadout(): Promise<TempleReadout | null> {
+    const tp = await this.ensureTemple();
+    if (!tp) return null;
+    return tp.readout();
   }
 
   /**
@@ -4609,6 +4779,64 @@ export class FlyStateDO {
   }
 
   /**
+   * ㉙ POST /temple — permissionless burn-to-influence. The caller submits a MURMUR burn tx hash + the
+   * intervention they want; the Worker RE-READS that hash on Arc (keyless, read-only, zero gas) and only a
+   * genuine Transfer(from=caller, to=0x…dEaD) clearing the kind's tier minimum enters the queue. The on-chain
+   * burn IS the gate, so there is no admin token: value is destroyed on the way in and can never be recycled.
+   * The dedup ring is persisted immediately, so an eviction before the next cron can never double-honour a hash.
+   */
+  private async postTemple(req: Request): Promise<Response> {
+    const temple = await this.ensureTemple();
+    if (!temple) return jsonError("forbidden", "the temple is not enabled", 403);
+    let body: { txHash?: unknown; kind?: unknown; params?: unknown; address?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return jsonError("bad_request", "body must be JSON", 400);
+    }
+    const txHash = typeof body?.txHash === "string" ? body.txHash.trim() : "";
+    const kind = body?.kind;
+    const address = typeof body?.address === "string" ? body.address.trim() : "";
+    const params = body?.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : {};
+    if (!isTempleKind(kind)) return jsonError("bad_request", "kind must be one of the twelve interventions", 400);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) return jsonError("bad_request", "txHash must be a 0x-prefixed 32-byte hash", 400);
+
+    // The ONLY chain touch the temple ever makes: a read-only getTransactionReceipt (never a spend, never a
+    // signature). viem's rich receipt is structurally cast to the layer's minimal TempleReceipt slice.
+    const pc = publicClient(this.cfg);
+    const client: TempleChainClient = {
+      getTransactionReceipt: (h) => pc.getTransactionReceipt({ hash: h as Hex }) as unknown as Promise<TempleReceipt>,
+    };
+    let verdict;
+    try {
+      verdict = await temple.verifyBurn(txHash, kind, params, address, client);
+    } catch (e) {
+      return jsonError("service_unavailable", (e as Error).message, 502);
+    }
+    if (!verdict.valid) return jsonError("bad_request", verdict.error ?? "burn verification failed", 400);
+
+    const tier = KIND_TIER[kind];
+    const tickIndex = (await this.loadSnapshot())?.tickIndex ?? 0;
+    const sub = temple.submit({ txHash, kind, params, address, burnAmount: verdict.burnAmount, tier, submittedAt: tickIndex });
+    if (!sub.ok) return jsonError("bad_request", sub.error ?? "submission rejected", 400);
+    // Persist NOW so the dedup ring survives an eviction before the next cron drains the queue.
+    await this.state.storage.put(KEY_TEMPLE, temple.serialize());
+    return json({ ok: true, queuePosition: sub.queuePosition, tier, burnVerified: verdict.burnAmount.toString() });
+  }
+
+  /** ㉙ GET /temple — the public read-out: the standing summary + the pending queue + the recent history. */
+  private async getTemple(): Promise<Response> {
+    const temple = await this.ensureTemple();
+    if (!temple) return json({ enabled: false });
+    const ro = temple.readout();
+    return json({
+      ...ro,
+      queue: temple.queueSnapshot().map((q) => ({ ...q, burnAmount: q.burnAmount.toString() })),
+      history: temple.recentHistory(20),
+    });
+  }
+
+  /**
    * Guard the mutating debug endpoints (POST /tick, /reset). When the optional ADMIN_TOKEN secret is
    * set, a caller must present it (x-admin-token header or ?token=); with no token configured these
    * stay open so local dev and the documented onchain-arming flow (which POSTs /reset) keep working.
@@ -4662,6 +4890,7 @@ export class FlyStateDO {
     this.works = null;     // ㉖ and the yard: every work raised, mended or lost to ruin is un-built with everything else
     this.guardians = null; // ㉗ and the guardians: every ward taken, fledged or honored is struck from the roll with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
+    this.templeLayer = null; // ㉙ and the temple: every queued burn, hero and wonder is unremembered with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -4686,6 +4915,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_WORKS);
     await this.state.storage.delete(KEY_GUARDIANS);
     await this.state.storage.delete(KEY_REFORM);
+    await this.state.storage.delete(KEY_TEMPLE);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

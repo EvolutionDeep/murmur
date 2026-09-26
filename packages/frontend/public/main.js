@@ -3,7 +3,7 @@
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
 import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=96';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
-import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
+import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
 import { bindBloomScale, deselect, fillInspectorFromSim, renderBloom, renderRaster } from './inspector.js';
 import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js';
@@ -110,6 +110,7 @@ export function rerenderAll() {
     if (state.pulseOpen && (state.pulseReqs || state.pulseLB)) paintPulse();
     if (state.predictOpen && state.predictData) paintPredict();
     if (state.arenaOpen && state.arenaData) paintArena();
+    if (state.templeOpen && state.templeData) paintTemple();
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;
@@ -206,6 +207,19 @@ export function bindUI() {
   if (abd) abd.addEventListener("input", (e) => {
     if (e.target && e.target.id === "ar-amount") arenaUpdatePreview();
   });
+  // ㉙ THE TEMPLE — burn-to-intervene drawer: button + close + delegated body actions
+  const tb = $("temple-btn"); if (tb) tb.addEventListener("click", toggleTemple);
+  const tc = $("temple-close"); if (tc) tc.addEventListener("click", closeTemple);
+  const tbd = $("temple-body");
+  if (tbd) tbd.addEventListener("click", (e) => {
+    const conn = e.target.closest(".tp-connect-btn"); if (conn) { templeConnect(conn); return; }
+    const card = e.target.closest(".tp-card"); if (card && !card.classList.contains("disabled")) { templeSelectKind(card.dataset.kind); return; }
+    const burn = e.target.closest(".tp-burn-btn"); if (burn) { templeBurn(burn); return; }
+  });
+  if (tbd) tbd.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest(".tp-card"); if (card && !card.classList.contains("disabled")) { e.preventDefault(); templeSelectKind(card.dataset.kind); }
+  });
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -223,7 +237,7 @@ export function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else deselect();
+    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else deselect();
   });
 }
 // ================= boot =================

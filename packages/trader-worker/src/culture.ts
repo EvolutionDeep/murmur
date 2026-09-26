@@ -33,6 +33,10 @@ export interface MemeRecord {
   fap: Fap;
   /** remaining sub-ticks of belief; ≤0 ⇒ the meme dies and the fly reverts to its innate FAP. */
   ttl: number;
+  /** ㉙ TEMPLE — a CULTURAL_SEED's sacred text (≤32 chars); absent on naturally-caught creeds. */
+  text?: string;
+  /** ㉙ TEMPLE — true when planted by inject(): the creed spreads at 2× ADOPT_PCT (divine contagion). */
+  seeded?: boolean;
 }
 
 export interface CultureConfig {
@@ -121,7 +125,9 @@ export class CultureMembrane {
     for (const b of cohort) {
       const src = cohort[hash32(tick, b.id, CONTACT_SALT) % cohort.length];
       if (src.id === b.id) continue;                       // ate alone beside oneself: no contact
-      if (hash01(tick, src.id * 1000 + b.id, ADOPT_SALT) >= ADOPT_PCT) continue;
+      // ㉙ TEMPLE — a seeded (temple-planted) creed is doubly contagious; natural creeds spread unchanged.
+      const adoptPct = this.memes.get(src.id)?.seeded ? ADOPT_PCT * 2 : ADOPT_PCT;
+      if (hash01(tick, src.id * 1000 + b.id, ADOPT_SALT) >= adoptPct) continue;
       const caught = this.creedOf(src.id, src.fap);         // infection after decay: faded creeds don't spread
       if (caught === b.fap) continue;                       // already believes it: nothing new caught
       const house = houseOf(b.id);
@@ -146,6 +152,24 @@ export class CultureMembrane {
     const span = TTL_MAX - TTL_MIN + 1;
     const ttl = TTL_MIN + Math.floor(hash01(tick, id, TTL_SALT) * span);
     this.memes.set(id, { fap, ttl });
+  }
+
+  /**
+   * ㉙ TEMPLE intervention (CULTURAL_SEED): plant a sacred meme into one fly's creed from outside the
+   * contagion loop. The text is truncated to 32 chars and mapped DETERMINISTICALLY onto a FAP (so the
+   * creed is a real behaviour the read-out line can carry); `ttl` is counted in CRONS (contagion burns
+   * one per cron). A seeded creed spreads at 2× ADOPT_PCT — divine contagion. Bounded like adopt(): a
+   * full membrane plants nothing new. Inert while CULTURE_ENABLED is off.
+   */
+  inject(flyId: number, text: string, _tick: number, ttl: number): void {
+    if (!this.cfg.enabled) return;
+    if (!Number.isInteger(flyId) || flyId < 0) return;
+    const meme = (typeof text === "string" ? text : "").slice(0, 32);
+    const fap = FAP_LIST[textSeed(meme) % FAP_LIST.length];
+    const crons = Number.isFinite(Number(ttl)) && Number(ttl) > 0 ? Math.floor(Number(ttl)) : TTL_MIN;
+    const cur = this.memes.get(flyId);
+    if (!cur && this.memes.size >= MEME_CAP) return;
+    this.memes.set(flyId, { fap, ttl: crons, text: meme, seeded: true });
   }
 
   /**
@@ -234,7 +258,13 @@ export class CultureMembrane {
       memes: Array.from(this.memes.entries())
         .sort((x, y) => x[0] - y[0])
         .slice(0, MEME_CAP)
-        .map(([id, m]) => ({ id, fap: m.fap, ttl: m.ttl })),
+        // ㉙ TEMPLE — text/seeded ride along ONLY on planted creeds; natural memes keep the old shape
+        // byte-for-byte, so the round-trip and determinism contracts are unchanged.
+        .map(([id, m]) => ({
+          id, fap: m.fap, ttl: m.ttl,
+          ...(m.text != null ? { text: m.text } : {}),
+          ...(m.seeded ? { seeded: true } : {}),
+        })),
     });
   }
 
@@ -253,7 +283,11 @@ export class CultureMembrane {
         if (!Number.isInteger(id) || !Number.isInteger(ttl) || ttl <= 0) continue;
         if (typeof e.fap !== "string" || !FAP_LIST.includes(e.fap as Fap)) continue;
         if (this.memes.size >= MEME_CAP) break;
-        this.memes.set(id, { fap: e.fap as Fap, ttl });
+        this.memes.set(id, {
+          fap: e.fap as Fap, ttl,
+          ...(typeof e.text === "string" ? { text: e.text.slice(0, 32) } : {}),
+          ...(e.seeded === true ? { seeded: true } : {}),
+        });
       }
     } catch {
       this.memes.clear();
@@ -281,4 +315,15 @@ function hash32(a: number, b: number, c: number): number {
 
 function hash01(a: number, b: number, salt: number): number {
   return hash32(a, b, salt) / 0xffffffff;
+}
+
+// ㉙ TEMPLE — FNV-1a over a string (the char-level twin of hash32's int mix): maps a seeded meme's
+// text onto a stable FAP index. Deterministic across DOs, no RNG, no wall-clock.
+function textSeed(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
 }

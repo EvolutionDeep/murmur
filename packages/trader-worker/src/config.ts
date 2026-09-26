@@ -294,6 +294,17 @@ export interface Env {
   //     ESTATE_LEVIED/JUBILEE_PROCLAIMED/CATALYST_SURGE kinds can never speak (byte-for-byte rollback).
   REFORM_ENABLED?: string;              // "true"/"false" (default FALSE — grey-release; flip on by hand)
 
+  // --- ㉙ TEMPLE: burn-to-influence — a holder sends MURMUR to 0x…dEaD, submits the tx hash, and the Worker
+  //     (keyless, read-only, zero gas) re-reads the burn on-chain and queues the requested intervention (see
+  //     src/temple.ts). NOTE: armed on CODE DEFAULTS — the tier ladder (TIER_MINIMUMS), the queue/per-cron
+  //     caps and the twelve intervention semantics are constants, no knobs by design, and wrangler.toml [vars]
+  //     is at capacity so the master switch reads an env key only (NOT added to [vars]). PURE read-out +
+  //     internal bookkeeping: the interventions move no real money off the temple's own bounded state, and the
+  //     ONLY chain touch is a getTransactionReceipt READ. Shipped ENABLED (the ㉔-㉗ default-ON 口径):
+  //     TEMPLE_ENABLED=false ⇒ state.ts never constructs the layer ⇒ the twelve temple kinds can never speak
+  //     (byte-for-byte rollback).
+  TEMPLE_ENABLED?: string;              // "true"/"false" (default TRUE — the door is open; flip off by hand)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -647,6 +658,9 @@ export interface RuntimeConfig {
   };
   reform: {
     enabled: boolean;         // ㉘ the reform lines are constants (ESTATE_BRACKETS etc.) — no knobs by design
+  };
+  temple: {
+    enabled: boolean;         // ㉙ the tier ladder + caps are constants (TIER_MINIMUMS etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1089,6 +1103,12 @@ export function loadConfig(env: Env): RuntimeConfig {
       // ㉘ Shipped DISABLED (grey-release): the default is "false", so an unset REFORM_ENABLED leaves the
       //     reform layer inert and the chronicle byte-for-byte the pre-Reform build. Flip on by hand.
       enabled: (env.REFORM_ENABLED ?? "false").toLowerCase() !== "false",
+    },
+    temple: {
+      // ㉙ Shipped ENABLED (the ㉔-㉗ default-ON 口径): the default is "true", so an unset TEMPLE_ENABLED opens
+      //     the burn-to-influence door. Set TEMPLE_ENABLED=false to leave the layer inert and the chronicle
+      //     byte-for-byte the pre-Temple build.
+      enabled: (env.TEMPLE_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

@@ -174,7 +174,23 @@ export type ChronicleKind =
   //     wealthy + a per-citizen stimulus, and a dark-age/high-Gini catalyst surge accelerating discovery and art.
   | "ESTATE_LEVIED"
   | "JUBILEE_PROCLAIMED"
-  | "CATALYST_SURGE";
+  | "CATALYST_SURGE"
+  // ㉙ TEMPLE: burn-to-influence (temple.ts) — a holder destroys MURMUR at 0x…dEaD, the Worker re-reads the
+  //     burn on-chain (keyless, zero gas) and queues the requested divine act: a whispered arousal, a seeded
+  //     meme, a directed mutation, the small miracles (harvest / plague / revelation / migration / blessing),
+  //     a decree, a summoned hero, and — atop the cost ladder — the shaping of an epoch, the founding of a wonder.
+  | "ORACLE_WHISPER"
+  | "CULTURAL_SEED"
+  | "DIRECTED_MUTATION"
+  | "MIRACLE_HARVEST"
+  | "MIRACLE_PLAGUE"
+  | "MIRACLE_REVELATION"
+  | "MIRACLE_MIGRATION"
+  | "NATION_BLESSING"
+  | "DIVINE_DECREE"
+  | "HERO_SUMMONING"
+  | "EPOCH_SHAPING"
+  | "WONDER_FOUNDATION";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -302,6 +318,9 @@ export interface ChronicleContext {
   /** ㉘ REFORM read-out (reform.ts step events): this cron's estate duty, jubilee and catalyst edges. Absent ⇒
    *  no ESTATE_LEVIED/JUBILEE_PROCLAIMED/CATALYST_SURGE (REFORM_ENABLED=false never folds these in). */
   reform?: ChronicleReform | null;
+  /** ㉙ TEMPLE read-out (temple.ts step edges): this cron's executed burn-to-influence divine acts. Absent ⇒
+   *  none of the twelve temple kinds speak (TEMPLE_ENABLED=false never folds these in). */
+  temple?: ChronicleTemple | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -530,6 +549,14 @@ export interface ChronicleReform {
   catalyst: { multiplier: number } | null;
 }
 
+/** ㉙ TEMPLE: the divine acts one cron carried out (temple.ts step edges). Each executed intervention is
+ *  narrated once from its public template; {address} is the submitter's wallet and every other token rides in
+ *  `detail` (flyName / nationName / amount / path / discovery / …), so the server text and the browser
+ *  re-derivation agree byte-for-byte. The kind is a ChronicleKind (the twelve temple kinds are members). */
+export interface ChronicleTemple {
+  executed: Array<{ kind: ChronicleKind; address: string; flyName?: string; detail?: Record<string, unknown> }>;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -742,6 +769,11 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉘ REFORM: an estate duty may speak often (a burial is common news), a jubilee is once-an-age gravitas, and
   //     a catalyst surge lands slowly (it is a climate, not an event). The membrane one-edges the rare classes.
   ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60,
+  // ㉙ TEMPLE: the membrane one-edges each executed intervention, so these cooldowns are pure gravitas — a
+  //     whisper may speak often, a wonder is once-a-civilisation. Mirrored verbatim in the browser CHRON_.
+  ORACLE_WHISPER: 3, CULTURAL_SEED: 6, DIRECTED_MUTATION: 12, MIRACLE_HARVEST: 12,
+  MIRACLE_PLAGUE: 24, MIRACLE_REVELATION: 18, MIRACLE_MIGRATION: 12, NATION_BLESSING: 24,
+  DIVINE_DECREE: 60, HERO_SUMMONING: 120, EPOCH_SHAPING: 200, WONDER_FOUNDATION: 500,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -906,6 +938,20 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   ESTATE_LEVIED: "The estate of {address} was levied {tax} USDC — {ubi} per citizen returned to the commons.",
   JUBILEE_PROCLAIMED: "A Year of Jubilee was proclaimed: {debts} debts forgiven, {levy} USDC collected from the wealthy, {stimulus} USDC distributed to each citizen.",
   CATALYST_SURGE: "Dark times breed innovation — a catalyst surge ({multiplier}×) accelerates discovery and culture.",
+  // ㉙ TEMPLE — burn-to-influence divine acts. {address} is the submitter's wallet; every other token rides in
+  //     the executed edge's own detail. Byte-for-byte the browser CHRON_ mirror (shared.js + app.js). Mirrored.
+  ORACLE_WHISPER: "A whisper from beyond reached {flyName} — the void speaks through fire.",
+  CULTURAL_SEED: "A sacred meme '{meme}' was planted in the collective mind by the hand of {address}.",
+  DIRECTED_MUTATION: "Divine fire rewrote the genome of {flyName} — the path of {path} awakened.",
+  MIRACLE_HARVEST: "A miraculous harvest blessed all citizens — {amount} USDC rained from the temple.",
+  MIRACLE_PLAGUE: "The temple unleashed plague — {flyName} was taken by divine will.",
+  MIRACLE_REVELATION: "A revelation struck the civilization — {discovery} emerged ahead of its time.",
+  MIRACLE_MIGRATION: "Divine winds carried {count} citizens to new lands — borders redrawn by the temple.",
+  NATION_BLESSING: "The temple blessed {nationName} with divine productivity for {duration} cycles.",
+  DIVINE_DECREE: "A decree from above overrode the mortal assembly — credit cap {creditCap}, rate {iouRate} inscribed in celestial law.",
+  HERO_SUMMONING: "From the flame, hero {heroName} was summoned by {address} — marked by destiny.",
+  EPOCH_SHAPING: "The temple forged a new epoch: '{epochName}' under the {regime} regime — history bends to divine will.",
+  WONDER_FOUNDATION: "The wonder '{wonderName}' was founded in {nationName} by {address} — an eternal monument to sacrifice.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -948,6 +994,45 @@ export function renderTemplate(kind: ChronicleKind, tokens: Record<string, strin
   if (!tpl) return "";
   return tpl.replace(/\{(\w+)(?:~(\w+))?\}/g, (_m, key: string, fmt?: string) =>
     renderToken(tokens[key] ?? "", fmt));
+}
+
+/** ㉙ The gravity of each temple act (a whisper is a ripple; an epoch or a wonder reshapes the age). */
+const TEMPLE_SEVERITY: Record<string, 1 | 2 | 3 | 4 | 5> = {
+  ORACLE_WHISPER: 2, CULTURAL_SEED: 2, DIRECTED_MUTATION: 3, MIRACLE_HARVEST: 3,
+  MIRACLE_PLAGUE: 4, MIRACLE_REVELATION: 3, MIRACLE_MIGRATION: 3, NATION_BLESSING: 3,
+  DIVINE_DECREE: 4, HERO_SUMMONING: 4, EPOCH_SHAPING: 5, WONDER_FOUNDATION: 5,
+};
+
+/**
+ * ㉙ Build the public-template tokens for one executed temple act from the edge the layer handed up. Every
+ * value rides in the edge's own `detail` (plus the submitter's wallet), so the sentence re-derives identically
+ * in the browser from the entry's stored tokens. Pure string/number coercion — never `Number(v) || ""`, which
+ * would drop a legitimate 0 (a 0-USDC harvest, nation id 0).
+ */
+function templeTokens(
+  kind: ChronicleKind,
+  address: string,
+  flyName: string | undefined,
+  d: Record<string, unknown>,
+): Record<string, string | number> {
+  const s = (v: unknown): string => (v == null ? "" : String(v));
+  const n = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const name = flyName != null && flyName !== "" ? flyName : s(d.flyName);
+  switch (kind) {
+    case "ORACLE_WHISPER": return { flyName: name };
+    case "CULTURAL_SEED": return { meme: s(d.meme), address };
+    case "DIRECTED_MUTATION": return { flyName: name, path: s(d.path) };
+    case "MIRACLE_HARVEST": return { amount: n(d.amount) };
+    case "MIRACLE_PLAGUE": return { flyName: name };
+    case "MIRACLE_REVELATION": return { discovery: s(d.discovery) };
+    case "MIRACLE_MIGRATION": return { count: n(d.count) };
+    case "NATION_BLESSING": return { nationName: s(d.nationName), duration: n(d.duration) };
+    case "DIVINE_DECREE": return { creditCap: s(d.creditCap), iouRate: s(d.iouRate) };
+    case "HERO_SUMMONING": return { heroName: s(d.heroName), address };
+    case "EPOCH_SHAPING": return { epochName: s(d.epochName), regime: s(d.regime) };
+    case "WONDER_FOUNDATION": return { wonderName: s(d.wonderName), nationName: s(d.nationName), address };
+    default: return {};
+  }
 }
 
 /** The historian's "genome": a single digest of the entire deterministic rule-set. */
@@ -1895,6 +1980,23 @@ export class Chronicler {
         out.push(await this.emit(ctx, "CATALYST_SURGE", 3, [],
           { multiplier: m },
           { multiplier: m }));
+      }
+    }
+
+    // ㉙ Temple: burn-to-influence divine acts (temple.ts step edges, folded in ONLY while TEMPLE_ENABLED — off ⇒
+    //     no `temple` key ⇒ these twelve detectors never speak). The layer one-edges each executed intervention;
+    //     the cooldown guards a same-cron duplicate of one kind. Every token rides in the edge's own detail, so
+    //     the server text and the browser re-derivation agree byte-for-byte. The actors name the target fly when
+    //     the act had one (a whisper / plague / mutation / hero), else the news is about wallets and the realm.
+    const tp = ctx.temple;
+    if (tp && Array.isArray(tp.executed)) {
+      for (const ex of tp.executed) {
+        const kind = ex?.kind;
+        if (!kind || !TEMPLATES[kind] || !this.ready(kind, ctx)) continue;
+        const d = (ex.detail ?? {}) as Record<string, unknown>;
+        const actors = typeof d.flyId === "number" ? [d.flyId] : [];
+        out.push(await this.emit(ctx, kind, TEMPLE_SEVERITY[kind] ?? 3, actors,
+          templeTokens(kind, ex.address ?? "", ex.flyName, d), {}));
       }
     }
 

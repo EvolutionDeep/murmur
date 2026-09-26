@@ -2068,6 +2068,102 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .ar-last { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--hair); font-family: var(--mono); font-size: 8.5px; line-height: 1.5; color: var(--muted); }
 .ar-last b { font-weight: 600; }
 
+/* ═══════════ ㉙ TEMPLE — burn-to-intervene ═══════════
+   The temple trigger is the one deliberately LOUD element on the page: a gilt chip with a slow
+   golden breathing glow (box-shadow only — no backdrop-filter, and it animates a single button,
+   never a per-frame layer, so it stays off the render hot path). The drawer itself is quiet
+   vellum + gold, in keeping with the codex. Font tokens map to this codebase's --sans / --mono. */
+.temple-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; margin-top: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--gold);
+  border-radius: var(--r-chip, 6px);
+  background: linear-gradient(135deg, rgba(var(--gold-rgb), 0.20), rgba(var(--gold-rgb), 0.07));
+  color: var(--gold-lit);
+  font: 600 0.82rem/1 var(--sans);
+  letter-spacing: 0.04em; text-transform: uppercase; text-align: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  animation: temple-glow 2.4s ease-in-out infinite;
+  position: relative;
+  z-index: 7;
+}
+.temple-btn .temple-orn { font-size: 1.05em; filter: drop-shadow(0 0 3px rgba(var(--gold-rgb), 0.55)); }
+.temple-btn:hover { transform: scale(1.03); border-color: var(--gold-lit); color: #fff; }
+.temple-btn:focus-visible { box-shadow: var(--ring); }
+@keyframes temple-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(217,185,104,0.30), inset 0 0 4px rgba(217,185,104,0.10); }
+  50%      { box-shadow: 0 0 20px rgba(217,185,104,0.60), 0 0 40px rgba(217,185,104,0.20), inset 0 0 8px rgba(217,185,104,0.25); }
+}
+@media (prefers-reduced-motion: reduce) { .temple-btn { animation: none; box-shadow: 0 0 12px rgba(217,185,104,0.35); } }
+body.temple-open .temple-btn { opacity: 0; pointer-events: none; }
+body.temple-open .panel-pop { opacity: 0.1; pointer-events: none; }
+body.temple-open .zoom-controls { opacity: 0; pointer-events: none; }
+
+/* Temple drawer internals */
+.drawer.temple { width: clamp(320px, 38vw, 480px); }
+.tp-section { margin-bottom: 18px; }
+.tp-section-title { font: 700 0.78rem/1 var(--sans); color: var(--gall); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+.tp-tier-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tp-card {
+  padding: 10px 12px; border-radius: 8px;
+  border: 1px solid rgba(var(--gold-rgb), 0.42);
+  background: var(--vellum);
+  cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.tp-card:hover { border-color: var(--gold-lit); box-shadow: 0 0 12px rgba(217,185,104,0.25); }
+.tp-card.selected { border-color: var(--gold); background: rgba(var(--gold-rgb), 0.08); box-shadow: 0 0 16px rgba(217,185,104,0.35); }
+.tp-card.disabled { opacity: 0.4; pointer-events: none; }
+.tp-card-name { font: 600 0.82rem/1.2 var(--sans); color: var(--ink); }
+.tp-card-cost { font: 0.72rem/1.4 var(--mono); color: var(--gall); margin-top: 3px; }
+.tp-card-desc { font: 0.72rem/1.3 var(--sans); color: var(--gall); margin-top: 4px; opacity: 0.8; }
+.tp-tier-label { font: 700 0.68rem/1 var(--sans); color: var(--gold); text-transform: uppercase; letter-spacing: 0.08em; margin: 12px 0 6px; }
+
+.tp-burn-btn {
+  display: block; width: 100%; padding: 12px;
+  margin-top: 14px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, #b08a36, #d9b968);
+  color: #fff; font: 700 0.9rem/1 var(--sans);
+  cursor: pointer; text-align: center;
+  transition: opacity 0.2s, transform 0.15s;
+  box-shadow: 0 4px 16px rgba(176,138,54,0.35);
+}
+.tp-burn-btn:hover { transform: translateY(-1px); opacity: 0.92; }
+.tp-burn-btn:disabled { opacity: 0.4; pointer-events: none; }
+
+.tp-status { margin-top: 10px; font: 0.75rem/1.4 var(--sans); color: var(--gall); min-height: 1.4em; }
+.tp-status.ok { color: #1c5c33; }
+.tp-status.bad { color: #8a2222; }
+
+.tp-history { margin-top: 16px; }
+.tp-hist-item { padding: 8px 0; border-bottom: 1px solid rgba(var(--gold-rgb), 0.28); font: 0.73rem/1.4 var(--sans); }
+.tp-hist-kind { font-weight: 600; color: var(--gold); }
+.tp-hist-addr { font-family: var(--mono); font-size: 0.68rem; color: var(--gall); opacity: 0.7; }
+
+.tp-wallet-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.tp-wallet-addr { font: 0.72rem/1 var(--mono); color: var(--ink); }
+.tp-wallet-bal { font: 0.72rem/1 var(--mono); color: var(--gall); }
+.tp-connect-btn {
+  padding: 6px 14px; border: 1px solid var(--gold); border-radius: 5px;
+  background: transparent; color: var(--gold); font: 600 0.75rem/1 var(--sans);
+  cursor: pointer; transition: background 0.2s;
+}
+.tp-connect-btn:hover { background: rgba(var(--gold-rgb), 0.10); }
+
+.tp-params { margin-top: 10px; }
+.tp-param-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tp-param-label { font: 0.72rem/1 var(--sans); color: var(--gall); min-width: 74px; }
+.tp-param-input, .tp-param-select {
+  flex: 1; padding: 5px 8px; border: 1px solid rgba(var(--gold-rgb), 0.42); border-radius: 4px;
+  background: var(--vellum); color: var(--ink); font: 0.75rem/1.3 var(--sans);
+}
+.tp-empty { font: 0.74rem/1.5 var(--sans); color: var(--gall); opacity: 0.7; font-style: italic; }
+.tp-wonder-row, .tp-hero-row { display: flex; align-items: baseline; gap: 7px; padding: 5px 0; font: 0.74rem/1.4 var(--sans); color: var(--ink); }
+.tp-wonder-row .tp-ico, .tp-hero-row .tp-ico { font-size: 1rem; }
+.tp-queue-row { display: flex; align-items: baseline; gap: 7px; padding: 5px 0; border-bottom: 1px solid rgba(var(--gold-rgb), 0.18); font: 0.73rem/1.4 var(--sans); }
+.tp-queue-pos { font-family: var(--mono); font-size: 0.7rem; color: var(--gold); min-width: 22px; }
+
 /* ============ responsive ============
    The piece is four floating corner leaves over a full-bleed field. That reads beautifully on a
    desktop, but the corners collide once the viewport narrows (left+right leaves meet around
@@ -2133,6 +2229,7 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   .econ-feed { display: none; }
   .wallets { width: min(86vw, 372px); }
   .drawer { width: min(90vw, 440px); }
+  .drawer.temple { width: min(94vw, 480px); }
   .hist-btn { margin-top: 8px; }
   .proofs-btn { margin-top: 5px; }
 
@@ -2278,6 +2375,7 @@ body.arena-open .panel-pop { opacity: 0.1; pointer-events: none; }
   .layer-toggles .layer-btn { min-height: 40px; padding: 10px 14px; font-size: 10px; }
   .wallets-btn, .hist-btn, .proofs-btn, .brain-btn,
   .pulse-btn, .predict-btn, .arena-btn { min-height: 40px; padding: 11px 12px; }
+  .temple-btn { min-height: 40px; padding: 11px 12px; }
   .lang-select { min-height: 40px; padding: 10px 24px 10px 12px; font-size: 11px; }
   .chron-tab { min-height: 40px; padding: 10px 12px; }
   .wallet-row { min-height: 44px; }

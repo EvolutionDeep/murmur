@@ -20,6 +20,8 @@
 
 import type { LeaderRow } from "./economy.js";
 import type { LineageEntry } from "./breed.js";
+import { GENOME_BOUNDS, mutateGenome, type Genome } from "@fly/fly-brain";
+import type { MutationPath } from "./temple.js";
 
 /** One autonomous breeding decision the cron step should carry out (null = nothing worth breeding). */
 export interface EvolutionPlan {
@@ -246,4 +248,75 @@ export function lineageAnchorPlan(
     committed.add(e.genomeHash);                                  // enables this entry's descendants in-batch
   }
   return out;
+}
+
+// ---------- ㉙ TEMPLE — directed mutation (DIVINE fire rewrites a genome along a chosen path) ----------
+//
+// forceMutation() is the genome operator behind the temple's DIRECTED_MUTATION intervention. It stays a
+// PURE function of (genome, path, rngSeed) — no RNG state, no wall-clock, no storage — so the same burn
+// reproduces the same offspring anywhere, exactly like planEvolution's operators. It never touches a
+// connectome or a fingerprint: it returns a NOVEL Genome the caller (state.ts) hatches through the SAME
+// breed pipeline as natural selection, so the hatch budget / lineage / on-chain commit rails all still bind.
+
+/** Which genome fields each mutation path strengthens (the directed bias on top of a base point-mutation). */
+const PATH_FIELDS: Record<MutationPath, ReadonlyArray<keyof Genome>> = {
+  longevity: ["nModulatory"],                       // repair/resilience: the modulatory fan
+  intelligence: ["nInterL2", "density"],            // cognition: deeper inter-L2 + denser wiring
+  trading: ["nSensory", "nMotorPerChannel"],        // market sense + actuation
+  aggression: ["nSensory", "nModulatory"],          // threat channel + arousal drive
+};
+
+/** The numeric (non-`v`) genome keys, so a path field can be grown/clamped without an index-signature fight. */
+type NumericField = Exclude<keyof Genome, "v">;
+const BOUNDS = GENOME_BOUNDS as unknown as Record<NumericField, readonly [number, number]>;
+
+/** Integer-only mulberry32 — the SAME construction genome.ts uses (local copy: those helpers are private). */
+function rng32(a: number): () => number {
+  let t = a >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function clampInt(x: number, lo: number, hi: number): number {
+  if (!Number.isFinite(x)) return lo;
+  return Math.max(lo, Math.min(hi, Math.floor(x)));
+}
+function clamp(x: number, lo: number, hi: number): number {
+  return x < lo ? lo : x > hi ? hi : x;
+}
+function round4(x: number): number {
+  return Math.round(x * 1e4) / 1e4;
+}
+
+/**
+ * Temple intervention: force a DIRECTED mutation on a genome along one path.
+ *
+ * Two deterministic steps, both pure in (genome, path, rngSeed):
+ *   1. a base point-mutation through the EXISTING `mutateGenome` operator (reseed the wiring + perturb one
+ *      random layer) — so a directed mutation is still a real genetic event, never a hand-edited connectome;
+ *   2. a directed GROWTH of the path's own fields by +5..15% (a mulberry32 draw off `rngSeed`), each clamped
+ *      to GENOME_BOUNDS and (for density) rounded to 4dp to stay canonical-stable.
+ *
+ * The result is always novel (step 1 reseeds) and always buildable (every field stays inside the breeding
+ * bounds). An unknown path falls back to the base mutation only.
+ */
+export function forceMutation(genome: Genome, path: MutationPath, rngSeed: number): Genome {
+  const child = mutateGenome(genome, rngSeed >>> 0);
+  const fields = PATH_FIELDS[path];
+  if (!fields) return child;                          // unknown path ⇒ just the base point-mutation
+  const rng = rng32((rngSeed ^ 0x9e3779b9) >>> 0);    // a distinct stream so the bias ≠ the base draw
+  for (const f of fields) {
+    const field = f as NumericField;
+    const [lo, hi] = BOUNDS[field];
+    const grow = 1 + Math.floor(rng() * 11) / 100;    // +5%..+15%
+    if (field === "density") {
+      child.density = round4(clamp(child.density * grow, lo, hi));
+    } else {
+      child[field] = clampInt(Math.round((child[field] as number) * grow), lo, hi);
+    }
+  }
+  return child;
 }

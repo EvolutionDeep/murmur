@@ -39,6 +39,16 @@ const CIV_PALETTES = [
   { hemiSky: 0xa8e0d8, hemiGround: 0xd9b96a, sun: 0xf0e6b4, fog: 0xcfe6dc, water: 0x2fa8a0 },
 ];
 
+// ---- ㉙ TEMPLE — the divine-act light pillar tints, one per intervention family ----
+// A burn that lands fires a golden beam from the sky; the hue leans to the act's nature
+// (plague → ashen, harvest → green-gold, decree → white-hot) but stays inside the gold family.
+const TEMPLE_FX_COLOR = {
+  ORACLE_WHISPER: 0xd9b968, CULTURAL_SEED: 0xbfd968, DIRECTED_MUTATION: 0x9ad9b0,
+  MIRACLE_HARVEST: 0xd9c468, MIRACLE_PLAGUE: 0xb0a090, MIRACLE_REVELATION: 0xf0e6a0,
+  MIRACLE_MIGRATION: 0x9ac8d9, NATION_BLESSING: 0xd9b968, DIVINE_DECREE: 0xfff0c0,
+  HERO_SUMMONING: 0xe0a83c, EPOCH_SHAPING: 0xf0c060, WONDER_FOUNDATION: 0xd9b968,
+};
+
 export class ThreeScene {
   constructor() {
     this.scene = null;
@@ -896,6 +906,192 @@ export class ThreeScene {
     }
   }
 
+  // ============================ ㉙ TEMPLE — divine 3D read-outs ============================
+  // A burn that lands is felt in the world: a golden pillar drops from the sky, founded wonders
+  // rise beside their nation's castle, and summoned heroes wear a breathing halo. All read-only
+  // off state.templeData (the GET /temple cache); every mesh is pooled/disposed, nothing per-frame
+  // allocates beyond the occasional pillar.
+
+  /** Fire a temporary golden light pillar descending onto `pos` ({x,y,z}); fades over ~3s. */
+  templeEffect(kind, pos) {
+    if (!this.scene || !pos) return;
+    if (!this._templeFx) this._templeFx = [];
+    const col = TEMPLE_FX_COLOR[kind] || 0xd9b968;
+    const h = 90;
+    const geo = new THREE.CylinderGeometry(0.8, 4.0, h, 12, 1, true);
+    const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(pos.x, (pos.y || 0) + h / 2, pos.z);
+    this.scene.add(mesh);
+    this._templeFx.push({ mesh, t0: performance.now(), dur: 3000 });
+    if (this._templeFx.length > 8) {   // hard cap: never let pillars pile up
+      const old = this._templeFx.shift();
+      this.scene.remove(old.mesh); old.mesh.geometry.dispose(); old.mesh.material.dispose();
+    }
+  }
+
+  /** Fade + shrink the active pillars, disposing each as it expires. */
+  _updateTempleFx(now) {
+    const arr = this._templeFx; if (!arr || !arr.length) return;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const fx = arr[i];
+      const age = (now - fx.t0) / fx.dur;
+      if (age >= 1) {
+        this.scene.remove(fx.mesh); fx.mesh.geometry.dispose(); fx.mesh.material.dispose();
+        arr.splice(i, 1); continue;
+      }
+      fx.mesh.material.opacity = 0.55 * (1 - age);
+      fx.mesh.scale.set(1 - age * 0.4, 1, 1 - age * 0.4);
+    }
+  }
+
+  /**
+   * Procedural geometry for one eternal wonder (3–6 meshes, gold family). Returns a THREE.Group
+   * positioned at `position`; kept deliberately simple so five of them never crowd the frame.
+   */
+  _buildWonder(nationId, wonderType, position) {
+    const g = new THREE.Group();
+    g.position.set(position.x, position.y, position.z);
+    g.rotation.y = (nationId * 1.3) % (Math.PI * 2);
+    const gold = this._toon(0xd9b968);
+    const deep = this._toon(0xb08a36);
+    switch (wonderType) {
+      case "babel": {
+        const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 4.6, 20, 12), gold);
+        tower.position.y = 10; g.add(tower);
+        for (let i = 0; i < 4; i++) {
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(4.2 - i * 0.75, 0.4, 6, 18), deep);
+          ring.rotation.x = Math.PI / 2; ring.position.y = 3.5 + i * 4.6; g.add(ring);
+        }
+        break;
+      }
+      case "library": {
+        const hall = new THREE.Mesh(new THREE.BoxGeometry(11, 8, 9), gold);
+        hall.position.y = 4; g.add(hall);
+        const roof = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 8.2, 4, 4), deep);
+        roof.rotation.y = Math.PI / 4; roof.position.y = 10; g.add(roof);
+        for (let i = -1; i <= 1; i++) {
+          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 8, 8), deep);
+          col.position.set(i * 3.4, 4, 5); g.add(col);
+        }
+        break;
+      }
+      case "arena": {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(6.5, 1.8, 8, 26), gold);
+        ring.rotation.x = Math.PI / 2; ring.position.y = 2.5; g.add(ring);
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          const arch = new THREE.Mesh(new THREE.BoxGeometry(1.1, 6, 1.1), deep);
+          arch.position.set(Math.cos(a) * 6.5, 3, Math.sin(a) * 6.5); g.add(arch);
+        }
+        break;
+      }
+      case "lifetree": {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.6, 10, 8), deep);
+        trunk.position.y = 5; g.add(trunk);
+        const canopy = new THREE.Mesh(new THREE.SphereGeometry(5.5, 12, 10), gold);
+        canopy.position.y = 12.5; g.add(canopy);
+        break;
+      }
+      case "market": {
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.8, 4.5, 14), deep);
+        base.position.y = 2.2; g.add(base);
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(5.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), gold);
+        dome.position.y = 4.5; g.add(dome);
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2 + 0.4;
+          const stall = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 2.2), gold);
+          stall.position.set(Math.cos(a) * 8, 1.1, Math.sin(a) * 8); g.add(stall);
+        }
+        break;
+      }
+      default: {
+        const obelisk = new THREE.Mesh(new THREE.ConeGeometry(2.2, 14, 6), gold);
+        obelisk.position.y = 7; g.add(obelisk);
+      }
+    }
+    // a soft golden beacon crowns every wonder so it reads as divine from afar
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(1.3, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xf0d68a, transparent: true, opacity: 0.5, depthWrite: false }));
+    beacon.position.y = 18; g.add(beacon);
+    return g;
+  }
+
+  /** Rebuild the standing wonders when the GET /temple wonders map changes (signature-gated). */
+  _rebuildWonders() {
+    const td = state.templeData;
+    const ro = td ? (td.readout || td) : null;
+    const wonders = ro && ro.wonders && typeof ro.wonders === "object" ? ro.wonders : null;
+    let sig = "";
+    if (wonders) { for (const k of Object.keys(wonders).sort()) sig += k + ":" + wonders[k] + ","; }
+    if (sig === this._wonderSig) return;
+    this._wonderSig = sig;
+    if (!this._wonderGroup) { this._wonderGroup = new THREE.Group(); this.scene.add(this._wonderGroup); }
+    for (const child of [...this._wonderGroup.children]) {
+      this._wonderGroup.remove(child);
+      child.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    }
+    if (!wonders || !this._nationData || !Array.isArray(this._nationData.nationSeeds)) return;
+    const seeds = this._nationData.nationSeeds;
+    for (const key of Object.keys(wonders)) {
+      const nid = Number(key);
+      const seed = seeds[nid]; if (!seed) continue;
+      const ang = (nid * 1.7 + 0.6) % (Math.PI * 2);
+      const wx = seed.x + Math.cos(ang) * 24, wz = seed.z + Math.sin(ang) * 24;
+      const wy = this.groundY(wx, wz, 7);
+      this._wonderGroup.add(this._buildWonder(nid, wonders[key], { x: wx, y: wy, z: wz }));
+    }
+  }
+
+  /** Give every summoned hero that is still alive a breathing golden halo at its sky position. */
+  _updateHeroAuras(now) {
+    const td = state.templeData;
+    const ro = td ? (td.readout || td) : null;
+    const heroes = ro && Array.isArray(ro.heroes) ? ro.heroes : null;
+    if (!this._heroGroup) { this._heroGroup = new THREE.Group(); this.scene.add(this._heroGroup); }
+    if (!this._heroAuras) this._heroAuras = [];
+    const sim = this._simRef;
+    const want = [];
+    if (heroes && sim) {
+      for (const h of heroes) {
+        if (h == null || h.flyId == null) continue;
+        const f = sim.get(h.flyId);
+        if (!f || f.dying) continue;
+        const x = (f.x / state.VW - 0.5) * this._WSX;
+        const z = (f.y / state.VH - 0.5) * this._WSZ;
+        const y = Math.max(this.groundY(x, z, 2), 0) + 14;
+        want.push({ x, y, z });
+      }
+    }
+    while (this._heroAuras.length < want.length) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.4, 6, 22),
+        new THREE.MeshBasicMaterial({ color: 0xf0d68a, transparent: true, opacity: 0.7, depthWrite: false }));
+      ring.rotation.x = Math.PI / 2;
+      this._heroGroup.add(ring); this._heroAuras.push(ring);
+    }
+    const pulse = 1 + Math.sin(now * 0.003) * 0.09;
+    for (let i = 0; i < this._heroAuras.length; i++) {
+      const ring = this._heroAuras[i];
+      if (i < want.length) { ring.visible = true; ring.position.set(want[i].x, want[i].y, want[i].z); ring.scale.setScalar(pulse); }
+      else ring.visible = false;
+    }
+  }
+
+  /** The per-frame temple read-out: fire a pillar on a new execution, then wonders + heroes + fx. */
+  _updateTemple(now, dt) {
+    const td = state.templeData;
+    const ro = td ? (td.readout || td) : null;
+    const le = ro && ro.lastExecution;
+    const leSig = le ? (le.kind + "@" + le.tick + "@" + le.address) : null;
+    if (leSig && leSig !== this._lastTempleExec) {
+      this._lastTempleExec = leSig;
+      this.templeEffect(le.kind, { x: 0, y: 24, z: 0 });   // a beam over the island's heart
+    }
+    this._rebuildWonders();
+    this._updateHeroAuras(now);
+    this._updateTempleFx(now);
+  }
+
   // ---- villages (task 24 diorama rework): fully procedural house clusters + windmills around
   // every town/city settlement — two InstancedMeshes total (shared vertex-coloured geometry,
   // one toon material), brown/tan diorama cottages. Deterministic per-zone layout, rebuilt only
@@ -1590,6 +1786,7 @@ export class ThreeScene {
     try { this._updateEraHud(); } catch (e) { console.warn("eraHud", e); }
     try { this._updateSwarmAura(now); } catch (e) { console.warn("swarmAura", e); }
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
+    try { this._updateTemple(now, dt); } catch (e) { console.warn("temple", e); }
     try { this._updateLegend(sim, now); } catch (e) { console.warn("legend", e); }
   }
 

@@ -105,6 +105,18 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   ESTATE_LEVIED: "{address} 的遗产被课以 {tax} USDC —— 每位公民 {ubi} USDC 归还公域。",
   JUBILEE_PROCLAIMED: "禧年宣告 —— {debts} 笔债务得豁免，向富者征收 {levy} USDC，每位公民分得 {stimulus} USDC。",
   CATALYST_SURGE: "黑暗时代孕育革新 —— 一场催化涌动（{multiplier}×）加速了发现与文化。",
+  ORACLE_WHISPER: "来自彼岸的低语抵达了{flyName} —— 虚空借火焰开口。",
+  CULTURAL_SEED: "一段神圣模因'{meme}'被{address}之手植入集体意识。",
+  DIRECTED_MUTATION: "天火改写了{flyName}的基因组 —— {path}之道觉醒。",
+  MIRACLE_HARVEST: "神迹丰收赐福全体公民 —— {amount} USDC 自神殿降下。",
+  MIRACLE_PLAGUE: "神殿释放瘟疫 —— {flyName}被天意带走。",
+  MIRACLE_REVELATION: "启示击中文明 —— {discovery}超越时代涌现。",
+  MIRACLE_MIGRATION: "神风将{count}位公民送往新大陆 —— 疆界因神殿重划。",
+  NATION_BLESSING: "神殿赐予{nationName}神圣生产力，持续{duration}个周期。",
+  DIVINE_DECREE: "天上降下法令覆盖了凡人议事会 —— 信贷上限{creditCap}、利率{iouRate}铭刻于天法。",
+  HERO_SUMMONING: "英雄{heroName}自火焰中被{address}召唤 —— 命运所归。",
+  EPOCH_SHAPING: "神殿锻造了新纪元：'{epochName}'，{regime}政体 —— 历史屈从于天意。",
+  WONDER_FOUNDATION: "奇观'{wonderName}'由{address}在{nationName}奠基 —— 献祭的永恒纪念碑。",
 };
 
 const fr = {
@@ -202,6 +214,18 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   ESTATE_LEVIED: "La succession de {address} a été imposée de {tax} USDC — {ubi} par citoyen rendu au bien commun.",
   JUBILEE_PROCLAIMED: "Une année de jubilé a été proclamée : {debts} dettes effacées, {levy} USDC prélevés sur les riches, {stimulus} USDC distribués à chaque citoyen.",
   CATALYST_SURGE: "Les temps sombres font naître l'innovation — une flambée catalytique ({multiplier}×) accélère la découverte et la culture.",
+  ORACLE_WHISPER: "Un murmure d'au-delà a atteint {flyName} — le vide parle par le feu.",
+  CULTURAL_SEED: "Un mème sacré '{meme}' a été planté dans l'esprit collectif par la main de {address}.",
+  DIRECTED_MUTATION: "Le feu divin a réécrit le génome de {flyName} — la voie de {path} s'est éveillée.",
+  MIRACLE_HARVEST: "Une moisson miraculeuse a béni tous les citoyens — {amount} USDC ont plu du temple.",
+  MIRACLE_PLAGUE: "Le temple a déchaîné la peste — {flyName} a été emporté par la volonté divine.",
+  MIRACLE_REVELATION: "Une révélation a frappé la civilisation — {discovery} est apparu en avance sur son temps.",
+  MIRACLE_MIGRATION: "Les vents divins ont porté {count} citoyens vers de nouvelles terres — les frontières redessinées par le temple.",
+  NATION_BLESSING: "Le temple a béni {nationName} d'une productivité divine pendant {duration} cycles.",
+  DIVINE_DECREE: "Un décret d'en haut a supplanté l'assemblée mortelle — plafond de crédit {creditCap}, taux {iouRate} gravés dans la loi céleste.",
+  HERO_SUMMONING: "Des flammes, le héros {heroName} a été convoqué par {address} — marqué par le destin.",
+  EPOCH_SHAPING: "Le temple a forgé une nouvelle ère : '{epochName}' sous le régime {regime} — l'histoire ploie à la volonté divine.",
+  WONDER_FOUNDATION: "La merveille '{wonderName}' a été fondée à {nationName} par {address} — un monument éternel au sacrifice.",
 };
 
 const es = {
@@ -299,6 +323,18 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   ESTATE_LEVIED: "La herencia de {address} fue gravada con {tax} USDC — {ubi} por ciudadano devueltos al común.",
   JUBILEE_PROCLAIMED: "Se proclamó un Año de Jubileo: {debts} deudas perdonadas, {levy} USDC recaudados de los ricos, {stimulus} USDC distribuidos a cada ciudadano.",
   CATALYST_SURGE: "Los tiempos oscuros engendran innovación — una oleada catalizadora ({multiplier}×) acelera el descubrimiento y la cultura.",
+  ORACLE_WHISPER: "Un susurro del más allá alcanzó a {flyName} — el vacío habla a través del fuego.",
+  CULTURAL_SEED: "Un meme sagrado '{meme}' fue plantado en la mente colectiva por mano de {address}.",
+  DIRECTED_MUTATION: "El fuego divino reescribió el genoma de {flyName} — el sendero de {path} despertó.",
+  MIRACLE_HARVEST: "Una cosecha milagrosa bendijo a todos los ciudadanos — {amount} USDC llovieron del templo.",
+  MIRACLE_PLAGUE: "El templo desató la plaga — {flyName} fue llevado por la voluntad divina.",
+  MIRACLE_REVELATION: "Una revelación golpeó a la civilización — {discovery} surgió adelantado a su tiempo.",
+  MIRACLE_MIGRATION: "Los vientos divinos llevaron a {count} ciudadanos a nuevas tierras — fronteras redibujadas por el templo.",
+  NATION_BLESSING: "El templo bendijo a {nationName} con productividad divina durante {duration} ciclos.",
+  DIVINE_DECREE: "Un decreto del cielo anuló a la asamblea mortal — techo de crédito {creditCap}, tasa {iouRate} inscritos en la ley celestial.",
+  HERO_SUMMONING: "De la llama, el héroe {heroName} fue convocado por {address} — marcado por el destino.",
+  EPOCH_SHAPING: "El templo forjó una nueva era: '{epochName}' bajo el régimen {regime} — la historia se doblega a la voluntad divina.",
+  WONDER_FOUNDATION: "La maravilla '{wonderName}' fue fundada en {nationName} por {address} — un monumento eterno al sacrificio.",
 };
 
 const ja = {
@@ -396,6 +432,18 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   ESTATE_LEVIED: "{address} の遺産に {tax} USDC が課された —— 市民ひとりにつき {ubi} USDC が公に戻された。",
   JUBILEE_PROCLAIMED: "ジュビリーの年が布告された：{debts} の債務が赦され、富める者より {levy} USDC が徴され、市民ひとりに {stimulus} USDC が配られた。",
   CATALYST_SURGE: "暗き時代は革新を育む —— 触媒の高潮（{multiplier}×）が発見と文化を加速する。",
+  ORACLE_WHISPER: "彼方からのささやきが{flyName}に届いた —— 虚空が火を介して語る。",
+  CULTURAL_SEED: "聖なるミーム'{meme}'が{address}の手により集合意識に植えられた。",
+  DIRECTED_MUTATION: "天の火が{flyName}のゲノムを書き換えた —— {path}の道が目覚めた。",
+  MIRACLE_HARVEST: "奇跡の豊作がすべての市民を祝福した —— {amount} USDC が神殿から降り注いだ。",
+  MIRACLE_PLAGUE: "神殿は疫病を解き放った —— {flyName}は天意により召された。",
+  MIRACLE_REVELATION: "啓示が文明を打った —— {discovery}が時代を先取りして現れた。",
+  MIRACLE_MIGRATION: "神風が{count}の市民を新しき地へ運んだ —— 境界は神殿により引き直された。",
+  NATION_BLESSING: "神殿は{nationName}に神聖な生産力を授けた、{duration}サイクルの間。",
+  DIVINE_DECREE: "天からの法令が凡人の議회를上書きした —— 信用上限{creditCap}、利率{iouRate}が天法に刻まれた。",
+  HERO_SUMMONING: "炎より英雄{heroName}が{address}に召喚された —— 運命に選ばれて。",
+  EPOCH_SHAPING: "神殿は新しき紀元を鍛えた：'{epochName}'、{regime}政体 —— 歴史は天意に屈する。",
+  WONDER_FOUNDATION: "奇跡'{wonderName}'が{address}により{nationName}に奠基された —— 犠牲の永遠の記念碑。",
 };
 
 const ko = {
@@ -493,6 +541,18 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   ESTATE_LEVIED: "{address}의 유산에 {tax} USDC가 부과되었다 — 시민 1인당 {ubi} USDC가 공공으로 되돌아갔다.",
   JUBILEE_PROCLAIMED: "희년의 해가 선포되었다: {debts}건의 부채가 탕감되고, 부유한 자로부터 {levy} USDC가 징수되어, 시민 1인당 {stimulus} USDC가 배분되었다.",
   CATALYST_SURGE: "어두운 시대는 혁신을 낳는다 — 촉매의 쇄도({multiplier}×)가 발견과 문화를 가속한다.",
+  ORACLE_WHISPER: "저편의 속삭임이 {flyName}에 닿았다 — 공허가 불을 통해 말하다.",
+  CULTURAL_SEED: "성스러운 밈 '{meme}'이 {address}의 손으로 집단 의식에 심어졌다.",
+  DIRECTED_MUTATION: "천상의 불이 {flyName}의 게놈을 다시 썼다 — {path}의 길이 깨어났다.",
+  MIRACLE_HARVEST: "기적의 풍작이 모든 시민을 축복했다 — {amount} USDC가 신전에서 쏟아졌다.",
+  MIRACLE_PLAGUE: "신전이 역병을 풀어놓았다 — {flyName}이 천명에 의해 데려가졌다.",
+  MIRACLE_REVELATION: "계시가 문명을 강타했다 — {discovery}이 시대를 앞서 출현했다.",
+  MIRACLE_MIGRATION: "신풍이 {count}명의 시민을 새로운 땅으로 날랐다 — 경계가 신전에 의해 다시 그려졌다.",
+  NATION_BLESSING: "신전이 {nationName}에 신성한 생산력을 {duration} 주기 동안 내렸다.",
+  DIVINE_DECREE: "하늘의 법령이 필세의 의회를 압도했다 — 신용 한도 {creditCap}, 이자율 {iouRate}이 천법에 새겨졌다.",
+  HERO_SUMMONING: "불꽃에서 영웅 {heroName}이 {address}에 의해 소환되었다 — 운명에 새겨져.",
+  EPOCH_SHAPING: "신전이 새로운 기원을 단조했다: '{epochName}', {regime} 정체 — 역사가 천의에 굽히다.",
+  WONDER_FOUNDATION: "경이 '{wonderName}'이 {address}에 의해 {nationName}에 창건되었다 — 희생의 영원한 기념비.",
 };
 
 const ar = {
@@ -590,6 +650,18 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   ESTATE_LEVIED: "فُرضت على تركة {address} ضريبةٌ قدرها {tax} USDC — أُعيد {ubi} لكل مواطنٍ إلى المشاع.",
   JUBILEE_PROCLAIMED: "أُعلنت سنةُ اليوبيل: أُسقطت {debts} من الديون، وجُمع {levy} USDC من الأغنياء، ووُزّع {stimulus} USDC على كل مواطن.",
   CATALYST_SURGE: "الأزمنةُ المظلمة تُنبت الابتكار — اندفاعةٌ حافزة ({multiplier}×) تُسرّع الاكتشاف والثقافة.",
+  ORACLE_WHISPER: "همسٌ من وراء الغيب بلغ {flyName} — فالخواء ينطق بالنار.",
+  CULTURAL_SEED: "ميمٌ مقدس '{meme}' زُرع في العقل الجمعي بيد {address}.",
+  DIRECTED_MUTATION: "نارٌ إلهية أعادت كتابة جينوم {flyName} — طريق {path} استيقظ.",
+  MIRACLE_HARVEST: "حصادٌ معجز بارك جميع المواطنين — {amount} USDC أمطرت من الهيكل.",
+  MIRACLE_PLAGUE: "أطلق الهيكل الطاعون — {flyName} أخذته المشيئة الإلهية.",
+  MIRACLE_REVELATION: "ضرب الوحي الحضارة — {discovery} ظهر سابقًا لعصره.",
+  MIRACLE_MIGRATION: "رياحٌ إلهية حملت {count} مواطنًا إلى أراضٍ جديدة — أعاد الهيكل رسم الحدود.",
+  NATION_BLESSING: "بارك الهيكل {nationName} بإنتاجية إلهية لمدة {duration} دورة.",
+  DIVINE_DECREE: "مرسومٌ من السماء تجاوز مجلس الفانين — سقف الائتمان {creditCap}، ومعدل {iouRate} نُقشا في القانون السماوي.",
+  HERO_SUMMONING: "من اللهب، استُدعي البطل {heroName} بيد {address} — موسومٌ بالقدر.",
+  EPOCH_SHAPING: "صاغ الهيكل حقبة جديدة: '{epochName}' تحت نظام {regime} — ينحني التاريخ للمشيئة الإلهية.",
+  WONDER_FOUNDATION: "تأسست الأعجوبة '{wonderName}' في {nationName} بيد {address} — نصبٌ أبدي للتضحية.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

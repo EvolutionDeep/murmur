@@ -68,3 +68,12 @@
 
 /i18n-chron.js
   Cache-Control: no-cache, no-store, must-revalidate
+
+# task 41: the Temple added UI keys to i18n-ui.js and is reached through i18n.js (both bare/?v
+# imported by five live modules). Force revalidation on both so returning readers never run a
+# cached i18n.js?v=96 that still points at the pre-Temple i18n-ui.js dictionary.
+/i18n.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/i18n-ui.js
+  Cache-Control: no-cache, no-store, must-revalidate

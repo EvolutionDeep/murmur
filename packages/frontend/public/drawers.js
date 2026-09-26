@@ -1121,6 +1121,7 @@ export function renderWarSection() {
 }
 export function openWallets() {
   state.walletsOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -1278,6 +1279,7 @@ export function renderHistory() {
 }
 export function openHistory() {
   state.historyOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -1307,6 +1309,7 @@ export function toggleHistory() { if (state.historyOpen) closeHistory(); else op
 // ---- chronicle drawer lifecycle (button in the bottom-right corner; mutually exclusive like the others) ----
 export function openChron() {
   state.chronOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.walletsOpen) closeWallets();
@@ -1333,6 +1336,7 @@ export function closeChron() {
 export function toggleChron() { if (state.chronOpen) closeChron(); else openChron(); }
 export function openCanary() {
   state.canaryOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.chronOpen) closeChron();
   if (state.walletsOpen) closeWallets();
   if (state.historyOpen) closeHistory();
@@ -1623,6 +1627,10 @@ export const CHRON_ICONS = {
   WORK_RAISED: "🏛", WORK_REPAIRED: "🔧", WORK_DILAPIDATED: "🏚",
   WARD_TAKEN: "🛡", WARD_FLEDGED: "🐣", GUARDIAN_HONORED: "🏺",
   ESTATE_LEVIED: "⚖", JUBILEE_PROCLAIMED: "🕊", CATALYST_SURGE: "✨",
+  // ㉙ TEMPLE — burn-to-intervene divine acts
+  ORACLE_WHISPER: "👁", CULTURAL_SEED: "🌱", DIRECTED_MUTATION: "🧬", MIRACLE_HARVEST: "🌾",
+  MIRACLE_PLAGUE: "💀", MIRACLE_REVELATION: "💡", MIRACLE_MIGRATION: "🌊", NATION_BLESSING: "✨",
+  DIVINE_DECREE: "⚡", HERO_SUMMONING: "🦸", EPOCH_SHAPING: "🌅", WONDER_FOUNDATION: "🏛",
 };
 export function renderChron() {
   const list = $("chron-list");
@@ -1826,6 +1834,7 @@ export function renderChronVerdict() {
 }
 export function openProofs() {
   state.proofsOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -2025,6 +2034,7 @@ export function findLaureateEntry(seq) {
 }
 export function openLaureate() {
   state.laureateOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.brainOpen) closeBrain();
   if (state.walletsOpen) closeWallets();
@@ -2259,6 +2269,7 @@ export async function verifyBrain() {
 }
 export function openBrain() {
   state.brainOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.walletsOpen) closeWallets();
@@ -2404,6 +2415,7 @@ export const LIN_ADMIN_TOKEN = params.get("token") || "";
 export const LIN_OP = { genesis: "◦ genesis", mutate: "↻ mutate", cross: "⤫ cross" };
 export function openLineage() {
   state.lineageOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -2650,6 +2662,7 @@ export function d0LineageAddr() { return (state.lineageData && state.lineageData
 // ================= arc pulse drawer (x402 data product + trustless leaderboard) =================
 export function openPulse() {
   state.pulseOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -2889,6 +2902,7 @@ export async function buySignal(btn) {
 // ================= prediction market drawer (neural stakes + trustless hit-rate leaderboard) =================
 export function openPredict() {
   state.predictOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -3154,6 +3168,7 @@ export const fmtMur = (n, dp = 2) => Number(n || 0).toLocaleString("en-US", { mi
 // ---- drawer lifecycle (mirrors the predict drawer; mutually exclusive with the others) ----
 export function openArena() {
   state.arenaOpen = true;
+  if (state.templeOpen) closeTemple();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.brainOpen) closeBrain();
@@ -3543,4 +3558,400 @@ export function arenaVsSwarmCard(d) {
   }
   card.innerHTML = html;
   return card;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ㉙ THE TEMPLE — burn MURMUR to intervene in the swarm's fate.
+//
+// Every other membrane is a read-out; the temple is the one door that opens the
+// other way, and it opens only for FIRE. A holder sends MURMUR to 0x…dEaD —
+// provably, irreversibly GONE — and submits the tx hash; the Worker re-reads that
+// hash on-chain (keyless, read-only) and only a real burn clearing the tier minimum
+// enters the queue. This drawer mirrors the arena's wallet plumbing but BURNS instead
+// of betting: a plain ERC-20 transfer to the sink (no approve, no contract call),
+// then POST /temple with the hash. All state lives in `state.temple*` (shared.js).
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** The canonical ERC-20 burn sink — tokens sent here are provably unspendable (mirrors temple.ts). */
+export const TEMPLE_BURN_ADDRESS = "0x000000000000000000000000000000000000dEaD";
+/** MURMUR on Arc mainnet (18 dec) — the only token a temple burn counts in (mirrors temple.ts). */
+export const TEMPLE_MURMUR = "0x8faae5592b9acc27a79fca745c6b872adf514a5d";
+/** transfer(address,uint256) — a burn is a plain transfer to the sink. */
+export const TEMPLE_SEL_TRANSFER = "0xa9059cbb";
+/** Arc mainnet chain id (the temple burns on mainnet). */
+export const TEMPLE_CHAIN_ID = 5042;
+/** tier → the minimum MURMUR (whole units) a burn must clear (mirrors temple.ts TIER_MINIMUMS). */
+export const TEMPLE_TIER_MIN = [0, 1000, 10000, 100000, 1000000];
+
+/**
+ * The twelve interventions, laddered by cost (mirrors temple.ts KIND_TIER). `params` drives the
+ * input rows the drawer renders; `cost`/`desc`/`name` are display-only English labels.
+ */
+export const TEMPLE_KINDS = [
+  { kind: "ORACLE_WHISPER",     tier: 1, name: "Oracle Whisper",       cost: "1,000+",     desc: "Send a divine whisper to a specific fly",                 params: ["flyId", "direction"] },
+  { kind: "CULTURAL_SEED",      tier: 1, name: "Cultural Seed",        cost: "1,000+",     desc: "Plant a sacred meme in the collective mind",              params: ["flyId", "text"] },
+  { kind: "DIRECTED_MUTATION",  tier: 2, name: "Directed Mutation",    cost: "10,000+",    desc: "Rewrite a fly's genome along a chosen path",              params: ["flyId", "path"] },
+  { kind: "MIRACLE_HARVEST",    tier: 2, name: "Miracle: Harvest",     cost: "10,000+",    desc: "Bless all citizens with a small windfall",                params: [] },
+  { kind: "MIRACLE_PLAGUE",     tier: 2, name: "Miracle: Plague",      cost: "10,000+",    desc: "Strike down a random citizen by divine will",             params: [] },
+  { kind: "MIRACLE_REVELATION", tier: 2, name: "Miracle: Revelation",  cost: "10,000+",    desc: "Grant an immediate technological discovery",              params: [] },
+  { kind: "MIRACLE_MIGRATION",  tier: 2, name: "Miracle: Migration",   cost: "10,000+",    desc: "Carry 3 citizens to new lands",                           params: [] },
+  { kind: "NATION_BLESSING",    tier: 2, name: "Nation's Blessing",    cost: "10,000+",    desc: "Bless a nation with divine productivity (12 cycles)",     params: ["nationId"] },
+  { kind: "DIVINE_DECREE",      tier: 3, name: "Divine Decree",        cost: "100,000+",   desc: "Override the assembly with celestial law",                params: ["creditCap", "iouRate"] },
+  { kind: "HERO_SUMMONING",     tier: 3, name: "Hero Summoning",       cost: "100,000+",   desc: "Summon a named hero into the world",                      params: ["heroName"] },
+  { kind: "EPOCH_SHAPING",      tier: 4, name: "Epoch Shaping",        cost: "1,000,000+", desc: "Forge a new epoch with your chosen name and regime",      params: ["epochName", "regime"] },
+  { kind: "WONDER_FOUNDATION",  tier: 4, name: "Wonder Foundation",    cost: "1,000,000+", desc: "Erect an eternal wonder in a nation",                     params: ["nationId", "wonderType"] },
+];
+
+/** Per-param input metadata (label, control type, options). Technical field labels stay English. */
+export const TEMPLE_PARAMS = {
+  flyId:      { label: "Fly ID",        type: "number", ph: "e.g. 7" },
+  direction:  { label: "Direction",     type: "select", opts: [["up", "Up \u25b2"], ["down", "Down \u25bc"]] },
+  text:       { label: "Meme",          type: "text",   ph: "a sacred meme (\u2264 32)" },
+  path:       { label: "Mutation path", type: "select", opts: [["longevity", "Longevity"], ["intelligence", "Intelligence"], ["trading", "Trading"], ["aggression", "Aggression"]] },
+  nationId:   { label: "Nation ID",     type: "number", ph: "e.g. 2" },
+  creditCap:  { label: "Credit cap",    type: "number", ph: "USDC" },
+  iouRate:    { label: "IOU rate",      type: "number", ph: "e.g. 0.05" },
+  heroName:   { label: "Hero name",     type: "text",   ph: "a name (\u2264 24)" },
+  epochName:  { label: "Epoch name",    type: "text",   ph: "a name (\u2264 32)" },
+  regime:     { label: "Regime",        type: "select", opts: [["HOT", "Hot"], ["CALM", "Calm"], ["COLD", "Cold"]] },
+  wonderType: { label: "Wonder",        type: "select", opts: [["babel", "Babel"], ["library", "Library"], ["arena", "Arena"], ["lifetree", "Life Tree"], ["market", "Market"]] },
+};
+
+// ---- drawer lifecycle (mutually exclusive with the other eleven right-edge sheets) ----
+export function openTemple() {
+  state.templeOpen = true;
+  if (state.chronOpen) closeChron();
+  if (state.canaryOpen) closeCanary();
+  if (state.laureateOpen) closeLaureate();
+  if (state.walletsOpen) closeWallets();
+  if (state.historyOpen) closeHistory();
+  if (state.proofsOpen) closeProofs();
+  if (state.brainOpen) closeBrain();
+  if (state.lineageOpen) closeLineage();
+  if (state.pulseOpen) closePulse();
+  if (state.predictOpen) closePredict();
+  if (state.arenaOpen) closeArena();
+  const d = $("temple"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("temple-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderTemple();
+}
+export function closeTemple() {
+  state.templeOpen = false;
+  document.body.classList.remove("temple-open");
+  const d = $("temple"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!state.templeOpen) d.hidden = true; }, 420);
+}
+export function toggleTemple() { if (state.templeOpen) closeTemple(); else openTemple(); }
+
+export async function renderTemple() {
+  const body = $("temple-body"); if (!body) return;
+  body.innerHTML = `<p class="tp-empty">${T("temple.loading")}</p>`;
+  const res = await getJSON("/temple", 8000).catch(() => null);
+  if (!state.templeOpen) return;                 // closed while fetching
+  state.templeData = res || null;
+  await templeReadBalance();
+  if (!state.templeOpen) return;
+  paintTemple();
+}
+
+/** Read the connected wallet's MURMUR balance straight off Arc (browser → RPC, no server). */
+export async function templeReadBalance() {
+  const d = state.templeData || {};
+  const token = isRealAddr(d.token) ? d.token : TEMPLE_MURMUR;
+  if (!state.templeAcct || !isRealAddr(token)) { state.templeBal = null; return; }
+  try {
+    const bal = await arcRpc("eth_call", [{ to: token, data: MUR_SEL_BALANCE + wordAddr(state.templeAcct) }, "latest"]);
+    state.templeBal = BigInt(bal || "0x0");
+  } catch { state.templeBal = null; }
+}
+
+// ---- wallet plumbing (mirrors arenaEnsureWallet, but the temple only needs the right chain) ----
+export async function templeEnsureWallet(setMsg, chainId) {
+  if (!window.ethereum) { setMsg(T("temple.noWallet"), "bad"); return null; }
+  const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  const from = Array.isArray(accts) && accts[0];
+  if (!from) { setMsg(T("temple.walletFailed"), "bad"); return null; }
+  const cid = Number(chainId || TEMPLE_CHAIN_ID);
+  const chainHex = "0x" + cid.toString(16);
+  const cur = await window.ethereum.request({ method: "eth_chainId" });
+  if (String(cur).toLowerCase() !== chainHex.toLowerCase()) {
+    setMsg(T("temple.switchArc"));
+    const testnet = cid !== 5042;
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainHex }] });
+    } catch (swErr) {
+      if (swErr && (swErr.code === 4902 || /Unrecognized chain ID/i.test(String(swErr.message)))) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: chainHex, chainName: testnet ? "Arc Testnet" : "Arc",
+            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+            rpcUrls: testnet ? ["https://rpc.testnet.arc.io"] : ["https://rpc.mainnet.arc.io"],
+            blockExplorerUrls: ["https://explorer.arc.io"],
+          }],
+        });
+      } else { throw swErr; }
+    }
+  }
+  state.templeAcct = from.toLowerCase();
+  return from;
+}
+
+/** The status writer for the temple body (single .tp-status line, mirrors arenaMsgFn). */
+export function templeMsgFn() {
+  const status = document.querySelector("#temple-body .tp-status");
+  return (m, cls) => { if (status) { status.textContent = m || ""; status.className = "tp-status" + (cls ? " " + cls : ""); } };
+}
+
+// ---- actions ----
+export async function templeConnect(btn) {
+  if (state.templeBusy) return;
+  const setMsg = templeMsgFn();
+  state.templeBusy = true; if (btn) btn.disabled = true;
+  try {
+    setMsg(T("temple.connecting"));
+    const d = state.templeData || {};
+    const from = await templeEnsureWallet(setMsg, Number(d.chainId || TEMPLE_CHAIN_ID));
+    if (!from) return;
+    await templeReadBalance();
+    if (!state.templeOpen) return;
+    paintTemple();
+    templeMsgFn()(T("temple.connected") + " \u00b7 " + shortHash(from), "ok");
+  } catch (e) { setMsg(arenaErr(e), "bad"); }
+  finally { state.templeBusy = false; if (btn) btn.disabled = false; }
+}
+
+export function templeSelectKind(kind) {
+  const spec = TEMPLE_KINDS.find((k) => k.kind === kind);
+  if (!spec) return;
+  state.templeSelected = { kind: spec.kind, tier: spec.tier };
+  paintTemple();
+}
+
+/** Gather the param inputs for the selected kind, adding the alias keys temple.ts reads. */
+function templeCollectParams(kind) {
+  const spec = TEMPLE_KINDS.find((k) => k.kind === kind);
+  const out = {};
+  if (!spec) return out;
+  for (const p of spec.params) {
+    const el = document.querySelector(`#temple-body [data-param="${p}"]`);
+    if (!el) continue;
+    const v = String(el.value == null ? "" : el.value).trim();
+    if (!v) continue;
+    const meta = TEMPLE_PARAMS[p];
+    out[p] = meta && meta.type === "number" ? Number(v) : v;
+  }
+  // temple.ts reads p.name for hero/epoch and p.wonder for a wonder — mirror the aliases
+  if (out.heroName != null) out.name = out.heroName;
+  if (out.epochName != null) out.name = out.epochName;
+  if (out.wonderType != null) out.wonder = out.wonderType;
+  return out;
+}
+
+/**
+ * The burn: send the tier-minimum MURMUR to 0x…dEaD (a plain transfer — the tokens are gone the
+ * moment the tx lands), wait for the receipt, then POST the hash to /temple for on-chain verify.
+ */
+export async function templeBurn(btn) {
+  if (state.templeBusy) return;
+  const setMsg = templeMsgFn();
+  const sel = state.templeSelected;
+  if (!sel) { setMsg(T("temple.selectKind"), "bad"); return; }
+  if (!state.templeAcct) { setMsg(T("temple.noWalletHint"), "bad"); return; }
+  const d = state.templeData || {};
+  const token = isRealAddr(d.token) ? d.token : TEMPLE_MURMUR;
+  const sink = isRealAddr(d.burnAddress) ? d.burnAddress : TEMPLE_BURN_ADDRESS;
+  const chainId = Number(d.chainId || TEMPLE_CHAIN_ID);
+  const minBurn = TEMPLE_TIER_MIN[sel.tier] || 1000;
+  const burnAtomic = murToAtomic(String(minBurn));
+  if (state.templeBal != null && burnAtomic > state.templeBal) { setMsg(T("temple.insufficient"), "bad"); return; }
+  state.templeBusy = true; if (btn) btn.disabled = true;
+  let finalMsg = "", finalCls = "";
+  try {
+    const from = await templeEnsureWallet(setMsg, chainId);
+    if (!from) return;
+    const params = templeCollectParams(sel.kind);
+    const data = TEMPLE_SEL_TRANSFER + wordAddr(sink) + wordUint(burnAtomic);
+    setMsg(T("temple.burnConfirm"));
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: state.templeAcct, to: token, data, value: "0x0" }],
+    });
+    setMsg(T("temple.txWaiting"));
+    const ok = await arenaWaitReceipt(txHash);
+    if (ok !== true) {
+      setMsg(ok === false ? T("temple.txFailed") : T("temple.failed", { msg: shortHash(txHash) + " \u2026" }), "bad");
+      return;
+    }
+    setMsg(T("temple.verifying"));
+    const r = await fetch(API + "/temple", {
+      method: "POST", cache: "no-store", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ txHash, kind: sel.kind, params, address: state.templeAcct }),
+    });
+    const result = await r.json().catch(() => ({}));
+    if (result && result.ok) {
+      finalMsg = T("temple.queued", { pos: result.queuePosition, tier: result.tier || sel.tier, burned: fmtMur(minBurn, 0) });
+      finalCls = "ok";
+      state.templeSelected = null;
+      state.lastTemplePoll = 0;
+      const fresh = await getJSON("/temple", 8000).catch(() => null);
+      if (fresh) state.templeData = fresh;
+      await templeReadBalance();
+      if (state.templeOpen) paintTemple();
+    } else {
+      finalMsg = T("temple.failed", { msg: (result && result.error) || "unknown" });
+      finalCls = "bad";
+    }
+    setMsg(finalMsg, finalCls);
+  } catch (e) { setMsg(arenaErr(e), "bad"); }
+  finally { state.templeBusy = false; if (btn) btn.disabled = false; }
+}
+
+// ---- render ----
+export function paintTemple() {
+  const body = $("temple-body"); if (!body) return;
+  const sub = $("temple-sub"); if (sub) sub.textContent = T("temple.sub");
+  const d = state.templeData || {};
+  const canBurn = !!state.templeAcct && !!state.templeSelected && !state.templeBusy;
+  let html = "";
+  html += templeWalletRow(d);
+  html += templeKindGrid();
+  html += templeParamsArea();
+  html += `<button type="button" class="tp-burn-btn"${canBurn ? "" : " disabled"}>${T("temple.burn")}</button>`;
+  html += `<div class="tp-status"></div>`;
+  html += templeQueueCard(d);
+  html += templeHistoryCard(d);
+  html += templeWondersHeroes(d);
+  body.innerHTML = html;
+}
+
+function templeTotalBurned(d) {
+  const ro = d.readout || d;
+  if (ro.totalBurned == null) return null;
+  try { return Number(BigInt(String(ro.totalBurned))) / 1e18; } catch { return null; }
+}
+
+function templeWalletRow(d) {
+  const total = templeTotalBurned(d);
+  let html = `<div class="tp-section"><div class="tp-wallet-row">`;
+  if (!state.templeAcct) {
+    html += `<button type="button" class="tp-connect-btn">${T("temple.connect")}</button>` +
+      `<span class="tp-wallet-bal">${T("temple.noWalletHint")}</span>`;
+  } else {
+    const bal = state.templeBal != null ? fmtMur(Number(state.templeBal) / 1e18, 2) : "\u2013";
+    html += `<span class="tp-wallet-addr fp">${shortHash(state.templeAcct)}</span>` +
+      `<span class="tp-wallet-bal">${T("temple.balance")}: ${bal} MURMUR</span>` +
+      `<button type="button" class="tp-connect-btn">${T("temple.connected")}</button>`;
+  }
+  html += `</div>`;
+  if (total != null) html += `<div class="tp-wallet-bal">\ud83d\udd25 ${fmtMur(total, 0)} MURMUR</div>`;
+  return html + `</div>`;
+}
+
+function templeKindGrid() {
+  let html = "";
+  for (let tier = 1; tier <= 4; tier++) {
+    const kinds = TEMPLE_KINDS.filter((k) => k.tier === tier);
+    if (!kinds.length) continue;
+    html += `<div class="tp-tier-label">${T("temple.tier" + tier)} \u00b7 ${T("temple.minBurn", { n: fmtMur(TEMPLE_TIER_MIN[tier], 0) })}</div>`;
+    html += `<div class="tp-tier-grid">`;
+    for (const k of kinds) {
+      const selected = state.templeSelected && state.templeSelected.kind === k.kind;
+      const icon = CHRON_ICONS[k.kind] || "\u2726";
+      html += `<div class="tp-card${selected ? " selected" : ""}" data-kind="${k.kind}" role="button" tabindex="0">` +
+        `<div class="tp-card-name">${icon} ${escapeHtml(k.name)}</div>` +
+        `<div class="tp-card-cost">${escapeHtml(k.cost)} MURMUR</div>` +
+        `<div class="tp-card-desc">${escapeHtml(k.desc)}</div>` +
+      `</div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function templeParamsArea() {
+  const sel = state.templeSelected;
+  if (!sel) return `<div class="tp-section"><p class="tp-empty">${T("temple.selectKind")}</p></div>`;
+  const spec = TEMPLE_KINDS.find((k) => k.kind === sel.kind);
+  if (!spec || !spec.params.length) return "";
+  let html = `<div class="tp-section"><div class="tp-section-title">${escapeHtml(spec.name)}</div><div class="tp-params">`;
+  for (const p of spec.params) {
+    const meta = TEMPLE_PARAMS[p] || { label: p, type: "text" };
+    html += `<div class="tp-param-row"><label class="tp-param-label">${escapeHtml(meta.label)}</label>`;
+    if (meta.type === "select") {
+      html += `<select class="tp-param-select" data-param="${p}">` +
+        meta.opts.map((o) => `<option value="${escapeHtml(o[0])}">${escapeHtml(o[1])}</option>`).join("") + `</select>`;
+    } else {
+      html += `<input class="tp-param-input" data-param="${p}" type="${meta.type === "number" ? "number" : "text"}" step="any" placeholder="${escapeHtml(meta.ph || "")}" />`;
+    }
+    html += `</div>`;
+  }
+  return html + `</div></div>`;
+}
+
+function templeQueueCard(d) {
+  const q = Array.isArray(d.queue) ? d.queue : [];
+  let html = `<div class="tp-section"><div class="tp-section-title">${T("temple.queue")} (${q.length})</div>`;
+  if (!q.length) return html + `<p class="tp-empty">${T("temple.emptyQueue")}</p></div>`;
+  html += `<div class="tp-history">` + q.map((e, i) => templeQueueRow(e, i)).join("") + `</div>`;
+  return html + `</div>`;
+}
+
+function templeQueueRow(e, i) {
+  const icon = CHRON_ICONS[e.kind] || "\u2726";
+  return `<div class="tp-queue-row"><span class="tp-queue-pos">${i + 1}</span>` +
+    `<span class="tp-ico">${icon}</span><span class="tp-hist-kind">${escapeHtml(String(e.kind))}</span>` +
+    `<span class="tp-hist-addr fp">${e.address ? shortHash(e.address) : ""}</span></div>`;
+}
+
+function templeHistoryCard(d) {
+  const ro = d.readout || d;
+  const h = Array.isArray(d.history) ? d.history : (Array.isArray(ro.history) ? ro.history : []);
+  let html = `<div class="tp-section"><div class="tp-section-title">${T("temple.history")}</div>`;
+  if (!h.length) return html + `<p class="tp-empty">${T("temple.emptyHistory")}</p></div>`;
+  html += `<div class="tp-history">` + h.slice().reverse().slice(0, 20).map(templeHistItem).join("") + `</div>`;
+  return html + `</div>`;
+}
+
+function templeHistItem(e) {
+  const icon = CHRON_ICONS[e.kind] || "\u2726";
+  let burned = "";
+  if (e.burnAmount != null) { try { burned = fmtMur(Number(BigInt(String(e.burnAmount))) / 1e18, 0); } catch { burned = ""; } }
+  return `<div class="tp-hist-item">` +
+    `<span class="tp-hist-kind">${icon} ${escapeHtml(String(e.kind))}</span>` +
+    (burned ? ` <span class="tp-hist-addr">\ud83d\udd25 ${burned}</span>` : "") +
+    (e.tier ? ` <span class="tp-hist-addr">T${e.tier}</span>` : "") +
+    `<div class="tp-hist-addr fp">${e.address ? shortHash(e.address) : ""}</div>` +
+  `</div>`;
+}
+
+function templeWondersHeroes(d) {
+  const ro = d.readout || d;
+  const heroes = Array.isArray(ro.heroes) ? ro.heroes : [];
+  const wonders = ro.wonders && typeof ro.wonders === "object" ? ro.wonders : {};
+  const wKeys = Object.keys(wonders);
+  if (!heroes.length && !wKeys.length) return "";
+  let html = "";
+  if (wKeys.length) {
+    html += `<div class="tp-section"><div class="tp-section-title">${T("temple.wonders")}</div>`;
+    for (const nid of wKeys) {
+      html += `<div class="tp-wonder-row"><span class="tp-ico">\ud83c\udfdb</span>` +
+        `<span>${escapeHtml(String(wonders[nid]))}</span>` +
+        `<span class="tp-hist-addr">nation ${escapeHtml(nid)}</span></div>`;
+    }
+    html += `</div>`;
+  }
+  if (heroes.length) {
+    html += `<div class="tp-section"><div class="tp-section-title">${T("temple.heroes")}</div>`;
+    for (const h of heroes.slice(-20).reverse()) {
+      html += `<div class="tp-hero-row"><span class="tp-ico">\ud83e\uddb8</span>` +
+        `<span>${escapeHtml(h.name || ("#" + h.flyId))}</span>` +
+        `<span class="tp-hist-addr fp">${h.summoner ? shortHash(h.summoner) : ""}</span></div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
 }

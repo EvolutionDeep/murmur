@@ -576,13 +576,27 @@ REINVENTION: "Reinvention — fly #{id} has rediscovered {name} from the ashes o
     ESTATE_LEVIED: "The estate of {address} was levied {tax} USDC — {ubi} per citizen returned to the commons.",
     JUBILEE_PROCLAIMED: "A Year of Jubilee was proclaimed: {debts} debts forgiven, {levy} USDC collected from the wealthy, {stimulus} USDC distributed to each citizen.",
     CATALYST_SURGE: "Dark times breed innovation — a catalyst surge ({multiplier}×) accelerates discovery and culture.",
+    // ㉙ TEMPLE — burn-to-intervene divine acts. Byte-for-byte the server chronicler TEMPLATES
+    //     (a single drifted char and every visitor's "prove no LLM" banner goes red on these lines).
+    ORACLE_WHISPER: "A whisper from beyond reached {flyName} — the void speaks through fire.",
+    CULTURAL_SEED: "A sacred meme '{meme}' was planted in the collective mind by the hand of {address}.",
+    DIRECTED_MUTATION: "Divine fire rewrote the genome of {flyName} — the path of {path} awakened.",
+    MIRACLE_HARVEST: "A miraculous harvest blessed all citizens — {amount} USDC rained from the temple.",
+    MIRACLE_PLAGUE: "The temple unleashed plague — {flyName} was taken by divine will.",
+    MIRACLE_REVELATION: "A revelation struck the civilization — {discovery} emerged ahead of its time.",
+    MIRACLE_MIGRATION: "Divine winds carried {count} citizens to new lands — borders redrawn by the temple.",
+    NATION_BLESSING: "The temple blessed {nationName} with divine productivity for {duration} cycles.",
+    DIVINE_DECREE: "A decree from above overrode the mortal assembly — credit cap {creditCap}, rate {iouRate} inscribed in celestial law.",
+    HERO_SUMMONING: "From the flame, hero {heroName} was summoned by {address} — marked by destiny.",
+    EPOCH_SHAPING: "The temple forged a new epoch: '{epochName}' under the {regime} regime — history bends to divine will.",
+    WONDER_FOUNDATION: "The wonder '{wonderName}' was founded in {nationName} by {address} — an eternal monument to sacrifice.",
   },
   eraNames: {
     HOT: ["the Scorch", "the Fever", "the Long Burn", "the Surge", "Ember-time"],
     CALM: ["the Drift", "the Even Tide", "the Quiet Middle", "the Slow Current", "the Poise"],
     COLD: ["the Long Frost", "the Great Huddle", "the Still Age", "the Deep Winter", "Frostline"],
   },
-  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60, WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120, WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60, ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60 },
+  cooldown: { PANIC: 3, STORM: 5, HUDDLE: 5, FEAST: 4, BIRTH: 2, LEAD_CHANGE: 2, RECORD_CONC: 3, FEUD: 8, ALLIANCE: 8, BETRAYAL: 2, REPUTATION: 12, HOUSE_FOUNDED: 4, DYNASTY: 16, ELEGY: 1, EPOCH_OPEN: 200, EPOCH_CLOSE: 200, TREND: 8, TRADITION: 16, MARKET_SHIFT: 6, CREDIT: 10, RUN: 12, CLASS: 24, ASSEMBLY: 8, DECREE: 6, WAR_DECLARED: 4, WAR_RESOLVED: 4, TAX_LEVIED: 10, TERRITORY_SEIZED: 4, PROPHECY: 12, SCHISM: 12, REVIVAL: 12, PILGRIMAGE: 6, GENERATION: 84, GOLDEN_AGE: 400, DARK_AGE: 400, RENAISSANCE: 400, MIGRATION: 300, INVENTION: 60, DIFFUSION: 40, LOST_ART: 120, CITY_FOUNDED: 30, URBANIZATION: 200, CENSUS: 84, PLAGUE_WAVE: 120, TRANSMISSION: 8, SURPASS: 200, SCHOOL: 60, CRAFT_LOST: 120, RECORDING: 40, DECODE: 15, ARCHIVE_BURNED: 200, REINVENTION: 80, COIN_FEVER: 30, WHALE_MOVE: 20, TITHE: 60, COIN_SILENCE: 120, INDICTMENT: 10, TRIAL: 10, VERDICT: 10, EXILE: 40, AMNESTY: 200, GAMES: 100, CHAMPION: 100, RECORD: 200, GUILD_CHARTER: 200, APPRENTICE_PACT: 100, GUILD_MONOPOLY: 240, COINAGE: 60, WORD_SPREAD: 100, WORD_DIES: 240, RUMOR_AFOOT: 90, RUMOR_BENT: 240, RUMOR_FADED: 120, TREATY_SIGNED: 120, TREATY_RATIFIED: 180, TREATY_BREACHED: 60, WORK_RAISED: 90, WORK_REPAIRED: 60, WORK_DILAPIDATED: 120, WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60, ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60, ORACLE_WHISPER: 3, CULTURAL_SEED: 6, DIRECTED_MUTATION: 12, MIRACLE_HARVEST: 12, MIRACLE_PLAGUE: 24, MIRACLE_REVELATION: 18, MIRACLE_MIGRATION: 12, NATION_BLESSING: 24, DIVINE_DECREE: 60, HERO_SUMMONING: 120, EPOCH_SHAPING: 200, WONDER_FOUNDATION: 500 },
   // ⑦ EPOCHS shock detector — these exact values are hashed into the historian's genome server-side, so the
   // fingerprint only matches if the browser holds the identical names + thresholds (the era-forcing rule-set).
   shockNames: { FAMINE: "the Famine", PLAGERA: "the Rot", BOOM: "the Gilding", GREAT_HUDDLE: "the Long Cold", DYNASTIC: "the Yoke of Houses" },
@@ -823,6 +837,14 @@ export const state = {
   arenaAcct: null,
   arenaUser: null,
   arenaTickTimer: 0,
+  // ㉙ Temple — burn-to-intervene drawer (mutually exclusive with the other right-edge sheets)
+  templeOpen: false,
+  templeAcct: null,
+  templeBusy: false,
+  templeData: null,        // GET /temple cache
+  templeSelected: null,    // { kind, tier, params }
+  templeBal: null,         // connected wallet's MURMUR balance (atomic BigInt)
+  lastTemplePoll: 0,
   synthPhase: Math.random() * 100,
   synthTick: 0,
 };

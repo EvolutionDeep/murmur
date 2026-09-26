@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=99" />
+  <link rel="stylesheet" href="./styles.css?v=100" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -116,6 +116,9 @@
     <button class="pulse-btn" id="pulse-btn" type="button" data-i18n="temp.pulseBtn" data-i18n-title="temp.pulseTitle" title="Buy the machine-readable Arc-activity signal over x402 (HTTP 402), and see the trustless on-chain PnL leaderboard">arc pulse · x402 →</button>
     <button class="predict-btn" id="predict-btn" type="button" data-i18n="temp.predictBtn" data-i18n-title="temp.predictTitle" title="The swarm stakes real USDC on next tick's market temperature; parimutuel pools settle on-chain and every resolution is a verifiable registry receipt">predict · on-chain →</button>
     <button class="arena-btn" id="arena-btn" type="button" data-i18n="temp.arenaBtn" data-i18n-title="temp.arenaTitle" title="Bet MURMUR on the SAME temperature move the swarm does — non-custodial, parimutuel, escrowed and paid out by the on-chain PredictionArena contract. You vs the swarm.">arena · bet MURMUR →</button>
+    <!-- ㉙ THE TEMPLE — burn MURMUR to intervene in the swarm's fate. The golden breathing glow makes it
+         the most prominent trigger on the page; it opens the burn-to-intervene drawer (see drawers.js). -->
+    <button class="temple-btn" id="temple-btn" type="button" data-i18n-aria="temple.aria" data-i18n-title="temple.title" aria-label="The Temple" title="Burn MURMUR to become myth — intervene in the swarm's fate"><span class="temple-orn" aria-hidden="true">⛩</span> <span data-i18n="temple.btn">The Temple</span></button>
   </section>
 
   <!-- ============ population reaction (top-right) ============ -->
@@ -566,6 +569,16 @@
     <div class="drawer-body" id="arena-body"></div>
   </aside>
 
+  <!-- ============ ㉙ THE TEMPLE (right drawer) — burn MURMUR to intervene in the swarm's fate ============ -->
+  <aside class="drawer temple" id="temple" hidden data-i18n-aria="temple.aria" aria-label="The Temple">
+    <div class="drawer-head">
+      <span class="drawer-title" data-i18n="temple.title">⛩ The Temple — Burn to Become Myth</span>
+      <span class="drawer-sub" id="temple-sub" data-i18n="temple.sub">burn MURMUR · intervene in the swarm's fate</span>
+      <button class="drawer-close" id="temple-close" data-i18n-aria="chron.close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body" id="temple-body"></div>
+  </aside>
+
   <!-- ============ the Laureate (right drawer) — the swarm's own poet: neural activity + on-chain reality decoded into verifiable verse ============ -->
   <aside class="drawer laureate" id="laureate" hidden data-i18n-aria="laureate.aria" aria-label="the Laureate: the swarm's own poet">
     <div class="drawer-head">
@@ -612,6 +625,6 @@
        bottom-right stack is chron-btn → canary-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=127" type="module"></script>
+  <script src="./main.js?v=128" type="module"></script>
 </body>
 </html>
