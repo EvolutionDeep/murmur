@@ -129,7 +129,6 @@ export function bindUI() {
     else if (b.dataset.layer === "societies") state.showSocieties = on;
     else if (b.dataset.layer === "territory") { state.showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { state.showGraves = on; if (!on) hideEpitaph(); }
-    else if (b.dataset.layer === "chronicle") state.showChron = on;
     else if (b.dataset.layer === "cities") state.showCities = on;
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
