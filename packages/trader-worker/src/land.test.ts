@@ -1,7 +1,7 @@
 /**
  * ㉚ LAND — unit tests (node:test, mirrors temple.test.ts's fixture style).
  *
- * Covers: the price ratchet at every override boundary (the 10,000 floor, +100 per seizure), a successful
+ * Covers: the price ratchet at every override boundary (the 5,000 floor, +100 per seizure), a successful
  * claim, an override that changes hands and ratchets the count, the persisted dedup ring (a burn is honoured
  * once, ever), an insufficient burn, an out-of-range parcelId, an oversized image, the serialize/deserialize
  * round trip (BigInt as a decimal string), a corrupt blob restarting a COLD grid, and the dedup ring's cap.
@@ -87,11 +87,11 @@ function layer(): LandLayer {
 
 // ─── 1-3. the price ratchet (a pure function of the stored override count) ──────────────────────────────
 
-test("land: priceOf an unclaimed parcel is the 10,000 MURMUR floor", () => {
+test("land: priceOf an unclaimed parcel is the 5,000 MURMUR floor", () => {
   const l = layer();
-  assert.equal(LAND_BASE_PRICE, 10_000n * SCALE);
+  assert.equal(LAND_BASE_PRICE, 5_000n * SCALE);
   assert.equal(l.priceOf(0), LAND_BASE_PRICE, "no parcel ⇒ the floor");
-  assert.equal(wholeMurmur(l.priceOf(0)), "10000");
+  assert.equal(wholeMurmur(l.priceOf(0)), "5000");
 });
 
 test("land: priceOf ratchets +100 MURMUR for one prior override", () => {
@@ -99,16 +99,16 @@ test("land: priceOf ratchets +100 MURMUR for one prior override", () => {
   l.parcels.set(5, { owner: ADDR, imageKey: "do:5", overrides: 1, purchasedAt: 0, txHash: TX });
   assert.equal(LAND_OVERRIDE_STEP, 100n * SCALE);
   assert.equal(l.priceOf(5), LAND_BASE_PRICE + LAND_OVERRIDE_STEP);
-  assert.equal(l.priceOf(5), 10_100n * SCALE);
-  assert.equal(wholeMurmur(l.priceOf(5)), "10100");
+  assert.equal(l.priceOf(5), 5_100n * SCALE);
+  assert.equal(wholeMurmur(l.priceOf(5)), "5100");
 });
 
 test("land: priceOf ratchets +100 MURMUR for three prior overrides", () => {
   const l = layer();
   l.parcels.set(7, { owner: ADDR, imageKey: "do:7", overrides: 3, purchasedAt: 0, txHash: TX });
   assert.equal(l.priceOf(7), LAND_BASE_PRICE + LAND_OVERRIDE_STEP * 3n);
-  assert.equal(l.priceOf(7), 10_300n * SCALE);
-  assert.equal(wholeMurmur(l.priceOf(7)), "10300");
+  assert.equal(l.priceOf(7), 5_300n * SCALE);
+  assert.equal(wholeMurmur(l.priceOf(7)), "5300");
 });
 
 // ─── 4. a successful claim ───────────────────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ test("land: submit writes the parcel when the burn clears the floor price", asyn
   const ev = l.drainEvents();
   assert.equal(ev.length, 1, "a LAND_SOLD edge is queued for the historian");
   assert.equal(ev[0].kind, "LAND_SOLD");
-  assert.equal(ev[0].price, "10000");
+  assert.equal(ev[0].price, "5000");
   assert.equal(ev[0].n, 0);
 });
 

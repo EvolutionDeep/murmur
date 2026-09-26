@@ -106,8 +106,8 @@ export async function renderLandDrawer() {
 
   if (!state.landOpen) return;
 
-  // compute price
-  const basePrice = landMeta ? landMeta.basePrice : "10000";
+  // compute price (API returns whole MURMUR strings, not atomic)
+  const basePrice = landMeta ? landMeta.basePrice : "5000";
   const overrideStep = landMeta ? landMeta.overrideStep : "100";
   const overrides = parcel ? (parcel.overrides || 0) : 0;
   const price = parcel && parcel.price ? parcel.price : basePrice;
@@ -123,7 +123,8 @@ export function paintLandDrawer() {
   const info = state.landInfo || {};
   const { parcel, price, isOverride, overrides } = info;
   const pid = state.landParcelId;
-  const priceWhole = atomicToWhole(price);
+  // price from the API is already in whole MURMUR — display directly
+  const priceWhole = price || "5000";
 
   let html = `<div class="ld-info">`;
   html += `<div class="ld-row"><span class="ld-label">${T("land.parcel", { id: pid })}</span></div>`;
@@ -146,7 +147,7 @@ export function paintLandDrawer() {
       <span class="ld-drop-text">${T("land.dragDrop")}</span>
       <input type="file" accept="image/*" id="ld-file" class="ld-file-input" />
     </div>
-    <div class="ld-thumb-wrap" id="ld-thumb-wrap" hidden>
+    <div class="ld-thumb-wrap" id="ld-thumb-wrap" style="display:none">
       <img id="ld-thumb" class="ld-thumb" alt="preview" />
       <span class="ld-thumb-label">${T("land.uploadImage")}</span>
     </div>
@@ -221,7 +222,7 @@ async function processImage(file) {
     const thumb = $("ld-thumb");
     const dropzone = $("ld-dropzone");
     if (thumb) thumb.src = dataUrl;
-    if (thumbWrap) thumbWrap.hidden = false;
+    if (thumbWrap) thumbWrap.style.display = "flex";
     if (dropzone) dropzone.style.display = "none";
     setMsg("");
   } catch (e) {
@@ -256,8 +257,9 @@ export async function landBuy(btn) {
   }
 
   const info = state.landInfo || {};
-  const price = info.price || "10000";
-  const priceAtomic = BigInt(price);
+  const price = info.price || "5000";
+  // price is whole MURMUR from the API — convert to 18-decimal atomic for the burn tx
+  const priceAtomic = murToAtomic(price);
   const pid = state.landParcelId;
 
   state.landBusy = true;

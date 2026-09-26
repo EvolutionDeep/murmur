@@ -38,8 +38,8 @@ export const LAND_GRID_Z = 15;
 /** The total number of parcels (LAND_GRID_X × LAND_GRID_Z). A parcelId lives in [0, LAND_PARCEL_COUNT). */
 export const LAND_PARCEL_COUNT = LAND_GRID_X * LAND_GRID_Z;
 
-/** The floor price of a fresh parcel, in MURMUR atomic units (18 decimals): 10,000 MURMUR. */
-export const LAND_BASE_PRICE = 10_000n * 10n ** 18n;
+/** The floor price of a fresh parcel, in MURMUR atomic units (18 decimals): 5,000 MURMUR. */
+export const LAND_BASE_PRICE = 5_000n * 10n ** 18n;
 /** The ratchet added to a parcel's price for every prior override: +100 MURMUR per seizure. */
 export const LAND_OVERRIDE_STEP = 100n * 10n ** 18n;
 
@@ -100,7 +100,7 @@ export interface LandReadout {
   enabled: boolean;
   gridX: number;
   gridZ: number;
-  basePrice: string;     // whole MURMUR ("10000")
+  basePrice: string;     // whole MURMUR ("5000")
   overrideStep: string;  // whole MURMUR ("100")
   parcelsSold: number;
   totalBurned: string;   // whole MURMUR destroyed through the land grid
@@ -189,7 +189,7 @@ function succeeded(status: unknown): boolean {
   return status === "success" || status === 1 || status === "0x1" || status === 1n;
 }
 
-/** An atomic MURMUR amount → the whole-token decimal string the templates + read-out speak ("10000"). */
+/** An atomic MURMUR amount → the whole-token decimal string the templates + read-out speak ("5000"). */
 export function wholeMurmur(atomic: bigint): string {
   return (atomic / 10n ** 18n).toString();
 }
