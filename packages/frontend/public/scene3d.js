@@ -259,13 +259,13 @@ export class ThreeScene {
   // depthWrite:false, renderOrder:1. (task 51's custom ShaderMaterial is REVERTED: it rendered the
   // plane as a translucent checkerboard wash and its missing .color broke the civ-palette fade.) ----
   _buildWater() {
-    const geo = new THREE.PlaneGeometry(2600, 2600, 1, 1);   // covers the enlarged 720x450 world even at maxDistance 1500
+    const geo = new THREE.PlaneGeometry(8000, 8000, 1, 1);   // oversized so edges vanish inside FogExp2 (density 0.00085 → full absorption well before 4000 units)
     const normals = new THREE.TextureLoader().load("./assets/waternormals.jpg", (t) => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.repeat.set(16, 16);
+      t.repeat.set(48, 48);
     });
     normals.wrapS = normals.wrapT = THREE.RepeatWrapping;   // sane wrap/repeat even before the texture streams in
-    normals.repeat.set(16, 16);
+    normals.repeat.set(48, 48);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x2f93a2,             // diorama teal sea (#2e8b9a~#3a9aad), calm and saturated
       transparent: true,
