@@ -20,7 +20,7 @@
 //   commons→law   (the assembly/commons-in-law section lives in the Assembly volume)
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { t as T } from './i18n.js?v=98';
+
 
 // ---------------------------------------------------------------------------
 // vertex-colour helpers — raw 0..1 floats (NOT THREE.Color) so the buildings sit in the exact same
@@ -361,17 +361,17 @@ function _mesh(g, rec, sc, b, doubleSide) {
 
 // ---------------------------------------------------------------------------
 // the eight institutions, in build order. `foot` doubles as the sculpt-terrace inner radius and the
-// groundY sampling radius; `labelY` floats the name sprite clear of the roofline.
+// groundY sampling radius.
 // ---------------------------------------------------------------------------
 export const INSTITUTIONS = [
-  { key: 'court',    vol: 'court',   label: 'tab.court.name',   foot: 11, labelY: 18, build: buildCourt },
-  { key: 'games',    vol: 'games',   label: 'tab.games.name',   foot: 14, labelY: 11, build: buildGames },
-  { key: 'guilds',   vol: 'guilds',  label: 'tab.guilds.name',  foot: 11, labelY: 21, build: buildGuilds },
-  { key: 'lexicon',  vol: 'lexicon', label: 'tab.lexicon.name', foot: 10, labelY: 27, build: buildLexicon },
-  { key: 'archive',  vol: 'tech',    label: 'vol.archTitle',    foot: 11, labelY: 18, build: buildArchive },
-  { key: 'workshop', vol: 'tech',    label: 'vol.wrkTitle',     foot: 12, labelY: 16, build: buildWorkshop },
-  { key: 'bourse',   vol: 'bourse',  label: 'tab.bourse.name',  foot: 12, labelY: 13, build: buildBourse },
-  { key: 'commons',  vol: 'law',     label: 'tab.law.name',     foot: 13, labelY: 21, build: buildCommons },
+  { key: 'court',    vol: 'court',   foot: 11, build: buildCourt },
+  { key: 'games',    vol: 'games',   foot: 14, build: buildGames },
+  { key: 'guilds',   vol: 'guilds',  foot: 11, build: buildGuilds },
+  { key: 'lexicon',  vol: 'lexicon', foot: 10, build: buildLexicon },
+  { key: 'archive',  vol: 'tech',    foot: 11, build: buildArchive },
+  { key: 'workshop', vol: 'tech',    foot: 12, build: buildWorkshop },
+  { key: 'bourse',   vol: 'bourse',  foot: 12, build: buildBourse },
+  { key: 'commons',  vol: 'law',     foot: 13, build: buildCommons },
 ];
 
 // ---------------------------------------------------------------------------
@@ -431,32 +431,7 @@ export function computeInstitutionSpots(nationSeeds, sampleH, WSX, WSZ, avoid) {
   return spots;
 }
 
-// ---------------------------------------------------------------------------
-// floating name plate — a small serif sprite, baked in the current UI language (province labels are
-// baked the same way). A soft dark plate keeps it legible over bright sand or pale sea.
-// ---------------------------------------------------------------------------
-function makeLabel(text) {
-  const cv = document.createElement('canvas');
-  cv.width = 512; cv.height = 128;
-  const c = cv.getContext('2d');
-  c.clearRect(0, 0, 512, 128);
-  c.font = '600 50px Georgia, "Times New Roman", serif';
-  c.textAlign = 'center'; c.textBaseline = 'middle';
-  const w = Math.min(470, c.measureText(text).width + 46);
-  c.fillStyle = 'rgba(26,20,12,0.52)';
-  const x0 = 256 - w / 2, y0 = 34, h = 60, r = 14;
-  c.beginPath();
-  c.moveTo(x0 + r, y0); c.arcTo(x0 + w, y0, x0 + w, y0 + h, r); c.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
-  c.arcTo(x0, y0 + h, x0, y0, r); c.arcTo(x0, y0, x0 + w, y0, r); c.closePath(); c.fill();
-  c.fillStyle = '#f4e7c9';
-  c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 6;
-  c.fillText(text, 256, 66);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.anisotropy = 2;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  sp.scale.set(30, 7.5, 1);
-  return sp;
-}
+
 
 // ===========================================================================
 // Institutions — owns the group of eight landmarks; built once, spun/hovered/picked thereafter.
@@ -491,11 +466,6 @@ export class Institutions {
       g.rotation.y = sp.rot || 0;
       const rec = { def, group: g, mats: [], gears: [], smoke: null, smokeBaseY: 0 };
       try { def.build(g, rec, this.sc); } catch (e) { console.warn('[institutions] build failed:', def.key, e); }
-      try {
-        const lab = makeLabel(T(def.label));
-        lab.position.set(0, def.labelY || 16, 0);
-        g.add(lab);
-      } catch (e) { /* a label is never worth losing the building */ }
       g.traverse((o) => { if (o.isMesh) { o.userData.instRec = rec; this._pickMeshes.push(o); } });
       this.group.add(g);
       this.entries.push(rec);
