@@ -19,6 +19,26 @@ import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNation
 // - KayKit village rings + Kenney castle keeps (GLB kit)
 // - Fog + lighting for atmosphere
 
+// ---- task 32「文明演化系统一期」：纪元主题渐变 — 六档氛围调色板 ----------------------
+// 每档只调灯光 / 雾 / 海面色（绝不重算地形顶点色 — 性能红线）。色值全部留在羊皮纸沙盘的
+// 青-砂-金家族里，使每一档读起来都是同一个沙盘世界处于其文明的不同时辰。由 setCivStage()
+// 应用、_updateCivFade() 在 ≤2s 内交叉淡入；空闲时每帧只花一个布尔判断（零分配）。
+const CIV_FADE_S = 2.0;   // 过渡预算（任务硬约束：≤2s，到点自停）
+const CIV_PALETTES = [
+  // 0 部落晨雾 — 冷青雾 + 低饱和草色光（尚未营造的蜂群）
+  { hemiSky: 0xa9c6c4, hemiGround: 0x9aa88a, sun: 0xdfe8dc, fog: 0xc3d8d6, water: 0x33858f },
+  // 1 城邦青铜 — 暖铜方向光 + 骨白霭（最初的城邦）
+  { hemiSky: 0xcfe0dc, hemiGround: 0xb08d5a, sun: 0xe8b070, fog: 0xd8d2c0, water: 0x2f8f9c },
+  // 2 王国黄金 — 金黄方向光 + 暖雾（王国的黄金时代）
+  { hemiSky: 0xd9e6d2, hemiGround: 0xc9a45e, sun: 0xffd27a, fog: 0xe6d8b4, water: 0x2f97a0 },
+  // 3 帝国紫 — 品紫天光压深金（鼎盛帝国）
+  { hemiSky: 0xb79ad0, hemiGround: 0xa8874e, sun: 0xe9c46a, fog: 0xc9b8cc, water: 0x357f97 },
+  // 4 启蒙白 — 高亮中性关键光（理性时代）
+  { hemiSky: 0xeaf2f4, hemiGround: 0xd8d2c2, sun: 0xfff4e0, fog: 0xe8eef0, water: 0x3a9aa6 },
+  // 5 transcend 辉光 — teal×金发光混合（已越出沙盘的蜂群）
+  { hemiSky: 0xa8e0d8, hemiGround: 0xd9b96a, sun: 0xf0e6b4, fog: 0xcfe6dc, water: 0x2fa8a0 },
+];
+
 export class ThreeScene {
   constructor() {
     this.scene = null;
@@ -75,6 +95,12 @@ export class ThreeScene {
     this._shardRings = []; this._shardGuide = null;
     this._graveHits = [];                      // task 20②: invisible ×3 hit proxies, one per necropolis sprite
     this._eraHudEl = null; this._eraSig = "";  // task 20⑥: era label is a fixed DOM HUD, not a camera-riding Sprite
+    // ---- task 32: civ-stage atmosphere cross-fade scratch (pre-allocated, never re-created in update()) ----
+    this._civStage = null;            // current applied stage (null ⇒ never set ⇒ the first setCivStage snaps, no intro fade)
+    this._civFadeStart = 0;           // performance.now() origin of the armed ≤2s cross-fade
+    this._civFadeDone = true;         // idle flag — _updateCivFade() returns on this one boolean when settled
+    this._civFrom = { hemiSky: new THREE.Color(), hemiGround: new THREE.Color(), sun: new THREE.Color(), fog: new THREE.Color(), water: new THREE.Color() };
+    this._civTo = { hemiSky: new THREE.Color(), hemiGround: new THREE.Color(), sun: new THREE.Color(), fog: new THREE.Color(), water: new THREE.Color() };
     this._legendEl = null; this._legendSig = ""; this._legendT = -1e9;   // territory legend DOM
     this._raycaster = null; this._ndc = null; this._downX = 0; this._downY = 0;
     this._fwd = new THREE.Vector3(); this._v1 = new THREE.Vector3();
@@ -1464,6 +1490,7 @@ export class ThreeScene {
   update(sim, econCities, now) {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     this._simRef = sim;   // task 7: chron-fx spawns read the live swarm
+    this._updateCivFade(now);   // task 32: run the ≤2s civ-stage cross-fade (idle ⇒ one boolean, self-stops)
 
     // the dominion overlay obeys econDynasty.zoneOwners — the same authority the 2D map uses;
     // a conquest recolours the land and raises the new house's castle on the next frame.
@@ -2077,6 +2104,52 @@ export class ThreeScene {
       el.appendChild(sep); el.appendChild(nm);
     }
     el.style.display = "";
+  }
+
+  // ---- task 32「文明演化系统一期」：纪元主题渐变 ------------------------------------
+  // setCivStage() 由 civstage.js 仅在档位签名变化时调用（事件驱动）。它把当前灯光/雾/海面色
+  // 捕获为淡入起点、存下目标调色板，并武装一条 ≤2s 的交叉淡入，由 update() 内的 _updateCivFade()
+  // 推进。首次调用直接 snap（无淡入），所以新加载绝不会播一段做作的 intro。地形顶点色永不触碰
+  // （性能红线）——只有灯光、雾、海面色移动。instant=true 可强制 snap（供调试/验证）。
+  setCivStage(stage, instant) {
+    const s = Math.max(0, Math.min(CIV_PALETTES.length - 1, stage | 0));
+    const first = this._civStage == null;
+    if (!first && this._civStage === s && this._civFadeDone) return;   // already there and settled
+    this._civStage = s;
+    const P = CIV_PALETTES[s];
+    this._civTo.hemiSky.setHex(P.hemiSky);
+    this._civTo.hemiGround.setHex(P.hemiGround);
+    this._civTo.sun.setHex(P.sun);
+    this._civTo.fog.setHex(P.fog);
+    this._civTo.water.setHex(P.water);
+    if (first || instant) {
+      this.hemiLight.color.copy(this._civTo.hemiSky);
+      this.hemiLight.groundColor.copy(this._civTo.hemiGround);
+      this.sunLight.color.copy(this._civTo.sun);
+      if (this.scene.fog) this.scene.fog.color.copy(this._civTo.fog);
+      if (this.water && this.water.material) this.water.material.color.copy(this._civTo.water);
+      this._civFadeDone = true;
+      return;
+    }
+    // capture the live colours as the fade start (whatever the previous stage / transition left them at)
+    this._civFrom.hemiSky.copy(this.hemiLight.color);
+    this._civFrom.hemiGround.copy(this.hemiLight.groundColor);
+    this._civFrom.sun.copy(this.sunLight.color);
+    if (this.scene.fog) this._civFrom.fog.copy(this.scene.fog.color); else this._civFrom.fog.copy(this._civTo.fog);
+    if (this.water && this.water.material) this._civFrom.water.copy(this.water.material.color); else this._civFrom.water.copy(this._civTo.water);
+    this._civFadeStart = performance.now();
+    this._civFadeDone = false;
+  }
+  _updateCivFade(now) {
+    if (this._civFadeDone) return;   // idle: one boolean per frame, zero allocation
+    const t = (now - this._civFadeStart) / (CIV_FADE_S * 1000);
+    const e = t >= 1 ? 1 : (t <= 0 ? 0 : t * t * (3 - 2 * t));   // smoothstep ease
+    this.hemiLight.color.copy(this._civFrom.hemiSky).lerp(this._civTo.hemiSky, e);
+    this.hemiLight.groundColor.copy(this._civFrom.hemiGround).lerp(this._civTo.hemiGround, e);
+    this.sunLight.color.copy(this._civFrom.sun).lerp(this._civTo.sun, e);
+    if (this.scene.fog) this.scene.fog.color.copy(this._civFrom.fog).lerp(this._civTo.fog, e);
+    if (this.water && this.water.material) this.water.material.color.copy(this._civFrom.water).lerp(this._civTo.water, e);
+    if (t >= 1) this._civFadeDone = true;   // self-stop at the ≤2s budget
   }
 
   // ⑩ swarm neural aura — one breathing sphere over the collective's centroid (cohesion sizes it, arousal reddens it)

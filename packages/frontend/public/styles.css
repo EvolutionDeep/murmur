@@ -2446,3 +2446,93 @@ html[dir="rtl"] #era-hud { direction: rtl; }
   #era-hud { top: calc(env(safe-area-inset-top, 0px) + 80px); bottom: auto; }
   .panel-econ { margin-top: 120px; max-height: 64px; }
 }
+
+/* ==========================================================================================
+   task 32「文明演化系统一期」：stage 令牌 + 政体纹样 + era-hud 饰纹递进
+   全部由 body[data-civ-stage] / body[data-regime] 属性选择器驱动：纯令牌覆盖 + 纯符号装饰，
+   零布局改动（不碰任何定位/尺寸）、零每帧成本（只在档位切换时一次性重算）、符号免 i18n。
+   stage（0..5）与 regime（hot/calm/cold）正交：stage→--accent 进展色 + era-hud 边饰，
+   regime→--gold 色相 + header 符号，二者绝不覆盖同一令牌，故可自由组合。
+   置于文件末尾：body[data-*] 选择器 specificity(0,2,x) 已胜过基础规则，源序亦最后。 */
+
+/* ---- ① stage 令牌：--accent 进展色（0 黯淡石板 → 5 辉光 teal-金），与 3D 六档调色板同调。
+   覆盖的是 live 温度写在 <html> 内联的 --accent（body 层自有声明对 body 后代必胜）；
+   --paper/--panel 仍随温度呼吸，故场景冷暖身份不丢，只有小高亮随文明档位演进。 ---- */
+body[data-civ-stage="0"] { --accent: #8d8878; --accent-rgb: 141, 136, 120; }
+body[data-civ-stage="1"] { --accent: #9c8351; --accent-rgb: 156, 131, 81; }
+body[data-civ-stage="2"] { --accent: #b08a36; --accent-rgb: 176, 138, 54; }
+body[data-civ-stage="3"] { --accent: #9a6fb0; --accent-rgb: 154, 111, 176; }
+body[data-civ-stage="4"] { --accent: #6f8f9c; --accent-rgb: 111, 143, 156; }
+body[data-civ-stage="5"] { --accent: #3fae9c; --accent-rgb: 63, 174, 156; }
+
+/* ---- ② era-hud 边饰强度递进：0 素 pill → 1 单金线 → 2 双金线 → 3..5 渐强内光/外辉。
+   基础 #era-hud 已有 border:var(--edge-gilt) + inset 1px 0.20 金环；各档在其上叠加。 ---- */
+body[data-civ-stage] #era-hud { transition: box-shadow 1.2s ease, border-color 1.2s ease; }
+body[data-civ-stage="1"] #era-hud { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.36); }
+body[data-civ-stage="2"] #era-hud { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.44), inset 0 0 0 3px rgba(var(--gold-rgb), 0.16); }
+body[data-civ-stage="3"] #era-hud { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.52), inset 0 0 0 3px rgba(var(--gold-rgb), 0.20); }
+body[data-civ-stage="4"] #era-hud { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.60), inset 0 0 0 3px rgba(var(--gold-rgb), 0.24), 0 0 12px rgba(var(--gold-rgb), 0.18); }
+body[data-civ-stage="5"] #era-hud { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(var(--gold-rgb), 0.68), inset 0 0 0 3px rgba(var(--gold-rgb), 0.30), 0 0 18px rgba(var(--gold-rgb), 0.32); }
+
+/* ---- ③ era-hud 前置饰纹（::before， escalating）：2 菱形终端 ◆ → 3 加 ❦ → 4 加 ⚜(月桂/王冠代) → 5 全饰。
+   0/1 无 content ⇒ 不生成盒子（素 pill / 单金线）。flex:none 绝不打扰 era-hud 自身的 flex 行。 ---- */
+body[data-civ-stage] #era-hud::before {
+  flex: none; align-self: center;
+  font-family: var(--title); font-size: 10.5px; line-height: 1;
+  letter-spacing: 1.5px; color: var(--gold); opacity: 0.9;
+}
+body[data-civ-stage="2"] #era-hud::before { content: "\25C6"; }
+body[data-civ-stage="3"] #era-hud::before { content: "\25C6\2766"; }
+body[data-civ-stage="4"] #era-hud::before { content: "\25C6\2766\269C"; }
+body[data-civ-stage="5"] #era-hud::before { content: "\2766\25C6\2766\25C6\2766"; }
+
+/* ---- ④ era-hud 文明阶梯圆点串（::after）：6 点，亮 = 当前档+1（●○○○○○ … ●●●●●●）。
+   纯符号免 i18n；读作文明阶梯。flex:none，name span 吸收剩余宽度并 ellipsis。 ---- */
+body[data-civ-stage] #era-hud::after {
+  flex: none; align-self: center;
+  font-family: var(--sans); font-size: 8px; line-height: 1;
+  letter-spacing: 1px; color: var(--gold); opacity: 0.8;
+  margin-inline-start: 2px;
+}
+body[data-civ-stage="0"] #era-hud::after { content: "\25CF\25CB\25CB\25CB\25CB\25CB"; }
+body[data-civ-stage="1"] #era-hud::after { content: "\25CF\25CF\25CB\25CB\25CB\25CB"; }
+body[data-civ-stage="2"] #era-hud::after { content: "\25CF\25CF\25CF\25CB\25CB\25CB"; }
+body[data-civ-stage="3"] #era-hud::after { content: "\25CF\25CF\25CF\25CF\25CB\25CB"; }
+body[data-civ-stage="4"] #era-hud::after { content: "\25CF\25CF\25CF\25CF\25CF\25CB"; }
+body[data-civ-stage="5"] #era-hud::after { content: "\25CF\25CF\25CF\25CF\25CF\25CF"; }
+
+/* ---- ⑤ 政体（eraRegime）令牌：--gold 色相偏移。eraRegime 实际取值集（chronicler.ts:549）=
+   HOT | CALM | COLD；civstage.js 写小写 dataset。CALM 为基线（≈ :root burnished gold），
+   HOT 偏暖铜/锈，COLD 偏冷橄榄铜。只覆盖 --gold 家族（不碰 --accent=stage 进展色，
+   也不碰 live 温度写的 --paper/--panel）。 ---- */
+body[data-regime="hot"]  { --gold: #c1783a; --gold-lit: #e0a860; --gold-deep: #8a4f22; --gold-rgb: 193, 120, 58; }
+body[data-regime="calm"] { --gold: #b08a36; --gold-lit: #d9b968; --gold-deep: #7d6020; --gold-rgb: 176, 138, 54; }
+body[data-regime="cold"] { --gold: #9a9040; --gold-lit: #c0b868; --gold-deep: #6e6528; --gold-rgb: 154, 144, 64; }
+/* :root 把 --edge-gilt/--rule-gold/--ring/--sb-thumb-hi 预合成在 html 层，body 覆盖 --gold-rgb 不会回流到它们。
+   在 body[data-regime] 上重声明一次：var(--gold-rgb) 用 body 自身算出的政体值替换，三政体共用这份重声明。 */
+body[data-regime] {
+  --edge-gilt:   1px solid rgba(var(--gold-rgb), 0.52);
+  --rule-gold:   linear-gradient(90deg, rgba(var(--gold-rgb), 0) 0%, rgba(var(--gold-rgb), 0.55) 10%, rgba(var(--gold-rgb), 0.55) 90%, rgba(var(--gold-rgb), 0) 100%);
+  --ring:        0 0 0 2px var(--vellum), 0 0 0 4px rgba(var(--gold-rgb), 0.62);
+  --sb-thumb-hi: rgba(var(--gold-rgb), 0.78);
+}
+
+/* ---- ⑥ 政体 header 符号：rubricator 的手稿花记，内联前缀于标题文本。绝不用绝对定位，
+   不打扰 header 自身的 flex 行——标题是 flex:none 的 span，符号只是其内联内容，
+   弹性 sub/value（flex:1 1 auto, min-width:0）吸收宽度变化。HOT ☀ / CALM ⚖ / COLD ❄，纯符号免 i18n。 ---- */
+.panel-title > span:first-child::before,
+.drawer-title::before,
+.wallets-title::before {
+  color: var(--gold); opacity: 0.7;
+  font-family: var(--sans); font-size: 0.9em;
+  margin-inline-end: 0.42em;   /* 逻辑属性：RTL 下自动翻到左侧 */
+}
+body[data-regime="hot"]  .panel-title > span:first-child::before,
+body[data-regime="hot"]  .drawer-title::before,
+body[data-regime="hot"]  .wallets-title::before { content: "\2600"; }
+body[data-regime="calm"] .panel-title > span:first-child::before,
+body[data-regime="calm"] .drawer-title::before,
+body[data-regime="calm"] .wallets-title::before { content: "\2696"; }
+body[data-regime="cold"] .panel-title > span:first-child::before,
+body[data-regime="cold"] .drawer-title::before,
+body[data-regime="cold"] .wallets-title::before { content: "\2744"; }

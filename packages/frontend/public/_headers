@@ -56,3 +56,8 @@
 
 /polling.js
   Cache-Control: no-cache, must-revalidate
+
+# task 32 added civstage.js — a new bare-imported module (polling.js → civstage.js, no ?v on the
+# specifier), so it needs the same etag-revalidation treatment or returning readers run stale bytes.
+/civstage.js
+  Cache-Control: no-cache, must-revalidate

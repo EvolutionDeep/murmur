@@ -4,6 +4,7 @@ import { state, API, FAP_ROLE, FETCH_TIMEOUT_MS, OFFLINE_BACKOFF_MS, clamp, read
 import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLaureate, paintPredict, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderTechSection, renderTreatySection, renderWarSection, renderWorksSection, renderWorkshopSection, updateSinceLaunch, verifyBrain } from './drawers.js';
 import { applyEconAgents, applyEconomy, applySnapshot, applyState, applyTopology, setStatusKind, updateCronWatchdog } from './economy.js';
 import { spawnChronFx } from './render2d.js';
+import { evaluateCivStage } from './civstage.js';   // task 32: civStage 选择器（事件驱动，数据到达时评估）
 
 // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -46,6 +47,7 @@ export async function pollChron() {
       if (state.chronSeenSeq > 0) for (const e of state.chronRows) { if ((e.seq || 0) <= state.chronSeenSeq) break; spawnChronFx(e); }
       renderChron();          // task 26①: the bottom ticker is gone; the drawer is the only read-out
       if (state.chronVerifyState) renderChronVerdict();
+      evaluateCivStage();     // task 32: chronMeta（civLevel/era/generation/eraRegime）刚刷新 → 评估文明档位（签名去重，无变化零成本）
     } else {
       state.chronEnabled = false;
       renderChron();
@@ -208,6 +210,7 @@ export async function poll() {
     if (pop && pop.economy) applyEconomy(pop.economy);
     if (pop && pop.topology) applyTopology(pop.topology);
     applyState(st);
+    evaluateCivStage();   // task 32: 种群（sim.size）+ 膜层载荷（econXxx）刚刷新 → 评估文明档位（签名去重）
     // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
     // Only fetched while the drawer is actually open (it self-fetches on open too) — the canvas body
