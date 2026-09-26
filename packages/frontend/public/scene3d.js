@@ -93,7 +93,7 @@ export class ThreeScene {
     // ---- task 7: pre-allocated pools for the ported 2D layers (built in _initOverlays) ----
     this._socLineCap = 64;                     // max bond/feud segments on the social web
     this._socLines = null; this._socGrudge = null;
-    this._socSig = "";                         // task 25④: ribbon rebuild signature (pairs + quantised ends)
+    this._socSig = "";                         // task 25④/46: ribbon rebuild signature (pairs + 2-unit-quantised ends)
     this._socRibbonPts = 18;                   // max sample points per bond ribbon (≈12-unit steps)
     this._graveGroup = null; this._graveSprites = []; this._graveSig = "";   // necropolis (one Sprite per stone)
     this._payPool = [];                        // 20 pre-built gold payment arcs (tube + comet head)
@@ -345,7 +345,11 @@ export class ThreeScene {
     for (let k = 0; k < pos.count; k++) pos.setZ(k, h[k]);   // plane local Z becomes world Y after the -90° X rotation
     geo.computeVertexNormals();
 
-    this.terrain = new THREE.Mesh(geo, this._toon(0xffffff, { vertexColors: true }));
+    // task 46: terrain uses MeshStandardMaterial (smooth continuous shading) instead of
+    // MeshToonMaterial (4-step gradientMap) to eliminate visible lighting bands on slopes.
+    this.terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, flatShading: false, roughness: 0.88, metalness: 0.0,
+    }));
     this.terrain.rotation.x = -Math.PI / 2;
     this.scene.add(this.terrain);
     // nations partition hook (task 6): five-nation Voronoi, ground border ribbons and the nation
@@ -725,13 +729,14 @@ export class ThreeScene {
     return { geometry: geos.length === 1 ? geos[0] : mergeGeometries(geos, false), material: mat };
   }
 
-  // ---- the five nation castles (task 24 diorama, task 25① detail pass): fully procedural
-  // MONOCHROME castles — one palette per nation. Against the desktop-diorama reference each kit
-  // now carries: a gatehouse (twin flanking towers + dark recessed passage + half-cylinder arch),
-  // crenellation teeth on the curtain wall and every flat tower top, four tall corner towers and
-  // four low wall towers plus four keep turrets (cones seated on cornice rings), three courtyard
-  // cottages with gabled prism roofs, and triangular pennant flags on the tall towers + keep.
-  // Stonework vertex colours carry a ±6% same-hue mottle so walls read as dressed masonry.
+  // ---- the five nation castles (task 24 diorama, task 25① detail pass, task 46 refinement): fully
+  // procedural MONOCHROME castles — one palette per nation. Each kit now carries: 3-tier base steps,
+  // a gatehouse (twin flanking towers + dark recessed passage + half-cylinder arch + portcullis bars),
+  // crenellation teeth on the curtain wall and every flat tower top, four tall corner towers with
+  // arrow-slit windows (16-seg for smooth cones), four low wall towers plus four keep turrets (cones
+  // seated on cornice rings), three courtyard cottages with gabled prism roofs + windows, a stone
+  // courtyard well, and triangular pennant flags on the tall towers + keep.
+  // Stonework vertex colours carry a ±12% same-hue mottle so walls read as dressed masonry.
   // Merged into FOUR shared geometries (stone / roof / wood / flag) → 4 meshes per castle,
   // 5 castles = 20 draw calls. Footprint ≈32 units, embedded in its own pressed mesa. ----
   _rebuildCastles() {
@@ -766,97 +771,154 @@ export class ThreeScene {
       const LITE = [0.97, 0.95, 0.90];  // courtyard cottage plaster
       const WOOD = [0.42, 0.30, 0.20];  // doors / flag poles
       const DARK = [0.20, 0.14, 0.10];  // the recessed gate passage
+      const WIN = [0.08, 0.06, 0.12];   // window voids — near-black with a purple cast
       const stone = [], roof = [], wood = [], flag = [];
+      const MOT = 0.12;  // task 46: doubled mottle (was 0.06) for visible stonework texture
       const merlonRing = (cx, cz, r, y, count, mw, mh, md) => {
         for (let i = 0; i < count; i++) {
           const a = (i / count) * Math.PI * 2;
           const b = new THREE.BoxGeometry(mw, mh, md);
           b.rotateY(-a);
           b.translate(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r);
-          stone.push(solid(b, W, 0.06));
+          stone.push(solid(b, W, MOT));
         }
       };
+      // ---- task 46: base steps — 3 concentric rings below the plinth for a grounded feel ----
+      for (let s = 0; s < 3; s++) {
+        const sr = 17.2 + s * 1.4, sh = 0.55;
+        const step = new THREE.CylinderGeometry(sr, sr + 0.3, sh, 36);
+        step.translate(0, -2.6 - s * sh, 0);
+        stone.push(solid(step, BASE, MOT * 0.6));
+      }
       // plinth + curtain wall + battlement ring + crenellation teeth
       const plinth = new THREE.CylinderGeometry(15.5, 16.2, 2.0, 40); plinth.translate(0, -1.6, 0);
-      stone.push(solid(plinth, BASE, 0.05));
+      stone.push(solid(plinth, BASE, MOT * 0.8));
       const wall = new THREE.CylinderGeometry(13, 14.2, 6, 28, 1, true); wall.translate(0, 2.4, 0);
-      stone.push(solid(wall, W, 0.06));
+      stone.push(solid(wall, W, MOT));
       const batt = new THREE.CylinderGeometry(13.5, 13.5, 1.2, 28); batt.translate(0, 6.1, 0);
-      stone.push(solid(batt, W, 0.06));
+      stone.push(solid(batt, W, MOT));
       merlonRing(0, 0, 13.5, 7.05, 28, 1.0, 0.9, 0.8);
-      // four TALL corner towers: shaft + cornice ring + conical roof; three carry pennants
+      // four TALL corner towers: shaft + cornice ring + conical roof (16-seg for smoothness); windows
       const flagTops = [];
       for (let t = 0; t < 4; t++) {
         const a = Math.PI * (0.25 + 0.5 * t);
         const tx = Math.cos(a) * 13, tz = Math.sin(a) * 13;
-        const tw = new THREE.CylinderGeometry(2.6, 3.0, 13, 12); tw.translate(tx, 5.9, tz);
-        stone.push(solid(tw, W, 0.06));
-        const cor = new THREE.CylinderGeometry(3.3, 3.4, 0.55, 12); cor.translate(tx, 12.6, tz);
-        stone.push(solid(cor, W, 0.06));
-        const tr = new THREE.ConeGeometry(3.2, 5.2, 12); tr.translate(tx, 15.5, tz);
-        roof.push(solid(tr, W, 0.04));
+        const tw = new THREE.CylinderGeometry(2.6, 3.0, 13, 16); tw.translate(tx, 5.9, tz);
+        stone.push(solid(tw, W, MOT));
+        const cor = new THREE.CylinderGeometry(3.3, 3.4, 0.55, 16); cor.translate(tx, 12.6, tz);
+        stone.push(solid(cor, W, MOT));
+        const tr = new THREE.ConeGeometry(3.2, 5.2, 16); tr.translate(tx, 15.5, tz);
+        roof.push(solid(tr, W, MOT * 0.6));
+        // task 46: arrow-slit windows on each tall tower (3 per tower, facing outward)
+        for (let wi = 0; wi < 3; wi++) {
+          const wy = 4.0 + wi * 3.4;
+          const wa = a + (wi - 1) * 0.35;
+          const wx = tx + Math.cos(wa) * 2.7, wz = tz + Math.sin(wa) * 2.7;
+          const win = new THREE.BoxGeometry(0.4, 1.2, 0.7);
+          win.rotateY(-wa);
+          win.translate(wx, wy, wz);
+          stone.push(solid(win, WIN, 0));
+        }
         if (t < 3) flagTops.push([tx, 18.1, tz, a]);
       }
       // three LOW wall towers: shaft + cap + crenellation ring (the 4th low tower is the gate tower)
       for (let t = 0; t < 3; t++) {
         const a = Math.PI * (0.5 + 0.5 * t);
         const tx = Math.cos(a) * 13, tz = Math.sin(a) * 13;
-        const tw = new THREE.CylinderGeometry(2.2, 2.6, 8, 10); tw.translate(tx, 3.4, tz);
-        stone.push(solid(tw, W, 0.06));
-        const cap = new THREE.CylinderGeometry(2.5, 2.5, 0.5, 10); cap.translate(tx, 7.6, tz);
-        stone.push(solid(cap, W, 0.06));
+        const tw = new THREE.CylinderGeometry(2.2, 2.6, 8, 12); tw.translate(tx, 3.4, tz);
+        stone.push(solid(tw, W, MOT));
+        const cap = new THREE.CylinderGeometry(2.5, 2.5, 0.5, 12); cap.translate(tx, 7.6, tz);
+        stone.push(solid(cap, W, MOT));
         merlonRing(tx, tz, 2.2, 8.2, 8, 0.7, 0.7, 0.6);
+        // task 46: single window slit on each low tower
+        const wx = tx + Math.cos(a) * 2.3, wz = tz + Math.sin(a) * 2.3;
+        const lwin = new THREE.BoxGeometry(0.35, 0.9, 0.6); lwin.rotateY(-a); lwin.translate(wx, 4.2, wz);
+        stone.push(solid(lwin, WIN, 0));
       }
       // GATEHOUSE: twin flanking towers with conical caps + dark recessed passage + stone arch
       for (const sz of [-3.6, 3.6]) {
-        const gt = new THREE.CylinderGeometry(2.0, 2.4, 9, 10); gt.translate(12.2, 3.9, sz);
-        stone.push(solid(gt, W, 0.06));
-        const gc = new THREE.ConeGeometry(2.5, 3.2, 10); gc.translate(12.2, 9.9, sz);
-        roof.push(solid(gc, W, 0.04));
+        const gt = new THREE.CylinderGeometry(2.0, 2.4, 9, 12); gt.translate(12.2, 3.9, sz);
+        stone.push(solid(gt, W, MOT));
+        const gc = new THREE.ConeGeometry(2.5, 3.2, 12); gc.translate(12.2, 9.9, sz);
+        roof.push(solid(gc, W, MOT * 0.6));
+      }
+      // task 46: portcullis hint — vertical dark bars across the gate opening
+      for (let pb = -1; pb <= 1; pb++) {
+        const bar = new THREE.BoxGeometry(0.15, 3.2, 0.15); bar.translate(13.2, 1.8, pb * 0.8);
+        wood.push(solid(bar, DARK, 0));
       }
       const recess = new THREE.BoxGeometry(3.4, 3.6, 2.8); recess.translate(13.2, 1.8, 0);
       wood.push(solid(recess, DARK, 0));
-      const arch = new THREE.CylinderGeometry(1.7, 1.7, 4.6, 10, 1, true, 0, Math.PI);
+      const arch = new THREE.CylinderGeometry(1.7, 1.7, 4.6, 12, 1, true, 0, Math.PI);
       arch.rotateZ(Math.PI / 2);   // axis → X (gate depth); the half tube spans the passage top
       arch.translate(13.2, 3.5, 0);
-      stone.push(solid(arch, W, 0.06));
+      stone.push(solid(arch, W, MOT));
       // gate tower (4th low tower) crowning the arch, with its own crenellation ring
-      const gtw = new THREE.CylinderGeometry(2.3, 2.6, 5.5, 10); gtw.translate(11.6, 8.2, 0);
-      stone.push(solid(gtw, W, 0.06));
+      const gtw = new THREE.CylinderGeometry(2.3, 2.6, 5.5, 12); gtw.translate(11.6, 8.2, 0);
+      stone.push(solid(gtw, W, MOT));
       merlonRing(11.6, 0, 2.3, 11.2, 8, 0.7, 0.7, 0.6);
-      // central keep: shaft + cornice + spire + four corner turrets on cornice rings
+      // central keep: shaft + cornice + spire (16-seg) + four corner turrets on cornice rings
       const keep = new THREE.CylinderGeometry(4.6, 5.2, 15, 16); keep.translate(0, 6.9, 0);
-      stone.push(solid(keep, W, 0.06));
+      stone.push(solid(keep, W, MOT));
       const kcor = new THREE.CylinderGeometry(5.5, 5.6, 0.6, 16); kcor.translate(0, 14.5, 0);
-      stone.push(solid(kcor, W, 0.06));
+      stone.push(solid(kcor, W, MOT));
       const keepRoof = new THREE.ConeGeometry(5.4, 7, 16); keepRoof.translate(0, 18.3, 0);
-      roof.push(solid(keepRoof, W, 0.04));
+      roof.push(solid(keepRoof, W, MOT * 0.6));
+      // task 46: keep windows — 4 tall arched windows facing cardinal directions
+      for (let kw = 0; kw < 4; kw++) {
+        const ka = kw * Math.PI * 0.5;
+        const kwx = Math.cos(ka) * 4.8, kwz = Math.sin(ka) * 4.8;
+        const kwin = new THREE.BoxGeometry(0.5, 2.2, 0.9); kwin.rotateY(-ka); kwin.translate(kwx, 9.5, kwz);
+        stone.push(solid(kwin, WIN, 0));
+        // a smaller upper window
+        const kwin2 = new THREE.BoxGeometry(0.4, 1.4, 0.7); kwin2.rotateY(-ka); kwin2.translate(kwx * 0.95, 13.0, kwz * 0.95);
+        stone.push(solid(kwin2, WIN, 0));
+      }
       flagTops.push([0, 21.8, 0, 0]);
       for (const [qx, qz] of [[3.4, 3.4], [-3.4, 3.4], [3.4, -3.4], [-3.4, -3.4]]) {
-        const ts = new THREE.CylinderGeometry(1.2, 1.4, 7, 8); ts.translate(qx, 13.2, qz);
-        stone.push(solid(ts, W, 0.06));
-        const tc = new THREE.CylinderGeometry(1.7, 1.8, 0.35, 8); tc.translate(qx, 16.9, qz);
-        stone.push(solid(tc, W, 0.06));
-        const tr = new THREE.ConeGeometry(1.7, 2.6, 8); tr.translate(qx, 18.4, qz);
-        roof.push(solid(tr, W, 0.04));
+        const ts = new THREE.CylinderGeometry(1.2, 1.4, 7, 10); ts.translate(qx, 13.2, qz);
+        stone.push(solid(ts, W, MOT));
+        const tc = new THREE.CylinderGeometry(1.7, 1.8, 0.35, 10); tc.translate(qx, 16.9, qz);
+        stone.push(solid(tc, W, MOT));
+        const tr = new THREE.ConeGeometry(1.7, 2.6, 10); tr.translate(qx, 18.4, qz);
+        roof.push(solid(tr, W, MOT * 0.6));
       }
-      // courtyard: three plaster cottages (box body + gabled prism roof + door) fill the ward
+      // courtyard: three plaster cottages (box body + gabled prism roof + door + window) fill the ward
       for (let i = 0; i < 3; i++) {
         const a = 1.75 + i * 1.91;
         const hx = Math.cos(a) * 8.2, hz = Math.sin(a) * 8.2;
         const body = new THREE.BoxGeometry(3.6, 2.8, 3.0);
         body.rotateY(-a);
         body.translate(hx, 1.4, hz);
-        stone.push(solid(body, LITE, 0.05));
+        stone.push(solid(body, LITE, MOT * 0.7));
         const rg = new THREE.CylinderGeometry(1.9, 1.9, 4.2, 3, 1);   // triangular prism = gable
         rg.rotateZ(Math.PI / 2); rg.rotateX(-Math.PI / 2); rg.scale(1, 0.8, 1);
         rg.rotateY(-a);
         rg.translate(hx, 3.7, hz);
-        roof.push(solid(rg, W, 0.04));
+        roof.push(solid(rg, W, MOT * 0.6));
         const door = new THREE.BoxGeometry(0.25, 1.5, 1.0);
         door.rotateY(-a);
         door.translate(hx + Math.cos(a) * 1.85, 0.75, hz + Math.sin(a) * 1.85);
         wood.push(solid(door, WOOD, 0));
+        // task 46: cottage window — a small dark pane beside the door
+        const cwa = a + 0.55;
+        const cwx = hx + Math.cos(cwa) * 1.82, cwz = hz + Math.sin(cwa) * 1.82;
+        const cw = new THREE.BoxGeometry(0.15, 0.7, 0.6); cw.rotateY(-a); cw.translate(cwx, 1.8, cwz);
+        stone.push(solid(cw, WIN, 0));
+      }
+      // ---- task 46: courtyard WELL — stone ring + timber frame + tiny cone roof ----
+      {
+        const wa = 3.6, wr = 5.5;
+        const wx = Math.cos(wa) * wr, wz = Math.sin(wa) * wr;
+        const wellRing = new THREE.TorusGeometry(0.9, 0.3, 8, 12); wellRing.rotateX(Math.PI / 2); wellRing.translate(wx, 0.6, wz);
+        stone.push(solid(wellRing, BASE, MOT));
+        // two uprights
+        for (const s of [-0.6, 0.6]) {
+          const up = new THREE.CylinderGeometry(0.1, 0.1, 2.4, 6); up.translate(wx + s, 1.8, wz);
+          wood.push(solid(up, WOOD, 0));
+        }
+        const wellRoof = new THREE.ConeGeometry(1.2, 0.9, 8); wellRoof.translate(wx, 3.3, wz);
+        roof.push(solid(wellRoof, W, MOT * 0.5));
       }
       // FLAGS: triangular pennants (PlaneGeometry, double-sided) on poles at 3 tall towers + keep
       for (const [fx, fy, fz, fa] of flagTops) {
@@ -1316,10 +1378,10 @@ export class ThreeScene {
   // only rewrite buffers / matrices / opacities — never `new`.
   // =====================================================================================
   _initOverlays() {
-    // ---- ① social web (task 25④): alliance bonds are GROUND-HUGGING RIBBONS (per-vertex crest
+    // ---- ① social web (task 25④, task 46): alliance bonds are GROUND-HUGGING RIBBONS (per-vertex crest
     // lift, nation-blended vertex colours) instead of 1px LineSegments the terrain used to swallow;
-    // feuds stay dashed lines but densified to the same 12-unit sampling. Both rebuild ONLY when
-    // the bond signature changes — zero per-frame geometry cost. ----
+    // feuds stay dashed lines but densified to the same 12-unit sampling. Both rebuild when
+    // the bond signature changes (2-unit quantisation) — near-real-time fly tracking. ----
     const RIB_B = this._socLineCap, RIB_P = this._socRibbonPts;
     const rgeo = new THREE.BufferGeometry();
     rgeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(RIB_B * RIB_P * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -1792,10 +1854,10 @@ export class ThreeScene {
 
   // ============================ task 7 — layer implementations ============================
 
-  // ① social web — alliance ribbons + red dashed feud rifts between live flies (task 25④).
+  // ① social web — alliance ribbons + red dashed feud rifts between live flies (task 25④, task 46).
   // Ribbons sample every ≈12 world units and lift EACH vertex onto the local ground crest +4.5
   // (grudges +6), so no ridge can swallow a thread; colours blend the two endpoint nation hues.
-  // Geometry rebuilds only when the signature (pairs + 12-unit-quantised endpoints) changes.
+  // Geometry rebuilds when the signature (pairs + 2-unit-quantised endpoints) changes — near-real-time tracking.
   _nationRGBAt(x, z) {
     const nd = this._nationData;
     const vor = nd && nd.voronoi;
@@ -1829,7 +1891,7 @@ export class ThreeScene {
       const fa = sim.get(b.a), fb = sim.get(b.b);
       if (!fa || fa.dying || !fb || fb.dying) continue;
       liveB.push([fa, fb]);
-      sig += "b" + b.a + "." + b.b + "@" + ((fa.x / 12) | 0) + "," + ((fa.y / 12) | 0) + "," + ((fb.x / 12) | 0) + "," + ((fb.y / 12) | 0) + ";";
+      sig += "b" + b.a + "." + b.b + "@" + ((fa.x / 2) | 0) + "," + ((fa.y / 2) | 0) + "," + ((fb.x / 2) | 0) + "," + ((fb.y / 2) | 0) + ";";
     }
     sig += "|";
     if (grudges) for (const g of grudges) {
@@ -1838,9 +1900,9 @@ export class ThreeScene {
       const fa = sim.get(g.buyerId), fb = sim.get(g.sellerId);
       if (!fa || fa.dying || !fb || fb.dying) continue;
       liveG.push([fa, fb]);
-      sig += "g" + g.buyerId + "." + g.sellerId + "@" + ((fa.x / 12) | 0) + "," + ((fa.y / 12) | 0) + "," + ((fb.x / 12) | 0) + "," + ((fb.y / 12) | 0) + ";";
+      sig += "g" + g.buyerId + "." + g.sellerId + "@" + ((fa.x / 2) | 0) + "," + ((fa.y / 2) | 0) + "," + ((fb.x / 2) | 0) + "," + ((fb.y / 2) | 0) + ";";
     }
-    if (sig === this._socSig) return;   // nothing moved a 12-unit cell → zero per-frame cost
+    if (sig === this._socSig) return;   // nothing moved a 2-unit cell → minimal per-frame cost
     this._socSig = sig;
     const PTS = this._socRibbonPts;
     // ---- alliance ribbons: two vertices per sample, triangle strip indices, nation-blended colour ----
