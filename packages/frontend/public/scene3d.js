@@ -85,6 +85,7 @@ export class ThreeScene {
     this._castleLibLoading = false;
     this._castleLibReady = false;
     this._treeGroup = null;         // task 24: clustered instanced trees (broadleaf + conifer)
+    this._wallGroup = null;         // task 47: great wall + beacon towers along borders
     this._canalMask = null;         // task 24: canal proximity field, filled by _sculptTerrain
     this._nationData = null;        // last updateNations() result { nationSeeds, voronoi, … }
     this._nationSig = "";           // applied partition signature — rebuild only on change
@@ -386,6 +387,7 @@ export class ThreeScene {
     }
     this._rebuildCastles();
     this._buildTrees();
+    this._buildBorderWalls();   // task 47: great wall + beacon towers along the meandered border lines
     this._nationSig = sig;   // mark applied only after the full rebuild: a throw above leaves it unset so the next frame retries
   }
 
@@ -1345,6 +1347,178 @@ export class ThreeScene {
     this.scene.add(this._treeGroup);
   }
 
+  // ---- task 47: GREAT WALL + BEACON TOWERS along the meandered border lines.
+  // The wall is a continuous stone ribbon (merged into ONE BufferGeometry, single draw call)
+  // with crenellations every ~7 units. Beacon towers are placed every ~50 units (InstancedMesh
+  // for the stone bodies + InstancedMesh for the flames). Total ≤3 new draw calls.
+  // Visibility follows state.showTerritory (controlled in update()). ----
+  _buildBorderWalls() {
+    if (this._wallGroup) {
+      this.scene.remove(this._wallGroup);
+      this._wallGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      this._wallGroup = null;
+    }
+    const nat = this._nationData;
+    if (!nat || !nat.voronoi) return;
+
+    // Get the cached meander runs (same data _sculptTerrain and buildBorderMesh use)
+    const hAt = (x, z) => this.heightAt(x, z);
+    const runs = meanderEdges(voronoiEdges(nat.voronoi), hAt);
+    if (!runs || !runs.length) return;
+
+    // Helper: vertex-colour a geometry with mottle
+    const STONE = [0.42, 0.42, 0.42];  // #6b6b6b
+    const solid = (g, rgb, mottle) => {
+      const gi = g.index ? g.toNonIndexed() : g;
+      const n = gi.attributes.position.count;
+      const arr = new Float32Array(n * 3);
+      const m = mottle || 0;
+      for (let i = 0; i < n; i++) {
+        const jit = m > 0 ? (Math.sin(i * 7.31 + g.id * 0.1) * 0.5 + 0.5) * m - m * 0.5 : 0;
+        arr[i * 3] = Math.max(0, Math.min(1, rgb[0] + jit));
+        arr[i * 3 + 1] = Math.max(0, Math.min(1, rgb[1] + jit));
+        arr[i * 3 + 2] = Math.max(0, Math.min(1, rgb[2] + jit));
+      }
+      gi.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+      return gi;
+    };
+
+    const wallGeos = [];   // all wall + merlon pieces → merge into 1 geometry
+    const towerPositions = [];  // [{x, y, z, angle}] for beacon towers
+
+    const WALL_H = 3.2, WALL_W = 2.2, MERLON_H = 1.4, MERLON_W = 1.0;
+    const TOWER_SPACING = 50;   // world units between towers
+
+    for (const line of runs) {
+      // Filter to inland points only (mouth=0 and above sea level)
+      const pts = [];
+      for (const p of line) {
+        if (p[2] > 0) continue;   // estuary tail — no wall in the sea
+        const h = hAt(p[0], p[1]);
+        if (h < 0.5) continue;    // below land threshold
+        pts.push(p);
+      }
+      if (pts.length < 3) continue;
+
+      // Resample every ~8 units for wall segments
+      const wallPts = [pts[0]];
+      let accum = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const dx = pts[i][0] - pts[i - 1][0], dz = pts[i][1] - pts[i - 1][1];
+        accum += Math.hypot(dx, dz);
+        if (accum >= 8) { wallPts.push(pts[i]); accum = 0; }
+      }
+      if (wallPts.length < 2) continue;
+
+      // Build wall segments
+      let distSinceTower = 0;
+      for (let i = 0; i < wallPts.length - 1; i++) {
+        const ax = wallPts[i][0], az = wallPts[i][1];
+        const bx = wallPts[i + 1][0], bz = wallPts[i + 1][1];
+        const dx = bx - ax, dz = bz - az;
+        const segLen = Math.hypot(dx, dz);
+        if (segLen < 1) continue;
+        const angle = Math.atan2(dz, dx);
+        const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+        const gy = this.groundY(mx, mz, 4);
+        if (gy < 0.4) continue;
+
+        // Wall body: a box stretched along the segment
+        const wg = new THREE.BoxGeometry(segLen, WALL_H, WALL_W);
+        wg.rotateY(-angle);
+        wg.translate(mx, gy + WALL_H * 0.5 - 0.3, mz);
+        wallGeos.push(solid(wg, STONE, 0.06));
+
+        // Merlons: crenellations on top every ~7 units
+        const nMerlons = Math.max(1, Math.round(segLen / 7));
+        for (let m = 0; m < nMerlons; m++) {
+          const t = (m + 0.5) / nMerlons;
+          const px = ax + dx * t, pz = az + dz * t;
+          const py = this.groundY(px, pz, 2);
+          if (py < 0.4) continue;
+          const mg = new THREE.BoxGeometry(MERLON_W, MERLON_H, WALL_W * 0.8);
+          mg.rotateY(-angle);
+          mg.translate(px, py + WALL_H + MERLON_H * 0.5 - 0.3, pz);
+          wallGeos.push(solid(mg, STONE, 0.04));
+        }
+
+        // Track distance for tower placement
+        distSinceTower += segLen;
+        if (distSinceTower >= TOWER_SPACING) {
+          distSinceTower = 0;
+          towerPositions.push({ x: mx, y: gy, z: mz, angle });
+        }
+      }
+    }
+
+    this._wallGroup = new THREE.Group();
+    this._wallGroup.name = "borderWalls";
+
+    // Merge all wall geometry into one mesh (single draw call)
+    if (wallGeos.length) {
+      const merged = mergeGeometries(wallGeos, false);
+      if (merged) {
+        const mat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: this._toonRamp() });
+        const mesh = new THREE.Mesh(merged, mat);
+        mesh.frustumCulled = false;
+        mesh.castShadow = false;
+        this._wallGroup.add(mesh);
+      }
+    }
+
+    // Beacon towers — one InstancedMesh for the stone structure
+    if (towerPositions.length) {
+      const tGeos = [];
+      const tBody = new THREE.CylinderGeometry(2.5, 2.8, 8, 10);
+      tBody.translate(0, 4, 0);
+      tGeos.push(solid(tBody, [0.40, 0.40, 0.38], 0.05));
+      const tPlat = new THREE.CylinderGeometry(3.5, 3.2, 1.0, 10);
+      tPlat.translate(0, 8.5, 0);
+      tGeos.push(solid(tPlat, [0.44, 0.44, 0.42], 0.04));
+      const tBraz = new THREE.CylinderGeometry(1.5, 1.8, 1.2, 8);
+      tBraz.translate(0, 9.6, 0);
+      tGeos.push(solid(tBraz, [0.36, 0.30, 0.24], 0.03));
+      const towerGeo = mergeGeometries(tGeos, false);
+      if (towerGeo) {
+        const towerMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: this._toonRamp() });
+        const towerIM = new THREE.InstancedMesh(towerGeo, towerMat, towerPositions.length);
+        const d = new THREE.Object3D();
+        for (let i = 0; i < towerPositions.length; i++) {
+          const tp = towerPositions[i];
+          d.position.set(tp.x, tp.y - 0.4, tp.z);
+          d.rotation.set(0, tp.angle, 0);
+          d.scale.setScalar(1);
+          d.updateMatrix();
+          towerIM.setMatrixAt(i, d.matrix);
+        }
+        towerIM.instanceMatrix.needsUpdate = true;
+        towerIM.frustumCulled = false;
+        this._wallGroup.add(towerIM);
+      }
+
+      // Flames — small orange spheres on top of each tower (InstancedMesh, basic material)
+      const flameGeo = new THREE.SphereGeometry(1.2, 8, 6);
+      flameGeo.translate(0, 10.6, 0);
+      const flameMat = new THREE.MeshBasicMaterial({ color: 0xff6a20, transparent: true, opacity: 0.8 });
+      const flameIM = new THREE.InstancedMesh(flameGeo, flameMat, towerPositions.length);
+      const fd = new THREE.Object3D();
+      for (let i = 0; i < towerPositions.length; i++) {
+        const tp = towerPositions[i];
+        fd.position.set(tp.x, tp.y - 0.4, tp.z);
+        fd.rotation.set(0, 0, 0);
+        fd.scale.setScalar(1);
+        fd.updateMatrix();
+        flameIM.setMatrixAt(i, fd.matrix);
+      }
+      flameIM.instanceMatrix.needsUpdate = true;
+      flameIM.frustumCulled = false;
+      this._wallGroup.add(flameIM);
+    }
+
+    this._wallGroup.visible = state.showTerritory !== false;
+    this.scene.add(this._wallGroup);
+  }
+
   // ---- province names floating over the land — the atlas's own labels ----
   _buildLabels() {
     const mk = (text) => {
@@ -1829,6 +2003,10 @@ export class ThreeScene {
     if (this.flyBody.instanceColor) this.flyBody.instanceColor.needsUpdate = true;
 
     this._rebuildVillages(econCities);   // KayKit village ring per town/city (task 6; the mud-brick town is gone — task 18)
+    // task 47: cities toggle → villageGroup visible follows state.showCities
+    this.villageGroup.visible = state.showCities !== false;
+    // task 47: border walls follow territory toggle
+    if (this._wallGroup) this._wallGroup.visible = state.showTerritory !== false;
     // task 12 P0: flow the ocean by scrolling the normal map — no uniforms, no mirror pass
     if (this.water && this.water.material && this.water.material.normalMap) {
       const nm = this.water.material.normalMap;
