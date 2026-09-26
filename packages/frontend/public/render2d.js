@@ -1446,25 +1446,25 @@ export function renderSocieties(pal, now) {
     state.ctx.fillStyle = rgba(c.color, 0.92 * cdim); state.ctx.fillText(label, lx + crestW + gap, by);
     state.ctx.restore();
   }
-  // 2) gold bond web inside colonies (the alliances that define each society)
-  for (const p of state.societies.allies) {
-    const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-    const inv = foc != null && (p.a === foc || p.b === foc);
-    const ed = foc == null ? 1 : (inv ? 1 : 0.10);
-    state.ctx.lineWidth = inv ? 1.6 : 1.1;
-    state.ctx.strokeStyle = rgba(GOLD_THREAD, (0.30 + p.w * 0.35) * ed);
-    state.ctx.beginPath(); state.ctx.moveTo(a.x, a.y); state.ctx.lineTo(b.x, b.y); state.ctx.stroke();
-  }
-  // 3) red conflict cracks between feuding flies
-  for (const p of state.societies.feuds) {
-    const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
-    if (Math.hypot(a.x - b.x, a.y - b.y) > 380) continue;
-    const inv = foc != null && (p.a === foc || p.b === foc);
-    const ed = foc == null ? 1 : (inv ? 1 : 0.10);
-    state.ctx.lineWidth = inv ? 1.7 : 1.3;
-    state.ctx.strokeStyle = rgba(CRACK_RED, 0.5 * ed);
-    traceCrack(a, b); state.ctx.stroke();
-  }
+  // 2) gold bond web — DISABLED: permanent social lines removed for visual clarity.
+  // for (const p of state.societies.allies) {
+  //   const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+  //   const inv = foc != null && (p.a === foc || p.b === foc);
+  //   const ed = foc == null ? 1 : (inv ? 1 : 0.10);
+  //   state.ctx.lineWidth = inv ? 1.6 : 1.1;
+  //   state.ctx.strokeStyle = rgba(GOLD_THREAD, (0.30 + p.w * 0.35) * ed);
+  //   state.ctx.beginPath(); state.ctx.moveTo(a.x, a.y); state.ctx.lineTo(b.x, b.y); state.ctx.stroke();
+  // }
+  // 3) red conflict cracks — DISABLED: permanent grudge lines removed.
+  // for (const p of state.societies.feuds) {
+  //   const a = sim.get(p.a), b = sim.get(p.b); if (!a || a.dying || !b || b.dying) continue;
+  //   if (Math.hypot(a.x - b.x, a.y - b.y) > 380) continue;
+  //   const inv = foc != null && (p.a === foc || p.b === foc);
+  //   const ed = foc == null ? 1 : (inv ? 1 : 0.10);
+  //   state.ctx.lineWidth = inv ? 1.7 : 1.3;
+  //   state.ctx.strokeStyle = rgba(CRACK_RED, 0.5 * ed);
+  //   traceCrack(a, b); state.ctx.stroke();
+  // }
 }
 // ================= TERRITORY MAP: every house a dominion on the field (a Three-Kingdoms-style partition) ======
 // A pure client-side VISUALISATION of the LIVE dynasty membership (houseOf: flyId → {name,sigil,color}), so it

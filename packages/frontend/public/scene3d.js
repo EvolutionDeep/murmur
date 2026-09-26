@@ -254,108 +254,34 @@ export class ThreeScene {
     pmrem.dispose();
   }
 
-  // ---- sea: task 51 upgrade — custom ShaderMaterial with 2-frequency vertex waves,
-  // sun specular, and coastline foam. Still zero extra render passes, depthWrite:false,
-  // renderOrder:1. The old normalMap scrolling is replaced by a time uniform. ----
+  // ---- sea: the original diorama recipe — a plain MeshStandardMaterial plane whose sheen comes
+  // from the PMREM sky env + a slowly scrolling waternormals.jpg. Zero extra render passes,
+  // depthWrite:false, renderOrder:1. (task 51's custom ShaderMaterial is REVERTED: it rendered the
+  // plane as a translucent checkerboard wash and its missing .color broke the civ-palette fade.) ----
   _buildWater() {
-    const SEGS = 48;
-    const geo = new THREE.PlaneGeometry(2600, 2600, SEGS, SEGS);
-    this._waterUniforms = {
-      uTime: { value: 0 },
-      uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
-      uSunColor: { value: new THREE.Color(1.0, 0.95, 0.85) },
-      uNightFactor: { value: 0.0 },
-      uSeaColor: { value: new THREE.Color(0.055, 0.28, 0.34) },   // shallow teal (linear); deep = ×0.42 in-shader
-      uFoamColor: { value: new THREE.Color(0.85, 0.92, 0.94) },
-      fogColor: { value: new THREE.Color(0xcfe3e6) },
-      fogDensity: { value: 0.00085 },
-      uCoastTex: { value: null },   // filled after terrain builds
-      uTerrainSize: { value: new THREE.Vector2(720, 450) },
-    };
-    const waterVert = `
-uniform float uTime;
-varying vec3 vWorldPos;
-varying vec3 vNormal;
-varying vec2 vUvW;
-void main() {
-  vUvW = uv;
-  vec3 p = position;
-  // 2-frequency sine waves (gentle diorama swell)
-  float w1 = sin(p.x * 0.012 + uTime * 0.6) * cos(p.y * 0.009 + uTime * 0.4) * 0.45;
-  float w2 = sin(p.x * 0.031 - uTime * 0.9) * sin(p.y * 0.026 + uTime * 0.7) * 0.18;
-  p.z += w1 + w2;
-  // approximate normal from wave derivatives
-  float dx = 0.012 * cos(p.x * 0.012 + uTime * 0.6) * cos(p.y * 0.009 + uTime * 0.4) * 0.45
-           + 0.031 * cos(p.x * 0.031 - uTime * 0.9) * sin(p.y * 0.026 + uTime * 0.7) * 0.18;
-  float dy = -0.009 * sin(p.x * 0.012 + uTime * 0.6) * sin(p.y * 0.009 + uTime * 0.4) * 0.45
-           + 0.026 * sin(p.x * 0.031 - uTime * 0.9) * cos(p.y * 0.026 + uTime * 0.7) * 0.18;
-  vNormal = normalize(vec3(-dx, -dy, 1.0));
-  vec4 wp = modelMatrix * vec4(p, 1.0);
-  vWorldPos = wp.xyz;
-  gl_Position = projectionMatrix * viewMatrix * wp;
-}`;
-    const waterFrag = `
-uniform vec3 uSunDir, uSunColor, uSeaColor, uFoamColor;
-uniform float uNightFactor, uTime, fogDensity;
-uniform vec3 fogColor;
-uniform sampler2D uCoastTex;
-uniform vec2 uTerrainSize;
-varying vec3 vWorldPos, vNormal;
-varying vec2 vUvW;
-void main() {
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(cameraPosition - vWorldPos);
-  vec3 L = normalize(uSunDir);
-  float ndl = max(dot(N, L), 0.0);
-  vec3 H = normalize(L + V);
-  // tighter, brighter sun glint + a broad secondary sheen → a wet, living surface
-  float nh = max(dot(N, H), 0.0);
-  float spec = pow(nh, 240.0) * 1.25 + pow(nh, 22.0) * 0.09;
-  // coastline distance from the baked terrain height → deep-water gradient
-  vec2 terrUV = vec2(
-    (vWorldPos.x + uTerrainSize.x * 0.5) / uTerrainSize.x,
-    (vWorldPos.z + uTerrainSize.y * 0.5) / uTerrainSize.y
-  );
-  bool onMap = terrUV.x > 0.0 && terrUV.x < 1.0 && terrUV.y > 0.0 && terrUV.y < 1.0;
-  float th = 0.0;
-  float shallow = 0.0;
-  if (onMap) {
-    th = texture2D(uCoastTex, terrUV).r * 32.0 - 8.0;  // decode: stored as (h+8)/32
-    shallow = 1.0 - smoothstep(-1.0, 3.5, th);
-  }
-  // deep abyssal teal offshore → brighter shallow shelf near the beach
-  vec3 seaBase = mix(uSeaColor * 0.42, uSeaColor, shallow);
-  vec3 col = seaBase * (0.30 + ndl * 0.70) + uSunColor * spec;
-  // coastline foam (kept): a band right at the waterline, gently animated
-  float foam = 0.0;
-  if (onMap) {
-    foam = 1.0 - smoothstep(0.0, 2.8, abs(th));
-    foam *= 0.5 + 0.5 * sin(vWorldPos.x * 0.3 + uTime * 2.0) * sin(vWorldPos.z * 0.25 - uTime * 1.5);
-    foam = clamp(foam, 0.0, 1.0) * 0.7;
-  }
-  col = mix(col, uFoamColor, foam);
-  // night dimming
-  col *= mix(1.0, 0.15, uNightFactor);
-  // fog
-  float depth = length(vWorldPos - cameraPosition);
-  float fogFactor = 1.0 - exp(-fogDensity * fogDensity * depth * depth);
-  gl_FragColor = vec4(mix(col, fogColor, clamp(fogFactor, 0.0, 1.0)), 0.92);
-  // match the tone-mapped PBR terrain: ACES + sRGB (the pars live in three's program prefix)
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-}`;
-    const mat = new THREE.ShaderMaterial({
-      uniforms: this._waterUniforms,
-      vertexShader: waterVert,
-      fragmentShader: waterFrag,
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
+    const geo = new THREE.PlaneGeometry(2600, 2600, 1, 1);   // covers the enlarged 720x450 world even at maxDistance 1500
+    const normals = new THREE.TextureLoader().load("./assets/waternormals.jpg", (t) => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(16, 16);
     });
+    normals.wrapS = normals.wrapT = THREE.RepeatWrapping;   // sane wrap/repeat even before the texture streams in
+    normals.repeat.set(16, 16);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2f93a2,             // diorama teal sea (#2e8b9a~#3a9aad), calm and saturated
+      transparent: true,
+      opacity: 0.92,
+      roughness: 0.42,             // calm: broad soft sheen, no storm glitter
+      metalness: 0.05,
+      envMapIntensity: 0.8,        // the PMREM sky supplies a gentle sheen (no transmission pass)
+      normalMap: normals,
+      normalScale: new THREE.Vector2(0.22, 0.22),   // barely-there ripple - a still diorama sea
+      side: THREE.DoubleSide,
+      depthWrite: false,          // the sea never writes depth - coastal vertices that
+    });                           // graze y=0 can no longer z-fight the plane (terrain draws first)
     this.water = new THREE.Mesh(geo, mat);
     this.water.rotation.x = -Math.PI / 2;
-    this.water.position.y = 0.0;
-    this.water.renderOrder = 1;
+    this.water.position.y = 0.0;   // sea surface at y=0; the beach sand ring rises above it
+    this.water.renderOrder = 1;    // opaque terrain -> sea(1) -> canal water(2) -> banks(3)
     this.scene.add(this.water);
   }
 
@@ -534,34 +460,6 @@ void main() {
     // castles. update() re-runs it whenever the dynasty signature changes.
     this._applyNations();
     this._colorTerrain(null);
-    // task 51: generate coast height texture for the water foam shader
-    this._buildCoastTex();
-  }
-
-  // task 51: bake a small DataTexture of terrain heights for the water shader's foam line.
-  // Encoded as (h + 8) / 32 in the R channel — the shader decodes back to world height.
-  _buildCoastTex() {
-    const N = this._hN, h = this._hGrid;
-    const SZ = 128;
-    const data = new Uint8Array(SZ * SZ);
-    for (let j = 0; j < SZ; j++) {
-      for (let i = 0; i < SZ; i++) {
-        // bilinear sample from the full-res height grid
-        const fi = (i / (SZ - 1)) * (N - 1), fj = (j / (SZ - 1)) * (N - 1);
-        const i0 = fi | 0, j0 = fj | 0;
-        const i1 = Math.min(i0 + 1, N - 1), j1 = Math.min(j0 + 1, N - 1);
-        const tx = fi - i0, ty = fj - j0;
-        const v = (h[j0 * N + i0] * (1 - tx) + h[j0 * N + i1] * tx) * (1 - ty)
-                + (h[j1 * N + i0] * (1 - tx) + h[j1 * N + i1] * tx) * ty;
-        data[j * SZ + i] = Math.max(0, Math.min(255, ((v + 8) / 32 * 255) | 0));
-      }
-    }
-    const tex = new THREE.DataTexture(data, SZ, SZ, THREE.RedFormat, THREE.UnsignedByteType);
-    tex.magFilter = THREE.LinearFilter;
-    tex.minFilter = THREE.LinearFilter;
-    tex.needsUpdate = true;
-    if (this._waterUniforms) this._waterUniforms.uCoastTex.value = tex;
-    this._coastTex = tex;
   }
 
   // (re)run the five-nation partition off the live dynasty data (task 6): seeds → Voronoi →
@@ -1822,6 +1720,7 @@ void main() {
     }));
     this._socLines.frustumCulled = false;
     this._socLines.renderOrder = 6;
+    this._socLines.visible = false;   // permanently hidden: bond ribbons removed
     this.scene.add(this._socLines);
     const ggeo = new THREE.BufferGeometry();
     ggeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(RIB_B * (RIB_P - 1) * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -1829,6 +1728,7 @@ void main() {
     this._socGrudge = new THREE.LineSegments(ggeo, new THREE.LineDashedMaterial({ color: 0xc63c2c, dashSize: 9, gapSize: 6.5, transparent: true, opacity: 0.6, depthWrite: false }));
     this._socGrudge.frustumCulled = false;
     this._socGrudge.renderOrder = 6;
+    this._socGrudge.visible = false;  // permanently hidden: grudge lines removed
     this.scene.add(this._socGrudge);
 
     // ---- ② necropolis: one Sprite per stone, GRAVE_CAP slots, canvas texture each ----
@@ -2278,8 +2178,12 @@ void main() {
     this.villageGroup.visible = state.showCities !== false;
     // task 47: border walls follow territory toggle
     if (this._wallGroup) this._wallGroup.visible = state.showTerritory !== false;
-    // task 51: water animation via time uniform (replaces old normalMap scrolling)
-    if (this._waterUniforms) this._waterUniforms.uTime.value += dt;
+    // task 12 P0: flow the ocean by scrolling the normal map — no uniforms, no mirror pass
+    if (this.water && this.water.material && this.water.material.normalMap) {
+      const nm = this.water.material.normalMap;
+      nm.offset.x = (nm.offset.x + dt * 0.010) % 1;
+      nm.offset.y = (nm.offset.y + dt * 0.016) % 1;
+    }
     // task 48: walk mode drives the camera; orbit mode uses OrbitControls
     if (this.walkMode && this.walkMode.active) {
       try { this.walkMode.update(dt); } catch (e) { console.warn("walkMode", e); }
@@ -2288,7 +2192,9 @@ void main() {
     }
 
     // ---- task 7: the ported 2D layers — each isolated so one bad layer can never veto the frame ----
-    try { this._updateSocialLines(sim); } catch (e) { console.warn("socialLines", e); }
+    // NOTE: _updateSocialLines disabled — permanent bond ribbons / grudge lines removed for visual clarity.
+    //       Payment arcs (_updatePayments) are UNAFFECTED.
+    // try { this._updateSocialLines(sim); } catch (e) { console.warn("socialLines", e); }
     try { this._updateGraveyard(); } catch (e) { console.warn("graveyard", e); }
     try { this._updatePayments(sim, now); } catch (e) { console.warn("payments", e); }
     try { this._updateChronFx(now, dt); } catch (e) { console.warn("chronFx", e); }
@@ -2919,12 +2825,12 @@ void main() {
     dn.update(tick, gen, now);
   }
 
-  // task 51 (redo): the terrain is now a MeshStandardMaterial — its day/night rides on the real
+  // task 51 revert: the sea is a plain MeshStandardMaterial again — its day/night rides on the real
   // sun/hemi lights + scene.fog + envMapIntensity (all driven by dayNight.js), so there are no
-  // terrain uniforms left to push. This shim now only feeds the custom WATER shader, which still
-  // shades + fogs itself in-shader.
+  // water uniforms left to push. Guarded so a missing uniforms bag is a silent no-op.
   _syncTerrainUniforms() {
     const wu = this._waterUniforms;
+    if (!wu || !wu.uSunDir || !wu.uSunDir.value) return;   // guard: custom ocean shader no longer present
     const dn = this.dayNight;
     const fog = this.scene.fog;
     if (dn && wu) {
@@ -3175,7 +3081,10 @@ void main() {
       else if (o.material) killMat(o.material);
       if (o.isInstancedMesh && o.dispose) o.dispose();
     });
-    if (this._coastTex && this._coastTex.dispose) { this._coastTex.dispose(); }   // task 51: coast height texture
+    if (this.water && this.water.material && this.water.material.normalMap) {
+      const wt = this.water.material.normalMap;   // plane water — explicit normalMap release
+      if (wt && wt.dispose && !seenTex.has(wt)) { seenTex.add(wt); wt.dispose(); }
+    }
     if (this._terrainUniforms) {
       for (const k of ['tGrass','tRock','tSand','tSnow','tDetailNormal']) {
         const t = this._terrainUniforms[k] && this._terrainUniforms[k].value;
