@@ -10,7 +10,7 @@ import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js';
 import { select as selectFly, deselect as deselectFly } from './inspector.js';
-import { updateNations, assignNationIds, buildBorderMesh, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
+import { updateNations, assignNationIds, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
 import { cameraMode } from './camera.js';
 import { DayNight } from './dayNight.js';
 import { createTerrainTextures } from './terrainTex.js';
@@ -268,8 +268,8 @@ export class ThreeScene {
     normals.repeat.set(48, 48);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x2f93a2,             // diorama teal sea (#2e8b9a~#3a9aad), calm and saturated
-      transparent: true,
-      opacity: 0.92,
+      transparent: false,          // opaque: hides rectangular seabed beneath terrain plane
+      opacity: 1.0,
       roughness: 0.42,             // calm: broad soft sheen, no storm glitter
       metalness: 0.05,
       envMapIntensity: 0.8,        // the PMREM sky supplies a gentle sheen (no transmission pass)
@@ -436,6 +436,9 @@ export class ThreeScene {
          vec3 cS = texture2D(tSand,  tUv * 0.73 + 0.67).rgb;
          vec3 cN = texture2D(tSnow,  tUv * 1.13 + 0.13).rgb;
          vec3 splatAlbedo = cG * vSplat.x + cR * vSplat.y + cS * vSplat.z + cN * vSplat.w;
+         // deep seabed (h < -1.5): force ocean-coloured albedo so the rectangular terrain plane
+         // never shows a dark patch under the sea, even if the water is made transparent again
+         if (vWorldPos2.y < -1.5) splatAlbedo = vec3(0.05, 0.35, 0.42);
          splatAlbedo = mix(splatAlbedo, vNation, 0.08);
          diffuseColor.rgb = splatAlbedo;`
       );
@@ -484,10 +487,9 @@ export class ThreeScene {
       this.nationBorderGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
       this.nationBorderGroup = null;
     }
-    if (nat && nat.voronoi) {
-      this.nationBorderGroup = buildBorderMesh(nat.voronoi, (x, z) => this.heightAt(x, z), this._WSX, this._WSZ);
-      this.scene.add(this.nationBorderGroup);
-    }
+    // task: water band + sand bank ribbon (buildBorderMesh) removed per user “取消大陆上的河道”.
+    // The border is now read only through the great wall + beacon towers built below, which reuse
+    // the same meander path data but lay stone instead of a blue waterway ribbon.
     this._rebuildCastles();
     this._buildTrees();
     this._buildBorderWalls();   // task 47: great wall + beacon towers along the meandered border lines
@@ -710,39 +712,13 @@ export class ThreeScene {
     const seeds = nat && Array.isArray(nat.nationSeeds) ? nat.nationSeeds : null;
     if (seeds) for (const s of seeds) if (s && isFinite(s.x) && isFinite(s.z)) press(s.x, s.z, 24, 36);
 
-    // ③ diorama CANALS (task 24, meandered task 25②): carve the waterway groove along the SAME
-    // meander runs buildBorderMesh lays its ribbon on (nations.js caches them by edge signature).
-    // Inland groove floor never drops below CANAL_MIN; estuary (mouth>0) segments may dive under
-    // the sea so the canal connects to the ocean naturally. canalMask feeds _colorTerrain banks.
-    const mask = this._canalMask || (this._canalMask = new Float32Array(N * N));
-    mask.fill(0);
-    const CANAL_D = 1.6, CANAL_R = 4.0, CANAL_MIN = 0.3;
-    const mRuns = meanderEdges(voronoiEdges(nat && nat.voronoi ? nat.voronoi : null), (x, z) => this._sampleH(base, x, z));
-    for (const line of mRuns) for (const pt of line) {
-      const cx = pt[0], cz = pt[1], mouth = pt[2];
-      if (mouth <= 0 && this._sampleH(base, cx, cz) < 1.0) continue;   // never cut a land canal through beach/sea
-      const R = CANAL_R + mouth * 2.6;                                 // the trumpet mouth widens the groove
-      const i0 = Math.max(0, Math.floor((cx - R + WSX / 2) / stX));
-      const i1 = Math.min(N - 1, Math.ceil((cx + R + WSX / 2) / stX));
-      const j0 = Math.max(0, Math.floor((cz - R + WSZ / 2) / stZ));
-      const j1 = Math.min(N - 1, Math.ceil((cz + R + WSZ / 2) / stZ));
-      for (let j = j0; j <= j1; j++) {
-        const dzc = -WSZ / 2 + j * stZ - cz;
-        for (let i = i0; i <= i1; i++) {
-          const dxc = -WSX / 2 + i * stX - cx;
-          const dd = Math.sqrt(dxc * dxc + dzc * dzc);
-          if (dd > R) continue;
-          const k = j * N + i;
-          if (mouth <= 0 && base[k] < 1.0) continue;
-          const w = 1 - ss(dd / R);
-          const floor = mouth > 0 ? -1.7 : CANAL_MIN;   // estuary floor may sit below sea level
-          h[k] = Math.max(floor, h[k] - (CANAL_D + mouth * 2.2) * w);
-          if (w > mask[k]) mask[k] = w;
-        }
-      }
-    }
+    // ③ diorama CANALS removed (user: “取消大陆上的河道”): the waterway groove that used to be
+    // carved along the meander runs is gone. The border read is now carried solely by the great
+    // wall + beacon towers (_buildBorderWalls). _canalMask stays all-zero so the _colorTerrain
+    // sand/bank override is a no-op — no channels, no forced sand ribbon across the continent.
+    if (this._canalMask) this._canalMask.fill(0);
 
-    // ③ (task 25) SURF STEP: the sea plane lives at y=0, so any terrain vertex grazing 0 z-fights
+    // ④ (task 25) SURF STEP: the sea plane lives at y=0, so any terrain vertex grazing 0 z-fights
     // it (the flickering shoals). Push the whole coplanar band (−0.55, 0.30) out to two flat
     // shelves — a +0.34 sand step above the waterline and a −0.60 surf shelf below — with a
     // smoothstep-eased lip; the coastline contour keeps its shape, the coplanar band is gone.
