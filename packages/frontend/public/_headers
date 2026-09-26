@@ -61,3 +61,10 @@
 # specifier), so it needs the same etag-revalidation treatment or returning readers run stale bytes.
 /civstage.js
   Cache-Control: no-cache, must-revalidate
+
+# task 38: reform templates added to shared.js + i18n-chron.js translations — force revalidation
+/shared.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/i18n-chron.js
+  Cache-Control: no-cache, no-store, must-revalidate
