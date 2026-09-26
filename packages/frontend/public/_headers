@@ -99,3 +99,7 @@
 # task 50: GPU particle weather system — bare-imported by scene3d.js
 /particles.js
   Cache-Control: no-cache, must-revalidate
+
+# task 52: the eight chronicle institution landmarks — bare-imported by scene3d.js
+/institutions.js
+  Cache-Control: no-cache, must-revalidate

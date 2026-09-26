@@ -15,6 +15,7 @@ import { cameraMode } from './camera.js';
 import { DayNight } from './dayNight.js';
 import { createTerrainTextures } from './terrainTex.js';
 import { ParticleSystem, EVENT_MAP as PARTICLE_EVENT_MAP, WEATHER as PARTICLE_WEATHER } from './particles.js';
+import { Institutions, computeInstitutionSpots } from './institutions.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -132,6 +133,11 @@ export class ThreeScene {
     this._pxSeenSeq = 0;                         // high-water mark over raw /annals rows already turned into particles
     this._pxNationCursor = 0;                    // round-robin nation pick for region-agnostic events
     this._weatherNextAt = 0;                     // performance.now() when the ambient weather next re-rolls
+    // ---- task 52: chronicle institution landmarks (eight clickable buildings) ----
+    this.institutions = null;                    // the Institutions instance (built in _initOverlays)
+    this._institutionSpots = null;               // cached anchors, computed once in _sculptTerrain
+    this.onInstitutionClick = null;              // main.js wires this → openChron + openChronVol(vol)
+    this._onMove = null;                         // pointermove hover listener (removed in dispose)
     this._snowMin = null;                        // cached high-country height gate for the snow layer
     this._init();
   }
@@ -493,6 +499,10 @@ export class ThreeScene {
     this._rebuildCastles();
     this._buildTrees();
     this._buildBorderWalls();   // task 47: great wall + beacon towers along the meandered border lines
+    // task 52: seat the institution landmarks now that their terraces are pressed into the relief.
+    if (this._institutionSpots && this.institutions && !this.institutions.built) {
+      try { this.institutions.build(this._institutionSpots); } catch (e) { console.warn('[scene3d] institutions build', e); }
+    }
     this._nationSig = sig;   // mark applied only after the full rebuild: a throw above leaves it unset so the next frame retries
   }
 
@@ -702,23 +712,73 @@ export class ThreeScene {
       }
     };
 
-    // ① the 16 zone anchors — a city's building ring runs out to ≈33 units, town rings to ≈18
+    // ① BORDER RIDGES (task 53): raise a mountain spine along the meandered border lines so the
+    // great wall sits on a visible crest rather than flat ground. Every ~8-unit sample of the
+    // meander runs gets a smoothstep raise (rIn=6, rOut=22, amount=10). Ocean segments are skipped.
+    // Uses Math.max per vertex so overlapping raise discs don't stack — a uniform crest results.
+    if (nat && nat.voronoi) {
+      const hAtBase = (x, z) => this._sampleH(base, x, z);
+      const runs = meanderEdges(voronoiEdges(nat.voronoi), hAtBase);
+      if (runs && runs.length) {
+        const RIDGE_RIN = 6, RIDGE_ROUT = 22, RIDGE_AMT = 10;
+        for (const line of runs) {
+          for (let pi = 0; pi < line.length; pi += 2) {
+            const p = line[pi];
+            if (p[2] > 0) continue;              // estuary tail — no ridge in the sea
+            const cx = p[0], cz = p[1];
+            if (!isFinite(cx) || !isFinite(cz)) continue;
+            if (this._sampleH(base, cx, cz) < 0.5) continue;  // ocean/shallow — skip
+            const i0 = Math.max(0, Math.floor((cx - RIDGE_ROUT + WSX / 2) / stX));
+            const i1 = Math.min(N - 1, Math.ceil((cx + RIDGE_ROUT + WSX / 2) / stX));
+            const j0 = Math.max(0, Math.floor((cz - RIDGE_ROUT + WSZ / 2) / stZ));
+            const j1 = Math.min(N - 1, Math.ceil((cz + RIDGE_ROUT + WSZ / 2) / stZ));
+            for (let j = j0; j <= j1; j++) {
+              const dz = -WSZ / 2 + j * stZ - cz;
+              for (let i = i0; i <= i1; i++) {
+                const k = j * N + i;
+                if (base[k] < LAND) continue;     // never raise seabed vertices (no artificial islands)
+                const dx = -WSX / 2 + i * stX - cx;
+                const d = Math.sqrt(dx * dx + dz * dz);
+                if (d > RIDGE_ROUT) continue;
+                let w = 1;
+                if (d > RIDGE_RIN) { const t = (d - RIDGE_RIN) / (RIDGE_ROUT - RIDGE_RIN); w = 1 - t * t * (3 - 2 * t); }
+                const raised = base[k] + RIDGE_AMT * w;
+                if (raised > h[k]) h[k] = raised;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ② the 16 zone anchors — a city's building ring runs out to ≈33 units, town rings to ≈18
     const VW = state.VW || 1280, VH = state.VH || 720;
+    const zonePts = [];                          // task 52: village anchors, so landmarks keep clear
     for (let z = 0; z < 16; z++) {
       const za = zoneAnchor(z);
-      press((za.x / VW - 0.5) * WSX, (za.y / VH - 0.5) * WSZ, 26, 40);
+      const zx = (za.x / VW - 0.5) * WSX, zz = (za.y / VH - 0.5) * WSZ;
+      zonePts.push({ x: zx, z: zz });
+      press(zx, zz, 26, 40);
     }
-    // ② the nation capitals — the monochrome castle footprint (wall R13 + towers ≈16)
+    // ③ the nation capitals — the monochrome castle footprint (wall R13 + towers ≈16)
     const seeds = nat && Array.isArray(nat.nationSeeds) ? nat.nationSeeds : null;
     if (seeds) for (const s of seeds) if (s && isFinite(s.x) && isFinite(s.z)) press(s.x, s.z, 24, 36);
 
-    // ③ diorama CANALS removed (user: “取消大陆上的河道”): the waterway groove that used to be
+    // ③b (task 52): the eight chronicle institution landmarks. Their anchors are computed ONCE from
+    // the first live nation partition and cached, so a conquest never makes a landmark jump; each then
+    // gets a pressed mesa (rIn=footprint, rOut=+12) exactly like a capital, so it reads as terraced-in.
+    if (!this._institutionSpots && seeds && seeds.length) {
+      this._institutionSpots = computeInstitutionSpots(seeds, (x, z) => this._sampleH(base, x, z), WSX, WSZ, zonePts);
+    }
+    if (this._institutionSpots) for (const sp of this._institutionSpots) press(sp.x, sp.z, sp.rIn, sp.rOut);
+
+    // ④ diorama CANALS removed (user: "取消大陆上的河道"): the waterway groove that used to be
     // carved along the meander runs is gone. The border read is now carried solely by the great
     // wall + beacon towers (_buildBorderWalls). _canalMask stays all-zero so the _colorTerrain
     // sand/bank override is a no-op — no channels, no forced sand ribbon across the continent.
     if (this._canalMask) this._canalMask.fill(0);
 
-    // ④ (task 25) SURF STEP: the sea plane lives at y=0, so any terrain vertex grazing 0 z-fights
+    // ⑤ (task 25) SURF STEP: the sea plane lives at y=0, so any terrain vertex grazing 0 z-fights
     // it (the flickering shoals). Push the whole coplanar band (−0.55, 0.30) out to two flat
     // shelves — a +0.34 sand step above the waterline and a −0.60 surf shelf below — with a
     // smoothstep-eased lip; the coastline contour keeps its shape, the coplanar band is gone.
@@ -1854,6 +1914,17 @@ export class ThreeScene {
       window.__murmurWeather = (type) => { if (!this.particles) return false; if (type === 'clear') { this.particles.stopAmbient(); return true; } return !!this._startWeather(type); };
       window.__murmurParticles = () => this.particles;
     } catch (e) { console.warn('[scene3d] particle system init failed:', e); this.particles = null; }
+
+    // ---- task 52: the eight chronicle institution landmarks. computeInstitutionSpots runs inside
+    // _sculptTerrain once the first live nation partition exists; if the spots are ALREADY cached
+    // (dynasty data present at boot, so _sculptTerrain ran before this point) build them right now,
+    // otherwise _applyNations builds them the moment the partition arrives. Isolated like every layer.
+    try {
+      this.institutions = new Institutions(this.scene, this);
+      if (this._institutionSpots) this.institutions.build(this._institutionSpots);
+      this._onMove = (e) => this._onCanvasMove(e);
+      if (this._cvEl) this._cvEl.addEventListener("pointermove", this._onMove);
+    } catch (e) { console.warn('[scene3d] institutions init failed:', e); this.institutions = null; }
   }
 
   // one shared radial-gradient canvas texture for every glow sprite (prophet halo / candle point)
@@ -1973,6 +2044,19 @@ export class ThreeScene {
     const fly = this._pickFly(px, py, rect);
     if (fly != null) { selectFly(fly); return; }
 
+    // ①b (task 52) institution landmarks — a tap on a building opens its chronicle volume. The
+    // raycaster is already set from this click's NDC above; the buildings sit under the sky-patrolling
+    // flies, so a fly still wins an exact overlap (flies stay the primary target by design).
+    if (this.institutions && this.institutions.built) {
+      const rec = this.institutions.pick(this._raycaster);
+      if (rec) {
+        if (typeof this.onInstitutionClick === "function") {
+          try { this.onInstitutionClick(rec.def.vol, rec.def.key); } catch (err) { console.warn("institutionClick", err); }
+        }
+        return;
+      }
+    }
+
     // ② a headstone, but only while the necropolis layer is showing
     if (state.showGraves && this._graveGroup && this._graveGroup.visible) {
       const g = this._pickGrave(px, py, rect);
@@ -1982,6 +2066,21 @@ export class ThreeScene {
     // ③ empty click — clear both selections
     deselectFly();
     hideEpitaph();
+  }
+
+  // task 52 — hover feedback for the institution landmarks. A cheap raycast against the ~10 building
+  // meshes (bounding-sphere culled, so empty space costs almost nothing) lifts a warm emissive and a
+  // pointer cursor. Walk mode owns the pointer, so it never fires there.
+  _onCanvasMove(e) {
+    if (!this.institutions || !this.institutions.built || !this.renderer || !this.camera) return;
+    if (cameraMode() === "walk") { if (this._cvEl) this._cvEl.style.cursor = ""; return; }
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    this._ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    this._raycaster.setFromCamera(this._ndc, this.camera);
+    const rec = this.institutions.pick(this._raycaster);
+    this.institutions.setHover(rec);
+    if (this._cvEl) this._cvEl.style.cursor = rec ? "pointer" : "";
   }
 
   // task 20⑤ — pick a live fly. ① standard raycast against the flyBody InstancedMesh, using NDC from
@@ -2183,6 +2282,7 @@ export class ThreeScene {
     try { this._updateSwarmAura(now); } catch (e) { console.warn("swarmAura", e); }
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
     try { this._updateTemple(now, dt); } catch (e) { console.warn("temple", e); }
+    try { if (this.institutions) this.institutions.update(dt, now); } catch (e) { console.warn("institutions", e); }
     try { this._updateLegend(sim, now); } catch (e) { console.warn("legend", e); }
     // ---- task 50: GPU particle weather — consume new chronicle rows as bursts, roll the ambient
     // weather, then advance the shader clock. Fully isolated: a particle fault never vetoes the frame.
@@ -3037,6 +3137,7 @@ export class ThreeScene {
     if (this._cvEl) {
       if (this._onDown) this._cvEl.removeEventListener("pointerdown", this._onDown);
       if (this._onClick) this._cvEl.removeEventListener("click", this._onClick);
+      if (this._onMove) this._cvEl.removeEventListener("pointermove", this._onMove);
     }
     if (this._legendEl && this._legendEl.parentNode) this._legendEl.parentNode.removeChild(this._legendEl);
     // task 50: tear the particle system down first — it removes its Points from the scene so the
