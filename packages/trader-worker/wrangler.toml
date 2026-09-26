@@ -169,7 +169,8 @@ LINEAGE_ADDRESS = "0x482b7a3bbef796c9627d86d5a23c67728a78096f"   # Arc mainnet (
 # API key (secret below) so auth switches to Bearer. Rollback = set the mode back to "off" and redeploy.
 ECONOMY_CIRCLE_FACILITATOR = "external"     # LIVE: Arc Pulse seller side settles via Circle's relayer (keyless trial; payTo 0x2b9a…055c signs the seller proof, Circle pays gas). Internal agent economy still self-broadcasts. "off"=self-broadcast all · "all"=+internal economy. Inert unless ECONOMY_FACILITATOR="onchain".
 CIRCLE_FACILITATOR_URL = "https://api.circle.com"   # Circle API base URL; sandbox = https://api-sandbox.circle.com. One host routes testnet+mainnet by the CAIP-2 network in the body.
-CIRCLE_MAX_TIMEOUT_SECONDS = "12"           # seconds Circle may wait for terminal settlement before returning "pending" (Arc settles with instant finality)
+# CIRCLE_MAX_TIMEOUT_SECONDS = "12"       # EVICTED for ㉘ REFORM_ENABLED binding slot — code default in config.ts is also "12", zero behavioural change
+REFORM_ENABLED = "true"                    # ㉘ master switch — ARMED: estate duty, jubilee stabilizer and dark-age catalyst now live (pure read-out; set "false" for byte-for-byte rollback)
 # SECRET (optional) — set with `wrangler secret put CIRCLE_API_KEY`, NEVER written here: a Circle API key for
 # Bearer auth in production. Absent ⇒ keyless trial, authenticating each settle with an EIP-712 seller proof
 # signed by the payTo key murmur already holds. Mixing Bearer + seller-proof on one request is a 400.
