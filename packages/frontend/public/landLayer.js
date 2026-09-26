@@ -122,9 +122,33 @@ export class LandLayer {
     this._emptyMesh = new THREE.InstancedMesh(this._planeGeo, this._emptyMat, maxEmpty);
     this._emptyMesh.rotation.x = 0;  // we'll set per-instance matrices
     this._emptyMesh.renderOrder = 3;
-    this._emptyMesh.count = 0;
     this._emptyMesh.frustumCulled = false;
     this.group.add(this._emptyMesh);
+
+    // Synchronously populate all 360 instances so parcels are clickable
+    // immediately — don't wait for the async API response.
+    this._populateDefaultGrid();
+  }
+
+  // ---- fill _emptyMesh with all parcels at default height (sync, no API needed) ----
+  _populateDefaultGrid() {
+    const dummy = new THREE.Object3D();
+    const col = new THREE.Color(0x88ccaa);
+    let idx = 0;
+    for (let id = 0; id < GRID_X * GRID_Z; id++) {
+      const { x, z } = this.parcelWorldPos(id);
+      dummy.position.set(x, 0.5, z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      this._emptyMesh.setMatrixAt(idx, dummy.matrix);
+      this._emptyMesh.setColorAt(idx, col);
+      idx++;
+    }
+    this._emptyMesh.count = idx;
+    this._emptyMesh.instanceMatrix.needsUpdate = true;
+    if (this._emptyMesh.instanceColor) this._emptyMesh.instanceColor.needsUpdate = true;
+    this._emptyMesh.computeBoundingSphere();
   }
 
   // ---- world position of a parcel by id ----
@@ -213,6 +237,7 @@ export class LandLayer {
     this._emptyMesh.count = emptyIdx;
     this._emptyMesh.instanceMatrix.needsUpdate = true;
     if (this._emptyMesh.instanceColor) this._emptyMesh.instanceColor.needsUpdate = true;
+    this._emptyMesh.computeBoundingSphere();
 
     // reposition grid lines to average terrain height
     this._gridLines.position.y = 0.6;
@@ -343,12 +368,18 @@ export class LandLayer {
     const rect = cvEl.getBoundingClientRect();
     if (!rect.width || !rect.height) return -1;
 
+    // Ensure camera world matrix is fresh — OrbitControls damping may have
+    // moved the camera after the last render, leaving matrixWorldNeedsUpdate
+    // true.  Without this, setFromCamera produces a stale/zero-direction ray.
+    this.ts.camera.updateMatrixWorld();
+
     this._ndc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
     this._raycaster.setFromCamera(this._ndc, this.ts.camera);
 
+    // 1) Try precise mesh raycast first
     const targets = [...this._filledMeshes];
     if (this._emptyMesh.count > 0) targets.push(this._emptyMesh);
 
@@ -359,6 +390,21 @@ export class LandLayer {
         return hit.object.userData.parcelId;
       } else if (hit.object === this._emptyMesh && hit.instanceId != null) {
         return this._instanceToParcelId(hit.instanceId);
+      }
+    }
+
+    // 2) Mathematical fallback: intersect ray with ground plane (y≈0) and
+    //    determine the parcel cell from the world XZ coordinate.  This ensures
+    //    clicks always resolve even when the instanced planes are too small on
+    //    screen or slightly below terrain.
+    const ray = this._raycaster.ray;
+    if (Math.abs(ray.direction.y) > 1e-6) {
+      const t = (0 - ray.origin.y) / ray.direction.y;
+      if (t > 0) {
+        const px = ray.origin.x + ray.direction.x * t;
+        const pz = ray.origin.z + ray.direction.z * t;
+        const id = this.parcelIdAt(px, pz);
+        if (id >= 0) return id;
       }
     }
     return -1;

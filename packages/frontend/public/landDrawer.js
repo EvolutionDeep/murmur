@@ -24,7 +24,7 @@ function murToAtomic(str) {
   const s = String(str).trim().replace(/,/g, "");
   if (!/^\d*\.?\d*$/.test(s) || s === "" || s === ".") return 0n;
   const [ip, fp] = s.split(".");
-  return BigInt((ip || "0") + (fp + "000000000000000000").slice(0, 18));
+  return BigInt((ip || "0") + ((fp || "") + "000000000000000000").slice(0, 18));
 }
 
 /** Format atomic string to human-readable whole MURMUR. */
