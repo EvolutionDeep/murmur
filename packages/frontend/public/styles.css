@@ -2404,3 +2404,45 @@ html[dir="rtl"] #era-hud { direction: rtl; }
    reach panel-temp (which ends 12px left of --chan-l) or panel-pop (which starts 12px right of
    --chan-r). The chronicle itself is untouched: pollChron() still fills state.chronRows /
    state.chronMeta and renderChron() still paints the #panel-chron sheet. */
+
+/* ============ task 30: the stretched era-pill fix + phone first-screen IA =====================
+   ROOT CAUSE (measured with headless Chrome, 390x844 / 768x1024): the base #era-hud rule above
+   pins `bottom: --stack-2` and sits AFTER the responsive blocks in source order, so their
+   `bottom: auto` (same specificity, earlier position) loses while their `top:` still applies —
+   top AND bottom both constrained ⇒ the fixed pill stretches to nearly full viewport height and,
+   with border-radius:999px + the vellum fill, renders as the giant stadium bar that buried the
+   canvas (#era-hud measured 250x664 @390x844, 250x868 @768x1024). Every override below therefore
+   lives AFTER the base rule and restates BOTH offsets explicitly. Desktop (≥821px wide AND
+   ≥601px tall) matches none of these blocks — zero change there. */
+@media (max-width: 820px) {
+  /* corner layout: era pill rides the band under the topbar, height back to content height */
+  #era-hud { top: calc(var(--topbar-h) + 8px); bottom: auto; max-width: min(92vw, 420px); }
+}
+@media (max-width: 680px), (max-height: 600px) {
+  /* stacked column: the era label becomes a small BOTTOM pill again, parked one rung above the
+     three-rung dock (chron safe+12 / canary safe+64 / tray safe+116..166) with a 10px air gap */
+  #era-hud {
+    top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
+    max-width: min(92vw, 420px);
+  }
+  /* the economy leaf collapses into a compact strip: headline visible, the rest one internal
+     scroll away — every button stays reachable, nothing is display:none'd */
+  .panel-econ {
+    max-height: 132px; overflow-y: auto; overscroll-behavior: contain;
+    margin-top: clamp(150px, 24vh, 260px);
+  }
+  /* the remaining leaves begin BELOW the fold, so the first screen is exactly:
+     canvas + topbar + the compact econ strip + the dock (era pill included, all disjoint) */
+  .panel-temp { margin-top: calc(100vh + 12px); }
+  /* while any sheet is open (body.*-open) the z20 dock/tray would float over the sheet's own
+     content — the sheet has its 40x40 close button, so the dock steps aside instead */
+  body[class*="-open"] .layer-toggles,
+  body[class*="-open"] .chron-btn,
+  body[class*="-open"] .canary-btn { opacity: 0; pointer-events: none; }
+}
+@media (max-height: 600px) {
+  /* short viewports (landscape phones, small monitors): there is no free rung between the econ
+     strip and the dock, so the era pill returns to the band under the topbar instead */
+  #era-hud { top: calc(env(safe-area-inset-top, 0px) + 80px); bottom: auto; }
+  .panel-econ { margin-top: 120px; max-height: 64px; }
+}
