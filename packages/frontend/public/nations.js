@@ -162,7 +162,10 @@ export function buildBorderMesh(v, heightAtFn, WSX, WSZ) {
   const hAt = typeof heightAtFn === "function" ? heightAtFn : () => 0;
   const HALF = 0.75;    // 内带半宽（总宽 1.5）
   const RAIL = 0.14;    // 描边宽
-  const LIFT = 0.5;     // 抬离地形高度，避免 z-fight
+  // 任务22：LIFT 0.5 → 0.95，采样密度 len/2.6 → len/1.8。丝带每个四边只有四个角采样
+  // heightAt，坡地上四边形的中段会低于真实地面而被地形吞掉；抬高抬离量 + 加密顶点
+  // 后，即便在任务22 压平后的台地边缘也能完整贴地可见（polygonOffset 仍负责防 z-fight）。
+  const LIFT = 0.95;    // 抬离地形高度，避免 z-fight 与坡地中段没入
 
   // Voronoi 边去重：相邻 cell 共享同一条边，只画一次
   const seen = new Set();
@@ -189,7 +192,7 @@ export function buildBorderMesh(v, heightAtFn, WSX, WSZ) {
     const len = Math.hypot(dx, dz);
     if (len < 0.05) continue;
     const nx = -dz / len, nz = dx / len;    // 水平法线
-    const seg = Math.max(2, Math.ceil(len / 2.6));
+    const seg = Math.max(2, Math.ceil(len / 1.8));   // 任务22：加密采样，坡地上不再整段没入地形
     let run = [];
     const flush = () => {
       if (run.length >= 2) {

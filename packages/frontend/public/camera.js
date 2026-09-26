@@ -91,12 +91,20 @@ export function bindPointer() {
     const rect = getRect();          // cached — pointermove fires constantly; don't reflow each time
     pointer.sx = e.clientX - rect.left;
     pointer.sy = e.clientY - rect.top;
-    const w = screenToWorld(pointer.sx, pointer.sy);   // picking & ripples live in WORLD space
+    const w = screenToWorld(pointer.sx, pointer.sy);   // picking lives in WORLD space (sim.js's stir reads it)
     pointer.x = w.x; pointer.y = w.y;
   };
+  // task 22 B2 — in 3D mode the ENTIRE pointer semantic belongs to OrbitControls (orbit / pan / zoom)
+  // and scene3d._onCanvasClick (tap-select). This 2D handler used to keep running right alongside
+  // them: it mutated state.cam (a view transform nothing on the 3D path reads, so a later 2D fallback
+  // would open on a framing the reader never chose), painted cursor:"grabbing" over the canvas,
+  // walked the whole swarm in pickHover() on every move and could even start a two-finger pinch.
+  // Now the 3D branches only keep pointer.x/y/inside/down fresh — sim.js still stirs the swarm from
+  // those — and return without touching state.cam, the cursor or the pan/pinch bookkeeping.
+  const is3D = () => !!state.threeScene;
   // a tap (press that never travelled far) on empty ground stirs the swarm; on a fly it selects; on a stone it opens the epitaph
   const handleTap = () => {
-    if (state.threeScene) return;   // task 20⑤: in 3D mode scene3d._onCanvasClick owns tap-select — 2D world coords are meaningless here
+    if (is3D()) return;   // task 20⑤: in 3D mode scene3d._onCanvasClick owns tap-select — 2D world coords are meaningless here
     hideEpitaph();
     let best = null, bd = Infinity;
     for (const f of sim.values()) {
@@ -112,6 +120,7 @@ export function bindPointer() {
     }
   };
   canvas.addEventListener("pointermove", (e) => {
+    if (is3D()) { toLocal(e); pointer.inside = true; return; }   // task 22 B2: no ptrs/pan/pinch/cursor work
     if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX - getRect().left, y: e.clientY - getRect().top });
     toLocal(e); pointer.inside = true;
     if (pinch.active) { movePinch(); return; }
@@ -124,6 +133,10 @@ export function bindPointer() {
     pickHover();
   });
   canvas.addEventListener("pointerdown", (e) => {
+    if (is3D()) {   // task 22 B2: OrbitControls owns the gesture; we only feed sim.js's stir
+      toLocal(e); pointer.inside = true; pointer.down = true;
+      return;
+    }
     const rect = getRect();
     ptrs.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
     try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -134,7 +147,7 @@ export function bindPointer() {
     toLocal(e);
     pointer.inside = true; pointer.down = true;
     // a headstone under the press owns the gesture immediately (never pans or stirs)
-    if (state.showGraves && !state.threeScene) {   // task 20②: 3D stone picking lives in scene3d._onCanvasClick
+    if (state.showGraves) {   // task 20②: 3D stone picking lives in scene3d._onCanvasClick (already returned above)
       let gg = null, gd = 16 / state.cam.z;
       for (const g of graveField) { const d = Math.hypot(g.x - pointer.x, g.y - 2 - pointer.y); if (d < gd) { gd = d; gg = g; } }
       if (gg) { showEpitaph(gg); ptrs.delete(e.pointerId); return; }
@@ -142,6 +155,7 @@ export function bindPointer() {
     pan.active = true; pan.moved = false; pan.sx0 = pointer.sx; pan.sy0 = pointer.sy; pan.camX0 = state.cam.x; pan.camY0 = state.cam.y;
   });
   const endPointer = (e) => {
+    if (is3D()) { pointer.down = false; ptrs.delete(e.pointerId); return; }   // task 22 B2: no tap synthesis, no cursor reset
     ptrs.delete(e.pointerId);
     if (pinch.active) { if (ptrs.size < 2) { pinch.active = false; } return; }
     pointer.down = false;
@@ -153,10 +167,15 @@ export function bindPointer() {
   };
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", endPointer);
-  canvas.addEventListener("pointerleave", () => { if (!pan.active && !pinch.active) { pointer.inside = false; pointer.down = false; state.hoverId = null; canvas.style.cursor = ""; } });
+  canvas.addEventListener("pointerleave", () => {
+    pointer.inside = false; pointer.down = false;
+    if (is3D()) return;   // task 22 B2: leave the cursor to OrbitControls in 3D
+    if (!pan.active && !pinch.active) { state.hoverId = null; canvas.style.cursor = ""; }
+  });
   // wheel = cursor-centred zoom (native, no page scroll); shift-wheel nudges horizontally
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
+    if (is3D()) return;   // task 22 B2: OrbitControls.enableZoom owns the 3D dolly — never touch state.cam
     const rect = getRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     const factor = Math.exp(-e.deltaY * 0.0015);
@@ -164,6 +183,7 @@ export function bindPointer() {
   }, { passive: false });
 }
 export function startPinch() {
+  if (state.threeScene) return;   // task 22 B2: two-finger orbit/zoom is OrbitControls' job in 3D
   const p = Array.from(ptrs.values()); if (p.length < 2) return;
   pinch.d0 = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
   pinch.z0 = state.cam.z;
@@ -172,6 +192,7 @@ export function startPinch() {
   pinch.active = true; pan.active = false; pointer.down = false;
 }
 export function movePinch() {
+  if (state.threeScene) return;   // task 22 B2: no 2D-cam pinch while OrbitControls owns the camera
   const p = Array.from(ptrs.values()); if (p.length < 2) return;
   const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
   const mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
@@ -179,12 +200,38 @@ export function movePinch() {
   state.cam.x = mx - pinch.w0x * state.cam.z; state.cam.y = my - pinch.w0y * state.cam.z; clampCam();
 }
 // the +/−/reset cluster on the left edge — same zoomAt path as the wheel, anchored to the field centre
+// task 22 B2 — the cluster is DOM chrome, not a canvas pointer path, so the is3D() early-returns above
+// never covered it: in 3D mode it was still writing state.cam, a view transform nothing on the 3D path
+// renders through (and which a later 2D fallback would inherit as a framing the reader never chose).
+// Rather than leave three visibly-dead buttons, drive OrbitControls' dolly instead — pure scalar maths
+// along camera→target, clamped to the controls' own min/maxDistance, no THREE import, no allocation.
 export function bindZoomControls() {
   const zi = $("zoom-in"), zo = $("zoom-out"), zr = $("zoom-reset");
-  if (zi) zi.addEventListener("click", () => zoomAt(state.VW / 2, state.VH / 2, 1.28));
-  if (zo) zo.addEventListener("click", () => zoomAt(state.VW / 2, state.VH / 2, 1 / 1.28));
-  if (zr) zr.addEventListener("click", () => resetView());
+  const dolly = (f) => {
+    const ts = state.threeScene;
+    if (!ts || !ts.camera || !ts.controls) return false;
+    const t = ts.controls.target, p = ts.camera.position;
+    const dx = t.x - p.x, dy = t.y - p.y, dz = t.z - p.z;
+    const dist = Math.hypot(dx, dy, dz) || 1;
+    const s = clamp(dist * f, ts.controls.minDistance, ts.controls.maxDistance) / dist;
+    p.set(t.x - dx * s, t.y - dy * s, t.z - dz * s);
+    ts.controls.update();
+    return true;
+  };
+  if (zi) zi.addEventListener("click", () => { if (!dolly(1 / 1.28)) zoomAt(state.VW / 2, state.VH / 2, 1.28); });
+  if (zo) zo.addEventListener("click", () => { if (!dolly(1.28)) zoomAt(state.VW / 2, state.VH / 2, 1 / 1.28); });
+  if (zr) zr.addEventListener("click", () => {
+    const ts = state.threeScene;
+    if (ts && ts.camera && ts.controls) {   // back to the framing _init() opens on
+      ts.camera.position.set(0, 320, 440); ts.controls.target.set(0, 4, 0); ts.controls.update();
+      return;
+    }
+    resetView();
+  });
 }
-// task 20④: spawnRippleAt removed — the tap stimulus rings are gone. state.ripples is never pushed to,
-// so the 2D fallback's ripple draw and the (already-deleted) 3D ripple pool both stay inert. Drag /
+// task 20④/22 B1: spawnRippleAt is gone and so is state.ripples itself (shared.js) plus the 2D
+// fallback's draw loop (render2d.js) — the click stimulus rings were cancelled outright. Drag /
 // zoom / tap-select are untouched.
+// task 22 B2: every pointer path above now bows out completely while state.threeScene is set —
+// OrbitControls owns orbit/pan/zoom and scene3d._onCanvasClick owns tap-select; this module only
+// keeps pointer.x/y/inside/down fresh so sim.js can still stir the swarm.

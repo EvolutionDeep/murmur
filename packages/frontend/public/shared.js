@@ -83,8 +83,8 @@ export function applyPaletteToDOM(pal) {
 // behavioural-state earth tones (CSS strings for the inspector badge)
 export const STATE_COLOR = { AGITATE: "#c05e3c", EXPLORE: "#c99a3f", AGGREGATE: "#5b7c8d", REST: "#8b9a86" };
 export const KIND_COL = { sensory: [91, 124, 141], inter: [122, 114, 98], modulatory: [192, 94, 60], motor: [26, 26, 24] };
-export const STIR_COL = [120, 116, 104];
-// neutral ink for the pointer "stir" ripple
+// task 22 B1 — STIR_COL ("neutral ink for the pointer stir ripple") deleted with the ripple feature:
+// the tap rings were cancelled in task 20④, and with render2d.js's draw loop gone nothing read it.
 export const hexRgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 // state colours as RGB triples (STATE_COLOR holds CSS hex) — for the canvas dots in the shard-topology ring
 export const STATE_RGB = { AGITATE: hexRgb(STATE_COLOR.AGITATE), EXPLORE: hexRgb(STATE_COLOR.EXPLORE), AGGREGATE: hexRgb(STATE_COLOR.AGGREGATE), REST: hexRgb(STATE_COLOR.REST) };
@@ -633,7 +633,9 @@ export const state = {
   cohSmoothed: 0.5,
   centroidX: 0,
   centroidY: 0,
-  ripples: [],
+  // task 22 B1 — `ripples: []` removed. The click-stimulus rings were cancelled (task 20④):
+  // camera.js no longer pushes, the 3D pool is deleted and render2d.js's draw loop is gone, so the
+  // array had no writer and no reader left. A pointer stir still reaches the swarm via sim.js.
   econMode: "simulated",
   econTotals: null,
   econBalances: new Map(),

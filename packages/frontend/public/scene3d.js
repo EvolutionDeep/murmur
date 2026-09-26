@@ -39,7 +39,9 @@ export class ThreeScene {
     this._hingeL = new THREE.Matrix4().makeTranslation(0.42, 0.30, 0.16);
     this._hingeR = new THREE.Matrix4().makeTranslation(0.42, 0.30, -0.16);
     this._hGrid = null; this._hN = 0; this._hStepX = 1; this._hStepZ = 1;   // height field for terrain sampling
+    this._hBase = null;         // task 22: the PRISTINE noise field, before the build terraces are pressed in
     this._WSX = 720; this._WSZ = 450;   // task 18: continent enlarged 480×300 → 720×450 (+50%)
+    this._pickA = []; this._pickB = [];   // task 22 B4: preallocated pick candidate lists (never `new` per click)
     this._ramp = null;
     this._dummy = new THREE.Object3D();
     this._color = new THREE.Color();
@@ -272,6 +274,9 @@ export class ThreeScene {
       h = out;
     }
     this._hGrid = h; this._hN = N; this._hStepX = WSX / (N - 1); this._hStepZ = WSZ / (N - 1);
+    this._hBase = h.slice();   // task 22: keep an untouched copy — _sculptTerrain() always re-cuts
+    //                            the terraces from this, so a dynasty reshuffle can never grind the
+    //                            land progressively flatter.
 
     // task 18: the two rivers are gone (user: “两条河太丑”). Their valley carving ran an
     // O(N²·82) distance sweep at build time and fed _colorTerrain / forest / grass placement —
@@ -319,6 +324,11 @@ export class ThreeScene {
     this._nationData = nat;
     const sig = (nat && nat.sig) || "";
     if (sig === this._nationSig) return;   // partition unchanged → keep borders + castles
+
+    // task 22: cut the build terraces BEFORE anything samples the relief — the border ribbons below
+    // and the castle/village grounding both read heightAt(), so sculpting last would leave them
+    // floating over freshly flattened mesas.
+    this._sculptTerrain(nat);
 
     const pos = this.terrain && this.terrain.geometry ? this.terrain.geometry.attributes.position : null;
     if (pos) assignNationIds(pos, pos.count, nat && nat.voronoi ? nat.voronoi : null);
@@ -415,8 +425,12 @@ export class ThreeScene {
   }
 
   // bilinear sample of the baked height field (flies ride the relief, settlements sit on the land)
-  heightAt(x, z) {
-    const g = this._hGrid; if (!g) return 0;
+  heightAt(x, z) { return this._sampleH(this._hGrid, x, z); }
+
+  // task 22: the sampler is shared so _sculptTerrain() can read the PRISTINE _hBase while
+  // heightAt() keeps reading the live (terraced) grid.
+  _sampleH(g, x, z) {
+    if (!g) return 0;
     const N = this._hN;
     const u = Math.max(0, Math.min(N - 1.001, (x + this._WSX / 2) / this._hStepX));
     const v = Math.max(0, Math.min(N - 1.001, (z + this._WSZ / 2) / this._hStepZ));
@@ -425,6 +439,107 @@ export class ThreeScene {
     const a = g[j0 * N + i0], b = g[j0 * N + i1], c = g[j1 * N + i0], d = g[j1 * N + i1];
     const top = a + (b - a) * fu, bot = c + (d - c) * fu;
     return top + (bot - top) * fv;
+  }
+
+  // task 22 — THE grounding rule for anything that sits on the land. Every kit piece used to be
+  // parked on a SINGLE heightAt() sample at its centre, so any relief inside its own footprint (a
+  // ridge, a slope, a terrace lip) punched straight up through walls, roofs, headstones and fly
+  // bellies — that is the "地形会遮盖建筑" report. Sample a 5×5 grid spanning ±r and take the MAX:
+  // the object's floor then clears every point it covers. Callers add their own embed/lift on top.
+  // A seabed spot still returns its negative height, so the existing "walk inland" guards survive.
+  groundY(x, z, r) {
+    const s = r > 0 ? r : 4;
+    let m = this.heightAt(x, z);
+    for (let i = 0; i < 5; i++) {
+      const ox = -s + i * (s * 0.5);        // −s, −s/2, 0, +s/2, +s
+      for (let j = 0; j < 5; j++) {
+        const y = this.heightAt(x + ox, z - s + j * (s * 0.5));
+        if (y > m) m = y;
+      }
+    }
+    return m;
+  }
+
+  // task 22 — highest ground ALONG a span. A straight segment whose ends each ride their own
+  // ground height still buries itself mid-span wherever a ridge runs between the two endpoints
+  // (social threads, feud rifts, murmuration mesh, payment arcs). Both ends are lifted onto this
+  // crest instead, so the whole segment clears the relief.
+  spanY(ax, az, bx, bz, steps) {
+    const n = steps > 0 ? steps : 8;
+    let m = 0;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const y = this.heightAt(ax + (bx - ax) * t, az + (bz - az) * t);
+      if (y > m) m = y;
+    }
+    return m;
+  }
+
+  // ---- task 22: BUILD TERRACES. The land gets sculpted rather than the buildings getting taller
+  // plinths: a smoothstep plateau is pressed into the height field around every settlement anchor
+  // (the 16 zone anchors the KayKit village rings orbit) and every nation capital seed (the Kenney
+  // keep + curtain wall + drawbridge). That yields the tabletop-sandbox read — a dressed stone
+  // terrace in a mountain country — and it is the ONLY fix that also clears the courtyard: the old
+  // min-of-a-ring grounding sank the plinth into every dip and left each ridge INSIDE the walls
+  // free to rise up through the keep. Always re-cut from _hBase, so it is idempotent. A terrace
+  // whose centre is under the waterline is skipped — we never raise artificial islands. ----
+  _sculptTerrain(nat) {
+    const base = this._hBase, h = this._hGrid;
+    if (!base || !h || !this.terrain || !this.terrain.geometry) return;
+    const N = this._hN, WSX = this._WSX, WSZ = this._WSZ;
+    const stX = this._hStepX, stZ = this._hStepZ;
+    h.set(base);
+    const LAND = 0.2;      // below this the vertex is seabed/surf and must not be dragged up
+
+    const press = (cx, cz, rIn, rOut) => {
+      if (!isFinite(cx) || !isFinite(cz)) return;           // a NaN seed must never poison the grid
+      if (this._sampleH(base, cx, cz) < LAND) return;      // a capital/anchor at sea → leave the coast alone
+      // mesa top = the mean base height over the flat core (a mesa reads far better than a spike cut)
+      let sum = this._sampleH(base, cx, cz), cnt = 1;
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2, ca = Math.cos(ang), sa = Math.sin(ang);
+        sum += this._sampleH(base, cx + ca * rIn * 0.66, cz + sa * rIn * 0.66);
+        sum += this._sampleH(base, cx + ca * rIn, cz + sa * rIn);
+        cnt += 2;
+      }
+      const ty = Math.max(1.4, sum / cnt);   // never below the wet-sand band, never in the surf
+      const i0 = Math.max(0, Math.floor((cx - rOut + WSX / 2) / stX));
+      const i1 = Math.min(N - 1, Math.ceil((cx + rOut + WSX / 2) / stX));
+      const j0 = Math.max(0, Math.floor((cz - rOut + WSZ / 2) / stZ));
+      const j1 = Math.min(N - 1, Math.ceil((cz + rOut + WSZ / 2) / stZ));
+      for (let j = j0; j <= j1; j++) {
+        const dz = -WSZ / 2 + j * stZ - cz;
+        for (let i = i0; i <= i1; i++) {
+          const k = j * N + i;
+          if (base[k] < LAND) continue;                     // the shoreline is the terrace's natural stop
+          const dx = -WSX / 2 + i * stX - cx;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          if (d > rOut) continue;
+          let w = 1;
+          if (d > rIn) { const t = (d - rIn) / (rOut - rIn); w = 1 - t * t * (3 - 2 * t); }   // smoothstep
+          h[k] += (ty - h[k]) * w;
+        }
+      }
+    };
+
+    // ① the 16 zone anchors — a city's building ring runs out to ≈33 units, town rings to ≈18
+    const VW = state.VW || 1280, VH = state.VH || 720;
+    for (let z = 0; z < 16; z++) {
+      const za = zoneAnchor(z);
+      press((za.x / VW - 0.5) * WSX, (za.y / VH - 0.5) * WSZ, 26, 40);
+    }
+    // ② the nation capitals — plinth 19.7 + drawbridge ≈26 units out at S=4.8
+    const seeds = nat && Array.isArray(nat.nationSeeds) ? nat.nationSeeds : null;
+    if (seeds) for (const s of seeds) if (s && isFinite(s.x) && isFinite(s.z)) press(s.x, s.z, 24, 36);
+
+    // commit: geometry Z (plane-local Z becomes world Y after the −90° X rotation), then the
+    // normals the toon ramp reads and the sphere the frustum culls with.
+    const pos = this.terrain.geometry.attributes.position;
+    const cnt = Math.min(pos.count, h.length);
+    for (let k = 0; k < cnt; k++) pos.setZ(k, h[k]);
+    pos.needsUpdate = true;
+    this.terrain.geometry.computeVertexNormals();
+    this.terrain.geometry.computeBoundingSphere();
   }
 
   // task 18: _riverZ + _buildRivers removed with the rivers (user: “两条河太丑，可以不要”).
@@ -659,17 +774,13 @@ export class ThreeScene {
     for (let i = 0; i < nat.nationSeeds.length; i++) {
       const seed = nat.nationSeeds[i];
       const col = nat.nationColors[i] || new THREE.Color(0.7, 0.58, 0.34);
-      // ground the castle: sink the plinth below the LOWEST terrain sample under the footprint
-      let baseY = this.heightAt(seed.x, seed.z);
-      for (let k = 0; k < 16; k++) {
-        const a = (k / 16) * Math.PI * 2;
-        const yy = this.heightAt(seed.x + Math.cos(a) * 3.7 * S, seed.z + Math.sin(a) * 3.7 * S);
-        if (yy < baseY) baseY = yy;
-      }
-      // terrace top is kit-local +0.25 (≈1.2 world units at S=4.8); sinking the group 0.95
-      // below the lowest ground sample lands the terrace ≈0.25 above it — walls embed in the
-      // drum, the deep outer tier (kit-local −2.05 ≈ −9.8 world) always stays buried
-      baseY -= 0.95;
+      // task 22 — ground the keep on the HIGHEST point of its own footprint, not the lowest. The
+      // old min-of-a-ring sank the plinth into every dip and left each ridge INSIDE the curtain
+      // wall free to rise up through the courtyard and the towers. _sculptTerrain() has already
+      // pressed a flat mesa under every capital, so this max over the plinth radius (4.1·S ≈ 19.7)
+      // is just the mesa top; the −0.95 embed still buries the deep outer tier (kit-local −2.05
+      // ≈ −9.8 world) and lands the dressed-stone terrace ≈0.25 above the ground line.
+      const baseY = this.groundY(seed.x, seed.z, 4.1 * S) - 0.95;
 
       const group = new THREE.Group();
       group.position.set(seed.x, baseY, seed.z);
@@ -727,6 +838,11 @@ export class ThreeScene {
         new THREE.Quaternion().setFromAxisAngle(YAX, (yaw || 0) * Math.PI * 2),
         new THREE.Vector3(sc, sc, sc)));
     };
+    // task 22 — every building is grounded on the MAX of a 5×5 sample spanning its own footprint
+    // (±0.8·scale ≈ its half-width) and embedded 0.4, so the terrace lip or any slope can no longer
+    // slice through a roof. A plot that lands in the sea is hauled halfway back toward the anchor;
+    // if it is still wet the building is dropped rather than built on stilts.
+    // (Declared per-zone below: it closes over that zone's wx/wz and its deterministic rnd stream.)
     for (const s of sets) {
       const r = String(s.rank || "").toUpperCase();
       if (r !== "TOWN" && r !== "CITY") continue;
@@ -736,25 +852,33 @@ export class ThreeScene {
       // deterministic per-zone layout: a rebuild paints the same village again
       let rs = (Math.imul((s.zone | 0) + 1, 2654435761) ^ 0x9e3779b9) >>> 0;
       const rnd = () => { rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0; return rs / 4294967296; };
+      const plot = (kind, a, rr, sc) => {
+        let bx = wx + Math.cos(a) * rr, bz = wz + Math.sin(a) * rr;
+        let gy = this.groundY(bx, bz, sc * 0.8);
+        if (gy < 0.2) {
+          bx = wx + Math.cos(a) * rr * 0.55; bz = wz + Math.sin(a) * rr * 0.55;
+          gy = this.groundY(bx, bz, sc * 0.8);
+          if (gy < 0.2) return;
+        }
+        put(kind, bx, gy - 0.4, bz, sc, rnd());
+      };
       const ring = r === "CITY" ? 17 + rnd() * 9 : 12 + rnd() * 6;
       const nB = r === "CITY" ? 6 : 4;   // plus the civic anchors below
       const kinds = ["home", "windmill", "tower", "home"];
       for (let b = 0; b < nB; b++) {
         const a = rnd() * Math.PI * 2;
         const rr = ring + rnd() * 7;
-        const bx = wx + Math.cos(a) * rr, bz = wz + Math.sin(a) * rr;
         const kind = kinds[(rnd() * kinds.length) | 0];
         const sc = TYPES.find((t) => t.key === kind).sc * (0.85 + rnd() * 0.3);
-        put(kind, bx, this.heightAt(bx, bz) - 0.5, bz, sc, rnd());
+        plot(kind, a, rr, sc);
       }
       const nCivic = r === "CITY" ? 2 : 1;
       for (let q = 0; q < nCivic; q++) {
         const civic = rnd() < 0.55 ? "well" : "market";
         const ca = rnd() * Math.PI * 2;
         const cr = Math.max(ring - 5.5, 8) + rnd() * 3;
-        const cx = wx + Math.cos(ca) * cr, cz = wz + Math.sin(ca) * cr;
         const csc = (civic === "well" ? 4.3 : 3.7) * (0.9 + rnd() * 0.2);
-        put(civic, cx, this.heightAt(cx, cz) - 0.5, cz, csc, rnd());
+        plot(civic, ca, cr, csc);
       }
     }
 
@@ -788,7 +912,9 @@ export class ThreeScene {
     for (const p of PROVINCES) {
       const x = (p.t[0] - 0.5) * this._WSX, z = (p.t[1] - 0.5) * this._WSZ;
       const sp = mk(p.name);
-      sp.position.set(x, this.heightAt(x, z) + 22, z);
+      // task 22 — the plate is 58 units wide: clear the highest ground anywhere under it, not just
+      // the one point it is centred on, or a ridge eats the descenders.
+      sp.position.set(x, this.groundY(x, z, 29) + 22, z);
       this.scene.add(sp);
     }
   }
@@ -1081,6 +1207,14 @@ export class ThreeScene {
   // task 20⑤ — pick a live fly. ① standard raycast against the flyBody InstancedMesh, using NDC from
   // the canvas boundingRect (not window — the renderer need not fill the viewport). ② screen-space
   // fallback: project every live fly and take the nearest within 28px. Returns a fly id or null.
+  // task 22 B3 audit — the fallback used to RE-DERIVE each fly's world position from f.x/f.y with a
+  // single heightAt() + a fixed 7. That drifted from what was actually on screen in two ways: it
+  // dropped the ±2 hover bob, and it ignored the relief sampling now used to place the instances.
+  // At close zoom a couple of world units is several pixels, so a fly the reader aimed at could lose
+  // to a neighbour. It now reads the position straight back out of the instance matrix — the exact
+  // rendered transform — and the NDC→px conversion (x·0.5+0.5, −y·0.5+0.5) is verified against the
+  // same rect the raycaster's NDC came from. Only instances < this._flyCount are walked, and
+  // _flyArr is rebuilt from `!f.dying` flies every frame, so dying flies can never be picked.
   _pickFly(px, py, rect) {
     const body = this.flyBody;
     const n = this._flyCount | 0;
@@ -1094,16 +1228,13 @@ export class ThreeScene {
       if (f && f.id != null) return f.id;
     }
     // ② screen-space fallback — nearest live fly within 28px of the click
-    const v = this._v1;
+    const v = this._v1, m = this._m4;
     let best = null, bestD = 28;
-    const VW = state.VW, VH = state.VH;
     for (let i = 0; i < n; i++) {
       const f = this._flyArr[i];
       if (!f || f.id == null) continue;
-      const x = (f.x / VW - 0.5) * this._WSX;
-      const z = (f.y / VH - 0.5) * this._WSZ;
-      const y = Math.max(this.heightAt(x, z), 0) + 7;
-      v.set(x, y, z).project(this.camera);
+      body.getMatrixAt(i, m);
+      v.setFromMatrixPosition(m).project(this.camera);
       if (v.z < -1 || v.z > 1) continue;                 // behind camera / outside depth range
       const sx = (v.x * 0.5 + 0.5) * rect.width;
       const sy = (-v.y * 0.5 + 0.5) * rect.height;
@@ -1113,21 +1244,38 @@ export class ThreeScene {
     return best;
   }
 
-  // task 20② — pick a headstone via its ×3 invisible proxy (raycast), with a screen-space fallback.
+  // task 20② — pick a headstone. task 22 B4 audit: three r160's Raycaster.intersectObject only
+  // tests `object.layers.test(raycaster.layers)` — it never looks at `visible` — so the invisible
+  // proxies ARE hittable, and Sprite.raycast only needs `raycaster.camera` (set by setFromCamera)
+  // plus a non-zero matrixWorld scale and an up-to-date matrixWorld (we force it below). Layers are
+  // the default mask on both sides. The real bug was PRECISION: a ×3 proxy is 21.6 units wide while
+  // the necropolis plots are ≈26 units apart, so neighbouring proxies overlapped and a tilted camera
+  // happily handed back the stone in FRONT of the one that was clicked. Proxies are now ×1.8 and the
+  // actual billboards are raycast first, with the fat proxies only as the near-miss fallback.
   _pickGrave(px, py, rect) {
     const sprites = this._graveSprites;
     if (!sprites || !sprites.length) return null;
     this._graveGroup.updateMatrixWorld(true);            // proxies must be current before raycasting
-    const proxies = [];
+    // ① the real 7.2×9.6 billboards — exact, so a neighbour can never steal the hit
+    const live = this._pickA;
+    live.length = 0;
+    for (const sp of sprites) if (sp.visible && sp.userData.grave) live.push(sp);
+    if (live.length) {
+      const hits = this._raycaster.intersectObjects(live, false);
+      if (hits.length && hits[0].object.userData.grave) return hits[0].object.userData.grave;
+    }
+    // ② the ×1.8 invisible proxies — a colourWrite:false billboard is a legitimate fat target
+    const proxies = this._pickB;
+    proxies.length = 0;
     for (const h of this._graveHits) if (h && h.userData.grave) proxies.push(h);
     if (proxies.length) {
       const hits = this._raycaster.intersectObjects(proxies, false);
       if (hits.length && hits[0].object.userData.grave) return hits[0].object.userData.grave;
     }
+    // ③ screen-space last resort — nearest stone centre within 28px
     const v = this._v1;
     let best = null, bestD = 28;
-    for (const sp of sprites) {
-      if (!sp.visible || !sp.userData.grave) continue;
+    for (const sp of live) {
       v.setFromMatrixPosition(sp.matrixWorld).project(this.camera);
       if (v.z < -1 || v.z > 1) continue;
       const sx = (v.x * 0.5 + 0.5) * rect.width;
@@ -1183,9 +1331,14 @@ export class ThreeScene {
       const f = flies[i];
       const x = (f.x / state.VW - 0.5) * this._WSX;
       const z = (f.y / state.VH - 0.5) * this._WSZ;
-      const y = Math.max(this.heightAt(x, z), 0) + 7 + Math.sin(now * 0.004 + (f.phase || 0)) * 2.0;   // ride the relief, never below sea level (task 20③: +7 clears the fatter body)
       const balN = f.balN != null ? f.balN : 0.5;
       const sz = (0.7 + balN * 0.6) * 7.2;   // task 20③: ×1.8 for the 480×300→720×450 continent so the swarm reads at a glance
+      // task 22 — a fly is NOT a point: at instance scale sz its belly hangs 0.5·sz below the origin
+      // and its nose reaches 0.75·sz ahead, so the old single centre sample + a flat 7 left the
+      // fatter flies (sz up to 9.4 → a 4.7-unit half-height) belly-down in any slope, i.e. the
+      // terrain ate half the swarm. Ride the MAX ground under the whole body, then lift by its own
+      // half-height + 2.6 — never below sea level, and the ±2 hover bob rides on top of that.
+      const y = Math.max(this.groundY(x, z, sz * 0.8), 0) + sz * 0.5 + 2.6 + Math.sin(now * 0.004 + (f.phase || 0)) * 2.0;
       d.position.set(x, y, z);
       d.rotation.set(Math.sin(now * 0.002 + (f.phase || 0)) * 0.12, -(f.heading || 0), 0, "YXZ");
       d.scale.setScalar(sz);
@@ -1249,9 +1402,15 @@ export class ThreeScene {
     const bonds = (show && Array.isArray(s.bonds)) ? s.bonds : null;
     const grudges = (show && Array.isArray(s.grudges)) ? s.grudges : null;
     const W = this._WSX, H = this._WSZ, VW = state.VW, VH = state.VH;
-    const put = (f, arr, k) => {
-      const x = (f.x / VW - 0.5) * W, z = (f.y / VH - 0.5) * H;
-      arr[k] = x; arr[k + 1] = Math.max(this.heightAt(x, z), 0) + 5; arr[k + 2] = z;
+    // task 22 — a thread is ONE straight segment, so lifting each end by its own ground height still
+    // buried the middle wherever a ridge ran between the two flies. Both ends now ride the highest
+    // ground along the whole span (+5 clears the bodies), so the thread never dives into the land.
+    const span = (fa, fb, arr, k) => {
+      const ax = (fa.x / VW - 0.5) * W, az = (fa.y / VH - 0.5) * H;
+      const bx = (fb.x / VW - 0.5) * W, bz = (fb.y / VH - 0.5) * H;
+      const y = this.spanY(ax, az, bx, bz) + 5;
+      arr[k] = ax; arr[k + 1] = y; arr[k + 2] = az;
+      arr[k + 3] = bx; arr[k + 4] = y; arr[k + 5] = bz;
     };
     // alliances — a single blue segment per bond
     let nl = 0;
@@ -1261,8 +1420,7 @@ export class ThreeScene {
       if (!b || b.a == null || b.b == null || b.a === b.b) continue;
       const fa = sim.get(b.a), fb = sim.get(b.b);
       if (!fa || fa.dying || !fb || fb.dying) continue;
-      const k = nl * 6;
-      put(fa, la, k); put(fb, la, k + 3);
+      span(fa, fb, la, nl * 6);
       nl++;
     }
     if (nl) this._socLines.geometry.attributes.position.needsUpdate = true;
@@ -1276,8 +1434,7 @@ export class ThreeScene {
       if (!g || g.buyerId == null || g.sellerId == null || g.buyerId === g.sellerId) continue;
       const fa = sim.get(g.buyerId), fb = sim.get(g.sellerId);
       if (!fa || fa.dying || !fb || fb.dying) continue;
-      const k = nf * 6;
-      put(fa, ga, k); put(fb, ga, k + 3);
+      span(fa, fb, ga, nf * 6);
       nf++;
     }
     if (nf) {
@@ -1350,15 +1507,21 @@ export class ThreeScene {
       let y = this.heightAt(x, z);
       for (let k = 0; k < 10 && y < -0.6; k++) { z -= this._WSZ * 0.05; y = this.heightAt(x, z); }   // walk inland off the sea floor
       if (y < -0.6) y = 0.6;    // a far-south straggler stays visible just above the waterline
-      sp.position.set(x, y + 4.2, z);
+      // task 22 — the stone is a 7.2×9.6 billboard: ground it on the HIGHEST point of its own plot
+      // (±3.6) and lift it 5.4, so its foot sits +0.6 clear of every bump it covers. A ridge beside
+      // the grave can no longer swallow the epitaph.
+      const gy = Math.max(y, this.groundY(x, z, 3.6));
+      sp.position.set(x, gy + 5.4, z);
       sp.scale.set(7.2, 9.6, 1);
       sp.visible = true;
       sp.userData.grave = g;
-      // task 20②: park the ×3 billboard on the same stone so picking has a fat target. It stays
-      // visible=false (three r160 raycasts invisible objects) so it never draws, only receives hits.
+      // task 20②/22 B4: park the invisible billboard on the same stone so picking has a fat target.
+      // ×1.8, not ×3 — at ×3 (21.6 wide) neighbours on ≈26-unit plots overlapped and the raycast
+      // returned whichever stone was physically NEAREST rather than the one aimed at. It stays
+      // visible=false (three r160's Raycaster never tests `visible`) so it only receives hits.
       if (hit) {
         hit.position.copy(sp.position);
-        hit.scale.set(7.2 * 3, 9.6 * 3, 1);
+        hit.scale.set(7.2 * 1.8, 9.6 * 1.8, 1);
         hit.visible = false;
         hit.userData.grave = g;
       }
@@ -1385,8 +1548,12 @@ export class ThreeScene {
         const fade = e.real ? (agec < 0.12 ? agec / 0.12 : (1 - agec) / 0.88) : (1 - agec) * (e.valid ? 1 : 0.4);
         const ax = (fa.x / VW - 0.5) * W, az = (fa.y / VH - 0.5) * H;
         const bx = (fb.x / VW - 0.5) * W, bz = (fb.y / VH - 0.5) * H;
-        const ay = Math.max(this.heightAt(ax, az), 0) + 5;
-        const by = Math.max(this.heightAt(bx, bz), 0) + 5;
+        // task 22 — the chord's middle used to clip straight through any ridge between the payer and
+        // the payee even though both ends were clear. spanY() samples the ends too (and floors at 0),
+        // so this crest is ≥ either endpoint's own ground + 5: both ends ride it and the arc's belly
+        // stays above every point of relief it crosses.
+        const ay = this.spanY(ax, az, bx, bz) + 5;
+        const by = ay;
         const dist = Math.hypot(bx - ax, by - ay, bz - az);
         const Hump = dist * 0.22 + 5;
         const amt = Math.min(1, (Number(e.amount) || 0) * 520);    // bigger trade → fatter arc
@@ -1446,8 +1613,11 @@ export class ThreeScene {
       if (!rg.active) continue;
       rg.age += dt / rg.dur;
       if (rg.age >= 1) { rg.active = false; rg.mesh.visible = false; continue; }
-      const rr = rg.r0 + (rg.r1 - rg.r0) * rg.age;
-      const y = Math.max(this.heightAt(rg.x, rg.z), 0) + 1.2;
+      const rr = rg.r0 + (rg.r1 - rg.r0) * rg.age, rad = Math.abs(rr);
+      // task 22 — a shockwave is a FLAT ground disc: +1.2 let any bump under it cut a hole in the
+      // ring. Sample the crest near the burst (capped — sampling the whole 120-unit radius would
+      // find a distant peak and hang the ring in mid-air) and add a little altitude as it spreads.
+      const y = Math.max(this.groundY(rg.x, rg.z, Math.min(rad, 12)), 0) + 2.4 + rad * 0.05;
       rg.mesh.position.set(rg.x, y, rg.z);
       rg.mesh.scale.set(Math.abs(rr), 1, Math.abs(rr));
       rg.mat.opacity = rg.a0 * (1 - rg.age);
@@ -1462,7 +1632,7 @@ export class ThreeScene {
     if (fa && !fa.dying) { wx = (fa.x / state.VW - 0.5) * this._WSX; wz = (fa.y / state.VH - 0.5) * this._WSZ; }
     else if (fx.x != null && fx.y != null) { wx = (fx.x / state.VW - 0.5) * this._WSX; wz = (fx.y / state.VH - 0.5) * this._WSZ; }
     if (wx == null) { wx = 0; wz = 0; }   // law / holy / whale — the field's heart
-    const y = Math.max(this.heightAt(wx, wz), 0) + 5;
+    const y = Math.max(this.groundY(wx, wz, 6), 0) + 6;   // task 22: spawn above the local crest, not the centre point
     const kind = fx.kind;
     if (kind === "alliance") {
       this._spawnParts(wx, y, wz, [96, 148, 224], 14, 0, 16, 1.6);
@@ -1552,10 +1722,13 @@ export class ThreeScene {
         const dx = a.x - b.x, dy = a.y - b.y, dd2 = dx * dx + dy * dy;
         if (dd2 < R2) {
           const k = seg * 6;
-          let x = (a.x / VW - 0.5) * W, z = (a.y / VH - 0.5) * H;
-          arr[k] = x; arr[k + 1] = Math.max(this.heightAt(x, z), 0) + 5.2; arr[k + 2] = z;
-          x = (b.x / VW - 0.5) * W; z = (b.y / VH - 0.5) * H;
-          arr[k + 3] = x; arr[k + 4] = Math.max(this.heightAt(x, z), 0) + 5.2; arr[k + 5] = z;
+          const x = (a.x / VW - 0.5) * W, z = (a.y / VH - 0.5) * H;
+          const x2 = (b.x / VW - 0.5) * W, z2 = (b.y / VH - 0.5) * H;
+          // task 22 — the crest of the WHOLE span, not each end's own ground: a 4-step sample keeps
+          // this cheap at up to 2000 threads while no ridge can swallow the middle of a thread.
+          const y = this.spanY(x, z, x2, z2, 4) + 5.2;
+          arr[k] = x; arr[k + 1] = y; arr[k + 2] = z;
+          arr[k + 3] = x2; arr[k + 4] = y; arr[k + 5] = z2;
           seg++;
         }
       }
@@ -1586,7 +1759,10 @@ export class ThreeScene {
         if (!f || f.dying) continue;
         const sp = this._prophetSprites[np++];
         const x = (f.x / VW - 0.5) * W, z = (f.y / VH - 0.5) * H;
-        sp.position.set(x, Math.max(this.heightAt(x, z), 0) + 13 + pulse * 2, z);
+        // task 22: the halo is a 13-16 unit sprite, so on a slope the crest beside the prophet can be
+        // higher than its own centre point — sample the footprint (small radius: the halo must stay
+        // visually attached to its fly) instead of the single centre sample.
+        sp.position.set(x, Math.max(this.groundY(x, z, 5), 0) + 13 + pulse * 2, z);
         const sc = (23 + pulse * 6) * k;
         sp.scale.set(sc, sc, 1);
         sp.material.opacity = 0.5 + 0.3 * pulse;
@@ -1602,7 +1778,7 @@ export class ThreeScene {
       const px = (fnv1a("candle:" + i) % 1000) / 1000, py = (fnv1a("candle:y" + i) % 1000) / 1000;
       const x = (0.28 + 0.44 * px - 0.5) * W, z = (0.28 + 0.44 * py - 0.5) * H;
       const fl = 0.5 + 0.5 * Math.sin(now * 0.004 + i * 2.1) * Math.sin(now * 0.0017 + i);
-      sp.position.set(x, Math.max(this.heightAt(x, z), 0) + 10 + 4 * fl, z);
+      sp.position.set(x, Math.max(this.groundY(x, z, 7), 0) + 10 + 4 * fl, z);   // task 22: crest, not centre
       const sc = (16 + 8 * fl) * k;
       sp.scale.set(sc, sc, 1);
       sp.material.opacity = 0.22 + 0.3 * fl;
@@ -1704,7 +1880,7 @@ export class ThreeScene {
     const x0 = (cfx / VW - 0.5) * this._WSX, z0 = (cfy / VH - 0.5) * this._WSZ;
     const ring = Math.min(VW, VH) * 0.315 * (this._WSX / (VW || 1));
     const pAge = (now - state.shardPulseT) / 1500;
-    guide.position.set(x0, Math.max(this.heightAt(x0, z0), 0) + 1.6, z0);
+    guide.position.set(x0, Math.max(this.groundY(x0, z0, 24), 0) + 2.6, z0);   // task 22: clear the local crest (sampling the whole ≈128-unit radius would hang the guide in mid-air)
     guide.scale.set(ring, 1, ring);
     guide.material.opacity = 0.05 + 0.03 * (0.5 + 0.5 * Math.sin(now / 900));
     guide.visible = true;
@@ -1720,7 +1896,7 @@ export class ThreeScene {
         const p = clamp((pAge - delay) / Math.max(0.001, 1 - delay));
         if (p > 0 && p < 1) glow = Math.sin(p * Math.PI);
       }
-      mesh.position.set(x, Math.max(this.heightAt(x, z), 0) + 1.6, z);
+      mesh.position.set(x, Math.max(this.groundY(x, z, 5), 0) + 2.6, z);   // task 22: same flat-ring rule as the guide
       const sc = 4.4 + glow * 1.2;
       mesh.scale.set(sc, 1, sc);
       mesh.material.opacity = 0.14 + glow * 0.5;

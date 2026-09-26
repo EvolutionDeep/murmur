@@ -2508,21 +2508,11 @@ export function render(pal, now) {
   // the FlyShardDO isolates: a ring of compute nodes around the swarm, pulsing in fan-out waves each tick
   if (state.qualityCoeff > 0.3) renderShards(pal, now);
 
-  // pointer / stimulus ripples
-  for (let i = state.ripples.length - 1; i >= 0; i--) {
-    const r = state.ripples[i], age = (now - r.t0) / 1700;
-    if (age >= 1) { state.ripples.splice(i, 1); continue; }
-    // r.t0 is stamped with performance.now() in the pointer handler, but `now` is the rAF timestamp, which
-    // can lag a hair BEHIND the event that just spawned the ripple → age < 0 → a NEGATIVE arc radius →
-    // IndexSizeError that aborts the whole render() (flies never drawn that frame). Clamp the age to the
-    // timeline so a sub-frame clock skew can never drop a frame.
-    const a = age < 0 ? 0 : age;
-    const rad = a * Math.min(state.VW, state.VH) * 0.55;
-    if (rad <= 0) continue;
-    state.ctx.strokeStyle = rgba(r.color, (1 - a) * 0.36);
-    state.ctx.lineWidth = 1.4 * (1 - a) + 0.3;
-    state.ctx.beginPath(); state.ctx.arc(r.x, r.y, rad, 0, TAU); state.ctx.stroke();
-  }
+  // task 22 B1 — the pointer/stimulus ripple loop is GONE. The user asked for the click rings to be
+  // cancelled outright (task 20④), camera.js stopped pushing to state.ripples and the 3D pool was
+  // deleted; this draw loop was the last reader, iterating an array that could only ever be empty.
+  // state.ripples itself has been removed from shared.js — grep for `ripples` now only finds prose
+  // in the chronicle-law comments and the app.js backup (which index.html never loads).
 
   // the flies (viewport-culled: once zoomed in, only the visible subset is drawn at all — the swarm
   // spans the whole world rect, so at high zoom most bodies used to be painted straight off-screen)
