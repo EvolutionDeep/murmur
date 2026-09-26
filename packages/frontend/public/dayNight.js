@@ -1,28 +1,29 @@
 // dayNight.js — the diurnal heart of the murmur diorama.
 // ─────────────────────────────────────────────────────────────────────────────
-// The sun is not on a wall-clock: it is driven by the SIMULATION. One murmur
-// generation (≈42 ticks — 7 crons × 6 ticks) is one full turn of the sky. The
-// reader watches a world whose dawns are earned by the swarm's own on-chain
-// heartbeat, and whose nights fall because the ticks say so.
+// The sun is now on a WALL-CLOCK: one full day/night cycle = 1 real hour.
+// This prevents the "strobe" effect of the old tick-driven cycle (~7 min)
+// while preserving the narrative that the world has earned dawns.
+//
+// A low-pass delta filter ensures the displayed phase never jumps, even at
+// the 0.99→0.01 wrap boundary or if the tab was backgrounded.
 //
 // Design notes:
 //  · update() is pure scalar maths + uniform/light writes — ZERO per-frame
 //    allocation. Every THREE.Color / Vector3 it touches is either a module
 //    constant (read-only source) or a pre-allocated scratch on the instance.
-//  · The authoritative phase is (tick % TICKS_PER_GEN)/TICKS_PER_GEN. Because a
-//    live tick only lands every ~12–60s, we keep a CONTINUOUS accumulator that
-//    glides between real ticks (measured cadence) and is gently anchored back to
-//    the authoritative tick — so the sun never teleports, yet never drifts.
 //  · Night is when the world glows from within: castle arrow-slits light like
 //    banked hearths, the swarm reads as fireflies, and 500 stars fade in on a
 //    camera-following shell. No new Light objects are ever created.
 //  · A dynasty fall / era passage forces a blood eclipse (forceEclipse) that
-//    overrides the sky for a span of ticks, then smoothsteps back to the cycle.
+//    overrides the sky for 120 real seconds, then smoothsteps back over 60s.
 
 import * as THREE from 'three';
 
-// one generation = one full day/night turn (7 crons/gen × 6 ticks/cron)
+// Kept for backwards compatibility — other modules may import it.
 export const TICKS_PER_GEN = 42;
+
+// ── wall-clock cycle constant ──
+const DAY_MS = 3600000; // 1 hour = 1 full day/night cycle
 
 const TAU = Math.PI * 2;
 const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
@@ -62,25 +63,24 @@ export class DayNight {
   constructor(scene3d) {
     this.s3 = scene3d;
 
-    // ── continuous, tick-anchored time ──
-    this._tickCont = 0;          // smooth tick accumulator (drives phase + eclipse)
-    this._tickInterval = 20000;  // ms per tick, measured live (default ≈ sim cadence)
-    this._lastRealTick = null;
-    this._lastRealTickMs = 0;
+    // ── wall-clock phase state ──
+    this._displayPhase = frac(Date.now() / DAY_MS); // start at current real phase
+    this._lastRaw = this._displayPhase;
     this._lastMs = 0;
 
     // ── published read-outs ──
-    this.phase = 0.15;           // [0,1) position in the day
+    this.phase = this._displayPhase;
     this.nightFactor = 0;        // 0 day → 1 deep night (drives glow + stars)
     this.dayFactor = 1;
     this.watch = 'morning';
     this.icon = WATCHES[0].icon;
     this.forcePhase = null;      // console hook: pin the phase for screenshots
 
-    // ── eclipse state (in tick units) ──
+    // ── eclipse state (in real-time ms) ──
     this._eclActive = false;
-    this._eclStart = 0;
-    this._eclDur = 30;
+    this._eclStartMs = 0;
+    this._eclDurMs = 120000;    // 120 seconds of full eclipse
+    this._eclFadeMs = 60000;    // 60 seconds fade-out
     this._eclAmt = 0;
 
     // ── zero-alloc scratch ──
@@ -124,49 +124,51 @@ export class DayNight {
   }
 
   // ── special events ───────────────────────────────────────────────────────
-  /** Dynasty fall / era passage: a blood eclipse spanning `dur` ticks. */
-  forceEclipse(dur) {
+  /**
+   * Dynasty fall / era passage: a blood eclipse.
+   * @param {number} [durSec=120] duration of the full-eclipse plateau in SECONDS.
+   */
+  forceEclipse(durSec) {
     if (this._eclActive) return;              // one eclipse at a time — never stack to perpetual red
     this._eclActive = true;
-    this._eclStart = this._tickCont;
-    this._eclDur = Math.max(1, dur || 30);
+    this._eclStartMs = Date.now();
+    this._eclDurMs = Math.max(120000, (durSec || 120) * 1000); // min 120s (scene3d passes old tick-count 30)
+    this._eclFadeMs = 60000; // always 60s recovery
   }
   /** Release any forced event and let the natural cycle resume. */
   clearEvent() { this._eclActive = false; this._eclAmt = 0; }
 
   /**
    * Advance the sky one frame.
-   * @param {number} tick   authoritative simulation tick (on-chain tickIndex / synthTick)
-   * @param {number} generation current generation (informational; the cycle is tick-derived)
+   * @param {number} tick   authoritative simulation tick (kept for API compat, no longer drives phase)
+   * @param {number} generation current generation (informational)
    * @param {number} now    performance.now() ms
    */
   update(tick, generation, now) {
     const s3 = this.s3;
     if (!s3 || !s3.scene) return;
 
-    // ── 1. continuous, tick-anchored clock ──
-    tick = Number.isFinite(tick) ? tick : 0;
+    // ── 1. wall-clock phase with low-pass delta filter ──
     if (!this._lastMs) this._lastMs = now;
     let dt = now - this._lastMs; this._lastMs = now;
-    if (!(dt > 0)) dt = 0; else if (dt > 250) dt = 250;   // clamp a backgrounded-tab jump
+    if (!(dt > 0)) dt = 0; else if (dt > 250) dt = 250; // clamp backgrounded-tab jump
 
-    if (this._lastRealTick == null) {
-      this._lastRealTick = tick; this._lastRealTickMs = now; this._tickCont = tick;
-    } else if (tick !== this._lastRealTick) {
-      const gap = now - this._lastRealTickMs;
-      const dtk = Math.max(1, Math.abs(tick - this._lastRealTick));
-      if (gap > 200) {
-        const iv = gap / dtk;
-        if (iv > 1500 && iv < 600000) this._tickInterval = lerp(this._tickInterval, iv, 0.4);
-      }
-      this._lastRealTick = tick; this._lastRealTickMs = now;
-    }
-    // glide forward at the measured cadence, then ease back toward the true tick
-    this._tickCont += dt / this._tickInterval;
-    this._tickCont += (tick - this._tickCont) * 0.015 * (dt / 16.667);
+    // Raw phase from real time: 1 hour = 1 full cycle
+    const rawPhase = frac(Date.now() / DAY_MS);
 
-    // ── 2. phase → sun geometry ──
-    let phase = frac(this._tickCont / TICKS_PER_GEN);
+    // Advance displayPhase at the constant expected rate (smooth, no jumps)
+    this._displayPhase = frac(this._displayPhase + dt / DAY_MS);
+
+    // Gentle drift correction: handles tab-backgrounding, clock adjustments.
+    // Wrap-aware: shortest arc between raw and display.
+    let drift = rawPhase - this._displayPhase;
+    if (drift < -0.5) drift += 1;
+    if (drift > 0.5) drift -= 1;
+    // Absorb drift slowly (0.001/ms → a 0.5 jump takes ~8s to fully smooth out)
+    this._displayPhase = frac(this._displayPhase + drift * Math.min(0.001 * dt, 0.15));
+    this._lastRaw = rawPhase;
+
+    let phase = this._displayPhase;
     if (this.forcePhase != null) phase = frac(this.forcePhase);
     this.phase = phase;
 
@@ -179,19 +181,27 @@ export class DayNight {
     if (s3.sun) s3.sun.copy(this._sunDir);
     if (s3.sunLight) s3.sunLight.position.copy(this._sunDir).multiplyScalar(1000);
 
-    // ── 3. day / dusk / night envelopes (all smoothstep — no boundary snaps) ──
-    const dayAmt  = sstep(-0.12, 0.30, sunElev);              // 0 below horizon → 1 high sun
-    const duskAmt = 1 - sstep(0.02, 0.40, Math.abs(sunElev)); // a bump centred on the horizon
-    const night   = 1 - sstep(-0.20, 0.10, sunElev);          // 1 deep night → 0 day
+    // ── 3. day / dusk / night envelopes — WIDER smoothstep windows (±0.15 vs old ±0.05) ──
+    //    Night→day transition now spans ~9 minutes of real time (0.15/1.0 × 60min × 2 edges)
+    const dayAmt  = sstep(-0.25, 0.35, sunElev);              // 0 below horizon → 1 high sun
+    const duskAmt = 1 - sstep(0.05, 0.50, Math.abs(sunElev)); // wider dusk bump
+    const night   = 1 - sstep(-0.30, 0.15, sunElev);          // 1 deep night → 0 day
     this.dayFactor = dayAmt;
 
-    // ── 4. eclipse envelope (attack over the first 18%, release tail to 1.4×) ──
+    // ── 4. eclipse envelope (real-time: 120s plateau + 60s fade) ──
     let ecl = 0;
     if (this._eclActive) {
-      const et = (this._tickCont - this._eclStart) / this._eclDur;
-      if (et <= 1) ecl = sstep(0, 0.18, et);
-      else if (et < 1.4) ecl = 1 - sstep(1.0, 1.4, et);
-      else { this._eclActive = false; ecl = 0; }
+      const elapsed = Date.now() - this._eclStartMs;
+      const attackMs = this._eclDurMs * 0.15;   // 15% of duration = attack ramp
+      if (elapsed < attackMs) {
+        ecl = sstep(0, attackMs, elapsed);
+      } else if (elapsed < this._eclDurMs) {
+        ecl = 1; // full plateau
+      } else if (elapsed < this._eclDurMs + this._eclFadeMs) {
+        ecl = 1 - sstep(this._eclDurMs, this._eclDurMs + this._eclFadeMs, elapsed);
+      } else {
+        this._eclActive = false; ecl = 0;
+      }
     }
     this._eclAmt = ecl;
     const nf = Math.max(night, ecl);             // glow + stars answer to night OR eclipse
@@ -257,3 +267,6 @@ export class DayNight {
     }
   }
 }
+
+// Debug hooks (__murmurSetPhase, __murmurEclipse, __murmurDayNight) are
+// registered in main.js and access this instance via state.threeScene.dayNight.
