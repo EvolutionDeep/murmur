@@ -305,6 +305,18 @@ export interface Env {
   //     (byte-for-byte rollback).
   TEMPLE_ENABLED?: string;              // "true"/"false" (default TRUE — the door is open; flip off by hand)
 
+  // --- ㉚ LAND: burn-to-claim pixel parcels (see src/land.ts) ---
+  //     The continent is a fixed 24×15 = 360 parcel grid; a holder plants an image on a parcel by sending
+  //     MURMUR to 0x…dEaD (provably GONE) and submitting the tx hash + the image. The Worker RE-READS that
+  //     hash on-chain (keyless, read-only, zero gas) and only a genuine burn clearing the parcel's price
+  //     changes hands; each seizure ratchets the price +100 MURMUR, so the destroyed value only ever grows.
+  //     The grid dimensions, the floor price and the ratchet step are constants (no knobs by design), and
+  //     wrangler.toml [vars] is at the 128-binding wall, so the master switch reads an env key only (NOT added
+  //     to [vars]). PURE read-out + internal bookkeeping: the ONLY chain touch is a getTransactionReceipt READ.
+  //     Shipped ENABLED (the ㉔-㉙ default-ON 口径): LAND_ENABLED=false ⇒ state.ts never constructs the layer ⇒
+  //     the two land chronicle kinds can never speak (byte-for-byte rollback).
+  LAND_ENABLED?: string;                // "true"/"false" (default TRUE — the grid is open; flip off by hand)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -661,6 +673,9 @@ export interface RuntimeConfig {
   };
   temple: {
     enabled: boolean;         // ㉙ the tier ladder + caps are constants (TIER_MINIMUMS etc.) — no knobs by design
+  };
+  land: {
+    enabled: boolean;         // ㉚ the grid + floor price + ratchet are constants (LAND_BASE_PRICE etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1109,6 +1124,12 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     the burn-to-influence door. Set TEMPLE_ENABLED=false to leave the layer inert and the chronicle
       //     byte-for-byte the pre-Temple build.
       enabled: (env.TEMPLE_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    land: {
+      // ㉚ Shipped ENABLED (the ㉔-㉙ default-ON 口径): the default is "true", so an unset LAND_ENABLED opens the
+      //     burn-to-claim grid. Set LAND_ENABLED=false to leave the layer inert and the chronicle byte-for-byte
+      //     the pre-Land build.
+      enabled: (env.LAND_ENABLED ?? "true").toLowerCase() !== "false",
     },
 
     socialStimulus: {

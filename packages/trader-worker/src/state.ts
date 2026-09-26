@@ -80,6 +80,10 @@ import {
   TempleLayer, isTempleKind, KIND_TIER,
   type TempleReadout, type TempleStepContext, type TempleStepResult, type TempleChainClient, type TempleReceipt,
 } from "./temple.js";
+import {
+  LandLayer, LAND_PARCEL_COUNT, BURN_ADDRESS, MURMUR_TOKEN, wholeMurmur, landBase64ToBytes, landBytesToBase64,
+  type LandReadout, type LandImageStore, type LandChainClient, type LandReceipt, type LandEvent,
+} from "./land.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -172,6 +176,14 @@ const KEY_REFORM = "reform:v1";
  *  never ledger state. Bounded (queue ≤20, dedup ring ≤100, history ≤200, heroes ≤100, buffs ≤5), DO-safe.
  *  Absent while TEMPLE_ENABLED=false; the shipped default is ON (the ㉔-㉗ armed-on-code-defaults口径). */
 const KEY_TEMPLE = "temple:v1";
+/** ㉚ The Land layer (the 24×15 parcel ledger, the dedup ring, the cumulative burn, the pending chronicle
+ *  edges) — its OWN key: a corrupt/absent blob restarts a COLD grid (no parcel back-dated, no burn replayed),
+ *  never ledger state. Bounded (parcels ≤360, dedup ring ≤100, events ≤64), DO-safe. The per-parcel IMAGES live
+ *  under their OWN keys (`land:img:<id>`, kept OUT of this blob so a persist batch stays small). Absent while
+ *  LAND_ENABLED=false; the shipped default is ON (the ㉔-㉙ armed-on-code-defaults 口径). */
+const KEY_LAND = "land:v1";
+/** The DO storage key prefix for a parcel's image bytes (base64), one key per claimed parcel. */
+const LAND_IMG_PREFIX = "land:img:";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -327,6 +339,15 @@ export class FlyStateDO {
    * is told once from the cron that saw it. Empty while the temple is inert, so ctx.temple stays absent.
    */
   private templeExecuted: TempleStepResult["executed"] = [];
+  /** ㉚ The Land layer (burn-to-claim parcels) — null while LAND_ENABLED=false (byte-for-byte inert). */
+  private landLayer: LandLayer | null = null;
+  /**
+   * ㉚ Land parcel edges the CURRENT cron drained from the layer, consumed by observeChronicle (step 7) and
+   * cleared each tick. Transient (never persisted — the layer's OWN event ring is the durable record until it
+   * is drained): a chronicle line is told once from the cron that saw it. Empty while the land layer is inert,
+   * so ctx.land stays absent (byte-for-byte the pre-Land build).
+   */
+  private landEvents: LandEvent[] = [];
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -749,6 +770,21 @@ export class FlyStateDO {
     const stored = await this.state.storage.get<string>(KEY_TEMPLE);
     this.templeLayer = stored ? TempleLayer.deserialize(stored) : new TempleLayer({ enabled: true });
     return this.templeLayer;
+  }
+
+  /**
+   * ㉚ Lazily load the Land layer (null while LAND_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts a COLD grid (no parcels, an empty dedup ring): no burn is back-dated and no
+   * claim is replayed, so an eviction can never double-honour a tx hash — the persisted dedup ring is the
+   * replay guard. The land layer is pure read-out + its own bounded bookkeeping; its ONLY chain touch is
+   * verifyBurn (a read-only getTransactionReceipt), so it can never spend or sign.
+   */
+  private async ensureLand(): Promise<LandLayer | null> {
+    if (!this.cfg.land.enabled) return null;
+    if (this.landLayer) return this.landLayer;
+    const stored = await this.state.storage.get<string>(KEY_LAND);
+    this.landLayer = stored ? LandLayer.deserialize(stored) : new LandLayer({ enabled: true });
+    return this.landLayer;
   }
 
   /**
@@ -1423,6 +1459,7 @@ export class FlyStateDO {
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
     if (this.reformLayer) batch[KEY_REFORM] = this.reformLayer.serialize();
     if (this.templeLayer) batch[KEY_TEMPLE] = this.templeLayer.serialize();
+    if (this.landLayer) batch[KEY_LAND] = this.landLayer.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1890,6 +1927,13 @@ export class FlyStateDO {
             })),
           }
         : null;
+      // ㉚ LAND: fold the parcel edges THIS cron drained ONLY while LAND is on AND driveLand carried one out.
+      // Off (or an inert cron) ⇒ no `land` key ⇒ the historian's two land detectors never speak (byte-for-byte
+      // the pre-Land build). Each edge carries its own chronicle tokens (parcel / owner / price / n), so the
+      // server text and the browser re-derivation agree byte-for-byte. driveLand precedes observeChronicle.
+      const land = this.cfg.land.enabled && this.landEvents.length
+        ? { events: this.landEvents.map((e) => ({ kind: e.kind, parcel: e.parcel, owner: e.owner, price: e.price, n: e.n })) }
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1995,6 +2039,7 @@ export class FlyStateDO {
         guardians,
         reform,
         temple,
+        land,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2510,6 +2555,31 @@ export class FlyStateDO {
   }
 
   /**
+   * ㉚ THE LAND — drain the parcel edges the layer queued since the last cron (claims + seizures settled
+   * through POST /land) so the historian can narrate them THIS cron. Pure read-out: it reads the layer's own
+   * bounded event ring and never touches a neuron, a wallet or a settlement. The drained ring is persisted
+   * immediately so a crash before the cron's batch write can never re-narrate an edge (a chronicle line is told
+   * once). The edges fold into THIS cron's historian context, so driveLand precedes observeChronicle (step 7).
+   * Inert while LAND_ENABLED=false.
+   */
+  private async driveLand(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    this.landEvents = [];
+    const land = await this.ensureLand();
+    if (!land) return;
+    try {
+      land.setTick(snapshot?.tickIndex ?? tick);
+      this.landEvents = land.drainEvents();
+      if (this.landEvents.length) {
+        // Persist the drained ring NOW (at-most-once: a line is told once from the cron that saw it).
+        await this.state.storage.put(KEY_LAND, land.serialize());
+        console.log(`[DO] land: ${this.landEvents.length} parcel edge(s) narrated · sold=${land.readout().parcelsSold}`);
+      }
+    } catch (e) {
+      console.warn("[DO] land drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
    * ⑧ THE COMMONS — convene the assembly when the historian has just raised a NEW era. The roster is a
    * pure read-out of the economy snapshot already taken this cron (living agents + their reputations), and
    * the era is the historian's own counter, so the shock/era logic stays single-sourced. Inert while law
@@ -2626,6 +2696,14 @@ export class FlyStateDO {
       // a tx hash, but only a verified MURMUR burn to 0x…dEaD clearing the kind's tier enters the queue.
       if (req.method === "GET" && path === "/temple") return await this.getTemple();
       if (req.method === "POST" && path === "/temple") return await this.postTemple(req);
+      // ㉚ THE LAND — burn-to-claim pixel parcels. GET /land is the public read-out (the grid + every claimed
+      // parcel); POST /land is PERMISSIONLESS (no adminGate) and speaks the x402 402 challenge-response: with no
+      // proof it returns 402 + the burn challenge, with an X-Payment-Proof tx hash it re-reads the burn on-chain
+      // and only a genuine MURMUR burn to 0x…dEaD clearing the parcel's price plants the image. GET /land-img/<id>
+      // serves a parcel's picture from the DO image store.
+      if (req.method === "GET" && path === "/land") return await this.getLand();
+      if (req.method === "POST" && path === "/land") return await this.postLand(req);
+      if (req.method === "GET" && path.startsWith("/land-img/")) return await this.getLandImage(path.split("/")[2]);
       if (req.method === "POST" && path === "/breed") return this.adminGate(req) ?? (await this.postBreed(req));
       if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
@@ -3107,6 +3185,12 @@ export class FlyStateDO {
     // edges fold into THIS cron's historian context, so it too precedes step 7.
     await this.driveTemple(swarm.getTickIndex(), snapshot);
 
+    // ㉚ THE LAND rides after the temple: it drains the parcel edges (claims + seizures) settled through POST
+    // /land since the last cron so the historian can narrate them — pure read-out, no economy required (a cold
+    // swarm simply has no parcel to claim). Its edges fold into THIS cron's historian context, so it too
+    // precedes step 7.
+    await this.driveLand(swarm.getTickIndex(), snapshot);
+
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
@@ -3429,6 +3513,8 @@ export class FlyStateDO {
       if (reform) (economy as { reform?: unknown }).reform = reform;
       const temple = await this.templeReadout();
       if (temple) (economy as { temple?: unknown }).temple = temple;
+      const land = await this.landReadout();
+      if (land) (economy as { land?: unknown }).land = land;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3511,7 +3597,8 @@ export class FlyStateDO {
     const guardians = await this.guardiansReadout();
     const reform = await this.reformReadout();
     const temple = await this.templeReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple) {
+    const land = await this.landReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -3530,6 +3617,7 @@ export class FlyStateDO {
       ...(guardians ? { guardians } : null),
       ...(reform ? { reform } : null),
       ...(temple ? { temple } : null),
+      ...(land ? { land } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -3702,6 +3790,13 @@ export class FlyStateDO {
     const tp = await this.ensureTemple();
     if (!tp) return null;
     return tp.readout();
+  }
+
+  /** ㉚ The land read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Land build). */
+  private async landReadout(): Promise<LandReadout | null> {
+    const ld = await this.ensureLand();
+    if (!ld) return null;
+    return ld.readout();
   }
 
   /**
@@ -4837,6 +4932,143 @@ export class FlyStateDO {
   }
 
   /**
+   * ㉚ The DO-backed parcel image store: a parcel's picture lives as base64 under its OWN storage key
+   * (`land:img:<id>`), kept OUT of the layer's serialize blob so a persist batch stays small (360 parcels ×
+   * up to 256 KB would otherwise bloat one key past the DO put ceiling). `url` returns the public path the
+   * frontend resolves against the API origin (GET /land-img/<id>). This is the SAME LandImageStore contract an
+   * R2-backed store would satisfy — only `put`/`url` differ, so the layer never knows where the bytes live.
+   */
+  private landImageStore(): LandImageStore {
+    const storage = this.state.storage;
+    const idOf = (key: string): string => (key.startsWith("do:") ? key.slice(3) : key);
+    return {
+      put: async (key, data) => {
+        const b64 = typeof data === "string" ? data : landBytesToBase64(new Uint8Array(data));
+        await storage.put(LAND_IMG_PREFIX + idOf(key), b64);
+      },
+      url: (key) => `/land-img/${idOf(key)}`,
+    };
+  }
+
+  /**
+   * ㉚ POST /land — permissionless burn-to-claim, speaking the x402 HTTP 402 challenge-response. With no
+   * payment proof the Worker returns 402 + an X-Payment-Required challenge naming the parcel's EXACT burn
+   * (the MURMUR token, the atomic amount, the 0x…dEaD sink, the parcel id); with an X-Payment-Proof tx hash it
+   * RE-READS that hash on Arc (keyless, read-only, zero gas) and only a genuine Transfer(from=caller,
+   * to=0x…dEaD) clearing priceOf plants the image and changes hands. The on-chain burn IS the gate, so there is
+   * no admin token: value is destroyed on the way in and can never be recycled. The dedup ring + parcel ledger
+   * are persisted immediately, so an eviction before the next cron can never double-honour a hash.
+   */
+  private async postLand(req: Request): Promise<Response> {
+    const land = await this.ensureLand();
+    if (!land) return jsonError("forbidden", "the land grid is not enabled", 403);
+    let body: { parcelId?: unknown; address?: unknown; imageBase64?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return jsonError("bad_request", "body must be JSON", 400);
+    }
+    const parcelId = Number(body?.parcelId);
+    if (!Number.isInteger(parcelId) || parcelId < 0 || parcelId >= LAND_PARCEL_COUNT) {
+      return jsonError("bad_request", `parcelId must be an integer in [0, ${LAND_PARCEL_COUNT})`, 400);
+    }
+    const address = typeof body?.address === "string" ? body.address.trim() : "";
+    const imageBase64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
+    const price = land.priceOf(parcelId);
+
+    // ── the x402 402 challenge: no proof yet ⇒ tell the caller EXACTLY what burn this parcel needs ──
+    const proof = req.headers.get("X-Payment-Proof")?.trim() ?? "";
+    if (!proof) {
+      const challenge = {
+        scheme: "burn-verification",
+        token: MURMUR_TOKEN,
+        amount: price.toString(),          // atomic MURMUR (18 decimals) the burn must clear
+        amountWhole: wholeMurmur(price),    // the same price in whole MURMUR, for display
+        burnAddress: BURN_ADDRESS,
+        parcelId,
+      };
+      return new Response(JSON.stringify({ error: "payment required", code: "payment_required", status: 402, challenge }), {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Payment-Required": JSON.stringify(challenge),
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, X-Payment-Proof",
+          "Access-Control-Expose-Headers": "X-Payment-Required",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    // ── the proof is present: the ONLY chain touch the land layer ever makes — a read-only receipt (never a
+    //    spend, never a signature). viem's rich receipt is structurally cast to the layer's minimal slice. ──
+    const pc = publicClient(this.cfg);
+    const client: LandChainClient = {
+      getTransactionReceipt: (h) => pc.getTransactionReceipt({ hash: h as Hex }) as unknown as Promise<LandReceipt>,
+    };
+    land.setChainClient(client);
+    land.setTick((await this.loadSnapshot())?.tickIndex ?? 0);
+    let res;
+    try {
+      res = await land.submit(parcelId, proof, address, imageBase64, this.landImageStore());
+    } catch (e) {
+      land.setChainClient(null);
+      return jsonError("service_unavailable", (e as Error).message, 502);
+    }
+    land.setChainClient(null);
+    if (!res.ok) {
+      const code = res.code === "payment_required" ? "payment_required" : "bad_request";
+      return jsonError(code, res.reason ?? "submission rejected", code === "payment_required" ? 402 : 400);
+    }
+    // Persist NOW so the dedup ring + parcel ledger survive an eviction before the next cron drains the edge.
+    await this.state.storage.put(KEY_LAND, land.serialize());
+    const p = land.parcels.get(parcelId)!;
+    return json({
+      ok: true,
+      parcel: {
+        id: parcelId, owner: p.owner, imageKey: p.imageKey, overrides: p.overrides,
+        price: wholeMurmur(land.priceOf(parcelId)),
+      },
+      imageUrl: this.landImageStore().url(p.imageKey),
+      totalBurned: wholeMurmur(land.totalBurned),
+    });
+  }
+
+  /** ㉚ GET /land — the public read-out: the grid dimensions, the floor/step, and every claimed parcel. */
+  private async getLand(): Promise<Response> {
+    const land = await this.ensureLand();
+    if (!land) return json({ enabled: false });
+    const ro = land.readout();
+    const store = this.landImageStore();
+    return json({ ...ro, parcels: ro.parcels.map((p) => ({ ...p, imageUrl: store.url(p.imageKey) })) });
+  }
+
+  /**
+   * ㉚ GET /land-img/<parcelId> — serve one parcel's picture straight from the DO image store (base64 under
+   * `land:img:<id>`, decoded to bytes here). Cached a day at the edge; the image is immutable until the parcel
+   * is seized, and a seizure overwrites the SAME key, so a stale edge copy self-heals within the TTL.
+   */
+  private async getLandImage(idStr: string): Promise<Response> {
+    const id = Number(idStr);
+    if (!Number.isInteger(id) || id < 0 || id >= LAND_PARCEL_COUNT) {
+      return jsonError("bad_request", `parcelId must be an integer in [0, ${LAND_PARCEL_COUNT})`, 400);
+    }
+    const b64 = await this.state.storage.get<string>(LAND_IMG_PREFIX + id);
+    if (!b64) return jsonError("not_found", "no image for that parcel", 404);
+    const bytes = landBase64ToBytes(b64);
+    if (!bytes) return jsonError("not_found", "no image for that parcel", 404);
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/jpeg",
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
+  /**
    * Guard the mutating debug endpoints (POST /tick, /reset). When the optional ADMIN_TOKEN secret is
    * set, a caller must present it (x-admin-token header or ?token=); with no token configured these
    * stay open so local dev and the documented onchain-arming flow (which POSTs /reset) keep working.
@@ -4891,6 +5123,8 @@ export class FlyStateDO {
     this.guardians = null; // ㉗ and the guardians: every ward taken, fledged or honored is struck from the roll with everything else
     this.poet = null;      // ⑮ and the poet: the laureate's chain is forgotten with everything else
     this.templeLayer = null; // ㉙ and the temple: every queued burn, hero and wonder is unremembered with everything else
+    this.landLayer = null;   // ㉚ and the land: every claimed parcel and queued edge is unremembered with everything else
+    this.landEvents = [];
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -4916,6 +5150,11 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_GUARDIANS);
     await this.state.storage.delete(KEY_REFORM);
     await this.state.storage.delete(KEY_TEMPLE);
+    await this.state.storage.delete(KEY_LAND);
+    // ㉚ the per-parcel images live under their own keys (kept out of the serialize blob) — sweep them too
+    const landImgs = await this.state.storage.list<string>({ prefix: LAND_IMG_PREFIX });
+    const landImgKeys = [...landImgs.keys()];
+    if (landImgKeys.length) await this.state.storage.delete(landImgKeys);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

@@ -190,7 +190,12 @@ export type ChronicleKind =
   | "DIVINE_DECREE"
   | "HERO_SUMMONING"
   | "EPOCH_SHAPING"
-  | "WONDER_FOUNDATION";
+  | "WONDER_FOUNDATION"
+  // ㉚ LAND: burn-to-claim pixel parcels (land.ts) — a holder destroys MURMUR at 0x…dEaD, the Worker re-reads
+  //     the burn on-chain (keyless, zero gas) and, only when it clears the parcel's price, plants the image: a
+  //     fresh claim is a LAND_SOLD, a seizure of already-held ground is a LAND_OVERRIDDEN (the price ratchets up).
+  | "LAND_SOLD"
+  | "LAND_OVERRIDDEN";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -321,6 +326,9 @@ export interface ChronicleContext {
   /** ㉙ TEMPLE read-out (temple.ts step edges): this cron's executed burn-to-influence divine acts. Absent ⇒
    *  none of the twelve temple kinds speak (TEMPLE_ENABLED=false never folds these in). */
   temple?: ChronicleTemple | null;
+  /** ㉚ LAND read-out (land.ts claim/seizure edges): this cron's narratable parcel sales and overrides. Absent ⇒
+   *  neither land kind speaks (LAND_ENABLED=false never folds these in). */
+  land?: ChronicleLand | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -557,6 +565,14 @@ export interface ChronicleTemple {
   executed: Array<{ kind: ChronicleKind; address: string; flyName?: string; detail?: Record<string, unknown> }>;
 }
 
+/** ㉚ LAND: the parcel edges one cron carried (land.ts claim/seizure events, drained once per cron). Each edge
+ *  is narrated once from its public template; every token rides in the edge itself (parcel / owner / price / n),
+ *  so the server text and the browser re-derivation agree byte-for-byte. The kind is a ChronicleKind (the two
+ *  land kinds are members). */
+export interface ChronicleLand {
+  events: Array<{ kind: "LAND_SOLD" | "LAND_OVERRIDDEN"; parcel: number; owner: string; price: string; n: number }>;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -774,6 +790,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   ORACLE_WHISPER: 3, CULTURAL_SEED: 6, DIRECTED_MUTATION: 12, MIRACLE_HARVEST: 12,
   MIRACLE_PLAGUE: 24, MIRACLE_REVELATION: 18, MIRACLE_MIGRATION: 12, NATION_BLESSING: 24,
   DIVINE_DECREE: 60, HERO_SUMMONING: 120, EPOCH_SHAPING: 200, WONDER_FOUNDATION: 500,
+  // ㉚ LAND: a parcel claim or seizure is rare, deliberate news (real value burned), so a short gravitas gap
+  //     guards a same-cron duplicate of one kind. Mirrored verbatim in the browser CHRON_.
+  LAND_SOLD: 6, LAND_OVERRIDDEN: 6,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -952,6 +971,10 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   HERO_SUMMONING: "From the flame, hero {heroName} was summoned by {address} — marked by destiny.",
   EPOCH_SHAPING: "The temple forged a new epoch: '{epochName}' under the {regime} regime — history bends to divine will.",
   WONDER_FOUNDATION: "The wonder '{wonderName}' was founded in {nationName} by {address} — an eternal monument to sacrifice.",
+  // ㉚ LAND — burn-to-claim pixel parcels. {parcel} the grid id, {owner} the holder's wallet, {price} the whole
+  //     MURMUR burned, {n} the seizure count. Byte-for-byte the browser CHRON_ mirror (shared.js + app.js). Mirrored.
+  LAND_SOLD: "Parcel {parcel} claimed by {owner} for {price} MURMUR, burned forever.",
+  LAND_OVERRIDDEN: "Parcel {parcel} seized by {owner} — image overridden ({n}th time) for {price} MURMUR.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1003,6 +1026,11 @@ const TEMPLE_SEVERITY: Record<string, 1 | 2 | 3 | 4 | 5> = {
   DIVINE_DECREE: 4, HERO_SUMMONING: 4, EPOCH_SHAPING: 5, WONDER_FOUNDATION: 5,
 };
 
+/** ㉚ The gravity of a land edge: a fresh claim is solid news, a seizure of contested ground is dearer still. */
+const LAND_SEVERITY: Record<string, 1 | 2 | 3 | 4 | 5> = {
+  LAND_SOLD: 3, LAND_OVERRIDDEN: 4,
+};
+
 /**
  * ㉙ Build the public-template tokens for one executed temple act from the edge the layer handed up. Every
  * value rides in the edge's own `detail` (plus the submitter's wallet), so the sentence re-derives identically
@@ -1031,6 +1059,25 @@ function templeTokens(
     case "HERO_SUMMONING": return { heroName: s(d.heroName), address };
     case "EPOCH_SHAPING": return { epochName: s(d.epochName), regime: s(d.regime) };
     case "WONDER_FOUNDATION": return { wonderName: s(d.wonderName), nationName: s(d.nationName), address };
+    default: return {};
+  }
+}
+
+/**
+ * ㉚ Build the public-template tokens for one land edge from the event the layer handed up. Every value rides
+ * in the edge itself (parcel / owner / price / n), so the sentence re-derives identically in the browser from
+ * the entry's stored tokens. Pure string/number coercion — never `Number(v) || ""`, which would drop a legit 0
+ * (parcel id 0, the first seizure count).
+ */
+function landTokens(
+  kind: ChronicleKind,
+  ev: { parcel: number; owner: string; price: string; n: number },
+): Record<string, string | number> {
+  const s = (v: unknown): string => (v == null ? "" : String(v));
+  const n = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  switch (kind) {
+    case "LAND_SOLD": return { parcel: n(ev.parcel), owner: s(ev.owner), price: s(ev.price) };
+    case "LAND_OVERRIDDEN": return { parcel: n(ev.parcel), owner: s(ev.owner), price: s(ev.price), n: n(ev.n) };
     default: return {};
   }
 }
@@ -1997,6 +2044,22 @@ export class Chronicler {
         const actors = typeof d.flyId === "number" ? [d.flyId] : [];
         out.push(await this.emit(ctx, kind, TEMPLE_SEVERITY[kind] ?? 3, actors,
           templeTokens(kind, ex.address ?? "", ex.flyName, d), {}));
+      }
+    }
+
+    // ㉚ Land: burn-to-claim parcel edges (land.ts claim/seizure events, folded in ONLY while LAND_ENABLED — off ⇒
+    //     no `land` key ⇒ these two detectors never speak). The layer drains its event ring once per cron; the
+    //     cooldown guards a same-cron duplicate of one kind. Every token rides in the edge itself, so the server
+    //     text and the browser re-derivation agree byte-for-byte. The actors are empty (the news is about wallets
+    //     and parcels, not one living fly id).
+    const ld = ctx.land;
+    if (ld && Array.isArray(ld.events)) {
+      for (const ev of ld.events) {
+        const kind = ev?.kind;
+        if (kind !== "LAND_SOLD" && kind !== "LAND_OVERRIDDEN") continue;
+        if (!this.ready(kind, ctx)) continue;
+        out.push(await this.emit(ctx, kind, LAND_SEVERITY[kind] ?? 3, [],
+          landTokens(kind, ev), {}));
       }
     }
 

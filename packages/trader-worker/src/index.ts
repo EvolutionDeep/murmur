@@ -25,9 +25,11 @@ function corsHeaders(origin: string) {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     // X-PAYMENT carries the browser-signed x402 payload for the paid /signal/pulse product.
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-PAYMENT",
-    // Let the browser read the x402 settlement result + the 402 requirements + the free-replay marker.
-    "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION, X-PAYMENT-REPLAYED",
+    // X-PAYMENT-PROOF carries the burn tx hash for the ㉚ land grid's burn-verification 402 flow.
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-PAYMENT, X-Payment-Proof",
+    // Let the browser read the x402 settlement result + the 402 requirements + the free-replay marker, plus the
+    // ㉚ land grid's burn challenge (X-Payment-Required).
+    "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION, X-PAYMENT-REPLAYED, X-Payment-Required",
     "Access-Control-Max-Age": "86400",
   };
 }
