@@ -75,6 +75,7 @@ import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
+import { ReformLayer, type ReformReadout, type ReformStepResult, type ReformIouRecord } from "./reform.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
   Poet, poetGrammarHash, recomputePoemHash, replayCompose,
@@ -158,6 +159,10 @@ const KEY_WORKS = "works:v1";
  *  seen-grave ring, counts) — its OWN key: a corrupt/absent blob restarts an empty roll, never ledger
  *  state. Bounded (≤ 8 wards + 64 fledged-pending + 10 archived + a 240-key seen ring), DO-safe. */
 const KEY_GUARDIANS = "guardians:v1";
+/** ㉘ The Reform layer (estate duty gathered, the commons pool, the jubilee arm/counter, the catalyst state)
+ *  — its OWN key: a corrupt/absent blob restarts a cold reform layer, never ledger state. Bounded (one small
+ *  JSON of scalar counters, no growing rings), DO-safe. Absent while REFORM_ENABLED=false (the shipped default). */
+const KEY_REFORM = "reform:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -297,6 +302,14 @@ export class FlyStateDO {
   private works: WorksMembrane | null = null;
   /** ㉗ The Guardians roll (wards taken, fledged, the full-circle honors) — null while GUARDIANS_ENABLED=false (byte-for-byte inert). */
   private guardians: GuardiansMembrane | null = null;
+  /** ㉘ The Reform layer (estate duty, the jubilee stabilizer, the dark-age catalyst) — null while REFORM_ENABLED=false (byte-for-byte inert). */
+  private reformLayer: ReformLayer | null = null;
+  /**
+   * ㉘ Reform edges the CURRENT cron raised, consumed by observeChronicle (step 7) and cleared each tick.
+   * Transient (never persisted): a chronicle line is told once from the cron that saw it. Empty while the
+   * reform layer is inert, so the chronicle context stays byte-for-byte today's.
+   */
+  private reformEvents: ReformStepResult["events"] = [];
   /** ⑲ The Bourse meter (the MURMUR tape's memory) — null while BOURSE_ENABLED=false (byte-for-byte inert). */
   private bourse: BourseMeter | null = null;
   /** This cron's bourse signals (null while the bourse is off/failed) — read by the ctx fold + stimulus fold. */
@@ -690,6 +703,20 @@ export class FlyStateDO {
     this.guardians = new GuardiansMembrane({ enabled: true });
     if (stored) this.guardians.restore(stored);
     return this.guardians;
+  }
+
+  /**
+   * ㉘ Lazily load the Reform layer (null while REFORM_ENABLED=false — the shipped default, byte-for-byte
+   * inert rollback). A corrupt/absent blob restarts a COLD layer (counters at zero, the stabilizer armed):
+   * no duty is back-dated and no jubilee is replayed, so an eviction can never poison the ledger or move a
+   * coin — reform is pure read-out + its own bounded bookkeeping, never a real-money path.
+   */
+  private async ensureReform(): Promise<ReformLayer | null> {
+    if (!this.cfg.reform.enabled) return null;
+    if (this.reformLayer) return this.reformLayer;
+    const stored = await this.state.storage.get<string>(KEY_REFORM);
+    this.reformLayer = stored ? ReformLayer.deserialize(stored) : new ReformLayer({ enabled: true });
+    return this.reformLayer;
   }
 
   /**
@@ -1362,6 +1389,7 @@ export class FlyStateDO {
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
+    if (this.reformLayer) batch[KEY_REFORM] = this.reformLayer.serialize();
     if (this.workshop) batch[KEY_WORKSHOP] = this.workshop.serialize();
     if (this.bourse) batch[KEY_BOURSE] = this.bourse.serialize();
     if (this.commons) batch[KEY_COMMONS] = this.commons.serialize();
@@ -1795,6 +1823,25 @@ export class FlyStateDO {
       // ㉗ GUARDIANS: fold the roll's wardship edges ONLY while GUARDIANS is on. Off ⇒ no `guardians` key ⇒ the
       // historian's three guardians detectors never speak (byte-for-byte the pre-Guardians build).
       const guardians = this.cfg.guardians.enabled ? this.guardians?.signals() ?? null : null;
+      // ㉘ REFORM: fold the layer's estate-duty / jubilee / catalyst edges ONLY while REFORM is on AND this cron
+      // raised one. Off (or an inert cron) ⇒ no `reform` key ⇒ the historian's three reform detectors never speak
+      // (byte-for-byte the pre-Reform build). One edge per class per cron (the first estate the duty touched).
+      const reform = this.cfg.reform.enabled && this.reformEvents.length
+        ? (() => {
+            const est = this.reformEvents.find((e) => e.kind === "ESTATE_LEVIED");
+            const jub = this.reformEvents.find((e) => e.kind === "JUBILEE_PROCLAIMED");
+            const cat = this.reformEvents.find((e) => e.kind === "CATALYST_SURGE");
+            return {
+              estate: est && est.kind === "ESTATE_LEVIED"
+                ? { address: est.address, gross: est.gross, tax: est.tax, ubi: est.ubiPerAgent }
+                : null,
+              jubilee: jub && jub.kind === "JUBILEE_PROCLAIMED"
+                ? { debts: jub.debtsForgiven, levy: jub.levyCollected, stimulus: jub.stimulusPerAgent }
+                : null,
+              catalyst: cat && cat.kind === "CATALYST_SURGE" ? { multiplier: cat.multiplier } : null,
+            };
+          })()
+        : null;
       const mr = this.cfg.institutions.enabled ? this.lastEconomy?.market ?? null : null;
       const market = mr
         ? {
@@ -1898,6 +1945,7 @@ export class FlyStateDO {
         treaty,
         works,
         guardians,
+        reform,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2246,6 +2294,70 @@ export class FlyStateDO {
       gd.round(tick, facts);
     } catch (e) {
       console.warn("[DO] guardians drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉘ REFORM — read the cron's FINAL economy snapshot (the Gini in totals, the dynasty grave ring, the living
+   * roster's balances, the per-agent debt column) and the historian's civPhase, then let the reform layer gather
+   * the progressive estate duty, judge the jubilee stabilizer and publish the dark-age catalyst. PURE read-out +
+   * internal bookkeeping: v1 is ZERO-GAS — it moves NO real money and triggers NO chain transaction; the duty,
+   * the UBI split, the levy and the debt forgiveness are numerical accounting carried in the layer's own bounded
+   * state and narrated to the chronicle (its edges fold into THIS cron's historian context, so driveReform must
+   * precede observeChronicle). Runs after driveGuardians. Best-effort: a reform can never break the live tick.
+   */
+  private async driveReform(tick: number, snapshot: PopulationSnapshot | null): Promise<void> {
+    this.reformEvents = [];
+    const reform = await this.ensureReform();
+    if (!reform) return;
+    try {
+      const econ = this.lastEconomy;
+      if (!econ) return;
+      const info = this.chronicler ? this.chronicler.eraInfo() : null;
+      const gini = econ.totals?.gini ?? 0;
+      const civPhase = info ? info.civPhase : "ascendant";
+      // The cooldown is measured on the snapshot's own sub-tick index (never swarm.getTickIndex(), which has
+      // already advanced past the stepBatch by the time the membranes drive).
+      const tickIndex = snapshot?.tickIndex ?? tick;
+      // Resolve each burial's estate to its wallet address: the dynasty ring carries the id, the roster carries
+      // the address, and a buried fly keeps its ledger entry — so the join is exact (fall back to "#id").
+      const addrOf = new Map<number, string>();
+      for (const a of econ.agents) addrOf.set(a.id, a.address);
+      const graves = (econ.dynasty?.graves ?? []).map((g) => ({
+        address: addrOf.get(g.id) ?? `#${g.id}`,
+        balance: g.estateUsdc,
+      }));
+      const agents = econ.agents
+        .filter((a) => !a.dead)
+        .map((a) => ({ address: a.address, balance: a.balanceUsdc }));
+      // The per-agent debt column is the only PUBLIC view of credit (individual IOU notes are private to the
+      // economy); a jubilee forgives one synthesized note per indebted citizen — read-only, never a real
+      // cancellation, and empty while institutions are off (no debtAtomic key ⇒ nobody to forgive).
+      const ious: ReformIouRecord[] = [];
+      for (const a of econ.agents) {
+        if (a.debtAtomic && a.debtAtomic !== "0") {
+          ious.push({ id: `iou:${a.id}`, debtor: a.id, creditor: 0, amountUsdc: atomicToUsdc(a.debtAtomic) });
+        }
+      }
+      const result = reform.step({
+        gini,
+        civPhase,
+        tickIndex,
+        ticksPerCron: this.cfg.ticksPerCron,
+        graves,
+        agents,
+        economy: { creditIouRecords: () => ious },
+      });
+      this.reformEvents = result.events;
+      if (result.events.length) {
+        const ro = reform.readout();
+        console.log(
+          `[DO] reform: ${result.events.map((e) => e.kind).join(", ")} · catalyst=${result.catalystMultiplier.toFixed(3)} ` +
+            `pool=${ro.commonsPoolBalance.toFixed(4)} duty=${ro.estateDutyCollected.toFixed(4)} jubilees=${ro.jubileeCount}`,
+        );
+      }
+    } catch (e) {
+      console.warn("[DO] reform drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -2830,6 +2942,11 @@ export class FlyStateDO {
     // ㉗ THE GUARDIANS rides after the yard: it reads the dynasty's grave ring and the roster's living ids —
     // pure read-out, no causal leg, and no economy required (a cold swarm simply buries no one at all).
     await this.driveGuardians(swarm.getTickIndex());
+    // ㉘ REFORM rides after the roll: it reads the cron's FINAL economy snapshot (the Gini, the grave ring, the
+    // living balances, the debt column) + the historian's civPhase, gathers the estate duty, judges the jubilee
+    // and publishes the catalyst — pure read-out + zero-gas bookkeeping, no economy required (a cold swarm has
+    // no wealth to redistribute). Its edges fold into THIS cron's historian context, so it precedes step 7.
+    await this.driveReform(swarm.getTickIndex(), snapshot);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -3149,6 +3266,8 @@ export class FlyStateDO {
       if (works) (economy as { works?: unknown }).works = works;
       const guardians = await this.guardiansReadout();
       if (guardians) (economy as { guardians?: unknown }).guardians = guardians;
+      const reform = await this.reformReadout();
+      if (reform) (economy as { reform?: unknown }).reform = reform;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3229,7 +3348,8 @@ export class FlyStateDO {
     const treaty = await this.treatyReadout();
     const works = await this.worksReadout();
     const guardians = await this.guardiansReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians) {
+    const reform = await this.reformReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -3246,6 +3366,7 @@ export class FlyStateDO {
       ...(treaty ? { treaty } : null),
       ...(works ? { works } : null),
       ...(guardians ? { guardians } : null),
+      ...(reform ? { reform } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -3404,6 +3525,13 @@ export class FlyStateDO {
     const gd = await this.ensureGuardians();
     if (!gd) return null;
     return gd.signals();
+  }
+
+  /** ㉘ The reform read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Reform build). */
+  private async reformReadout(): Promise<ReformReadout | null> {
+    const rf = await this.ensureReform();
+    if (!rf) return null;
+    return rf.readout();
   }
 
   /**
@@ -4557,6 +4685,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_TREATY);
     await this.state.storage.delete(KEY_WORKS);
     await this.state.storage.delete(KEY_GUARDIANS);
+    await this.state.storage.delete(KEY_REFORM);
     await this.state.storage.delete(KEY_POET);
     return json({ ok: true });
   }

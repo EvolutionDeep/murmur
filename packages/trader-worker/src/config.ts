@@ -285,6 +285,15 @@ export interface Env {
   //     constructs the membrane ⇒ the three WARD_*/GUARDIAN_* kinds can never speak (byte-for-byte rollback).
   GUARDIANS_ENABLED?: string;           // "true"/"false" (default TRUE)
 
+  // --- ㉘ REFORM: the society's self-correction — progressive estate duty, the jubilee stabilizer and the
+  //     dark-age catalyst (see src/reform.ts). NOTE: armed on CODE DEFAULTS — the reform lines are constants
+  //     (ESTATE_BRACKETS, GINI_JUBILEE_THRESHOLD etc.), no knobs by design, and wrangler.toml [vars] is at
+  //     capacity so the master switch reads an env key only (NOT added to [vars]). PURE read-out + internal
+  //     bookkeeping: v1 is zero-gas — it moves no real money and triggers no chain transaction. Shipped
+  //     DISABLED (灰度): REFORM_ENABLED=false ⇒ state.ts never constructs the layer ⇒ the three
+  //     ESTATE_LEVIED/JUBILEE_PROCLAIMED/CATALYST_SURGE kinds can never speak (byte-for-byte rollback).
+  REFORM_ENABLED?: string;              // "true"/"false" (default FALSE — grey-release; flip on by hand)
+
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /
   //     dark / ascendant / declining + the shock era). This layer folds that SAME reckoning back into the
@@ -635,6 +644,9 @@ export interface RuntimeConfig {
   };
   guardians: {
     enabled: boolean;         // the roll's lines are constants (GD_FLEDGE etc.) — no knobs by design
+  };
+  reform: {
+    enabled: boolean;         // ㉘ the reform lines are constants (ESTATE_BRACKETS etc.) — no knobs by design
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1072,6 +1084,11 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     guardians: {
       enabled: (env.GUARDIANS_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    reform: {
+      // ㉘ Shipped DISABLED (grey-release): the default is "false", so an unset REFORM_ENABLED leaves the
+      //     reform layer inert and the chronicle byte-for-byte the pre-Reform build. Flip on by hand.
+      enabled: (env.REFORM_ENABLED ?? "false").toLowerCase() !== "false",
     },
 
     socialStimulus: {

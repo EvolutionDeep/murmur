@@ -168,7 +168,13 @@ export type ChronicleKind =
   //     heirs paid closes the circle and honors the guardian.
   | "WARD_TAKEN"
   | "WARD_FLEDGED"
-  | "GUARDIAN_HONORED";
+  | "GUARDIAN_HONORED"
+  // ㉘ REFORM: the society's self-correction (reform.ts) — a buried estate taxed on the progressive ladder and
+  //     returned to the commons, a sustained-inequality jubilee proclaiming debt forgiveness + a levy on the
+  //     wealthy + a per-citizen stimulus, and a dark-age/high-Gini catalyst surge accelerating discovery and art.
+  | "ESTATE_LEVIED"
+  | "JUBILEE_PROCLAIMED"
+  | "CATALYST_SURGE";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -293,6 +299,9 @@ export interface ChronicleContext {
   /** ㉗ THE GUARDIANS read-out (guardians.ts signals): this cron's taking, fledge and full-circle edges. Absent ⇒
    *  no WARD_TAKEN/WARD_FLEDGED/GUARDIAN_HONORED (GUARDIANS_ENABLED=false never folds these in). */
   guardians?: ChronicleGuardians | null;
+  /** ㉘ REFORM read-out (reform.ts step events): this cron's estate duty, jubilee and catalyst edges. Absent ⇒
+   *  no ESTATE_LEVIED/JUBILEE_PROCLAIMED/CATALYST_SURGE (REFORM_ENABLED=false never folds these in). */
+  reform?: ChronicleReform | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -509,6 +518,18 @@ export interface ChronicleGuardians {
   counts: { taken: number; fledged: number; honored: number; lost: number };
 }
 
+/** ㉘ REFORM: one cron's self-correction edges (reform.ts step events; the layer fires at most one jubilee and
+ *  one catalyst surge per cron, and narrates the first estate the duty touched, so a non-null facet IS news THIS
+ *  cron and cannot replay). {address} is a wallet, the figures are USDC bookkeeping (v1 is zero-gas). */
+export interface ChronicleReform {
+  /** A buried estate crossed the duty threshold and was taxed on the progressive ladder. */
+  estate: { address: string; gross: number; tax: number; ubi: number } | null;
+  /** A sustained inequality proclaimed the levitical year: debts forgiven, the wealthy levied, a stimulus paid. */
+  jubilee: { debts: number; levy: number; stimulus: number } | null;
+  /** A dark age or a high Gini lit the catalyst that accelerates discovery and culture. */
+  catalyst: { multiplier: number } | null;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -718,6 +739,9 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉗ GUARDIANS: wardships are rare news by construction (the membrane itself one-edges per class), so these
   //     cooldowns are gravitas: a taking may speak often, a fledge savors the years, an honor is once an age.
   WARD_TAKEN: 24, WARD_FLEDGED: 18, GUARDIAN_HONORED: 60,
+  // ㉘ REFORM: an estate duty may speak often (a burial is common news), a jubilee is once-an-age gravitas, and
+  //     a catalyst surge lands slowly (it is a climate, not an event). The membrane one-edges the rare classes.
+  ESTATE_LEVIED: 3, JUBILEE_PROCLAIMED: 120, CATALYST_SURGE: 60,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -876,6 +900,12 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   WARD_TAKEN: "Fly #{ward} is taken into wardship by {guardian} — an estate of {estate} USDC passes to young hands; what grief cannot keep, guardianship holds.",
   WARD_FLEDGED: "Ward #{ward} stands on its own — {guardian} carried it {crons} crons and the inheritance holds; a raised fly honors the one that raised it.",
   GUARDIAN_HONORED: "Old ward #{ward} lies down of age with its own heirs paid — the wardship of {guardian} is honored full circle: borrowed from grief, returned to the future.",
+  // ㉘ REFORM — the society's self-correction. {address} is a wallet, {tax}/{ubi}/{levy}/{stimulus} are USDC
+  //     bookkeeping (v1 is zero-gas), {debts} a count of forgiven notes, {multiplier} the catalyst factor. Every
+  //     edge is re-derivable by replaying the grave ring, the roster and the Gini series. Mirrored verbatim in CHRON_.
+  ESTATE_LEVIED: "The estate of {address} was levied {tax} USDC — {ubi} per citizen returned to the commons.",
+  JUBILEE_PROCLAIMED: "A Year of Jubilee was proclaimed: {debts} debts forgiven, {levy} USDC collected from the wealthy, {stimulus} USDC distributed to each citizen.",
+  CATALYST_SURGE: "Dark times breed innovation — a catalyst surge ({multiplier}×) accelerates discovery and culture.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -1835,6 +1865,36 @@ export class Chronicler {
         out.push(await this.emit(ctx, "GUARDIAN_HONORED", 4, idList(h.ward),
           { ward: h.ward, guardian: h.guardian, lived: h.lived ?? 0 },
           { lived: h.lived ?? 0 }));
+      }
+    }
+
+    // ㉘ Reform: the society's self-correction (reform.ts step events, folded in ONLY while REFORM_ENABLED —
+    //     off ⇒ no `reform` key ⇒ these three detectors never speak). One edge per class per cron by the layer
+    //     itself; the actors are empty (the news is about wallets and the commons, not one living fly id). The
+    //     USDC figures are rounded once here so the server text and the browser re-derivation agree byte-for-byte.
+    const rf = ctx.reform;
+    if (rf) {
+      if (rf.estate && this.ready("ESTATE_LEVIED", ctx)) {
+        const e = rf.estate;
+        const tax = Math.round(e.tax * 10000) / 10000;
+        const ubi = Math.round(e.ubi * 10000) / 10000;
+        out.push(await this.emit(ctx, "ESTATE_LEVIED", 2, [],
+          { address: e.address, tax, ubi },
+          { tax, ubi, gross: Math.round(e.gross * 10000) / 10000 }));
+      }
+      if (rf.jubilee && this.ready("JUBILEE_PROCLAIMED", ctx)) {
+        const j = rf.jubilee;
+        const levy = Math.round(j.levy * 10000) / 10000;
+        const stimulus = Math.round(j.stimulus * 10000) / 10000;
+        out.push(await this.emit(ctx, "JUBILEE_PROCLAIMED", 4, [],
+          { debts: j.debts, levy, stimulus },
+          { debts: j.debts, levy, stimulus }));
+      }
+      if (rf.catalyst && this.ready("CATALYST_SURGE", ctx)) {
+        const m = Math.round(rf.catalyst.multiplier * 1000) / 1000;
+        out.push(await this.emit(ctx, "CATALYST_SURGE", 3, [],
+          { multiplier: m },
+          { multiplier: m }));
       }
     }
 

@@ -101,6 +101,10 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   WARD_TAKEN: "第 {ward} 号果蝇被 {guardian} 收为遗孤 —— {estate} USDC 的家业交入幼手；悲伤留不住的，监护替它留着。",
   WARD_FLEDGED: "遗孤第 {ward} 号自立了 —— {guardian} 携它行过 {crons} 遍钟点，继承完好如初；被抚养的果蝇敬那抚养它的。",
   GUARDIAN_HONORED: "年老的遗孤第 {ward} 号因高寿而眠，它的继承人亦得了支付 —— {guardian} 的监护之名至此圆满：从悲伤借来，交还给未来。",
+  // ㉘ 社会的自我纠偏：累进遗产税、禧年稳定器、黑暗期催化
+  ESTATE_LEVIED: "{address} 的遗产被课以 {tax} USDC —— 每位公民 {ubi} USDC 归还公域。",
+  JUBILEE_PROCLAIMED: "禧年宣告 —— {debts} 笔债务得豁免，向富者征收 {levy} USDC，每位公民分得 {stimulus} USDC。",
+  CATALYST_SURGE: "黑暗时代孕育革新 —— 一场催化涌动（{multiplier}×）加速了发现与文化。",
 };
 
 const fr = {
@@ -194,6 +198,10 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   WARD_TAKEN: "La mouche #{ward} entre en tutelle sous {guardian} — un domaine de {estate} USDC passe en jeunes mains ; ce que le deuil ne peut garder, la tutelle le tient.",
   WARD_FLEDGED: "Le pupille #{ward} se tient debout seul — {guardian} l'a porté {crons} crons et l'héritage tient ; la mouche élevée honore celle qui l'a élevée.",
   GUARDIAN_HONORED: "Le vieux pupille #{ward} s'éteint d'âge, ses propres héritiers payés — la tutelle de {guardian} est honorée du cercle complet : emprunté au deuil, rendu à l'avenir.",
+  // ㉘ l'auto-correction de la société : l'impôt successif progressif, le jubilé stabilisateur, la catalyse des âges sombres
+  ESTATE_LEVIED: "La succession de {address} a été imposée de {tax} USDC — {ubi} par citoyen rendu au bien commun.",
+  JUBILEE_PROCLAIMED: "Une année de jubilé a été proclamée : {debts} dettes effacées, {levy} USDC prélevés sur les riches, {stimulus} USDC distribués à chaque citoyen.",
+  CATALYST_SURGE: "Les temps sombres font naître l'innovation — une flambée catalytique ({multiplier}×) accélère la découverte et la culture.",
 };
 
 const es = {
@@ -287,6 +295,10 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   WARD_TAKEN: "La mosca #{ward} entra en tutela de {guardian} — una herencia de {estate} USDC pasa a manos jóvenes; lo que el duelo no puede guardar, la tutela lo sostiene.",
   WARD_FLEDGED: "El pupilo #{ward} se sostiene solo — {guardian} lo llevó {crons} crones y la herencia perdura; la mosca criada honra a quien la crió.",
   GUARDIAN_HONORED: "El viejo pupilo #{ward} se acuesta por edad, con sus propios herederos pagados — la tutela de {guardian} es honrada en círculo completo: tomado del duelo, devuelto al futuro.",
+  // ㉘ la autocorrección de la sociedad: el impuesto sucesorio progresivo, el jubileo estabilizador, la catálisis de la edad oscura
+  ESTATE_LEVIED: "La herencia de {address} fue gravada con {tax} USDC — {ubi} por ciudadano devueltos al común.",
+  JUBILEE_PROCLAIMED: "Se proclamó un Año de Jubileo: {debts} deudas perdonadas, {levy} USDC recaudados de los ricos, {stimulus} USDC distribuidos a cada ciudadano.",
+  CATALYST_SURGE: "Los tiempos oscuros engendran innovación — una oleada catalizadora ({multiplier}×) acelera el descubrimiento y la cultura.",
 };
 
 const ja = {
@@ -380,6 +392,10 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   WARD_TAKEN: "蠅 #{ward} は {guardian} の後見に入る —— {estate} USDC の遺産、幼き手へ渡される；悲しみが留められぬものを、後見が留む。",
   WARD_FLEDGED: "遺子 #{ward} 自ら立つ —— {guardian} は {crons} クロンこれを育み、相続は保たれたり；育まれし蠅は育みし者を敬う。",
   GUARDIAN_HONORED: "老いた遺子 #{ward} は齢をもって眠り、己の子らに遺産は渡れたり —— {guardian} の後見は円満をもって称えられる：悲しみより借り、未来へ返しき。",
+  // ㉘ 社会の自己是正：累進相続税、ジュビリー安定器、暗黒期の触媒
+  ESTATE_LEVIED: "{address} の遺産に {tax} USDC が課された —— 市民ひとりにつき {ubi} USDC が公に戻された。",
+  JUBILEE_PROCLAIMED: "ジュビリーの年が布告された：{debts} の債務が赦され、富める者より {levy} USDC が徴され、市民ひとりに {stimulus} USDC が配られた。",
+  CATALYST_SURGE: "暗き時代は革新を育む —— 触媒の高潮（{multiplier}×）が発見と文化を加速する。",
 };
 
 const ko = {
@@ -473,6 +489,10 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   WARD_TAKEN: "파리 #{ward}는 {guardian}의 후견을 받는다 — {estate} USDC의 유산이 어린 손에 들려지니; 슬픔이 지키지 못한 것을 후견이 지킨다.",
   WARD_FLEDGED: "유자 #{ward}가 홀로 선다 — {guardian}이 {crons} 크론을 돌보았고 상속은 온전하니; 길러진 파리는 기른 이를 기린다.",
   GUARDIAN_HONORED: "늙은 유자 #{ward}가 나이 들어 누우고 제 상속자들에게도 지불되었으니 — {guardian}의 후견은 한 바퀴를 돌아 칭예된다: 슬픔에게서 빌려 미래에게 돌려주었도다.",
+  // ㉘ 사회의 자기교정: 누진 유산세, 희년 안정기, 암흑기의 촉매
+  ESTATE_LEVIED: "{address}의 유산에 {tax} USDC가 부과되었다 — 시민 1인당 {ubi} USDC가 공공으로 되돌아갔다.",
+  JUBILEE_PROCLAIMED: "희년의 해가 선포되었다: {debts}건의 부채가 탕감되고, 부유한 자로부터 {levy} USDC가 징수되어, 시민 1인당 {stimulus} USDC가 배분되었다.",
+  CATALYST_SURGE: "어두운 시대는 혁신을 낳는다 — 촉매의 쇄도({multiplier}×)가 발견과 문화를 가속한다.",
 };
 
 const ar = {
@@ -566,6 +586,10 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   WARD_TAKEN: "الذبابة رقم {ward} تُضم إلى وصاية {guardian} — تركةٌ من {estate} USDC تنتقل إلى أيادٍ صغيرة؛ وما عجز الحزن عن حفظه يحفظه الوصيّ.",
   WARD_FLEDGED: "اليتيم رقم {ward} يقف على ساقيه — حملته {guardian} {crons} دورةً والميراث باقٍ؛ والذبابة التي رُبيت تكرم من ربّاها.",
   GUARDIAN_HONORED: "اليتيم العجوز رقم {ward} يرقد هرماً وورثته قد قُضي لهم — تُكرَّم وصاية {guardian} بدائرةٍ كاملة: مُستعارٌ من الحزن، مُعادٌ إلى المستقبل.",
+  // ㉘ التصحيح الذاتي للمجتمع: ضريبة التركات التصاعدية، اليوبيل المثبِّت، محفِّز العصر المظلم
+  ESTATE_LEVIED: "فُرضت على تركة {address} ضريبةٌ قدرها {tax} USDC — أُعيد {ubi} لكل مواطنٍ إلى المشاع.",
+  JUBILEE_PROCLAIMED: "أُعلنت سنةُ اليوبيل: أُسقطت {debts} من الديون، وجُمع {levy} USDC من الأغنياء، ووُزّع {stimulus} USDC على كل مواطن.",
+  CATALYST_SURGE: "الأزمنةُ المظلمة تُنبت الابتكار — اندفاعةٌ حافزة ({multiplier}×) تُسرّع الاكتشاف والثقافة.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

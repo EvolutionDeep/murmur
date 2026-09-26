@@ -1622,6 +1622,7 @@ export const CHRON_ICONS = {
   TREATY_SIGNED: "📜", TREATY_RATIFIED: "🕊", TREATY_BREACHED: "⚔",
   WORK_RAISED: "🏛", WORK_REPAIRED: "🔧", WORK_DILAPIDATED: "🏚",
   WARD_TAKEN: "🛡", WARD_FLEDGED: "🐣", GUARDIAN_HONORED: "🏺",
+  ESTATE_LEVIED: "⚖", JUBILEE_PROCLAIMED: "🕊", CATALYST_SURGE: "✨",
 };
 export function renderChron() {
   const list = $("chron-list");
