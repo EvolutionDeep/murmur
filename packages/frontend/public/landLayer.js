@@ -48,8 +48,10 @@ export class LandLayer {
     this._planeGeo = null;
 
     // event binding
+    this._onPointerDown = null;
     this._onPointerMove = null;
     this._onClick = null;
+    this._downPos = null;           // { x, y } for drag guard
     this.onParcelClick = null;      // callback: (parcelId) => void
 
     this._build();
@@ -298,8 +300,10 @@ export class LandLayer {
     const cvEl = this.ts && this.ts.renderer && this.ts.renderer.domElement;
     if (!cvEl) return;
 
+    this._onPointerDown = (e) => { this._downPos = { x: e.clientX, y: e.clientY }; };
     this._onPointerMove = (e) => this._handleMove(e);
     this._onClick = (e) => this._handleClick(e);
+    cvEl.addEventListener('pointerdown', this._onPointerDown, { passive: true });
     cvEl.addEventListener('pointermove', this._onPointerMove, { passive: true });
     cvEl.addEventListener('click', this._onClick);
   }
@@ -308,9 +312,36 @@ export class LandLayer {
     if (!this.enabled || !this.group.visible) return;
     if (state.walkMode && state.walkMode.active) return;
 
+    const parcelId = this._parcelAtEvent(e);
+
+    if (parcelId !== this.hoveredId) {
+      this.hoveredId = parcelId;
+      this._updateHover();
+      const cvEl = this.ts.renderer.domElement;
+      cvEl.style.cursor = parcelId >= 0 ? 'pointer' : '';
+    }
+  }
+
+  _handleClick(e) {
+    if (!this.enabled || !this.group.visible) return;
+    if (state.walkMode && state.walkMode.active) return;
+
+    // Drag guard: ignore clicks where the pointer moved significantly (camera orbit)
+    if (this._downPos && Math.hypot(e.clientX - this._downPos.x, e.clientY - this._downPos.y) > 8) return;
+
+    // Perform a fresh raycast at the click position — don't rely on hover state,
+    // which never fires on touch devices (no pointermove before click during a tap).
+    const parcelId = this._parcelAtEvent(e);
+    if (parcelId >= 0 && typeof this.onParcelClick === 'function') {
+      this.onParcelClick(parcelId);
+    }
+  }
+
+  // ---- shared raycast logic: resolve a parcel id from a pointer/click event ----
+  _parcelAtEvent(e) {
     const cvEl = this.ts.renderer.domElement;
     const rect = cvEl.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    if (!rect.width || !rect.height) return -1;
 
     this._ndc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -318,35 +349,19 @@ export class LandLayer {
     );
     this._raycaster.setFromCamera(this._ndc, this.ts.camera);
 
-    // intersect the land group children (filled meshes + empty instanced mesh)
     const targets = [...this._filledMeshes];
     if (this._emptyMesh.count > 0) targets.push(this._emptyMesh);
 
     const hits = this._raycaster.intersectObjects(targets, false);
-    let parcelId = -1;
-
     if (hits.length > 0) {
       const hit = hits[0];
       if (hit.object.userData && hit.object.userData.parcelId != null) {
-        parcelId = hit.object.userData.parcelId;
+        return hit.object.userData.parcelId;
       } else if (hit.object === this._emptyMesh && hit.instanceId != null) {
-        // map instance index back to parcel id
-        parcelId = this._instanceToParcelId(hit.instanceId);
+        return this._instanceToParcelId(hit.instanceId);
       }
     }
-
-    if (parcelId !== this.hoveredId) {
-      this.hoveredId = parcelId;
-      this._updateHover();
-      cvEl.style.cursor = parcelId >= 0 ? 'pointer' : '';
-    }
-  }
-
-  _handleClick(e) {
-    if (this.hoveredId < 0) return;
-    if (typeof this.onParcelClick === 'function') {
-      this.onParcelClick(this.hoveredId);
-    }
+    return -1;
   }
 
   // ---- map an instanceId of _emptyMesh back to a parcel id ----
@@ -400,6 +415,7 @@ export class LandLayer {
   dispose() {
     const cvEl = this.ts && this.ts.renderer && this.ts.renderer.domElement;
     if (cvEl) {
+      if (this._onPointerDown) cvEl.removeEventListener('pointerdown', this._onPointerDown);
       if (this._onPointerMove) cvEl.removeEventListener('pointermove', this._onPointerMove);
       if (this._onClick) cvEl.removeEventListener('click', this._onClick);
     }

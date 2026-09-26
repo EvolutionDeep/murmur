@@ -148,6 +148,7 @@ export function bindUI() {
     else if (b.dataset.layer === "territory") { state.showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { state.showGraves = on; if (!on) hideEpitaph(); }
     else if (b.dataset.layer === "cities") state.showCities = on;
+    else if (b.dataset.layer === "land" && state.landLayer) { state.landLayer.enabled = on; state.landLayer.group.visible = on; }
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);
@@ -285,7 +286,7 @@ export async function boot() {
   if (state.threeScene) {
     try {
       state.landLayer = new LandLayer(state.threeScene);
-      state.landLayer.onParcelClick = (parcelId) => { try { openLand(parcelId); } catch (e) { console.warn("[murmur] openLand", e); } };
+      state.landLayer.onParcelClick = (parcelId) => { try { deselect(); openLand(parcelId); } catch (e) { console.warn("[murmur] openLand", e); } };
       // hook into the scene update loop
       const origUpdate = state.threeScene.update.bind(state.threeScene);
       state.threeScene.update = function (sim, econCities, now) {
