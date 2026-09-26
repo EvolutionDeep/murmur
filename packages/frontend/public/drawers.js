@@ -1,7 +1,7 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=96';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=97';
 import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js';
 import { select } from './inspector.js';
 import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js';
@@ -3862,9 +3862,9 @@ function templeKindGrid() {
       const selected = state.templeSelected && state.templeSelected.kind === k.kind;
       const icon = CHRON_ICONS[k.kind] || "\u2726";
       html += `<div class="tp-card${selected ? " selected" : ""}" data-kind="${k.kind}" role="button" tabindex="0">` +
-        `<div class="tp-card-name">${icon} ${escapeHtml(k.name)}</div>` +
+        `<div class="tp-card-name">${icon} ${T("temple.kind." + k.kind)}</div>` +
         `<div class="tp-card-cost">${escapeHtml(k.cost)} MURMUR</div>` +
-        `<div class="tp-card-desc">${escapeHtml(k.desc)}</div>` +
+        `<div class="tp-card-desc">${T("temple.desc." + k.kind)}</div>` +
       `</div>`;
     }
     html += `</div>`;
@@ -3877,15 +3877,16 @@ function templeParamsArea() {
   if (!sel) return `<div class="tp-section"><p class="tp-empty">${T("temple.selectKind")}</p></div>`;
   const spec = TEMPLE_KINDS.find((k) => k.kind === sel.kind);
   if (!spec || !spec.params.length) return "";
-  let html = `<div class="tp-section"><div class="tp-section-title">${escapeHtml(spec.name)}</div><div class="tp-params">`;
+  let html = `<div class="tp-section"><div class="tp-section-title">${T("temple.kind." + sel.kind)}</div><div class="tp-params">`;
   for (const p of spec.params) {
     const meta = TEMPLE_PARAMS[p] || { label: p, type: "text" };
-    html += `<div class="tp-param-row"><label class="tp-param-label">${escapeHtml(meta.label)}</label>`;
+    html += `<div class="tp-param-row"><label class="tp-param-label">${T("temple.param." + p)}</label>`;
     if (meta.type === "select") {
       html += `<select class="tp-param-select" data-param="${p}">` +
-        meta.opts.map((o) => `<option value="${escapeHtml(o[0])}">${escapeHtml(o[1])}</option>`).join("") + `</select>`;
+        meta.opts.map((o) => `<option value="${escapeHtml(o[0])}">${T("temple.opt." + p + "." + o[0])}</option>`).join("") + `</select>`;
     } else {
-      html += `<input class="tp-param-input" data-param="${p}" type="${meta.type === "number" ? "number" : "text"}" step="any" placeholder="${escapeHtml(meta.ph || "")}" />`;
+      const ph = T("temple.ph." + p) || meta.ph || "";
+      html += `<input class="tp-param-input" data-param="${p}" type="${meta.type === "number" ? "number" : "text"}" step="any" placeholder="${escapeHtml(ph)}" />`;
     }
     html += `</div>`;
   }
@@ -3903,7 +3904,7 @@ function templeQueueCard(d) {
 function templeQueueRow(e, i) {
   const icon = CHRON_ICONS[e.kind] || "\u2726";
   return `<div class="tp-queue-row"><span class="tp-queue-pos">${i + 1}</span>` +
-    `<span class="tp-ico">${icon}</span><span class="tp-hist-kind">${escapeHtml(String(e.kind))}</span>` +
+    `<span class="tp-ico">${icon}</span><span class="tp-hist-kind">${T("temple.kind." + e.kind)}</span>` +
     `<span class="tp-hist-addr fp">${e.address ? shortHash(e.address) : ""}</span></div>`;
 }
 
@@ -3921,7 +3922,7 @@ function templeHistItem(e) {
   let burned = "";
   if (e.burnAmount != null) { try { burned = fmtMur(Number(BigInt(String(e.burnAmount))) / 1e18, 0); } catch { burned = ""; } }
   return `<div class="tp-hist-item">` +
-    `<span class="tp-hist-kind">${icon} ${escapeHtml(String(e.kind))}</span>` +
+    `<span class="tp-hist-kind">${icon} ${T("temple.kind." + e.kind)}</span>` +
     (burned ? ` <span class="tp-hist-addr">\ud83d\udd25 ${burned}</span>` : "") +
     (e.tier ? ` <span class="tp-hist-addr">T${e.tier}</span>` : "") +
     `<div class="tp-hist-addr fp">${e.address ? shortHash(e.address) : ""}</div>` +
