@@ -12,8 +12,10 @@
 //    allocation. Every THREE.Color / Vector3 it touches is either a module
 //    constant (read-only source) or a pre-allocated scratch on the instance.
 //  · Night is when the world glows from within: castle arrow-slits light like
-//    banked hearths, the swarm reads as fireflies, and 500 stars fade in on a
-//    camera-following shell. No new Light objects are ever created.
+//    banked hearths, the swarm reads as fireflies, and 800 stars fade in on a
+//    camera-following shell. The sun becomes MOONLIGHT: direction flips above
+//    the horizon with cold blue-silver colour at 0.25 intensity. No new Light
+//    objects are ever created.
 //  · A dynasty fall / era passage forces a blood eclipse (forceEclipse) that
 //    overrides the sky for 120 real seconds, then smoothsteps back over 60s.
 
@@ -36,14 +38,14 @@ const frac = (t) => t - Math.floor(t);
 const C = {
   sunDay:    new THREE.Color(0xfff5e0),   // high noon — near-white warm
   sunDusk:   new THREE.Color(0xff8040),   // low sun — ember orange
-  sunNight:  new THREE.Color(0x304060),   // moonless cold fill
+  sunNight:  new THREE.Color(0x8090c0),   // cold blue-silver MOONLIGHT (was 0x304060)
   hemiSkyD:  new THREE.Color(0x87ceeb),   // day sky bounce
-  hemiSkyN:  new THREE.Color(0x0a0a20),   // night sky bounce
+  hemiSkyN:  new THREE.Color(0x1a2040),   // deep blue-purple night sky (was 0x0a0a20)
   hemiGndD:  new THREE.Color(0x8b7355),   // day earth bounce
-  hemiGndN:  new THREE.Color(0x101010),   // night earth bounce
+  hemiGndN:  new THREE.Color(0x0a1020),   // cool blue ground reflection (was 0x101010)
   fogDay:    new THREE.Color(0xcfe3e6),   // matches the diorama's teal haze
   fogDusk:   new THREE.Color(0xcf7a48),   // horizon fire
-  fogNight:  new THREE.Color(0x080814),   // deep night haze
+  fogNight:  new THREE.Color(0x0a0f1e),   // deep blue night haze (was 0x080814)
   eclSun:    new THREE.Color(0x800000),   // blood-red eclipsed sun
   eclFog:    new THREE.Color(0x1a0000),   // blood haze
   winGlow:   new THREE.Color(0xff9030),   // hearth-orange window emissive
@@ -86,19 +88,19 @@ export class DayNight {
     // ── zero-alloc scratch ──
     this._sunDir = new THREE.Vector3();
 
-    // ── star shell (built once, 500 verts, opacity-animated) ──
+    // ── star shell (built once, 800 verts, opacity-animated) ──
     this._stars = null;
     this._starMat = null;
     this._buildStars();
   }
 
-  // 500 random points on a large shell; they follow the camera so the sky is
+  // 800 random points on a large shell; they follow the camera so the sky is
   // always star-filled in both orbit and walk mode. PointsMaterial (not Mesh)
   // because these are GL points; fog:false keeps them crisp above the haze.
   _buildStars() {
     const s3 = this.s3;
     if (!s3 || !s3.scene) return;
-    const N = 500, R = 2600;
+    const N = 800, R = 2600;
     const pos = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const u = Math.random() * 2 - 1;            // cos(polar)
@@ -113,7 +115,7 @@ export class DayNight {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     this._starMat = new THREE.PointsMaterial({
-      color: 0xf6f2e6, size: 3.0, sizeAttenuation: false,
+      color: 0xf6f2e6, size: 3.8, sizeAttenuation: false,
       transparent: true, opacity: 0, depthWrite: false, fog: false,
     });
     this._stars = new THREE.Points(geo, this._starMat);
@@ -173,18 +175,24 @@ export class DayNight {
     this.phase = phase;
 
     const sunElev = Math.sin(phase * TAU);        // −1 (midnight) … +1 (noon)
-    const elevDeg = sunElev * 70;                 // noon peaks at 70°, midnight at −70°
     const azimDeg = phase * 360;                  // the sun walks a full compass turn
+
+    // ── MOONLIGHT: when sun is below horizon, flip elevation & rotate azimuth
+    //    180° so the directional light simulates moonlight from above ──
+    const isNight = sunElev < 0;
+    const effectiveElev = isNight ? -sunElev * 0.55 : sunElev; // moon peaks at ~38° (softer angle)
+    const effectiveAzim = isNight ? azimDeg + 180 : azimDeg;
+    const elevDeg = effectiveElev * 70;
     const phi = THREE.MathUtils.degToRad(90 - elevDeg);
-    const theta = THREE.MathUtils.degToRad(azimDeg);
+    const theta = THREE.MathUtils.degToRad(effectiveAzim);
     this._sunDir.setFromSphericalCoords(1, phi, theta);
     if (s3.sun) s3.sun.copy(this._sunDir);
     if (s3.sunLight) s3.sunLight.position.copy(this._sunDir).multiplyScalar(1000);
 
-    // ── 3. day / dusk / night envelopes — WIDER smoothstep windows (±0.15 vs old ±0.05) ──
-    //    Night→day transition now spans ~9 minutes of real time (0.15/1.0 × 60min × 2 edges)
+    // ── 3. day / dusk / night envelopes — WIDER golden-hour for more beautiful transitions ──
+    //    Dusk window expanded ±0.03 for longer golden hour
     const dayAmt  = sstep(-0.25, 0.35, sunElev);              // 0 below horizon → 1 high sun
-    const duskAmt = 1 - sstep(0.05, 0.50, Math.abs(sunElev)); // wider dusk bump
+    const duskAmt = 1 - sstep(0.02, 0.55, Math.abs(sunElev)); // wider dusk bump (was 0.05/0.50)
     const night   = 1 - sstep(-0.30, 0.15, sunElev);          // 1 deep night → 0 day
     this.dayFactor = dayAmt;
 
@@ -207,55 +215,56 @@ export class DayNight {
     const nf = Math.max(night, ecl);             // glow + stars answer to night OR eclipse
     this.nightFactor = nf;
 
-    // ── 5. key light: intensity + colour ──
+    // ── 5. key light: intensity + colour — moonlit night is visible, not pitch-black ──
     if (s3.sunLight) {
-      let sunI = lerp(0.08, 1.2, dayAmt);
-      sunI = lerp(sunI, 0.4, duskAmt * 0.75);
-      sunI = lerp(sunI, 0.05, ecl);
+      let sunI = lerp(0.25, 1.2, dayAmt);       // night floor raised: 0.08 → 0.25 (moonlight)
+      sunI = lerp(sunI, 0.45, duskAmt * 0.75);  // golden hour slightly warmer
+      sunI = lerp(sunI, 0.08, ecl);             // eclipse still dramatic
       s3.sunLight.intensity = sunI;
       s3.sunLight.color.copy(C.sunNight).lerp(C.sunDay, dayAmt).lerp(C.sunDusk, duskAmt * 0.85).lerp(C.eclSun, ecl);
     }
 
-    // ── 6. hemisphere bounce ──
+    // ── 6. hemisphere bounce — blue-purple sky fills night with ambient mystery ──
     if (s3.hemiLight) {
       s3.hemiLight.color.copy(C.hemiSkyN).lerp(C.hemiSkyD, dayAmt);
       s3.hemiLight.groundColor.copy(C.hemiGndN).lerp(C.hemiGndD, dayAmt);
-      s3.hemiLight.intensity = lerp(lerp(0.34, 0.78, dayAmt), 0.16, ecl);
+      // Night floor 0.40 (was effectively 0.34 at dayAmt=0) ensures scene readability
+      s3.hemiLight.intensity = Math.max(0.40, lerp(0.40, 0.82, dayAmt) * (1 - ecl * 0.6));
     }
 
-    // ── 7. fog follows the sky ──
+    // ── 7. fog follows the sky — deep blue night fog adds mystery depth ──
     const fog = s3.scene.fog;
     if (fog) {
       fog.color.copy(C.fogNight).lerp(C.fogDay, dayAmt).lerp(C.fogDusk, duskAmt * 0.8).lerp(C.eclFog, ecl);
-      fog.density = lerp(0.00095, 0.00078, dayAmt) + ecl * 0.0004;
+      // Night fog 10% denser for atmosphere: base 0.00105 vs old 0.00095
+      fog.density = lerp(0.00105, 0.00078, dayAmt) + ecl * 0.0004;
     }
 
-    // ── 8. Preetham sky uniforms ──
+    // ── 8. Preetham sky: moonlight direction (already flipped above) + enhanced night scatter ──
     const u = s3.skyUniforms;
     if (u) {
       if (u.sunPosition) u.sunPosition.value.copy(this._sunDir);
       if (u.turbidity)      u.turbidity.value      = lerp(2.0, 5.0, dayAmt) + duskAmt * 3.0;
-      if (u.rayleigh)       u.rayleigh.value       = lerp(lerp(0.35, 2.2, dayAmt) + duskAmt * 1.1, 0.1, ecl);
+      if (u.rayleigh)       u.rayleigh.value       = lerp(lerp(0.5, 2.2, dayAmt) + duskAmt * 1.1, 0.1, ecl); // night 0.35→0.5 for subtle blue scatter
       if (u.mieCoefficient) u.mieCoefficient.value = lerp(0.002, 0.005, dayAmt) + duskAmt * 0.004;
     }
 
-    // ── 9. the noon-baked PMREM env (scene.environment) keeps lighting the world even at
-    //    midnight, so dim its IBL contribution on every standard-material surface as night falls.
+    // ── 9. envMap IBL — keep faint environment reflections at night (0.15 not 0) ──
     const wm = s3.water && s3.water.material;
-    if (wm && wm.envMapIntensity !== undefined) wm.envMapIntensity = lerp(0.8, 0.12, nf);
+    if (wm && wm.envMapIntensity !== undefined) wm.envMapIntensity = lerp(0.8, 0.15, nf);
     const tm = s3.terrain && s3.terrain.material;
-    if (tm && tm.envMapIntensity !== undefined) tm.envMapIntensity = lerp(1.0, 0.10, nf);
+    if (tm && tm.envMapIntensity !== undefined) tm.envMapIntensity = lerp(1.0, 0.15, nf);
 
-    // ── 10. night life: castle hearth-windows + firefly swarm ──
+    // ── 10. night life: castle hearth-windows BLAZE + firefly swarm glows ──
     const winMats = s3._castleWindowMats;
-    if (winMats) for (let i = 0; i < winMats.length; i++) winMats[i].emissiveIntensity = nf * 0.85;
-    if (s3.flyBody && s3.flyBody.material) s3.flyBody.material.emissiveIntensity = nf * 0.6;
+    if (winMats) for (let i = 0; i < winMats.length; i++) winMats[i].emissiveIntensity = nf * 1.4; // was 0.85 — windows pop warmly against blue night
+    if (s3.flyBody && s3.flyBody.material) s3.flyBody.material.emissiveIntensity = nf * 0.8; // was 0.6 — fireflies more visible
 
-    // ── 11. stars ──
+    // ── 11. stars — full brightness, slightly larger for dreamy night sky ──
     if (this._starMat) {
-      this._starMat.opacity = nf * 0.95;
+      this._starMat.opacity = nf * 1.0;  // was 0.95 — stars at full presence
       if (this._stars) {
-        this._stars.visible = nf > 0.02;
+        this._stars.visible = nf > 0.01;
         if (s3.camera) this._stars.position.copy(s3.camera.position);
       }
     }
