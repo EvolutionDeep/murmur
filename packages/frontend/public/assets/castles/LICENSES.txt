@@ -1,0 +1,58 @@
+================================================================================
+3D asset licenses — packages/frontend/public/assets/castles/
+================================================================================
+
+All 3D assets in this directory are released under
+CC0 1.0 Universal (Public Domain Dedication)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+They may be used for personal, educational, and commercial purposes.
+Attribution is not required (but appreciated).
+
+--------------------------------------------------------------------------------
+Kenney Castle Kit (2.0)
+--------------------------------------------------------------------------------
+Source:  https://kenney.nl/assets/castle-kit
+License: CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+Author:  Kenney (https://kenney.nl)
+Created: 2024-03-27
+
+Included files (18):
+  tower-hexagon-base.glb          tower-hexagon-mid.glb
+  tower-hexagon-top.glb           tower-hexagon-roof.glb
+  tower-square-base.glb           tower-square-mid.glb
+  tower-square-top.glb            tower-square-roof.glb
+  tower-square-top-roof.glb       wall.glb
+  wall-corner.glb                 wall-corner-half-tower.glb
+  wall-half.glb                   gate.glb
+  metal-gate.glb                  bridge-straight.glb
+  flag.glb                        flag-pennant.glb
+
+Note: converted from the kit's "Models/GLB format" folder into self-contained
+GLB files (the shared Textures/colormap.png is embedded) using
+@gltf-transform/cli copy. No geometry or texture edits.
+
+--------------------------------------------------------------------------------
+KayKit Medieval Hexagon Pack (1.0)
+--------------------------------------------------------------------------------
+Source:  https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0
+License: CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+Author:  Kay Lousberg (https://www.kaylousberg.com)
+Created: 2024-04-26
+
+Included files (5):
+  building_home_A_blue.glb    (house / 民居)
+  building_market_blue.glb    (market stall / 市场)
+  building_tower_A_blue.glb   (small tower / 小塔)
+  building_windmill_blue.glb  (windmill / 风车)
+  building_well_blue.glb      (well / 水井)
+
+Note: converted from the pack's glTF + .bin + shared hexagons_medieval.png
+texture into self-contained GLB files using @gltf-transform/cli copy.
+No geometry or texture edits. "blue" is the faction color variant of the pack
+(same geometry; faction color is baked into the shared texture atlas).
+
+--------------------------------------------------------------------------------
+Tooling
+--------------------------------------------------------------------------------
+Conversion: @gltf-transform/cli 4.2.1 (MIT License) — https://gltf-transform.dev

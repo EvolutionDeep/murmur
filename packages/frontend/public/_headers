@@ -30,3 +30,18 @@
 
 /styles.css
   Cache-Control: no-cache, must-revalidate
+
+# The split ESM tree is imported bare (no ?v= on the sub-module specifiers, and render2d.js has six
+# importers so adding ?v would fork duplicate module instances). Force etag revalidation on the entry
+# and the modules touched by the five-nations rebuild so returning readers never run stale bytes.
+/main.js
+  Cache-Control: no-cache, must-revalidate
+
+/scene3d.js
+  Cache-Control: no-cache, must-revalidate
+
+/nations.js
+  Cache-Control: no-cache, must-revalidate
+
+/render2d.js
+  Cache-Control: no-cache, must-revalidate

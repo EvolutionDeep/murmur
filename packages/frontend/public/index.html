@@ -22,7 +22,8 @@
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "d3-delaunay": "https://cdn.jsdelivr.net/npm/d3-delaunay@6/+esm"
     }
   }
   </script>
@@ -607,6 +608,7 @@
     <div class="chron-ticker-track" id="chron-ticker-track"></div>
   </div>
 
-  <script src="./app.js?v=119" type="module"></script>
+  <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
+  <script src="./main.js?v=121" type="module"></script>
 </body>
 </html>
