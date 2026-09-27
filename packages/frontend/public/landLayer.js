@@ -593,6 +593,7 @@ export class LandLayer {
   // On mobile (≤680px / ≤600px tall) the leaderboard is position:relative in the scrolling
   // column, so no JS positioning is needed — clear any inline styles and bail.
   // On desktop, also caps maxHeight so the leaf never overlaps the right-edge dock stack.
+  // GUARANTEE: maxHeight is always ≥ 160px so the leaderboard is never collapsed to invisibility.
   _positionLeaderboard() {
     if (!this._lbEl) return;
     const isMobile = window.innerWidth <= 680 || window.innerHeight <= 600;
@@ -607,12 +608,23 @@ export class LandLayer {
     if (rect.bottom > 0) {
       const top = Math.round(rect.bottom + 12);
       this._lbEl.style.top = `${top}px`;
-      // Cap height: never extend into the right-edge dock (walk-btn is the topmost rung)
+      // Cap height: never extend into the right-edge dock (walk-btn is the topmost rung).
+      // Check walk-btn visibility first — if hidden (display:none / zero rect), use a safe fallback.
       const walkBtn = document.getElementById('walk-btn');
-      const dockTop = walkBtn
-        ? walkBtn.getBoundingClientRect().top
-        : (window.innerHeight - 378);
-      const maxH = Math.max(60, Math.round(dockTop - 12 - top));
+      let dockTop = 0;
+      if (walkBtn) {
+        const wRect = walkBtn.getBoundingClientRect();
+        // visible = has non-zero height AND is attached to the layout (offsetParent non-null)
+        if (wRect.height > 0 && walkBtn.offsetParent !== null) {
+          dockTop = wRect.top;
+        }
+      }
+      // Fallback: if walk-btn not measurable, use viewport-based estimate (bottom dock ≈ 378px tall)
+      if (dockTop <= 0) dockTop = window.innerHeight - 378;
+      // CSS fallback ceiling: min(320px, vh - 320px) — JS only tightens, never goes below 160px
+      const cssFallback = Math.min(320, window.innerHeight - 320);
+      const computed = Math.round(dockTop - 12 - top);
+      const maxH = Math.max(160, Math.min(computed, Math.max(cssFallback, 160)));
       this._lbEl.style.maxHeight = `${maxH}px`;
     }
   }
