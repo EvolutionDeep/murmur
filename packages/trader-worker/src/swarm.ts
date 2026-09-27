@@ -20,6 +20,7 @@ import {
   type Genome,
   type MarketPulse,
   type MotorOutput,
+  type NeuromodState,
   type StimulusEvent,
 } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
@@ -66,6 +67,8 @@ export interface FlyNeuralSnapshot {
   neuronKinds: string[];
   neuronChannels: (string | null)[];
   neuronCount: number;
+  /** A3 DA/OA-like neuromodulatory read-out of the modulatory layer (pure, manifest-neutral). */
+  neuromod: NeuromodState;
 }
 
 /** The compact per-fly detail for GET /flies/:id (motor + identity + last decoded behaviour). */
@@ -160,6 +163,7 @@ export function neuralSnapshotOf(fly: AdvanceableFly): FlyNeuralSnapshot {
     neuronKinds: fly.brain.connectome?.neurons?.map((n) => n.kind) ?? [],
     neuronChannels: fly.brain.connectome?.neurons?.map((n) => n.channel) ?? [],
     neuronCount: fly.brain.connectome?.neurons?.length ?? 0,
+    neuromod: snap.neuromod,
   };
 }
 
@@ -315,7 +319,10 @@ export class ShardedSwarm implements SwarmBackend {
   }
 
   private makeDecoder(): MotorDecoder {
-    return new MotorDecoder({ hotT: this.cfg.regimeHot, coldT: this.cfg.regimeCold });
+    return new MotorDecoder(
+      { hotT: this.cfg.regimeHot, coldT: this.cfg.regimeCold },
+      { neuromodGating: this.cfg.neuromodGating },
+    );
   }
 
   /**

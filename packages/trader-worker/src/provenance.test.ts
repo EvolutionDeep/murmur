@@ -108,7 +108,7 @@ function reading(id: number, state: FlyReading["state"], over: Partial<FlyReadin
     arousal: 0.9, turnBias: id % 2 ? 0.4 : -0.4, cohesion: 0.5,
     wingbeat: 0.8, rest: 0.05, temperament: (id * 7919) % 1000 / 1000,
     fingerprint: `fp${id}`,
-    fap: "FORAGE", valence: 0, heading: 0, role: "signal-seeker", bouts: [],
+    fap: "FORAGE", valence: 0, heading: 0, role: "signal-seeker", bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0 },
     ...over,
   };
 }

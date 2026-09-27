@@ -21,7 +21,7 @@ function reading(id: number, fap: Fap, over: Partial<FlyReading> = {}): FlyReadi
     arousal: 0.5, turnBias: 0, cohesion: 0.5,
     wingbeat: 0.5, rest: 0.2, temperament: ((id * 7919) % 1000) / 1000,
     fingerprint: `fp${id}`,
-    fap, valence: 0, heading: 0, role: FAP_ROLE[fap], bouts: [],
+    fap, valence: 0, heading: 0, role: FAP_ROLE[fap], bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0 },
     ...over,
   };
 }

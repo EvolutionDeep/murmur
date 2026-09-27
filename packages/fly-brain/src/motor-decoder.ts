@@ -1,6 +1,7 @@
-import type { MotorChannel, MotorOutput, FlyBehavior, BehaviorState, SensoryInput } from "./types.js";
+import type { MotorChannel, MotorOutput, FlyBehavior, BehaviorState, SensoryInput, NeuromodState } from "./types.js";
 import { MOTOR_CHANNEL_LIST } from "./connectome.js";
 import { Ethogram } from "./ethogram.js";
+import { NEUTRAL_NEUROMOD } from "./neuromod.js";
 
 /**
  * Behaviour decoder: translates the fly's motor-neuron firing rates into a behavioural state plus
@@ -134,8 +135,34 @@ export const DEFAULT_DECODER_CONFIG: DecoderConfig = {
   hysteresisSteps: 2,
 };
 
+/**
+ * A3 neuromodulatory-gating options — deliberately kept OUTSIDE DecoderConfig / DEFAULT_DECODER_CONFIG.
+ * Those two objects are folded into the on-chain brain-manifest hash (see trader-worker/manifest.ts), so
+ * adding a field there would rotate the committed hash. These options never enter the manifest, which is
+ * what keeps the neuromodulatory gate manifest-neutral.
+ */
+export interface DecoderOptions {
+  /**
+   * Master switch for the A3 behavioural coupling (mirrors the worker's NEUROMOD_GATING env). FALSE by
+   * default ⇒ the octopamine modulation term is NEVER computed and decode() is byte-for-byte the pre-A3
+   * behaviour; the neuromod read-out is still surfaced for observability but touches no drive. TRUE ⇒ the
+   * OA-like octopamine tone modulates arousal/exploration within a bounded band.
+   */
+  neuromodGating?: boolean;
+  /** Bounded strength of the octopamine → arousal/exploration modulation (only used when gating is on). */
+  neuromodGain?: number;
+}
+
+export const DEFAULT_DECODER_OPTIONS: Required<DecoderOptions> = {
+  neuromodGating: false,
+  neuromodGain: 0.25,
+};
+
 export class MotorDecoder {
   private cfg: DecoderConfig;
+  /** A3 neuromodulatory-gating options (kept separate from cfg so the manifest hash never rotates). */
+  private readonly neuromodGating: boolean;
+  private readonly neuromodGain: number;
   private lastState: BehaviorState = "EXPLORE";
   private candidate: BehaviorState = "EXPLORE";
   private candidateCount = 0;
@@ -147,19 +174,26 @@ export class MotorDecoder {
    */
   private readonly etho = new Ethogram();
 
-  constructor(cfg: Partial<DecoderConfig> = {}) {
+  constructor(cfg: Partial<DecoderConfig> = {}, opts: DecoderOptions = {}) {
     this.cfg = { ...DEFAULT_DECODER_CONFIG, ...cfg };
+    const o = { ...DEFAULT_DECODER_OPTIONS, ...opts };
+    this.neuromodGating = o.neuromodGating === true;
+    this.neuromodGain = Number.isFinite(o.neuromodGain) ? o.neuromodGain : DEFAULT_DECODER_OPTIONS.neuromodGain;
   }
 
   /** Decode one fly's motor output into its behavioural response for this tick.
    *  @param temperature market temperature 0..1 (HOT → 1) — the collective anchor for the regime.
-   *  @param bands       this tick's population bands; omit only for standalone/single-fly decoding. */
+   *  @param bands       this tick's population bands; omit only for standalone/single-fly decoding.
+   *  @param neuromod    this fly's DA/OA-like neuromodulatory read-out (neuromod.ts). Always surfaced on the
+   *                     returned behaviour for observability; modulates arousal/exploration ONLY when this
+   *                     decoder was built with neuromodGating=true (worker NEUROMOD_GATING). */
   decode(
     motor: MotorOutput[],
     sensory: SensoryInput[],
     simTimeMs: number,
     temperature = 0.5,
     bands: PopulationBands = REF_BANDS,
+    neuromod: NeuromodState = NEUTRAL_NEUROMOD,
   ): FlyBehavior {
     const raw = readRawDrives(motor);
 
@@ -175,9 +209,18 @@ export class MotorDecoder {
     // Collective layer: the regime base every fly shares, driven by market temperature.
     const T = clamp01(temperature);
     const s = this.cfg.spread;
-    const arousal = clamp01(T + s * (relAro - 0.5));
+    let arousal = clamp01(T + s * (relAro - 0.5));
     const cohesion = clamp01(1 - T + s * (relCoh - 0.5));
     const rest = clamp01(1 - T + s * (relRest - 0.5));
+
+    // A3 neuromodulatory gating (behind NEUROMOD_GATING). When the switch is OFF this branch is never
+    // entered, so arousal — and therefore wingbeat, the behavioural state, the neural fingerprint, the
+    // ethogram and every economic read-out derived from them — is byte-for-byte identical to the pre-A3
+    // decoder. When ON, the OA-like octopamine tone nudges arousal (exploration) around the collective base
+    // within a bounded ±neuromodGain/2 band, so it can shade the drive but never pin it.
+    if (this.neuromodGating) {
+      arousal = clamp01(arousal + this.neuromodGain * (clamp01(neuromod.octopamine) - 0.5));
+    }
     const wingbeat = arousal;
 
     let rawState: BehaviorState;
@@ -230,6 +273,7 @@ export class MotorDecoder {
       heading: etho.heading,
       role: etho.role,
       bouts: etho.bouts,
+      neuromod,
     };
   }
 

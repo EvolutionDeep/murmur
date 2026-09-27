@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "format": "fafb783-mb-cx-v1",
+  "source": {
+    "dataset": "FAFB_783",
+    "description": "FlyWire adult female fruit fly brain connectome (FAFB), MB+CX functional subgraph",
+    "version": "fafb_783 (compiled 2026-04)",
+    "license": "CC-BY 4.0",
+    "citations": [
+      "Schlegel P, et al. (2021). Whole-brain annotation and taxonomy of cell types in the adult brain of Drosophila melanogaster. eLife 10:e62552.",
+      "Dorkenwald S, et al. (2024). Neuronal wiring diagram of an adult brain. Nature 634:124-138.",
+      "Matsunami K, et al. (2024). A connectome of the adult Drosophila central brain. bioRxiv.",
+      "Eckstein N, et al. (2024). Neurotransmitter classification from electron microscopy images at the synapse resolution. Cell 187(22)."
+    ],
+    "url": "https://storage.googleapis.com/lee-lab_brain-and-nerve-cord-fly-connectome/compiled_data/fafb_783/",
+    "neurotransmitter_method": "Eckstein et al. 2024 predictions (embedded in fafb_783_meta.feather)",
+    "extraction_date": "2026-09-27",
+    "min_synapse_count": 2,
+    "subgraph_scope": "mushroom_body + central_complex + antennal_lobe_PN + descending_neurons"
+  },
+  "stats": {
+    "n_neurons": 10361,
+    "n_edges": 467314,
+    "layer_counts": {
+      "inter_l1": 6521,
+      "inter_l2": 622,
+      "modulatory": 318,
+      "motor": 1257,
+      "sensory": 1643
+    },
+    "sign_distribution": {
+      "excitatory_neurons": 9664,
+      "inhibitory_neurons": 697,
+      "excitatory_pct": 93.3,
+      "inhibitory_pct": 6.7
+    },
+    "fan_in": {
+      "mean": 45.1,
+      "max": 2736,
+      "median": 29.0
+    }
+  },
+  "encoding": {
+    "format": "gzip(base64) of little-endian binary",
+    "layout": "uint32 n_neurons | uint32 n_edges | uint8 version | uint8[n] layers | int8[n] signs | uint8[n] nt_codes | uint16[E] pre | uint16[E] post | uint8[E] weights_q",
+    "weight_quantization": "uint8 [1-255], log1p(count)/log1p(max_count)*254+1",
+    "sign_rule": "per-neuron from presynaptic NT: GABA/GLY=-1, else=+1",
+    "layer_codes": {
+      "sensory": 0,
+      "inter_l1": 1,
+      "inter_l2": 2,
+      "modulatory": 3,
+      "motor": 4
+    },
+    "nt_names": [
+      "acetylcholine",
+      "glutamate",
+      "gaba",
+      "glycine",
+      "dopamine",
+      "serotonin",
+      "octopamine",
+      "tyramine",
+      "histamine",
+      "unknown"
+    ]
+  },
+  "integrity": {
+    "raw_sha256": "2ca7d01f6c1191bae9ff038df3f756d1eb9b51f5d192ff3781f1bd7fd96f36ca",
+    "compressed_sha256": "9c7548fe41dd630e85be3f92795a631520cd8e034a7034770197a5250f930264",
+    "raw_bytes": 2367662,
+    "compressed_bytes": 1033945,
+    "base64_chars": 1378596
+  },
+  "constraints": {
+    "neurons_under_30800": true,
+    "compressed_b64_under_2MB": true,
+    "heap_under_72MB": true,
+    "heap_estimate_mb": 2.6
+  }
+}

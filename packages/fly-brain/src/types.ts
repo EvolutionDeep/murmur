@@ -82,6 +82,26 @@ export interface MotorOutput {
   normalized: number;
 }
 
+/**
+ * Neuromodulatory state — a PURE READ-OUT derived from the modulatory layer's firing rates (see
+ * neuromod.ts). Two biologically-grounded scalars plus a RESERVED plasticity gate:
+ *   dopamine         DA-like reward/reinforcement tone, 0..1 (lower modulatory half).
+ *   octopamine       OA-like arousal/exploration tone, 0..1 (upper modulatory half).
+ *   learningRateGate RESERVED learning-rate gate for the A1 STDP plasticity step, 0..1 — derived from
+ *                    `dopamine`, but NOT wired to any synaptic weight update yet (A3 only observes it).
+ * Like the ethogram this is manifest-neutral: it reads signals the connectome already produces, never
+ * writes back, and never touches a hashed manifest input, so the on-chain brain-manifest hash is
+ * unchanged. Consumers that predate it can ignore it safely.
+ */
+export interface NeuromodState {
+  /** DA-like (dopamine) reward/learning tone, normalized 0..1. */
+  dopamine: number;
+  /** OA-like (octopamine) arousal/exploration tone, normalized 0..1. */
+  octopamine: number;
+  /** RESERVED learning-rate gate for A1 plasticity (derived from dopamine); not consumed by any weight yet. */
+  learningRateGate: number;
+}
+
 export interface BrainSnapshot {
   t: number;                    // Simulation time (ms)
   step: number;                 // Number of simulation steps taken
@@ -89,6 +109,8 @@ export interface BrainSnapshot {
   spikesLastStep: Uint8Array;   // Whether each neuron spiked on the last step
   firingRates: Float32Array;    // Moving-average firing rate per neuron
   motor: MotorOutput[];         // Aggregated motor outputs
+  /** DA/OA-like neuromodulatory read-out derived from the modulatory layer (pure, manifest-neutral). */
+  neuromod: NeuromodState;
 }
 
 /** Discrete behavioural state a fly expresses in response to the market pulse + its own dynamics. */
@@ -179,6 +201,14 @@ export interface FlyBehavior {
   role: RoleName;
   /** Recent behaviour sequence (oldest → newest), capped — rendered as the fly's ethogram ribbon. */
   bouts: Bout[];
+  /**
+   * --- A3 neuromodulatory read-out (added by the decoder; purely observable) ---
+   * The DA/OA-like state derived from this fly's modulatory layer. ALWAYS present (a neutral zero state
+   * when no modulatory read-out was supplied), so the frontend/inspector can render it. When the
+   * NEUROMOD_GATING switch is OFF (production default) these values are OBSERVED ONLY and never touch the
+   * drives above; when ON, `octopamine` additionally modulates arousal/exploration inside decode().
+   */
+  neuromod: NeuromodState;
 }
 
 export interface IFlyBrain {

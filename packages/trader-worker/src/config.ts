@@ -38,6 +38,7 @@ export interface Env {
   POPULATION_SEED_BASE?: string;    // base seed; fly i uses base + i*7919 (default 42)
   TICKS_PER_CRON?: string;          // simulation sub-ticks per cron (default 6)
   SIM_STEPS_PER_TICK?: string;      // LIF integration steps per sub-tick (default 500)
+  NEUROMOD_GATING?: string;         // "true"/"false" (default false) — A3: let the DA/OA neuromodulatory read-out gate exploration/arousal in the decoder. OFF ⇒ the read-out is observed only and behaviour is byte-for-byte unchanged (dark deploy). Manifest-neutral either way.
   SHARD_COUNT?: string;             // swarm shards across N Durable Objects (default 1 = single DO; needs the FLY_SHARD binding)
   EVOLUTION_MAX_LIVE_POPULATION?: string; // live-population growth ceiling (default = POPULATION_SIZE = no growth). ALSO the STABLE basis for shard slices, so raising it MUST be paired with SHARD_COUNT = ceil(cap/2) to keep 2 flies/shard (no brain ever migrates as the population grows).
 
@@ -387,6 +388,15 @@ export interface RuntimeConfig {
   populationSeeds: number[];        // pre-computed per-fly seeds (base + i*7919)
   ticksPerCron: number;
   simStepsPerTick: number;
+  /**
+   * A3 neuromodulatory gating (NEUROMOD_GATING, default FALSE). When false the DA/OA-like neuromodulatory
+   * read-out is computed and surfaced for observability but NEVER modulates a drive, so the decoder output
+   * (arousal/turnBias/state/fingerprint/ethogram) — and therefore every economic read-out and provenance
+   * receipt derived from it — is byte-for-byte identical to the pre-A3 behaviour (dark deploy). When true the
+   * OA-like octopamine tone additionally shades exploration/arousal within a bounded band. Manifest-neutral
+   * either way: the gate lives outside DEFAULT_DECODER_CONFIG, so the on-chain brain hash never rotates.
+   */
+  neuromodGating: boolean;
   /** Durable Objects the swarm is sharded across (1 = the single FlyStateDO, today's behaviour). */
   shardCount: number;
   /**
@@ -832,6 +842,9 @@ export function loadConfig(env: Env): RuntimeConfig {
     populationSeeds,
     ticksPerCron: clampInt(Number(env.TICKS_PER_CRON || "6"), 1, 60),
     simStepsPerTick: Math.max(1, Number(env.SIM_STEPS_PER_TICK || "500")),
+    // A3 dark deploy: OFF unless NEUROMOD_GATING="true". Absent/false ⇒ the neuromodulatory read-out is
+    // observed only and the decoder is byte-for-byte the pre-A3 behaviour.
+    neuromodGating: (env.NEUROMOD_GATING ?? "false").toLowerCase() === "true",
     shardCount,
     maxLivePopulation,
     liveRetire,

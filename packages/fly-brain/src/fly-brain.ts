@@ -10,8 +10,10 @@ import type {
   IFlyBrain,
   MotorChannel,
   MotorOutput,
+  NeuromodState,
   SensoryInput,
 } from "./types.js";
+import { computeNeuromod } from "./neuromod.js";
 
 /**
  * Reference sensory-channel size the injection gain was calibrated at (default nSensory 180 / 10
@@ -138,6 +140,16 @@ export class FlyBrain implements IFlyBrain {
     return MOTOR_CHANNEL_LIST.map((ch) => this.readMotor(ch, windowMs));
   }
 
+  /**
+   * Read the DA/OA-like neuromodulatory state off the modulatory layer's moving-average firing rates.
+   * A PURE, DETERMINISTIC read-out (see neuromod.ts): it never writes back into the network and never
+   * touches a hashed manifest input, so it is manifest-neutral. Exposed via snapshot() and threaded to the
+   * decoder, where it is observed always and gates behaviour only when NEUROMOD_GATING is enabled.
+   */
+  readNeuromod(): NeuromodState {
+    return computeNeuromod(this.net.firingRate, this.connectome.byKind.modulatory);
+  }
+
   /** Full snapshot (used for frontend visualization) */
   snapshot(): BrainSnapshot {
     return {
@@ -147,6 +159,7 @@ export class FlyBrain implements IFlyBrain {
       spikesLastStep: this.net.spiking,
       firingRates: this.net.firingRate,
       motor: this.readAllMotor(),
+      neuromod: this.readNeuromod(),
     };
   }
 

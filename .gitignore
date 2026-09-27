@@ -33,6 +33,9 @@ Thumbs.db
 # committed; the lineage/breeding system they depict no longer exists. Safe to delete locally.
 /family_tree_*.png
 
+# Offline connectome data downloads (FAFB 783 feather files, ~327MB) — never commit
+_connectome_data/
+
 # Editor / IDE
 .vscode/
 .idea/

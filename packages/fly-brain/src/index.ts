@@ -11,14 +11,22 @@ export { FlyBrain } from "./fly-brain.js";
 export {
   MotorDecoder,
   DEFAULT_DECODER_CONFIG,
+  DEFAULT_DECODER_OPTIONS,
   neuralFingerprint,
   readRawDrives,
   computeBands,
   REF_BANDS,
   type DecoderConfig,
+  type DecoderOptions,
   type RawDrives,
   type PopulationBands,
 } from "./motor-decoder.js";
+export {
+  computeNeuromod,
+  neuromodPartition,
+  NEUROMOD_CONFIG,
+  NEUTRAL_NEUROMOD,
+} from "./neuromod.js";
 export {
   Ethogram,
   ETHOGRAM_CONFIG,

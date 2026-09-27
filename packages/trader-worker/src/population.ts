@@ -36,6 +36,7 @@ import {
   type BehaviorState,
   type Fap,
   type Bout,
+  type NeuromodState,
   type ConnectomeOptions,
   type Genome,
   genomeToConnectomeOptions,
@@ -83,6 +84,8 @@ export interface FlyReading {
   heading: number;                // 0..2π persistent ring-attractor head direction
   role: string;                   // observable economic role implied by `fap`
   bouts: Bout[];                  // recent behaviour sequence (oldest → newest), capped
+  /** A3 DA/OA-like neuromodulatory read-out (observable; gated into arousal only when NEUROMOD_GATING is on). */
+  neuromod: NeuromodState;
 }
 
 /** The swarm's shared mood this tick (collective response to the market regime). */
@@ -128,6 +131,13 @@ export interface FlyReadOut {
   sensory: SensoryInput[];
   /** The brain's simulation clock (ms) at read time — feeds the neural fingerprint. */
   t: number;
+  /**
+   * A3 DA/OA-like neuromodulatory read-out derived from this fly's modulatory layer. A fixed pair of
+   * scalars (independent of neuron count), so it is as cheap to ship across the shard RPC boundary as the
+   * motor read-out. Feeds the decoder, which observes it always and gates exploration only when the
+   * coordinator's decoders were built with neuromodGating=true.
+   */
+  neuromod: NeuromodState;
 }
 
 /** The per-fly coordinator-side state the reduce needs alongside each read-out: identity, the stable
@@ -200,7 +210,10 @@ export class Population {
 
   /** The decoder's regime anchor tracks the SAME hot/cold thresholds the MarketMeter uses. */
   private makeDecoder(): MotorDecoder {
-    return new MotorDecoder({ hotT: this.cfg.regimeHot, coldT: this.cfg.regimeCold });
+    return new MotorDecoder(
+      { hotT: this.cfg.regimeHot, coldT: this.cfg.regimeCold },
+      { neuromodGating: this.cfg.neuromodGating },
+    );
   }
 
   /** A stable temperament in 0.2..0.8 drawn from the seed (so it survives restarts). */
@@ -360,7 +373,7 @@ export function advanceFlies(
       if (c < 3) for (const st of stimuli) fly.brain.inject(encodeStimulus(st));
       fly.brain.advance(Math.min(chunkSize, simSteps - c * chunkSize));
     }
-    out.push({ id: fly.id, motor: fly.brain.readAllMotor(), sensory, t: fly.brain.t });
+    out.push({ id: fly.id, motor: fly.brain.readAllMotor(), sensory, t: fly.brain.t, neuromod: fly.brain.readNeuromod() });
   }
   return out;
 }
@@ -401,6 +414,7 @@ export function reduceReadOuts(
       r?.t ?? 0,
       ctx.pulse.temperature,
       bands,
+      r?.neuromod,
     );
     behaviors.push(b);
     states[b.state]++;
@@ -425,6 +439,7 @@ export function reduceReadOuts(
       heading: b.heading,
       role: b.role,
       bouts: b.bouts,
+      neuromod: b.neuromod,
     });
   }
 
