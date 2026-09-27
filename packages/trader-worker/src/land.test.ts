@@ -94,21 +94,32 @@ test("land: priceOf an unclaimed parcel is the 5,000 MURMUR floor", () => {
   assert.equal(wholeMurmur(l.priceOf(0)), "5000");
 });
 
-test("land: priceOf ratchets +100 MURMUR for one prior override", () => {
+test("land: priceOf a claimed parcel (overrides=0) is 5100 — the first override premium", () => {
   const l = layer();
-  l.parcels.set(5, { owner: ADDR, imageKey: "do:5", overrides: 1, purchasedAt: 0, txHash: TX });
+  l.parcels.set(5, { owner: ADDR, imageKey: "do:5", overrides: 0, purchasedAt: 0, txHash: TX });
   assert.equal(LAND_OVERRIDE_STEP, 100n * SCALE);
+  // Claimed parcel: BASE + STEP*(overrides+1) = 5000 + 100*1 = 5100
   assert.equal(l.priceOf(5), LAND_BASE_PRICE + LAND_OVERRIDE_STEP);
   assert.equal(l.priceOf(5), 5_100n * SCALE);
   assert.equal(wholeMurmur(l.priceOf(5)), "5100");
 });
 
+test("land: priceOf ratchets +100 MURMUR for one prior override", () => {
+  const l = layer();
+  l.parcels.set(5, { owner: ADDR, imageKey: "do:5", overrides: 1, purchasedAt: 0, txHash: TX });
+  // overrides=1: BASE + STEP*(1+1) = 5000 + 200 = 5200
+  assert.equal(l.priceOf(5), LAND_BASE_PRICE + LAND_OVERRIDE_STEP * 2n);
+  assert.equal(l.priceOf(5), 5_200n * SCALE);
+  assert.equal(wholeMurmur(l.priceOf(5)), "5200");
+});
+
 test("land: priceOf ratchets +100 MURMUR for three prior overrides", () => {
   const l = layer();
   l.parcels.set(7, { owner: ADDR, imageKey: "do:7", overrides: 3, purchasedAt: 0, txHash: TX });
-  assert.equal(l.priceOf(7), LAND_BASE_PRICE + LAND_OVERRIDE_STEP * 3n);
-  assert.equal(l.priceOf(7), 5_300n * SCALE);
-  assert.equal(wholeMurmur(l.priceOf(7)), "5300");
+  // overrides=3: BASE + STEP*(3+1) = 5000 + 400 = 5400
+  assert.equal(l.priceOf(7), LAND_BASE_PRICE + LAND_OVERRIDE_STEP * 4n);
+  assert.equal(l.priceOf(7), 5_400n * SCALE);
+  assert.equal(wholeMurmur(l.priceOf(7)), "5400");
 });
 
 // ─── 4. a successful claim ───────────────────────────────────────────────────────────────────────────────
@@ -141,25 +152,29 @@ test("land: submit writes the parcel when the burn clears the floor price", asyn
 test("land: submit seizes an existing parcel — overrides++ and the owner changes", async () => {
   const l = layer();
   const store = memStore();
-  // A fresh claim by ADDR.
+  // A fresh claim by ADDR (unclaimed parcel → price = BASE = 5000).
   l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR));
   assert.equal((await l.submit(3, txAt(1), ADDR, IMG, store)).ok, true);
   assert.equal(l.parcels.get(3)!.overrides, 0);
-  // A seizure by ADDR2 — the price is still the floor (overrides was 0), so the same burn clears it.
-  l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR2));
+  // A seizure by ADDR2 — the parcel is claimed with overrides=0 → price = BASE + STEP*(0+1) = 5100.
+  const overridePrice = LAND_BASE_PRICE + LAND_OVERRIDE_STEP;
+  l.setChainClient(burnClient(overridePrice, ADDR2));
   const res = await l.submit(3, txAt(2), ADDR2, IMG, store);
   assert.equal(res.ok, true);
 
   const p = l.parcels.get(3)!;
   assert.equal(p.overrides, 1, "the seizure ratchets the override count");
   assert.equal(p.owner, ADDR2.toLowerCase(), "the parcel changed hands");
-  assert.equal(l.totalBurned, LAND_BASE_PRICE * 2n);
-  assert.equal(l.priceOf(3), LAND_BASE_PRICE + LAND_OVERRIDE_STEP, "the next seizure is dearer");
+  assert.equal(l.totalBurned, LAND_BASE_PRICE + overridePrice, "cumulative burn = 5000 + 5100");
+  // After override (overrides=1): next price = BASE + STEP*(1+1) = 5200
+  assert.equal(l.priceOf(3), LAND_BASE_PRICE + LAND_OVERRIDE_STEP * 2n, "the next seizure is dearer");
+  assert.equal(wholeMurmur(l.priceOf(3)), "5200");
 
   const ev = l.drainEvents();
   assert.equal(ev.length, 2);
   assert.equal(ev[1].kind, "LAND_OVERRIDDEN");
   assert.equal(ev[1].n, 1);
+  assert.equal(ev[1].price, "5100", "the event records the override price paid");
 });
 
 // ─── 6. the persisted dedup ring ─────────────────────────────────────────────────────────────────────────
@@ -189,6 +204,22 @@ test("land: submit refuses a burn one atom below the parcel price", async () => 
   assert.equal(res.code, "payment_required");
   assert.equal(l.parcels.size, 0, "no parcel is written");
   assert.equal(l.totalBurned, 0n, "nothing is counted as burned");
+});
+
+test("land: submit refuses an override that burns only BASE (must burn BASE+STEP for a claimed parcel)", async () => {
+  const l = layer();
+  const store = memStore();
+  // Fresh claim by ADDR at BASE.
+  l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR));
+  assert.equal((await l.submit(10, txAt(1), ADDR, IMG, store)).ok, true);
+  // ADDR2 tries to override burning only BASE (5000) — but price is now 5100.
+  l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR2));
+  const res = await l.submit(10, txAt(2), ADDR2, IMG, store);
+  assert.equal(res.ok, false, "override at BASE is rejected — must clear the premium");
+  assert.equal(res.code, "payment_required");
+  // The parcel is untouched.
+  assert.equal(l.parcels.get(10)!.owner, ADDR.toLowerCase());
+  assert.equal(l.parcels.get(10)!.overrides, 0);
 });
 
 // ─── 8. an out-of-range parcelId ─────────────────────────────────────────────────────────────────────────
@@ -228,10 +259,13 @@ test("land: submit refuses an image larger than 256KB after decode", async () =>
 test("land: serialize/deserialize is a byte-identical round trip (BigInt as a decimal string)", async () => {
   const l = layer();
   const store = memStore();
+  // Two fresh claims at BASE (5000 each).
   l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR));
   await l.submit(0, txAt(1), ADDR, IMG, store);
   await l.submit(1, txAt(2), ADDR, IMG, store);
-  l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR2));
+  // Override parcel 0 (overrides=0 → price = BASE + STEP = 5100).
+  const overridePrice = LAND_BASE_PRICE + LAND_OVERRIDE_STEP;
+  l.setChainClient(burnClient(overridePrice, ADDR2));
   await l.submit(0, txAt(3), ADDR2, IMG, store); // override parcel 0
 
   const json1 = l.serialize();
@@ -239,12 +273,16 @@ test("land: serialize/deserialize is a byte-identical round trip (BigInt as a de
   const l2 = LandLayer.deserialize(json1);
   assert.equal(l2.serialize(), json1, "re-serializing the rebuild is byte-identical");
 
+  // totalBurned = 5000 + 5000 + 5100 = 15100
+  const expectedBurned = LAND_BASE_PRICE * 2n + overridePrice;
   assert.equal(l2.totalBurned, l.totalBurned, "the cumulative burn survives");
-  assert.equal(l2.totalBurned, LAND_BASE_PRICE * 3n);
+  assert.equal(l2.totalBurned, expectedBurned);
   assert.equal(l2.parcels.get(0)!.overrides, 1);
   assert.equal(l2.parcels.get(0)!.owner, ADDR2.toLowerCase());
   assert.equal(l2.readout().parcelsSold, 2);
-  assert.equal(l2.readout().totalBurned, wholeMurmur(LAND_BASE_PRICE * 3n));
+  assert.equal(l2.readout().totalBurned, wholeMurmur(expectedBurned));
+  // After override (overrides=1): priceOf(0) = BASE + STEP*(1+1) = 5200
+  assert.equal(wholeMurmur(l2.priceOf(0)), "5200");
 });
 
 // ─── 11. a corrupt blob restarts cold ────────────────────────────────────────────────────────────────────

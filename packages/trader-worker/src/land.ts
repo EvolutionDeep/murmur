@@ -254,11 +254,11 @@ export class LandLayer {
 
   // ── 1. pricing (a pure function of the stored override count) ─────────────────────────────────────────
 
-  /** The price to acquire `parcelId` right now: BASE + STEP × (its current override count). */
+  /** The price to acquire `parcelId` right now: BASE for unclaimed; BASE + STEP × (overrides + 1) for claimed. */
   priceOf(parcelId: number): bigint {
     const p = this.parcels.get(parcelId);
-    const overrides = p ? Math.max(0, p.overrides) : 0;
-    return LAND_BASE_PRICE + LAND_OVERRIDE_STEP * BigInt(overrides);
+    if (!p) return LAND_BASE_PRICE; // unclaimed → the floor
+    return LAND_BASE_PRICE + LAND_OVERRIDE_STEP * BigInt(Math.max(0, p.overrides) + 1);
   }
 
   // ── 2. on-chain burn verification (the ONLY chain touch — a read, never a spend) ──────────────────────
