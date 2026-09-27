@@ -2224,6 +2224,12 @@ body.walk-active .wallets {
 }
 html.walk-active { overflow: hidden !important; height: 100% !important; }
 body.walk-active { overflow: hidden !important; }
+/* hint-select must vanish INSTANTLY (no transition) so it never overlaps the walk-hud
+   which occupies the exact same bottom-centre slot. */
+body.walk-active .hint-select {
+  opacity: 0 !important; visibility: hidden !important;
+  pointer-events: none !important; transition: none !important;
+}
 
 /* Temple drawer internals */
 .drawer.temple { width: clamp(320px, 38vw, 480px); }
