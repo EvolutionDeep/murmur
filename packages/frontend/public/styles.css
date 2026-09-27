@@ -509,7 +509,8 @@ body.ins-open #land-leaderboard { opacity: 0.1; pointer-events: none; }
 .land-lb-list {
   list-style: none; margin: 0; padding: 7px var(--sp-3) 9px;
   display: flex; flex-direction: column; gap: 3px;
-  max-height: 38vh; overflow-y: auto;
+  flex: 1 1 0; min-height: 0;
+  max-height: 38vh; overflow-y: auto; overscroll-behavior: contain;
 }
 #land-leaderboard.is-collapsed .land-lb-list { display: none; }
 
@@ -546,7 +547,13 @@ body.ins-open #land-leaderboard { opacity: 0.1; pointer-events: none; }
   text-align: center; padding: 5px 0;
 }
 @media (max-width: 680px), (max-height: 600px) {
-  #land-leaderboard { width: min(var(--col-r), 48vw); }
+  /* leaderboard joins the in-flow column like the other panels — no more fixed positioning
+     that conflicts with the scrolling layout on phones */
+  #land-leaderboard {
+    position: relative; right: auto; left: auto; top: auto !important; bottom: auto;
+    width: auto; max-width: min(90vw, 460px); max-height: none !important;
+    margin: 0 auto 12px;
+  }
   .land-lb-list { max-height: 30vh; }
 }
 
@@ -2486,7 +2493,8 @@ body.walk-active .hint-select {
          canary pill      bottom safe+64, 44 tall  ⇒ [VH-108, VH-64]
          temple pill      bottom safe+120, 44 tall ⇒ [VH-164, VH-120]
          layer tray       bottom safe+176, ≤88 tall ⇒ [VH-264, VH-176]
-       and body padding-bottom safe+284 keeps the scrolling column's last pixel 20px below the tray. */
+         era pill          bottom safe+274, 28 tall  ⇒ [VH-302, VH-274]
+       and body padding-bottom safe+322 keeps the scrolling column's last pixel 20px below the era pill. */
 @media (max-width: 680px), (max-height: 600px) {
   /* clip (not just hidden) so the off-canvas fixed sheets can never add horizontal scroll width; the
      page still scrolls vertically. Safe-area aware because viewport-fit=cover is set. */
@@ -2506,8 +2514,8 @@ body.walk-active .hint-select {
   /* first leaf clears the (wrapping) pinned topbar + the era HUD + the watchdog banner, and leaves
      a band of artwork above it */
   .panel-econ { margin-top: clamp(120px, 24vh, 260px); }
-  /* last leaf in the column must clear the fixed bottom dock (four rungs, 264px + a 20px margin) */
-  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 284px); }
+  /* last leaf in the column must clear the fixed bottom dock (four rungs + era pill, 302px + a 20px margin) */
+  body { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 322px); }
 
   /* vertical room is no longer scarce — bring back the live settlement feed */
   .econ-feed { display: flex; max-height: 150px; overflow: hidden; }
@@ -2760,10 +2768,10 @@ html[dir="rtl"] #era-hud { direction: rtl; }
   #era-hud { top: calc(var(--topbar-h) + 8px); bottom: auto; max-width: min(92vw, 420px); }
 }
 @media (max-width: 680px), (max-height: 600px) {
-  /* stacked column: the era label becomes a small BOTTOM pill again, parked one rung above the
-     three-rung dock (chron safe+12 / canary safe+64 / tray safe+116..166) with a 10px air gap */
+  /* stacked column: the era label becomes a small BOTTOM pill parked ABOVE the layer-toggles
+     tray (which occupies safe+176 to safe+264). A 10px air gap separates them. */
   #era-hud {
-    top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
+    top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 274px);
     max-width: min(92vw, 420px);
   }
   /* the economy leaf collapses into a compact strip: headline visible, the rest one internal

@@ -590,12 +590,31 @@ export class LandLayer {
   }
 
   // ---- seat the leaf just below the top-right population panel ----
+  // On mobile (≤680px / ≤600px tall) the leaderboard is position:relative in the scrolling
+  // column, so no JS positioning is needed — clear any inline styles and bail.
+  // On desktop, also caps maxHeight so the leaf never overlaps the right-edge dock stack.
   _positionLeaderboard() {
     if (!this._lbEl) return;
+    const isMobile = window.innerWidth <= 680 || window.innerHeight <= 600;
+    if (isMobile) {
+      this._lbEl.style.top = '';
+      this._lbEl.style.maxHeight = '';
+      return;
+    }
     const pop = document.querySelector('.panel-pop');
     if (!pop) return;
     const rect = pop.getBoundingClientRect();
-    if (rect.bottom > 0) this._lbEl.style.top = `${Math.round(rect.bottom + 12)}px`;
+    if (rect.bottom > 0) {
+      const top = Math.round(rect.bottom + 12);
+      this._lbEl.style.top = `${top}px`;
+      // Cap height: never extend into the right-edge dock (walk-btn is the topmost rung)
+      const walkBtn = document.getElementById('walk-btn');
+      const dockTop = walkBtn
+        ? walkBtn.getBoundingClientRect().top
+        : (window.innerHeight - 378);
+      const maxH = Math.max(60, Math.round(dockTop - 12 - top));
+      this._lbEl.style.maxHeight = `${maxH}px`;
+    }
   }
 
   // ---- show the leaf only while the land layer is live ----
