@@ -123,6 +123,7 @@ export function rerenderAll() {
     if (state.arenaOpen && state.arenaData) paintArena();
     if (state.templeOpen && state.templeData) paintTemple();
     if (state.landOpen) paintLand();
+    if (state.landLayer) state.landLayer.refreshLeaderboard();   // task 56: re-localise the land leaderboard labels
     if (state.walkMode) state.walkMode.paintChrome();   // task 48: re-localise walk button tooltip
   } catch { /* never let a re-render break the scene */ }
 }
@@ -148,7 +149,7 @@ export function bindUI() {
     else if (b.dataset.layer === "territory") { state.showTerritory = on; if (on) pollRoster(true); }
     else if (b.dataset.layer === "graves") { state.showGraves = on; if (!on) hideEpitaph(); }
     else if (b.dataset.layer === "cities") state.showCities = on;
-    else if (b.dataset.layer === "land" && state.landLayer) { state.landLayer.enabled = on; state.landLayer.group.visible = on; }
+    else if (b.dataset.layer === "land" && state.landLayer) { state.landLayer.enabled = on; state.landLayer.group.visible = on; state.landLayer.refreshLeaderboard(); }
   });
   const epc = $("epitaph-close"); if (epc) epc.addEventListener("click", hideEpitaph);
   const wb = $("wallets-btn"); if (wb) wb.addEventListener("click", toggleWallets);

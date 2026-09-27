@@ -462,6 +462,94 @@ dd, .fp, .micro dd, .econ-vol, .temp-value, .wallet-bal b, .ar-vs-big, .pb-amt, 
 .dist-legend .sw { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .dist-legend b { margin-left: auto; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
 
+/* --- task 56: land leaderboard (top-right leaf, seated below the population panel) ---
+   Same "leaf on the table" recipe as every other panel: warm vellum at high alpha, a gilt
+   hairline, a 12px corner and the double shadow — NO backdrop-filter (the field repaints every
+   frame; a blur pass would re-composite the whole scene). Ranks wallets by parcels held; the
+   list is filled by landLayer._renderLeaderboard(). `top` is refined in JS to clear .panel-pop. */
+#land-leaderboard {
+  position: fixed; z-index: 9;
+  right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  top: calc(var(--topbar-h) + 44px);   /* JS refines this to sit just below .panel-pop */
+  width: var(--col-r);
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  background-image: var(--leaf-grain);
+  border: var(--edge);
+  border-radius: var(--r-leaf);
+  box-shadow: var(--shadow-leaf);
+  overflow: hidden;
+  transition: background 1.6s linear, border-color 1.6s linear, opacity 0.45s ease;
+}
+/* the base rule sets display:flex, which would beat the UA [hidden]{display:none} — pin it shut */
+#land-leaderboard[hidden] { display: none !important; }
+/* when a fly is selected the whole right flank recedes so the inspector is the focus */
+body.ins-open #land-leaderboard { opacity: 0.1; pointer-events: none; }
+
+.land-lb-head {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; padding: 9px var(--sp-3);
+  border: 0; background-color: transparent; cursor: pointer;
+  font-family: var(--title); font-weight: 600;
+  font-size: var(--fs-title); letter-spacing: var(--ls-title); text-indent: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep);
+  background-image: var(--rule-gold);
+  background-size: 100% 1px; background-position: 0 100%; background-repeat: no-repeat;
+}
+.land-lb-head:focus-visible { box-shadow: var(--ring); }
+.land-lb-orn { font-size: 12px; line-height: 1; color: var(--gold); text-indent: 0; }
+.land-lb-title { flex: 1 1 auto; text-align: left; }
+[dir="rtl"] .land-lb-title { text-align: right; }
+.land-lb-chev {
+  flex: none; font-size: 10px; line-height: 1; color: var(--gold); text-indent: 0;
+  transition: transform var(--t-fast) ease;
+}
+#land-leaderboard.is-collapsed .land-lb-chev { transform: rotate(-90deg); }
+
+.land-lb-list {
+  list-style: none; margin: 0; padding: 7px var(--sp-3) 9px;
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 38vh; overflow-y: auto;
+}
+#land-leaderboard.is-collapsed .land-lb-list { display: none; }
+
+.land-lb-row {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center; gap: 8px;
+  font-size: var(--fs-body); line-height: 1.65;
+}
+.land-lb-rank {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--muted); text-align: center;
+}
+.land-lb-addr {
+  font-family: var(--mono); font-size: 11px; color: var(--gall-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.land-lb-count {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  color: var(--gall); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.land-lb-count i {
+  font-style: normal; font-family: var(--sans); font-weight: 400;
+  font-size: 8.5px; letter-spacing: var(--ls-micro); color: var(--muted);
+  margin-inline-start: 3px;
+}
+/* medals: gold / silver / bronze for the top three land holders */
+.land-lb-row.is-gold   .land-lb-rank { color: var(--gold); }
+.land-lb-row.is-silver .land-lb-rank { color: #8d8d85; }
+.land-lb-row.is-bronze .land-lb-rank { color: #9c6b3f; }
+.land-lb-row.is-gold   .land-lb-addr { color: var(--gold-deep); font-weight: 600; }
+
+.land-lb-empty {
+  font-size: var(--fs-body); font-style: italic; color: var(--muted);
+  text-align: center; padding: 5px 0;
+}
+@media (max-width: 680px), (max-height: 600px) {
+  #land-leaderboard { width: min(var(--col-r), 48vw); }
+  .land-lb-list { max-height: 30vh; }
+}
+
 /* ============ fly inspector ============
    A leaf like any other, but it floats above the right flank (z 12 > the panels' 10) and slides in
    14px from the edge. When it is on stage the right-edge control stack bows out (see the group

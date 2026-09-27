@@ -7849,6 +7849,9 @@ const enLand = {
   "land.compressing": "Compressing\u2026",
   "land.txWaiting": "Waiting for confirmation\u2026",
   "land.error": "Error: {msg}",
+  "land.leaderboard": "Land Leaders",
+  "land.leaderboardEmpty": "No claims yet",
+  "land.parcels": "parcels",
 };
 const zhLand = {
   "land.title": "\u571f\u5730\u8d2d\u4e70",
@@ -7882,6 +7885,9 @@ const zhLand = {
   "land.compressing": "\u538b\u7f29\u4e2d\u2026",
   "land.txWaiting": "\u7b49\u5f85\u786e\u8ba4\u2026",
   "land.error": "\u9519\u8bef\uff1a{msg}",
+  "land.leaderboard": "\u571f\u5730\u6392\u884c",
+  "land.leaderboardEmpty": "\u6682\u65e0\u8ba4\u9886",
+  "land.parcels": "\u5730\u5757",
 };
 const frLand = {
   "land.title": "Achat de terrain",
@@ -7915,6 +7921,9 @@ const frLand = {
   "land.compressing": "Compression\u2026",
   "land.txWaiting": "En attente de confirmation\u2026",
   "land.error": "Erreur : {msg}",
+  "land.leaderboard": "Classement des terres",
+  "land.leaderboardEmpty": "Aucune revendication",
+  "land.parcels": "parcelles",
 };
 const esLand = {
   "land.title": "Compra de terreno",
@@ -7948,6 +7957,9 @@ const esLand = {
   "land.compressing": "Comprimiendo\u2026",
   "land.txWaiting": "Esperando confirmaci\u00f3n\u2026",
   "land.error": "Error: {msg}",
+  "land.leaderboard": "L\u00edderes de terreno",
+  "land.leaderboardEmpty": "Sin reclamos a\u00fan",
+  "land.parcels": "parcelas",
 };
 const jaLand = {
   "land.title": "\u571f\u5730\u8cfc\u5165",
@@ -7981,6 +7993,9 @@ const jaLand = {
   "land.compressing": "\u5727\u7e2e\u4e2d\u2026",
   "land.txWaiting": "\u78ba\u8a8d\u5f85\u3061\u2026",
   "land.error": "\u30a8\u30e9\u30fc: {msg}",
+  "land.leaderboard": "\u571f\u5730\u30e9\u30f3\u30ad\u30f3\u30b0",
+  "land.leaderboardEmpty": "\u307e\u3060\u53d6\u5f97\u306a\u3057",
+  "land.parcels": "\u533a\u753b",
 };
 const koLand = {
   "land.title": "\ud1a0\uc9c0 \uad6c\uc785",
@@ -8014,6 +8029,9 @@ const koLand = {
   "land.compressing": "\uc555\ucd95 \uc911\u2026",
   "land.txWaiting": "\ud655\uc778 \ub300\uae30 \uc911\u2026",
   "land.error": "\uc624\ub958: {msg}",
+  "land.leaderboard": "\ud1a0\uc9c0 \uc21c\uc704",
+  "land.leaderboardEmpty": "\uc544\uc9c1 \uccad\uad6c \uc5c6\uc74c",
+  "land.parcels": "\uad6c\uc5ed",
 };
 const arLand = {
   "land.title": "\u0634\u0631\u0627\u0621 \u0627\u0644\u0623\u0631\u0636",
@@ -8047,6 +8065,9 @@ const arLand = {
   "land.compressing": "\u062c\u0627\u0631\u064a \u0627\u0644\u0636\u063a\u0637\u2026",
   "land.txWaiting": "\u0628\u0627\u0646\u062a\u0638\u0627\u0631 \u0627\u0644\u062a\u0623\u0643\u064a\u062f\u2026",
   "land.error": "\u062e\u0637\u0623: {msg}",
+  "land.leaderboard": "\u0642\u0627\u062f\u0629 \u0627\u0644\u0623\u0631\u0627\u0636\u064a",
+  "land.leaderboardEmpty": "\u0644\u0627 \u0645\u0637\u0627\u0644\u0628\u0627\u062a \u0628\u0639\u062f",
+  "land.parcels": "\u0642\u0637\u0639",
 };
 Object.assign(en, enLand);
 Object.assign(zh, zhLand);

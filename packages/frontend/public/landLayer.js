@@ -4,7 +4,8 @@
 // Raycast hover highlights; click opens the land purchase drawer.
 // Performance target: <2ms per frame (instanced geometry, no per-frame allocation).
 
-import { state, API } from './shared.js';
+import { state, API, shortHash } from './shared.js';
+import { t as T } from './i18n.js?v=98';
 import * as THREE from 'three';
 
 // ---- constants ----
@@ -56,6 +57,7 @@ export class LandLayer {
 
     this._build();
     this._bindEvents();
+    this._initLeaderboard();
 
     // add to scene
     if (this.ts && this.ts.scene) {
@@ -260,6 +262,9 @@ export class LandLayer {
       this._gridLines.material.dispose();
     }
     this._buildGridLines();
+
+    // task 56: refresh the on-canvas wallet-parcel leaderboard whenever data changes
+    this._renderLeaderboard();
   }
 
   // ---- create a terrain-conforming subdivided plane geometry ----
@@ -508,6 +513,105 @@ export class LandLayer {
     this.refresh();
   }
 
+  // ============ task 56: on-canvas land leaderboard (wallet → parcel count) ============
+  // A pure-DOM HUD leaf floated over the canvas; it ranks wallets by how many parcels
+  // they own. Zero 3D cost, rebuilt only when GET /land data changes.
+
+  // ---- wire up the leaderboard shell (collapse toggle + resize reposition) ----
+  _initLeaderboard() {
+    this._lbEl = document.getElementById('land-leaderboard');
+    this._onResize = null;
+    if (!this._lbEl) return;
+
+    // small screens start collapsed so the leaf never crowds the field
+    try {
+      if (window.matchMedia && window.matchMedia('(max-width: 680px), (max-height: 600px)').matches) {
+        this._lbEl.classList.add('is-collapsed');
+        const h0 = this._lbEl.querySelector('#land-lb-head');
+        if (h0) h0.setAttribute('aria-expanded', 'false');
+      }
+    } catch (e) { /* matchMedia unsupported — stay expanded */ }
+
+    const head = this._lbEl.querySelector('#land-lb-head');
+    if (head) {
+      head.addEventListener('click', () => {
+        const collapsed = this._lbEl.classList.toggle('is-collapsed');
+        head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      });
+    }
+
+    this._onResize = () => this._positionLeaderboard();
+    window.addEventListener('resize', this._onResize);
+  }
+
+  // ---- aggregate parcels by owner and paint the top-10 list ----
+  _renderLeaderboard() {
+    if (!this._lbEl) this._lbEl = document.getElementById('land-leaderboard');
+    if (!this._lbEl) return;
+    const list = this._lbEl.querySelector('#land-lb-list');
+    if (!list) return;
+
+    // owner(lowercase) → { addr, n, first } ; `first` = index of first parcel bought (tie-break)
+    const byOwner = new Map();
+    const parcels = this.parcels || [];
+    for (let i = 0; i < parcels.length; i++) {
+      const p = parcels[i];
+      if (!p || !p.owner) continue;
+      const key = String(p.owner).toLowerCase();
+      let e = byOwner.get(key);
+      if (!e) { e = { addr: String(p.owner), n: 0, first: i }; byOwner.set(key, e); }
+      e.n++;
+    }
+
+    const rows = [...byOwner.values()]
+      .sort((a, b) => (b.n - a.n) || (a.first - b.first))
+      .slice(0, 10);
+
+    const unit = T('land.parcels');
+    if (rows.length === 0) {
+      list.innerHTML = `<li class="land-lb-empty">${T('land.leaderboardEmpty')}</li>`;
+    } else {
+      let html = '';
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const rank = i + 1;
+        const medal = rank === 1 ? ' is-gold' : rank === 2 ? ' is-silver' : rank === 3 ? ' is-bronze' : '';
+        const short = shortHash(r.addr);
+        html += `<li class="land-lb-row${medal}">`
+          + `<span class="land-lb-rank">${rank}</span>`
+          + `<span class="land-lb-addr" title="${r.addr}">${short}</span>`
+          + `<span class="land-lb-count">${r.n}<i>${unit}</i></span>`
+          + `</li>`;
+      }
+      list.innerHTML = html;
+    }
+
+    this._syncLeaderboardVisibility();
+  }
+
+  // ---- seat the leaf just below the top-right population panel ----
+  _positionLeaderboard() {
+    if (!this._lbEl) return;
+    const pop = document.querySelector('.panel-pop');
+    if (!pop) return;
+    const rect = pop.getBoundingClientRect();
+    if (rect.bottom > 0) this._lbEl.style.top = `${Math.round(rect.bottom + 12)}px`;
+  }
+
+  // ---- show the leaf only while the land layer is live ----
+  _syncLeaderboardVisibility() {
+    if (!this._lbEl) return;
+    const show = !!(this.enabled && this.group && this.group.visible && this.data);
+    this._lbEl.hidden = !show;
+    if (show) this._positionLeaderboard();
+  }
+
+  // ---- public: re-sync the leaderboard after the layer toggle flips (called from main.js) ----
+  refreshLeaderboard() {
+    if (this.data) this._renderLeaderboard();
+    else this._syncLeaderboardVisibility();
+  }
+
   // ---- dispose ----
   dispose() {
     const cvEl = this.ts && this.ts.renderer && this.ts.renderer.domElement;
@@ -516,6 +620,7 @@ export class LandLayer {
       if (this._onPointerMove) cvEl.removeEventListener('pointermove', this._onPointerMove);
       if (this._onClick) cvEl.removeEventListener('click', this._onClick);
     }
+    if (this._onResize) window.removeEventListener('resize', this._onResize);
     if (this.ts && this.ts.scene) this.ts.scene.remove(this.group);
     this._planeGeo.dispose();
     if (this._hoverGeo) this._hoverGeo.dispose();

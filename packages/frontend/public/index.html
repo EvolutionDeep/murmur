@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=106" />
+  <link rel="stylesheet" href="./styles.css?v=107" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -127,6 +127,18 @@
     <button class="brain-btn lineage-btn" id="lineage-btn" type="button" data-i18n="pop.lineageBtn" data-i18n-title="pop.lineageTitle" title="The connectome breeding market: every brain's genome + its on-chain ancestry — explore the family tree and verify any individual trustlessly in your browser">breeding market →</button>
     <button class="brain-btn laureate-btn" id="laureate-btn" type="button" data-i18n="pop.laureateBtn" data-i18n-title="pop.laureateTitle" title="The Laureate — the swarm's own poet. Each era crowns one living fly, and it decodes its real neural activity plus the on-chain reality into a four-line verse. No LLM wrote it: recompute the receipt and replay the grammar in your own browser">the Laureate →</button>
   </section>
+
+  <!-- ============ task 56: land leaderboard (㉟ LAND) — a right-edge leaf, seated below the population
+         panel, ranking wallets by parcels held. Filled by landLayer._renderLeaderboard(); shown/hidden
+         with the land layer toggle. Collapsible via its header. ============ -->
+  <div id="land-leaderboard" hidden>
+    <button type="button" class="land-lb-head" id="land-lb-head" aria-expanded="true" aria-controls="land-lb-list">
+      <span class="land-lb-orn" aria-hidden="true">▦</span>
+      <span class="land-lb-title" data-i18n="land.leaderboard">Land Leaders</span>
+      <span class="land-lb-chev" aria-hidden="true">▾</span>
+    </button>
+    <ol class="land-lb-list" id="land-lb-list"></ol>
+  </div>
 
   <!-- ㉙ THE TEMPLE — standalone golden trigger, docked above canary. Opens the burn-to-intervene drawer. -->
   <button class="temple-btn" id="temple-btn" type="button" data-i18n-aria="temple.aria" data-i18n-title="temple.title" aria-label="The Temple" title="Burn MURMUR to become myth — intervene in the swarm's fate"><span class="temple-orn" aria-hidden="true">⛩</span> <span data-i18n="temple.btn">The Temple</span></button>
@@ -648,6 +660,6 @@
        bottom-right stack is chron-btn → canary-btn → temple-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=140" type="module"></script>
+  <script src="./main.js?v=141" type="module"></script>
 </body>
 </html>
