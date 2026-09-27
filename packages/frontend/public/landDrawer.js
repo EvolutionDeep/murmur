@@ -15,6 +15,18 @@ const TRANSFER_SELECTOR = "0xa9059cbb";
 const IMG_SIZE = 512;
 const IMG_QUALITY = 0.8;
 
+// ---- NSFW filter (task: land-art porn filter -> deep mosaic) ----
+// Client-side detection + client-side masking: the image stored on the backend is
+// ALREADY the masked copy, so every visitor sees the safe version with no per-visitor
+// model run. Model weights are self-hosted under /assets/nsfw/ (binary assets must not
+// depend on a third-party CDN at runtime); only the JS libs resolve via the importmap.
+// KNOWN GAP: a caller hitting POST /land directly bypasses this filter entirely.
+const NSFW_THRESHOLD = 0.5;      // "obviously explicit": Porn>=0.5 or Hentai>=0.5
+const NSFW_MODEL_URL = "/assets/nsfw/model.json";
+const MOSAIC_GRID = 16;          // downscale target -> heavy pixel blocks
+let _nsfwModel = null;           // cached across uploads (lazy-loaded once)
+let _nsfwLoadFailed = false;     // don't retry a hard failure within the session
+
 // ---- helpers ----
 const wordAddr = (a) => String(a).replace(/^0x/i, "").toLowerCase().padStart(64, "0");
 const wordUint = (n) => BigInt(n).toString(16).padStart(64, "0");
@@ -175,6 +187,77 @@ export function paintLandDrawer() {
 // ---- image upload + compression ----
 let _compressedBase64 = null;
 
+// ---- NSFW detection + deep-mosaic (client-side, lazy-loaded) ----
+/**
+ * Lazily import nsfwjs (via importmap; it pulls tfjs itself) and load the
+ * self-hosted model. Resolves to the cached model, or null if loading failed —
+ * in which case the caller MUST NOT block the upload.
+ */
+async function getNsfwModel() {
+  if (_nsfwModel) return _nsfwModel;
+  if (_nsfwLoadFailed) return null;
+  try {
+    const nsfwjs = await import("nsfwjs");
+    _nsfwModel = await nsfwjs.load(NSFW_MODEL_URL);
+    return _nsfwModel;
+  } catch (e) {
+    _nsfwLoadFailed = true;
+    console.warn("[nsfw] model load failed - upload not blocked:", (e && e.message) || e);
+    return null;
+  }
+}
+
+/**
+ * Classify a canvas. Returns a { Porn, Hentai, Neutral, Sexy, Drawing } probability
+ * map, or null when the model/inference is unavailable (caller must not block on null).
+ */
+async function classifyNsfw(canvas) {
+  const model = await getNsfwModel();
+  if (!model) return null;
+  try {
+    const preds = await model.classify(canvas);
+    const out = {};
+    for (const p of preds || []) out[p.className] = p.probability;
+    return out;
+  } catch (e) {
+    console.warn("[nsfw] classify failed - upload not blocked:", (e && e.message) || e);
+    return null;
+  }
+}
+
+/**
+ * Deep mosaic: downscale to a tiny grid, then upscale with smoothing OFF so the
+ * result is heavy pixel blocks; veil it and stamp a centred "blocked" mark (pure
+ * canvas, no DOM). Returns a NEW canvas; the source is left untouched.
+ */
+function applyDeepMosaic(src) {
+  const w = src.width, h = src.height;
+  const small = document.createElement("canvas");
+  small.width = MOSAIC_GRID; small.height = MOSAIC_GRID;
+  const sctx = small.getContext("2d");
+  sctx.drawImage(src, 0, 0, MOSAIC_GRID, MOSAIC_GRID);
+
+  const out = document.createElement("canvas");
+  out.width = w; out.height = h;
+  const octx = out.getContext("2d");
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(small, 0, 0, w, h);
+
+  // translucent veil
+  octx.fillStyle = "rgba(38,36,32,0.42)";
+  octx.fillRect(0, 0, w, h);
+
+  // centred "no" mark: ring + diagonal slash
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) * 0.14;
+  octx.lineWidth = Math.max(4, r * 0.22);
+  octx.strokeStyle = "rgba(242,238,230,0.9)";
+  octx.beginPath(); octx.arc(cx, cy, r, 0, Math.PI * 2); octx.stroke();
+  const d = r * Math.SQRT1_2;
+  octx.beginPath(); octx.moveTo(cx - d, cy + d); octx.lineTo(cx + d, cy - d); octx.stroke();
+
+  return out;
+}
+
 function bindUpload() {
   const dropzone = $("ld-dropzone");
   const fileInput = $("ld-file");
@@ -213,7 +296,22 @@ async function processImage(file) {
     ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, IMG_SIZE, IMG_SIZE);
     bitmap.close();
 
-    const dataUrl = canvas.toDataURL("image/jpeg", IMG_QUALITY);
+    // ---- NSFW filter: classify the compressed 512x512, deep-mosaic if explicit ----
+    setMsg(T("land.masking"));
+    const scores = await classifyNsfw(canvas);
+    let finalCanvas = canvas;
+    let masked = false;
+    const filterDown = scores === null;
+    if (scores) {
+      const porn = scores.Porn || 0;
+      const hentai = scores.Hentai || 0;
+      if (porn >= NSFW_THRESHOLD || hentai >= NSFW_THRESHOLD) {
+        finalCanvas = applyDeepMosaic(canvas);
+        masked = true;
+      }
+    }
+
+    const dataUrl = finalCanvas.toDataURL("image/jpeg", IMG_QUALITY);
     // strip the data:image/jpeg;base64, prefix for the API
     _compressedBase64 = dataUrl.split(",")[1] || dataUrl;
 
@@ -224,7 +322,9 @@ async function processImage(file) {
     if (thumb) thumb.src = dataUrl;
     if (thumbWrap) thumbWrap.style.display = "flex";
     if (dropzone) dropzone.style.display = "none";
-    setMsg("");
+    if (masked) setMsg(T("land.masked"), "warn");
+    else if (filterDown) setMsg(T("land.filterUnavailable"), "warn");
+    else setMsg("");
   } catch (e) {
     setMsg(T("land.error", { msg: e.message || "image" }), "bad");
     _compressedBase64 = null;

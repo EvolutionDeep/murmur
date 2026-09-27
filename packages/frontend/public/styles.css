@@ -2997,6 +2997,7 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
 }
 .ld-status.ok { color: #4caf50; }
 .ld-status.bad { color: var(--rust); }
+.ld-status.warn { color: #a8791f; }
 
 /* mobile override */
 @media (max-width: 820px) {

@@ -110,3 +110,9 @@
 
 /landDrawer.js
   Cache-Control: no-cache, must-revalidate
+
+# NSFW filter model weights (self-hosted binary, loaded by landDrawer.js via nsfwjs).
+# The 2.6MB shard + 129KB manifest are immutable content — cache aggressively so the
+# lazy load on first upload is cheap for returning visitors. Rename the dir to bust.
+/assets/nsfw/*
+  Cache-Control: public, max-age=31536000, immutable

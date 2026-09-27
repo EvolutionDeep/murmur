@@ -8069,6 +8069,43 @@ const arLand = {
   "land.leaderboardEmpty": "\u0644\u0627 \u0645\u0637\u0627\u0644\u0628\u0627\u062a \u0628\u0639\u062f",
   "land.parcels": "\u0642\u0637\u0639",
 };
+// ---- NSFW mask keys (task: land-art porn filter → deep mosaic) — appended, 7-language symmetric ----
+Object.assign(enLand, {
+  "land.masking": "Checking content\u2026",
+  "land.masked": "Content masked by community standards",
+  "land.filterUnavailable": "Content filter unavailable \u2014 upload not blocked",
+});
+Object.assign(zhLand, {
+  "land.masking": "\u68c0\u6d4b\u4e2d\u2026",
+  "land.masked": "\u5185\u5bb9\u5df2\u6309\u793e\u533a\u6807\u51c6\u6253\u7801",
+  "land.filterUnavailable": "\u5185\u5bb9\u68c0\u6d4b\u4e0d\u53ef\u7528 \u2014 \u4e0a\u4f20\u672a\u88ab\u963b\u6b62",
+});
+Object.assign(frLand, {
+  "land.masking": "V\u00e9rification du contenu\u2026",
+  "land.masked": "Contenu masqu\u00e9 selon les normes de la communaut\u00e9",
+  "land.filterUnavailable": "Filtre de contenu indisponible \u2014 envoi non bloqu\u00e9",
+});
+Object.assign(esLand, {
+  "land.masking": "Comprobando contenido\u2026",
+  "land.masked": "Contenido ocultado por las normas de la comunidad",
+  "land.filterUnavailable": "Filtro de contenido no disponible \u2014 subida no bloqueada",
+});
+Object.assign(jaLand, {
+  "land.masking": "\u30b3\u30f3\u30c6\u30f3\u30c4\u3092\u78ba\u8a8d\u4e2d\u2026",
+  "land.masked": "\u30b3\u30df\u30e5\u30cb\u30c6\u30a3\u57fa\u6e96\u306b\u3088\u308a\u30b3\u30f3\u30c6\u30f3\u30c4\u3092\u307c\u304b\u3057\u51e6\u7406\u3057\u307e\u3057\u305f",
+  "land.filterUnavailable": "\u30b3\u30f3\u30c6\u30f3\u30c4\u30d5\u30a3\u30eb\u30bf\u30fc\u3092\u5229\u7528\u3067\u304d\u307e\u305b\u3093 \u2014 \u30a2\u30c3\u30d7\u30ed\u30fc\u30c9\u306f\u30d6\u30ed\u30c3\u30af\u3055\u308c\u3066\u3044\u307e\u305b\u3093",
+});
+Object.assign(koLand, {
+  "land.masking": "\ucf58\ud150\uce20 \ud655\uc778 \uc911\u2026",
+  "land.masked": "\ucee4\ubba4\ub2c8\ud2f0 \uae30\uc900\uc5d0 \ub530\ub77c \ucf58\ud150\uce20\uac00 \uac00\ub824\uc84c\uc2b5\ub2c8\ub2e4",
+  "land.filterUnavailable": "\ucf58\ud150\uce20 \ud544\ud130\ub97c \uc0ac\uc6a9\ud560 \uc218 \uc5c6\uc74c \u2014 \uc5c5\ub85c\ub4dc\uac00 \ucc28\ub2e8\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4",
+});
+Object.assign(arLand, {
+  "land.masking": "\u062c\u0627\u0631\u064d \u0641\u062d\u0635 \u0627\u0644\u0645\u062d\u062a\u0648\u0649\u2026",
+  "land.masked": "\u062a\u0645 \u0625\u062e\u0641\u0627\u0621 \u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0648\u0641\u0642\u064b\u0627 \u0644\u0645\u0639\u0627\u064a\u064a\u0631 \u0627\u0644\u0645\u062c\u062a\u0645\u0639",
+  "land.filterUnavailable": "\u0639\u0627\u0645\u0644 \u062a\u0635\u0641\u064a\u0629 \u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u063a\u064a\u0631 \u0645\u062a\u0627\u062d \u2014 \u0644\u0645 \u064a\u062a\u0645 \u062d\u0638\u0631 \u0627\u0644\u0631\u0641\u0639",
+});
+
 Object.assign(en, enLand);
 Object.assign(zh, zhLand);
 Object.assign(fr, frLand);
