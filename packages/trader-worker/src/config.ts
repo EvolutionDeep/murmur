@@ -316,7 +316,6 @@ export interface Env {
   //     Shipped ENABLED (the ㉔-㉙ default-ON 口径): LAND_ENABLED=false ⇒ state.ts never constructs the layer ⇒
   //     the two land chronicle kinds can never speak (byte-for-byte rollback).
   LAND_ENABLED?: string;                // "true"/"false" (default TRUE — the grid is open; flip off by hand)
-  LAND_MODERATE_KEY?: string;           // SECRET (optional): when set, POST /land-moderate requires X-Moderate-Key == this value. Used for one-time NSFW content audit; remove after audit completes.
 
   // --- ① NEURAL FEEDBACK BUS: let the swarm FEEL the age it lives in (see src/socialStimulus.ts) ---
   //     The historian already reckons a civilizational fortune (civLevel 0..100) and names its ages (golden /

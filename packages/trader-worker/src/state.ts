@@ -2704,7 +2704,6 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/land") return await this.getLand();
       if (req.method === "POST" && path === "/land") return await this.postLand(req);
       if (req.method === "GET" && path.startsWith("/land-img/")) return await this.getLandImage(path.split("/")[2]);
-      if (req.method === "POST" && path === "/land-moderate") return await this.postLandModerate(req);
       if (req.method === "POST" && path === "/breed") return this.adminGate(req) ?? (await this.postBreed(req));
       if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
@@ -5067,51 +5066,6 @@ export class FlyStateDO {
         "Access-Control-Allow-Origin": "*",
       },
     });
-  }
-
-  /**
-   * ㉚ POST /land-moderate — TEMPORARY content-safety endpoint for the one-time NSFW audit.
-   * Replaces a parcel's stored image WITHOUT burn verification. Gated by the LAND_MODERATE_KEY secret
-   * (X-Moderate-Key header must match). Remove this endpoint after the audit is complete.
-   */
-  private async postLandModerate(req: Request): Promise<Response> {
-    const key = (this.env.LAND_MODERATE_KEY ?? "").trim();
-    if (!key) return jsonError("forbidden", "moderation endpoint not configured", 403);
-    const provided = req.headers.get("X-Moderate-Key") ?? "";
-    if (provided !== key) return jsonError("forbidden", "invalid moderation key", 403);
-
-    const land = await this.ensureLand();
-    if (!land) return jsonError("forbidden", "the land grid is not enabled", 403);
-
-    let body: { parcelId?: unknown; imageBase64?: unknown };
-    try {
-      body = (await req.json()) as typeof body;
-    } catch {
-      return jsonError("bad_request", "body must be JSON", 400);
-    }
-    const parcelId = Number(body?.parcelId);
-    if (!Number.isInteger(parcelId) || parcelId < 0 || parcelId >= LAND_PARCEL_COUNT) {
-      return jsonError("bad_request", `parcelId must be an integer in [0, ${LAND_PARCEL_COUNT})`, 400);
-    }
-    const p = land.parcels.get(parcelId);
-    if (!p) return jsonError("not_found", "parcel not claimed", 404);
-
-    const imageBase64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
-    const cleaned = imageBase64.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
-    if (!cleaned) return jsonError("bad_request", "missing imageBase64", 400);
-    if (cleaned.length > Math.ceil(256 * 1024 / 3) * 4 + 4) {
-      return jsonError("bad_request", "image exceeds 256KB", 400);
-    }
-
-    // Overwrite the image in the DO store (no burn, no dedup, no ownership change)
-    const store = this.landImageStore();
-    try {
-      await store.put(p.imageKey, cleaned);
-    } catch (e) {
-      return jsonError("internal_error", `image store failed: ${(e as Error).message}`, 500);
-    }
-
-    return json({ ok: true, parcelId, message: "image replaced by moderation" });
   }
 
   /**
