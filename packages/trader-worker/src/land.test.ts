@@ -177,6 +177,45 @@ test("land: submit seizes an existing parcel — overrides++ and the owner chang
   assert.equal(ev[1].price, "5100", "the event records the override price paid");
 });
 
+// ─── 5b. override replaces the image in the store ────────────────────────────────────────────────────────
+
+test("land: override replaces the stored image, increments overrides, changes owner", async () => {
+  const l = layer();
+  const store = memStore();
+  // Fresh claim by ADDR with IMG_A
+  const IMG_A = landBytesToBase64(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0xAA, 0xAA, 0xAA, 0xAA]));
+  const IMG_B = landBytesToBase64(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0xBB, 0xBB, 0xBB, 0xBB]));
+  l.setChainClient(burnClient(LAND_BASE_PRICE, ADDR));
+  assert.equal((await l.submit(42, txAt(10), ADDR, IMG_A, store)).ok, true);
+  assert.equal(store.map.get("do:42"), IMG_A, "initial image stored");
+  assert.equal(l.parcels.get(42)!.owner, ADDR.toLowerCase());
+  assert.equal(l.parcels.get(42)!.overrides, 0);
+
+  // Override by ADDR2 with a DIFFERENT image (IMG_B) at the override price (5100)
+  const overridePrice = LAND_BASE_PRICE + LAND_OVERRIDE_STEP;
+  l.setChainClient(burnClient(overridePrice, ADDR2));
+  const res = await l.submit(42, txAt(11), ADDR2, IMG_B, store);
+  assert.equal(res.ok, true, "override succeeds");
+
+  // Image is REPLACED
+  assert.equal(store.map.get("do:42"), IMG_B, "the store now holds the new image");
+  assert.notEqual(store.map.get("do:42"), IMG_A, "the old image is gone");
+  // Owner changed
+  assert.equal(l.parcels.get(42)!.owner, ADDR2.toLowerCase(), "owner is the overrider");
+  // Overrides incremented
+  assert.equal(l.parcels.get(42)!.overrides, 1, "overrides ratcheted to 1");
+  // totalBurned accumulates both
+  assert.equal(l.totalBurned, LAND_BASE_PRICE + overridePrice);
+  // Event is LAND_OVERRIDDEN
+  const ev = l.drainEvents();
+  assert.equal(ev.length, 2);
+  assert.equal(ev[1].kind, "LAND_OVERRIDDEN");
+  assert.equal(ev[1].parcel, 42);
+  assert.equal(ev[1].owner, ADDR2.toLowerCase());
+  assert.equal(ev[1].n, 1);
+  assert.equal(ev[1].price, "5100");
+});
+
 // ─── 6. the persisted dedup ring ─────────────────────────────────────────────────────────────────────────
 
 test("land: the dedup ring honours a burn tx hash once, ever", async () => {

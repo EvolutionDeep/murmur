@@ -103,17 +103,26 @@ export async function renderLandDrawer() {
   let parcel = null;
   let landMeta = null;
 
-  // use cached land data from the layer if available
-  const layer = state.landLayer;
-  if (layer && layer.data) {
-    landMeta = layer.data;
-    parcel = (layer.parcels || []).find(p => p.id === pid) || null;
+  // ALWAYS fetch fresh data so the price reflects the latest override count
+  // (cached layer data may be stale after someone else just overrode the parcel).
+  try {
+    landMeta = await getJSON("/land", 8000);
+  } catch { /* fall through to cache */ }
+
+  // Fall back to the cached layer only when the network fetch failed
+  if (!landMeta) {
+    const layer = state.landLayer;
+    if (layer && layer.data) {
+      landMeta = layer.data;
+    }
   }
 
-  if (!landMeta) {
-    try {
-      landMeta = await getJSON("/land", 8000);
-    } catch { /* */ }
+  // Extract the parcel from whichever source provided landMeta
+  if (landMeta && landMeta.parcels) {
+    parcel = landMeta.parcels.find(p => p.id === pid) || null;
+  } else {
+    const layer = state.landLayer;
+    if (layer) parcel = (layer.parcels || []).find(p => p.id === pid) || null;
   }
 
   if (!state.landOpen) return;
@@ -348,7 +357,8 @@ export async function landBuy(btn) {
   const setMsg = landMsgFn();
 
   if (!_compressedBase64) {
-    setMsg(T("land.selectImage"), "bad");
+    const isOvr = !!(state.landInfo && state.landInfo.isOverride);
+    setMsg(isOvr ? T("land.selectImage") + " (override requires a new image)" : T("land.selectImage"), "bad");
     return;
   }
   if (!window.ethereum) {
