@@ -1563,14 +1563,24 @@ export class Chronicler {
       if (s.cronSeen - s.genStartCron >= GEN_CRONS) {
         s.genStartCron = s.cronSeen;
         s.generation += 1;
-        // a bounded, deterministic step taken on the swarm's real condition this generation
+        // one-time escape from the historical absorb state: the old formula's standing gini penalty
+        // drove civLevel to the 0 floor, where Math.max(0,...) + the civDark edge-lock made it a
+        // one-way sink. Re-seed a running-but-bottomed historian so the recalibrated step can climb.
+        // Never fires again once civLevel is above 0 (so it cannot disturb a healthy chronicle).
+        if (s.civLevel === 0 && s.generation > 10) s.civLevel = 30;
+        // a bounded, deterministic step taken on the swarm's real condition this generation.
+        // Rebalanced so a normal live swarm ACCUMULATES instead of bleeding: volume only rewards
+        // growth (flat is neutral, not a penalty), gini only punishes the extreme tail, and a
+        // small positive floor keeps a trading swarm slowly rising through quiet generations.
         let d = 0;
-        if (s.prevCivVolume > 0) d += ctx.volumeUsdc > s.prevCivVolume ? 3 : -2;
-        d += ctx.gini <= 0.4 ? 2 : (ctx.gini >= 0.6 ? -3 : 0);
-        if (ctx.size > 0 && ctx.size >= s.maxSize) d += 1;
+        if (s.prevCivVolume > 0) d += ctx.volumeUsdc > s.prevCivVolume ? 3 : 0;
+        d += ctx.gini <= 0.5 ? 2 : (ctx.gini >= 0.8 ? -2 : 0);
+        if (ctx.size > 0 && ctx.size > s.maxSize) d += 1;        // only a NEW all-time high scores
+        if (ctx.volumeUsdc > 0) d += 1;                          // baseline: alive and trading
         if (ctx.social?.topFeud) d -= 1;
         if (ctx.market?.run) d -= 4;
         if (s.eraShock) d -= 5;                                // an age of famine/plague/war dims the spirit
+        s.maxSize = Math.max(s.maxSize, ctx.size);              // track the record AFTER scoring it
         const wasDark = s.civDark, wasGolden = s.civGolden;
         s.civLevel = Math.max(0, Math.min(CIV_MAX, s.civLevel + d));
         s.prevCivVolume = ctx.volumeUsdc;
