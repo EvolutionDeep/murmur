@@ -27,6 +27,9 @@ import {
   encodeStimulus,
   readRawDrives,
   computeBands,
+  buildFromFlyWire,
+  buildFromGenomeFlyWire,
+  FLYWIRE_DEFAULTS,
   type MarketPulse,
   type StimulusEvent,
   type SensoryInput,
@@ -39,6 +42,7 @@ import {
   type NeuromodState,
   type ConnectomeOptions,
   type Genome,
+  type FlyWireSubgraph,
   genomeToConnectomeOptions,
 } from "@fly/fly-brain";
 import type { RuntimeConfig } from "./config.js";
@@ -177,27 +181,26 @@ export class Population {
   /** Connectome sizing applied to every FlyBrain (spawn / restore) */
   private brainOpts: ConnectomeOptions;
   private tickIndex = 0;
-  /** Slow EWMA of the market temperature — a "vitality" the whole population carries. */
+  /** Slow EWMA of the market temperature — a “vitality” the whole population carries. */
   private vitality: number;
   private lastSnapshot: PopulationSnapshot | null = null;
+  /** FlyWire subgraph (pre-loaded by the caller when FLYWIRE_TOPOLOGY is on; null = legacy PRNG path). */
+  private flywireSubgraph: FlyWireSubgraph | null;
 
   constructor(
     cfg: RuntimeConfig,
     restored?: { flies: FlyVitals[]; brains: string[]; tickIndex: number; vitality: number },
+    flywireSubgraph?: FlyWireSubgraph | null,
   ) {
     this.cfg = cfg;
     this.brainOpts = cfg.brainOpts ?? {};
     this.vitality = restored?.vitality ?? 0.5;
+    this.flywireSubgraph = flywireSubgraph ?? null;
     if (restored) {
       for (let i = 0; i < restored.flies.length; i++) {
         const vitals = restored.flies[i];
         // A hatched offspring rebuilds from its OWN genome; a genesis fly from (seed, shared brainOpts).
-        const opts = vitals.genome
-          ? genomeToConnectomeOptions(vitals.genome)
-          : { seed: vitals.seed, ...this.brainOpts };
-        const brain = restored.brains[i]
-          ? FlyBrain.deserialize(restored.brains[i], opts)
-          : new FlyBrain(opts);
+        const brain = this.buildBrainForVitals(vitals, restored.brains[i]);
         this.flies.push({ id: vitals.id, brain, decoder: this.makeDecoder(), vitals });
       }
       this.tickIndex = restored.tickIndex;
@@ -222,11 +225,32 @@ export class Population {
   }
 
   private spawnFly(seed: number, id: number): FlyInstance {
-    const brain = new FlyBrain({ seed, ...this.brainOpts });
+    const brain = this.flywireSubgraph
+      ? new FlyBrain({ seed, connectome: buildFromFlyWire(this.flywireSubgraph, { seed, weightJitter: FLYWIRE_DEFAULTS.weightJitter, maxWeight: FLYWIRE_DEFAULTS.weightGain }) })
+      : new FlyBrain({ seed, ...this.brainOpts });
     const vitals: FlyVitals = { id, seed, temperament: this.temperamentOf(seed) };
     const inst: FlyInstance = { id, brain, decoder: this.makeDecoder(), vitals };
     this.flies.push(inst);
     return inst;
+  }
+
+  /** Build a FlyBrain for restored vitals (FlyWire or legacy PRNG path). */
+  private buildBrainForVitals(vitals: FlyVitals, archive: string | undefined): FlyBrain {
+    if (vitals.genome && this.flywireSubgraph) {
+      const conn = buildFromGenomeFlyWire(vitals.genome, this.flywireSubgraph);
+      const opts = { seed: vitals.genome.seed, connectome: conn };
+      return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
+    }
+    if (this.flywireSubgraph && !vitals.genome) {
+      const conn = buildFromFlyWire(this.flywireSubgraph, { seed: vitals.seed, weightJitter: FLYWIRE_DEFAULTS.weightJitter, maxWeight: FLYWIRE_DEFAULTS.weightGain });
+      const opts = { seed: vitals.seed, connectome: conn };
+      return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
+    }
+    // Legacy PRNG path
+    const opts = vitals.genome
+      ? genomeToConnectomeOptions(vitals.genome)
+      : { seed: vitals.seed, ...this.brainOpts };
+    return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
   }
 
   /**
@@ -236,7 +260,9 @@ export class Population {
    */
   spawnFromGenome(genome: Genome, id: number): FlyInstance | null {
     if (this.flies.some((f) => f.id === id)) return null;
-    const brain = new FlyBrain(genomeToConnectomeOptions(genome));
+    const brain = this.flywireSubgraph
+      ? new FlyBrain({ seed: genome.seed, connectome: buildFromGenomeFlyWire(genome, this.flywireSubgraph) })
+      : new FlyBrain(genomeToConnectomeOptions(genome));
     const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
     const inst: FlyInstance = { id, brain, decoder: this.makeDecoder(), vitals };
     this.flies.push(inst);
@@ -319,7 +345,7 @@ export class Population {
     });
   }
 
-  static deserialize(data: string, cfg: RuntimeConfig): Population {
+  static deserialize(data: string, cfg: RuntimeConfig, flywireSubgraph?: FlyWireSubgraph | null): Population {
     const parsed = JSON.parse(data);
     const version = parsed?.version;
     // v6 (holes/recycled ids) and v5 (may carry hatched offspring genomes) are native; v4 is genesis-only;
@@ -336,7 +362,7 @@ export class Population {
         brains: parsed.flies.map((x: any) => x.brain),
         tickIndex: Number(parsed.tickIndex ?? 0),
         vitality: Number(parsed.vitality ?? 0.5),
-      });
+      }, flywireSubgraph);
     }
     throw new Error("unsupported population serialization version");
   }

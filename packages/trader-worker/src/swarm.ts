@@ -18,11 +18,13 @@ import {
   MotorDecoder,
   type FlyBehavior,
   type Genome,
+  type FlyWireSubgraph,
   type MarketPulse,
   type MotorOutput,
   type NeuromodState,
   type StimulusEvent,
 } from "@fly/fly-brain";
+import { loadSubgraph } from "./flywire-loader.js";
 import type { Env, RuntimeConfig } from "./config.js";
 import { fliesPerShard, shardOf } from "./config.js";
 import type { Regime } from "./market.js";
@@ -183,16 +185,18 @@ export class LocalSwarm implements SwarmBackend {
 
   /** Load the persisted population (or found a fresh one) — the exact path ensurePopulation() used. */
   static async load(cfg: RuntimeConfig, storage: DurableObjectStorage): Promise<LocalSwarm> {
+    // FlyWire topology: pre-load the subgraph so Population can build brains synchronously.
+    const subgraph: FlyWireSubgraph | null = cfg.flywireTopology ? await loadSubgraph(cfg.flywireArtifact) : null;
     const stored = await storage.get<string>(KEY_POPULATION);
     let population: Population | null = null;
     if (stored) {
       try {
-        population = Population.deserialize(stored, cfg);
+        population = Population.deserialize(stored, cfg, subgraph);
       } catch (e) {
         console.warn("[swarm] population deserialize failed:", (e as Error).message);
       }
     }
-    return new LocalSwarm(cfg, population ?? new Population(cfg));
+    return new LocalSwarm(cfg, population ?? new Population(cfg, undefined, subgraph));
   }
 
   async step(
@@ -268,7 +272,8 @@ export class LocalSwarm implements SwarmBackend {
   }
 
   async reset(storage: DurableObjectStorage): Promise<void> {
-    this.population = new Population(this.cfg);
+    const subgraph: FlyWireSubgraph | null = this.cfg.flywireTopology ? await loadSubgraph(this.cfg.flywireArtifact) : null;
+    this.population = new Population(this.cfg, undefined, subgraph);
     await storage.put(KEY_POPULATION, this.population.serialize());
   }
 }

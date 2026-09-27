@@ -55,12 +55,29 @@ export interface PopulationBands {
 /**
  * Fallback bands for standalone decoding (no population context — e.g. tests / a single fly).
  * Taken from the observed HOT-regime maxima so a lone fly still lands in a sensible 0..1 range.
+ * These are calibrated for the PRNG procedural connectome (1,080 neurons, fan-in ~13).
  */
 export const REF_BANDS: PopulationBands = {
   arousal: [0, 0.42],
   cohesion: [0, 0.2],
   rest: [0, 0.06],
   turnAbs: 0.1,
+};
+
+/**
+ * FlyWire-calibrated fallback bands (FLYWIRE_TOPOLOGY=true). The real FAFB 783 subgraph has
+ * fan-in ~45 and produces DIFFERENT absolute drive magnitudes than the PRNG connectome.
+ * Values are the observed p10/p90 across 24 flies in a CALM market (T=0.5) at the calibrated
+ * weightGain=0.22. In production, computeBands(allDrives) dynamically adapts each tick;
+ * these serve only for standalone/test decoding of a single FlyWire brain.
+ *
+ * Calibration source: scripts/verify-flywire.ts, 24 flies × 3 ticks × 200 steps.
+ */
+export const REF_BANDS_FLYWIRE: PopulationBands = {
+  arousal: [0.28, 0.55],
+  cohesion: [0.13, 0.25],
+  rest: [0.09, 0.21],
+  turnAbs: 0.08,
 };
 
 /** Read the four raw drives off a fly's motor output. */

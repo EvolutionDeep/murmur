@@ -23,6 +23,8 @@ import {
   type ConnectomeStructuralSpec,
 } from "./manifest.js";
 import type { Connectome } from "./types.js";
+import type { FlyWireConnectomeOptions, FlyWireSubgraph } from "./connectome-data/types.js";
+import { buildFromFlyWire } from "./connectome-data/generator.js";
 
 /** Bump when the genome field set / operator semantics change (invalidates comparability). */
 export const GENOME_SCHEMA_VERSION = 1;
@@ -30,10 +32,14 @@ export const GENOME_SCHEMA_VERSION = 1;
 /**
  * The complete heritable identity of one connectome: the effective generator parameters. Two genomes
  * that are equal produce equal brains; different genomes produce different brains.
+ *
+ * FlyWire mode (FLYWIRE_TOPOLOGY=true): the layer-size fields are VESTIGIAL (set to the real subgraph's
+ * counts for estimation compatibility) and the heritable variation lives in the optional parameter fields
+ * (weightGain, threshGain, tauGain, weightJitter). The seed still controls deterministic jitter.
  */
 export interface Genome {
   v: number;
-  /** uint32 PRNG seed — the wiring identity. */
+  /** uint32 PRNG seed — the wiring identity (PRNG mode) or jitter identity (FlyWire mode). */
   seed: number;
   nSensory: number;
   nInterL1: number;
@@ -42,6 +48,15 @@ export interface Genome {
   nMotorPerChannel: number;
   /** Synapse density fraction (0,1]; rounded to 4dp by operators to stay canonical-stable. */
   density: number;
+  // --- FlyWire-mode parameters (optional; only meaningful when FLYWIRE_TOPOLOGY is on) ---
+  /** Multiplicative gain on all synapse weights (default 1.0). Breeding mutates this. */
+  weightGain?: number;
+  /** Multiplicative gain on all vThresh values (default 1.0). Breeding mutates this. */
+  threshGain?: number;
+  /** Multiplicative gain on all tau values (default 1.0). Breeding mutates this. */
+  tauGain?: number;
+  /** Per-synapse weight jitter factor [0, 0.4] (default 0.15). Breeding mutates this. */
+  weightJitter?: number;
 }
 
 /** Sane breeding bounds so offspring stay buildable on the edge (never 0-size, never absurd).
@@ -275,4 +290,119 @@ export function hatchBudgetFromGenesis(
 export function genomeWithinBudget(g: Genome, budget: HatchBudget): boolean {
   const s = estimateConnectomeSize(g);
   return s.neurons <= budget.maxNeurons && s.synapses <= budget.maxSynapses;
+}
+
+// ========== FlyWire-mode genome extensions (FLYWIRE_TOPOLOGY=true) ==========
+//
+// When the real FAFB 783 subgraph is active, topology is FIXED (10,361 neurons / 467k synapses).
+// Heritable variation moves from layer sizes to PARAMETERS: weightGain, threshGain, tauGain, weightJitter.
+// The seed still controls per-neuron LIF jitter and per-synapse weight perturbation.
+// The size fields in the genome are vestigial (set to the real subgraph counts) so estimateConnectomeSize
+// and hatchBudgetFromGenesis still function correctly.
+
+/** Breeding bounds for the FlyWire parameter genome. */
+export const FLYWIRE_GENOME_BOUNDS = {
+  weightGain: [0.08, 0.60],   // calibrated: 0.22 = healthy calm; >0.40 saturates
+  threshGain: [0.5, 2.5],     // higher = calmer fly
+  tauGain: [0.4, 3.0],        // higher = slower integration = calmer
+  weightJitter: [0.05, 0.60], // increased for inter-fly variance (fixed topology)
+} as const;
+
+/** The fixed FAFB 783 subgraph dimensions (for estimateFlyWireConnectomeSize). */
+const FLYWIRE_FIXED = { neurons: 10_361, synapses: 467_314 } as const;
+
+/** Parameter fields that FlyWire-mode operators mutate. */
+const FLYWIRE_PARAM_FIELDS = ["weightGain", "threshGain", "tauGain", "weightJitter"] as const;
+type FlyWireParamField = (typeof FLYWIRE_PARAM_FIELDS)[number];
+
+/** Default FlyWire genome parameter values. */
+export const FLYWIRE_DEFAULTS = {
+  weightGain: 0.22,    // calibrated: produces arousal ~0.3-0.5, motor 5-15 Hz, modulatory ~2 Hz
+  threshGain: 1.0,
+  tauGain: 1.0,
+  weightJitter: 0.30,  // doubled from initial 0.15: creates inter-fly variance under fixed topology
+} as const;
+
+/**
+ * POINT MUTATION (FlyWire mode): reseed the jitter and perturb exactly ONE parameter field.
+ * Pure in (parent, rngSeed). Topology is fixed; only the seed + one parameter change.
+ */
+export function mutateGenomeFlyWire(parent: Genome, rngSeed: number): Genome {
+  const rng = mulberry32(rngSeed >>> 0);
+  const child: Genome = { ...parent, v: GENOME_SCHEMA_VERSION };
+  child.seed = (parent.seed ^ Math.floor(rng() * 4294967296)) >>> 0;
+  // Pick one parameter field to mutate
+  const f: FlyWireParamField = FLYWIRE_PARAM_FIELDS[Math.floor(rng() * FLYWIRE_PARAM_FIELDS.length)];
+  const current = child[f] ?? FLYWIRE_DEFAULTS[f];
+  const bounds = FLYWIRE_GENOME_BOUNDS[f];
+  // ±5–20% step
+  const step = current * (0.05 + rng() * 0.15);
+  const delta = (rng() < 0.5 ? -1 : 1) * step;
+  child[f] = round4(clamp(current + delta, bounds[0], bounds[1]));
+  return child;
+}
+
+/**
+ * UNIFORM CROSSOVER (FlyWire mode): each parameter field is inherited from either parent.
+ * The seed is inherited whole from one parent. Pure in (a, b, rngSeed).
+ */
+export function crossoverGenomeFlyWire(a: Genome, b: Genome, rngSeed: number): Genome {
+  const rng = mulberry32(rngSeed >>> 0);
+  const pick = <T>(x: T, y: T): T => (rng() < 0.5 ? x : y);
+  return {
+    v: GENOME_SCHEMA_VERSION,
+    seed: pick(a.seed, b.seed),
+    // Vestigial size fields: inherit from either (they're identical in FlyWire mode)
+    nSensory: pick(a.nSensory, b.nSensory),
+    nInterL1: pick(a.nInterL1, b.nInterL1),
+    nInterL2: pick(a.nInterL2, b.nInterL2),
+    nModulatory: pick(a.nModulatory, b.nModulatory),
+    nMotorPerChannel: pick(a.nMotorPerChannel, b.nMotorPerChannel),
+    density: round4(pick(a.density, b.density)),
+    // FlyWire parameters: the real heritable variation
+    weightGain: round4(pick(a.weightGain ?? FLYWIRE_DEFAULTS.weightGain, b.weightGain ?? FLYWIRE_DEFAULTS.weightGain)),
+    threshGain: round4(pick(a.threshGain ?? FLYWIRE_DEFAULTS.threshGain, b.threshGain ?? FLYWIRE_DEFAULTS.threshGain)),
+    tauGain: round4(pick(a.tauGain ?? FLYWIRE_DEFAULTS.tauGain, b.tauGain ?? FLYWIRE_DEFAULTS.tauGain)),
+    weightJitter: round4(pick(a.weightJitter ?? FLYWIRE_DEFAULTS.weightJitter, b.weightJitter ?? FLYWIRE_DEFAULTS.weightJitter)),
+  };
+}
+
+/**
+ * Convert a genome to FlyWireConnectomeOptions (for buildFromFlyWire).
+ * The genome's seed + weightJitter are passed through; weightGain/threshGain/tauGain are applied
+ * POST-BUILD by the caller (they scale the connectome's neurons/synapses after construction).
+ */
+export function genomeToFlyWireOptions(g: Genome): FlyWireConnectomeOptions {
+  return {
+    seed: g.seed,
+    weightJitter: g.weightJitter ?? FLYWIRE_DEFAULTS.weightJitter,
+    maxWeight: g.weightGain ?? FLYWIRE_DEFAULTS.weightGain,
+  };
+}
+
+/**
+ * Build a Connectome from a genome in FlyWire mode: fixed topology + seed-driven jitter.
+ * Applies threshGain and tauGain post-build (scaling neuron parameters).
+ */
+export function buildFromGenomeFlyWire(g: Genome, subgraph: FlyWireSubgraph): Connectome {
+  const opts = genomeToFlyWireOptions(g);
+  const conn = buildFromFlyWire(subgraph, opts);
+  // Apply threshGain and tauGain post-build
+  const tg = g.threshGain ?? FLYWIRE_DEFAULTS.threshGain;
+  const tauG = g.tauGain ?? FLYWIRE_DEFAULTS.tauGain;
+  if (tg !== 1.0 || tauG !== 1.0) {
+    for (const n of conn.neurons) {
+      if (tg !== 1.0) n.vThresh *= tg;
+      if (tauG !== 1.0) n.tau *= tauG;
+    }
+  }
+  return conn;
+}
+
+/**
+ * Fixed-size estimate for FlyWire genomes (topology is constant; only parameters vary).
+ * Returns the FAFB 783 subgraph dimensions regardless of genome parameter fields.
+ */
+export function estimateFlyWireConnectomeSize(_g: Genome): { neurons: number; synapses: number } {
+  return { neurons: FLYWIRE_FIXED.neurons, synapses: FLYWIRE_FIXED.synapses };
 }

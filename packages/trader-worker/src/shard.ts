@@ -15,7 +15,8 @@
 // Shards are reachable ONLY from the coordinator via the FLY_SHARD binding — the public Worker fetch
 // never routes here — so they are internal by construction and need no auth gate or CORS of their own.
 
-import { FlyBrain, genomeToConnectomeOptions, type Genome, type MarketPulse, type StimulusEvent } from "@fly/fly-brain";
+import { FlyBrain, genomeToConnectomeOptions, buildFromGenomeFlyWire, buildFromFlyWire, FLYWIRE_DEFAULTS, type Genome, type MarketPulse, type StimulusEvent, type FlyWireSubgraph } from "@fly/fly-brain";
+import { loadSubgraph } from "./flywire-loader.js";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice } from "./config.js";
 import {
@@ -54,6 +55,8 @@ export class FlyShardDO {
   /** True when this shard's brains were loaded from the legacy single-blob key and still need to be
    *  re-written as per-fly keys (one-time v3→v4 migration on the next persist). */
   private legacyPending = false;
+  /** FlyWire subgraph cache (loaded once per isolate when FLYWIRE_TOPOLOGY is on). */
+  private flywireSubgraph: FlyWireSubgraph | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -82,6 +85,10 @@ export class FlyShardDO {
     const archived = await this.loadArchived();   // also populates this.retiredIds
     const retired = this.retiredIds ?? new Set<number>();
     const flies: AdvanceableFly[] = [];
+
+    // FlyWire topology: load the subgraph ONCE for this isolate (async decode, cached module-level).
+    const subgraph = this.cfg.flywireTopology ? await this.ensureSubgraph() : null;
+
     for (let id = start; id < end; id++) {
       if (retired.has(id)) continue;   // tombstone: a retired fly stays dead, never rebuilt from the seed
       const rec = archived?.get(id);
@@ -89,15 +96,13 @@ export class FlyShardDO {
         // OFFSPRING / RECYCLED slot (a genesis id reclaimed by a new offspring carries a genome here): rebuild
         // from its OWN genome (NOT the genesis sizing) so a restored bred brain matches its archive.
         const genome = rec.genome;
-        const opts = genomeToConnectomeOptions(genome);
-        const brain = rec.brain ? FlyBrain.deserialize(rec.brain, opts) : new FlyBrain(opts);
+        const brain = this.buildBrain(genome, rec.brain, subgraph);
         const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
         flies.push({ id, brain, vitals });
       } else if (id < this.cfg.populationSize) {
         // GENESIS slot (never retired, never recycled): reproducible from (seed, shared brainOpts).
         const seed = this.cfg.populationSeeds[id];
-        const opts = { seed, ...this.cfg.brainOpts };
-        const brain = rec ? FlyBrain.deserialize(rec.brain, opts) : new FlyBrain(opts);
+        const brain = this.buildGenesisBrain(seed, rec?.brain, subgraph);
         const vitals: FlyVitals = { id, seed, temperament: flyTemperament(seed) };
         flies.push({ id, brain, vitals });
       }
@@ -105,6 +110,39 @@ export class FlyShardDO {
     }
     this.flies = flies;
     return this.flies;
+  }
+
+  /** Load + cache the FlyWire subgraph (async; called once per isolate lifetime). */
+  private async ensureSubgraph(): Promise<FlyWireSubgraph> {
+    if (this.flywireSubgraph) return this.flywireSubgraph;
+    this.flywireSubgraph = await loadSubgraph(this.cfg.flywireArtifact);
+    return this.flywireSubgraph;
+  }
+
+  /** Build a FlyBrain for a GENESIS fly (seed-based, shared brainOpts or FlyWire subgraph). */
+  private buildGenesisBrain(seed: number, archive: string | undefined, subgraph: FlyWireSubgraph | null): FlyBrain {
+    if (subgraph) {
+      // FlyWire path: build connectome from the real subgraph with this seed's jitter
+      const conn = buildFromFlyWire(subgraph, { seed, weightJitter: FLYWIRE_DEFAULTS.weightJitter, maxWeight: FLYWIRE_DEFAULTS.weightGain });
+      const opts = { seed, connectome: conn };
+      return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
+    }
+    // Legacy PRNG path (byte-for-byte unchanged)
+    const opts = { seed, ...this.cfg.brainOpts };
+    return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
+  }
+
+  /** Build a FlyBrain for an OFFSPRING fly (genome-based, FlyWire or PRNG). */
+  private buildBrain(genome: Genome, archive: string | undefined, subgraph: FlyWireSubgraph | null): FlyBrain {
+    if (subgraph) {
+      // FlyWire path: build from genome parameters + real topology
+      const conn = buildFromGenomeFlyWire(genome, subgraph);
+      const opts = { seed: genome.seed, connectome: conn };
+      return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
+    }
+    // Legacy PRNG path (byte-for-byte unchanged)
+    const opts = genomeToConnectomeOptions(genome);
+    return archive ? FlyBrain.deserialize(archive, opts) : new FlyBrain(opts);
   }
 
   /** id → {brain JSON, genome?} archived for this shard, or null when nothing is stored / it is unreadable.
@@ -247,8 +285,9 @@ export class FlyShardDO {
       // the offspring brain below takes the id, matching the coordinator's roster.
       flies.splice(flies.indexOf(existing), 1);
     }
-    const opts = genomeToConnectomeOptions(genome);
-    const brain = new FlyBrain(opts);
+    // Build the offspring brain: FlyWire path (real topology + genome parameters) or legacy PRNG path.
+    const subgraph = this.cfg.flywireTopology ? await this.ensureSubgraph() : null;
+    const brain = this.buildBrain(genome, undefined, subgraph);
     const vitals: FlyVitals = { id, seed: genome.seed, temperament: flyTemperament(genome.seed), genome };
     flies.push({ id, brain, vitals });
     flies.sort((a, b) => a.id - b.id);   // keep the slice ascending (the coordinator re-orders by id anyway)

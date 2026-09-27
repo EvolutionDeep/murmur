@@ -39,6 +39,8 @@ export interface Env {
   TICKS_PER_CRON?: string;          // simulation sub-ticks per cron (default 6)
   SIM_STEPS_PER_TICK?: string;      // LIF integration steps per sub-tick (default 500)
   NEUROMOD_GATING?: string;         // "true"/"false" (default false) — A3: let the DA/OA neuromodulatory read-out gate exploration/arousal in the decoder. OFF ⇒ the read-out is observed only and behaviour is byte-for-byte unchanged (dark deploy). Manifest-neutral either way.
+  FLYWIRE_TOPOLOGY?: string;        // "true"/"false" (default false) — A2 online: use the REAL FAFB 783 FlyWire subgraph (10,361 neurons / 467k synapses) instead of the procedural PRNG generator. OFF ⇒ byte-for-byte the old buildConnectome path. When ON, genome operators mutate PARAMETERS (weight gain / threshold / tau) instead of layer sizes, and the topology is FIXED from the artifact. Manifest-affecting: rotates manifestHash (new structural spec). MUST stay false until shadow-verified + user-approved.
+  FLYWIRE_ARTIFACT?: R2Bucket;        // R2 bucket holding fafb783-mb-cx.bin.gz.b64 (1.32 MB). Only needed when FLYWIRE_TOPOLOGY=true.
   SHARD_COUNT?: string;             // swarm shards across N Durable Objects (default 1 = single DO; needs the FLY_SHARD binding)
   EVOLUTION_MAX_LIVE_POPULATION?: string; // live-population growth ceiling (default = POPULATION_SIZE = no growth). ALSO the STABLE basis for shard slices, so raising it MUST be paired with SHARD_COUNT = ceil(cap/2) to keep 2 flies/shard (no brain ever migrates as the population grows).
 
@@ -397,6 +399,17 @@ export interface RuntimeConfig {
    * either way: the gate lives outside DEFAULT_DECODER_CONFIG, so the on-chain brain hash never rotates.
    */
   neuromodGating: boolean;
+  /**
+   * A2 online: real FlyWire topology (FLYWIRE_TOPOLOGY, default FALSE). When false the procedural PRNG
+   * generator (buildConnectome) builds every brain — byte-for-byte today's behaviour. When true the fixed
+   * FAFB 783 MB+CX subgraph (10,361 neurons / 467k synapses, fan-in ~45) replaces the PRNG topology;
+   * the genome's seed controls only LIF jitter + weight perturbation, and breeding operators mutate
+   * PARAMETERS (weightGain/threshGain/tauGain) instead of layer sizes. MANIFEST-AFFECTING: the structural
+   * spec changes (different neuronCount/synapseCount/edgeHash), so manifestHash rotates. Dark-deploy only.
+   */
+  flywireTopology: boolean;
+  /** R2 bucket holding the FlyWire artifact (only needed when flywireTopology=true). */
+  flywireArtifact?: R2Bucket;
   /** Durable Objects the swarm is sharded across (1 = the single FlyStateDO, today's behaviour). */
   shardCount: number;
   /**
@@ -845,6 +858,11 @@ export function loadConfig(env: Env): RuntimeConfig {
     // A3 dark deploy: OFF unless NEUROMOD_GATING="true". Absent/false ⇒ the neuromodulatory read-out is
     // observed only and the decoder is byte-for-byte the pre-A3 behaviour.
     neuromodGating: (env.NEUROMOD_GATING ?? "false").toLowerCase() === "true",
+    // A2 dark deploy: OFF unless FLYWIRE_TOPOLOGY="true". Absent/false ⇒ the procedural PRNG generator
+    // builds every brain (byte-for-byte today's behaviour). ON ⇒ the real FAFB 783 subgraph replaces the
+    // topology; manifestHash ROTATES (different structural spec). NEVER enable without user approval.
+    flywireTopology: (env.FLYWIRE_TOPOLOGY ?? "false").toLowerCase() === "true",
+    flywireArtifact: env.FLYWIRE_ARTIFACT,
     shardCount,
     maxLivePopulation,
     liveRetire,

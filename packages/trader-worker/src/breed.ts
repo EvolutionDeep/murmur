@@ -17,8 +17,10 @@
 import {
   canonicalGenome,
   crossoverGenome,
+  crossoverGenomeFlyWire,
   genomeFromSeed,
   mutateGenome,
+  mutateGenomeFlyWire,
   specFromGenome,
   type Genome,
   type ConnectomeStructuralSpec,
@@ -93,10 +95,19 @@ export async function genesisLineage(cfg: RuntimeConfig): Promise<LineageEntry[]
 /**
  * Apply a breed request against the existing lineage. Validates arity + parent existence, runs the
  * pure operator, and returns the offspring entry. Throws on bad requests (caller maps to 400).
+ *
+ * When `opts.flywireTopology` is true, uses the FlyWire-mode operators (mutateGenomeFlyWire /
+ * crossoverGenomeFlyWire) which mutate PARAMETERS (weightGain/threshGain/tauGain/weightJitter)
+ * instead of layer sizes. Topology is fixed from the real FAFB 783 subgraph.
  */
-export async function applyBreed(entries: LineageEntry[], req: BreedRequest): Promise<LineageEntry> {
+export async function applyBreed(
+  entries: LineageEntry[],
+  req: BreedRequest,
+  opts: { flywireTopology?: boolean } = {},
+): Promise<LineageEntry> {
   const byHash = new Map(entries.map((e) => [e.genomeHash, e]));
   const rngSeed = (req.rngSeed ?? (Date.now() & 0xffffffff)) >>> 0;
+  const flywire = opts.flywireTopology === true;
 
   let child: Genome;
   let parents: string[];
@@ -107,7 +118,7 @@ export async function applyBreed(entries: LineageEntry[], req: BreedRequest): Pr
     if (req.parents.length !== 1) throw new Error("mutate needs exactly 1 parent");
     const p = byHash.get(req.parents[0]);
     if (!p) throw new Error(`unknown parent genome ${req.parents[0]}`);
-    child = mutateGenome(p.genome, rngSeed);
+    child = flywire ? mutateGenomeFlyWire(p.genome, rngSeed) : mutateGenome(p.genome, rngSeed);
     parents = [p.genomeHash];
     generation = p.generation + 1;
     op = "mutate";
@@ -116,7 +127,9 @@ export async function applyBreed(entries: LineageEntry[], req: BreedRequest): Pr
     const a = byHash.get(req.parents[0]);
     const b = byHash.get(req.parents[1]);
     if (!a || !b) throw new Error("unknown parent genome in cross");
-    child = crossoverGenome(a.genome, b.genome, rngSeed);
+    child = flywire
+      ? crossoverGenomeFlyWire(a.genome, b.genome, rngSeed)
+      : crossoverGenome(a.genome, b.genome, rngSeed);
     parents = [a.genomeHash, b.genomeHash];
     generation = Math.max(a.generation, b.generation) + 1;
     op = "cross";

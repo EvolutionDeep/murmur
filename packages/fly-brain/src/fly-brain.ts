@@ -23,6 +23,19 @@ import { computeNeuromod } from "./neuromod.js";
  */
 const SENSORY_DRIVE_REF = 18;
 
+/** Options for constructing a FlyBrain. */
+export interface FlyBrainOptions extends ConnectomeOptions {
+  spontaneousRate?: number;
+  injectGain?: number;
+  /**
+   * Pre-built connectome (FlyWire path). When provided, the constructor uses THIS instead of calling
+   * buildConnectome(opts). The worker pre-builds via buildFromFlyWire(subgraph, {seed, weightJitter, ...})
+   * when FLYWIRE_TOPOLOGY is enabled, then passes it here. This keeps FlyBrain synchronous while the
+   * artifact decode (async) happens once in the shard's ensureFlies().
+   */
+  connectome?: Connectome;
+}
+
 /**
  * FlyBrain — top-level wrapper around the whole fruit-fly brain simulation.
  *
@@ -49,11 +62,9 @@ export class FlyBrain implements IFlyBrain {
   /** Internal noise source */
   private noiseState: number;
 
-  constructor(opts: ConnectomeOptions & {
-    spontaneousRate?: number;
-    injectGain?: number;
-  } = {}) {
-    this.connectome = buildConnectome(opts);
+  constructor(opts: FlyBrainOptions = {}) {
+    // FlyWire path: use the pre-built connectome when provided; else fall back to the PRNG generator.
+    this.connectome = opts.connectome ?? buildConnectome(opts);
     this.net = new LifNetwork(this.connectome.neurons, this.connectome.synapses);
     this.channelNeurons = this.connectome.byChannel;
     this.spontaneousRate = opts.spontaneousRate ?? 0.3;
@@ -194,7 +205,7 @@ export class FlyBrain implements IFlyBrain {
    *       SFA then keeps the woken network from re-latching. */
   static deserialize(
     data: string,
-    opts: ConnectomeOptions = {},
+    opts: FlyBrainOptions = {},
   ): FlyBrain {
     const parsed = JSON.parse(data);
     const brain = new FlyBrain(opts);

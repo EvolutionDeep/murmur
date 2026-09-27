@@ -1158,7 +1158,7 @@ export class FlyStateDO {
     let child: LineageEntry;
     try {
       const resolved = await resolveNovelBreed(plan, (op, parents, seed) =>
-        applyBreed(entries, { op, parents, rngSeed: seed, breeder: plan.payerAddress }),
+        applyBreed(entries, { op, parents, rngSeed: seed, breeder: plan.payerAddress }, { flywireTopology: this.cfg.flywireTopology }),
       );
       if (!resolved) {
         console.warn("[DO] evolution: no novel offspring this cron (every attempt duplicated)");
@@ -4080,7 +4080,7 @@ export class FlyStateDO {
     const entries = await this.ensureLineage();
     let child: LineageEntry;
     try {
-      child = await applyBreed(entries, { ...body, parents });
+      child = await applyBreed(entries, { ...body, parents }, { flywireTopology: this.cfg.flywireTopology });
     } catch (e) {
       return jsonError("bad_request", (e as Error).message, 400);
     }

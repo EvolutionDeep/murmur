@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "npx --yes tsx --test src/*.test.ts"
+    "test": "npx --yes tsx --test src/**/*.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

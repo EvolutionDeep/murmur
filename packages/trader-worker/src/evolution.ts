@@ -20,7 +20,7 @@
 
 import type { LeaderRow } from "./economy.js";
 import type { LineageEntry } from "./breed.js";
-import { GENOME_BOUNDS, mutateGenome, type Genome } from "@fly/fly-brain";
+import { GENOME_BOUNDS, FLYWIRE_GENOME_BOUNDS, FLYWIRE_DEFAULTS, mutateGenome, mutateGenomeFlyWire, type Genome } from "@fly/fly-brain";
 import type { MutationPath } from "./temple.js";
 
 /** One autonomous breeding decision the cron step should carry out (null = nothing worth breeding). */
@@ -317,6 +317,36 @@ export function forceMutation(genome: Genome, path: MutationPath, rngSeed: numbe
     } else {
       child[field] = clampInt(Math.round((child[field] as number) * grow), lo, hi);
     }
+  }
+  return child;
+}
+
+/**
+ * Temple intervention (FlyWire mode): force a DIRECTED parameter mutation.
+ *
+ * In FlyWire mode the topology is fixed, so directed mutation grows the PARAMETER fields
+ * (weightGain/threshGain/tauGain/weightJitter) instead of layer sizes. The base mutation
+ * (mutateGenomeFlyWire) reseeds + perturbs one random parameter; the directed growth then
+ * biases the path's associated parameters upward by +5–15%.
+ */
+export function forceMutationFlyWire(genome: Genome, path: MutationPath, rngSeed: number): Genome {
+  const child = mutateGenomeFlyWire(genome, rngSeed >>> 0);
+  // Map temple paths to FlyWire parameter fields
+  const paramFields: Record<string, (keyof typeof FLYWIRE_GENOME_BOUNDS)[]> = {
+    sensory: ["weightGain"],
+    inter: ["threshGain", "tauGain"],
+    modulatory: ["weightJitter"],
+    motor: ["weightGain", "threshGain"],
+    density: ["weightGain", "weightJitter"],
+  };
+  const fields = paramFields[path];
+  if (!fields) return child;
+  const rng = rng32((rngSeed ^ 0x9e3779b9) >>> 0);
+  for (const f of fields) {
+    const [lo, hi] = FLYWIRE_GENOME_BOUNDS[f];
+    const current = child[f] ?? FLYWIRE_DEFAULTS[f];
+    const grow = 1 + Math.floor(rng() * 11) / 100;
+    child[f] = round4(clamp(current * grow, lo, hi));
   }
   return child;
 }

@@ -23,7 +23,10 @@ import {
   SENSORY_CHANNEL_LIST,
   type ConnectomeOptions,
 } from "./connectome.js";
+import { buildFromFlyWire, DEFAULT_FLYWIRE_OPTIONS } from "./connectome-data/index.js";
+import { FLYWIRE_DEFAULTS } from "./genome.js";
 import type { Connectome, NeuronKind } from "./types.js";
+import type { FlyWireSubgraph, FlyWireConnectomeOptions } from "./connectome-data/types.js";
 
 /** Bump when the manifest/spec schema or the digest algorithm changes (invalidates comparability). */
 export const BRAIN_MANIFEST_VERSION = 1;
@@ -203,4 +206,71 @@ export function effectiveConnectomeOptions(
     nMotorPerChannel: opts.nMotorPerChannel ?? DEFAULT_CONNECTOME_OPTIONS.nMotorPerChannel,
     density: opts.density ?? DEFAULT_CONNECTOME_OPTIONS.density,
   };
+}
+
+// ============ FlyWire manifest extensions (A2 online, FLYWIRE_TOPOLOGY=true) ============
+
+/**
+ * HONEST provenance for the FlyWire literal path. Recorded verbatim in the manifest when
+ * FLYWIRE_TOPOLOGY is enabled. The subgraph IS real FAFB 783 FlyWire data (CC-BY 4.0).
+ */
+export const FLYWIRE_PROVENANCE = {
+  name: "murmur fly connectome (FlyWire literal)",
+  architecture:
+    "Real FAFB 783 FlyWire MB+CX subgraph: sensory(PN) → inter_l1(KC/CX) → inter_l2(MBON/CX-out) → modulatory(DA/5HT/OCT) → motor(DN)",
+  flywireLiteral: true,
+  generatedDeterministically: true,
+  reproducibleFromSeed: true,
+  llmInvolved: false,
+  dataset: "FAFB_783 (FlyWire adult female brain, compiled 2026-04)",
+  license: "CC-BY 4.0",
+  subgraphScale: { neurons: 10_361, synapses: 467_314 },
+  note:
+    "Every neuron and synapse comes from the real FAFB 783 FlyWire connectome (Lee Lab, CC-BY 4.0), " +
+    "extracted as the Mushroom Body + Central Complex subgraph. The topology is FIXED; the seed controls " +
+    "only LIF parameter jitter and multiplicative weight perturbation via mulberry32 (integer PRNG, " +
+    "bit-identical cross-engine). No LLM is used anywhere.",
+} as const;
+
+/** FlyWire connectome sizing recorded in the manifest (replaces the PRNG ConnectomeOptions). */
+export interface FlyWireManifestConnectome {
+  mode: "flywire";
+  nNeurons: number;
+  nSynapses: number;
+  fanInMean: number;
+  weightGain: number;
+  weightJitter: number;
+  threshGain: number;
+  tauGain: number;
+}
+
+/** The FlyWire manifest's connectome field (fixed topology + genome-parameterised jitter). */
+export function flyWireManifestConnectome(): FlyWireManifestConnectome {
+  return {
+    mode: "flywire",
+    nNeurons: 10_361,
+    nSynapses: 467_314,
+    fanInMean: 45.1,
+    weightGain: FLYWIRE_DEFAULTS.weightGain,
+    weightJitter: FLYWIRE_DEFAULTS.weightJitter,
+    threshGain: FLYWIRE_DEFAULTS.threshGain,
+    tauGain: FLYWIRE_DEFAULTS.tauGain,
+  };
+}
+
+/**
+ * Compute the structural spec of a FlyWire connectome for a given seed. The topology is FIXED;
+ * only the weight jitter + LIF parameter jitter vary by seed. Requires the decoded subgraph.
+ */
+export function connectomeSpecForSeedFlyWire(
+  seed: number,
+  subgraph: FlyWireSubgraph,
+  opts: FlyWireConnectomeOptions = {},
+): ConnectomeStructuralSpec {
+  const conn = buildFromFlyWire(subgraph, {
+    seed,
+    weightJitter: opts.weightJitter ?? FLYWIRE_DEFAULTS.weightJitter,
+    maxWeight: opts.maxWeight ?? FLYWIRE_DEFAULTS.weightGain,
+  });
+  return connectomeStructuralSpec(conn);
 }

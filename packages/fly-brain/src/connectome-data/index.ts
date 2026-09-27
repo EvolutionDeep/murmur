@@ -53,3 +53,9 @@ export {
   subgraphStats,
   DEFAULT_FLYWIRE_OPTIONS,
 } from "./generator.js";
+
+// Artifact cache (Node-only: uses node:fs/zlib) — NOT re-exported here to avoid pulling Node
+// types into the Workers typecheck when trader-worker resolves @fly/fly-brain.
+// In Node contexts (tests/scripts), import directly:
+//   import { getSubgraphSync } from "./artifact-cache.js";
+// In Workers (trader-worker), use the local flywire-loader.ts which reads from R2 + DecompressionStream.
