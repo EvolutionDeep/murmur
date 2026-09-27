@@ -1,0 +1,36 @@
+[package]
+name = "fly-brain-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Bit-exact Rust port of murmur's TypeScript fly-brain (packages/fly-brain): deterministic LIF connectome, FlyBrain, genome operators and the brain manifest — for offline replay, research and future Wasm use"
+repository = "https://github.com/EvolutionDeep/murmur"
+publish = false
+
+[lib]
+name = "fly_brain_rs"
+path = "src/lib.rs"
+
+[features]
+default = ["fma"]
+# Fuse the multiply-adds inside V8's fdlibm ports (src/v8math.rs) as clang does when compiling
+# Node for AArch64 (macOS arm64 / Apple Silicon). Disable (`--no-default-features`) to match
+# baseline x86-64 Node builds, whose transcendentals are the un-contracted two-rounding form.
+# See README.md "Platform note".
+fma = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: serde_json's default float parsing is best-effort (can be 1 ULP off); fixtures
+# and FlyBrain archives must parse to the exact f64 JSON.stringify emitted.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[dev-dependencies]
+# The parity fixtures carry sha256 digests of the full network state (tests/gen/*.ts).
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "fat"
+debug = false

@@ -137,6 +137,7 @@ connectome). Behavioural state picks *which good* to buy (`EXPLORE→signal`, `A
 packages/
   fly-brain/       LIF neural core: connectome, LIF network, motor decoder, stimuli, shared types
     src/*.test.ts  unit tests: connectome structure, LIF dynamics + SFA, motor-decoder invariants
+  fly-brain-rs/    bit-exact Rust port of the neural core (replay / research / future Wasm); parity suite vs fly-brain
   trader-worker/   Cloudflare Worker + Durable Object: market temperature, population, x402 agent economy
     src/           chain · market · population · economy · x402 · keys · stimulus · state · config · index
     schema.sql     D1 archival table (one row per cron) served back by GET /history

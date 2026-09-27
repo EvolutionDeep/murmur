@@ -10,6 +10,10 @@ name: CI
 #   • contracts — the on-chain Solidity suites (NeuralReceiptRegistry + NeuralManifestRegistry +
 #                 PredictionArena) under forge, including the fuzz invariants that prove the receipt
 #                 hash-chain stays contiguous and the brain-manifest anchor is immutable.
+#   • fly-brain-rs — bit-exact parity of the Rust port (packages/fly-brain-rs) with fly-brain:
+#                 regenerates the numeric traces from the TypeScript on the runner and replays them
+#                 in Rust with no tolerance, on both an x86-64 and an arm64 runner (the two differ in
+#                 the last bit of Math.log/cos/tanh; see packages/fly-brain-rs/README.md).
 on:
   push:
     branches: [main]
@@ -82,3 +86,55 @@ jobs:
 
       - name: Run forge tests
         run: forge test -vvv
+
+  fly-brain-rs:
+    name: fly-brain-rs · bit-exact parity with fly-brain (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Official x86-64 Node binaries carry V8's fdlibm with NO fused multiply-adds (baseline
+          # x86-64 has no FMA instruction for the compiler to contract to), so the port is built
+          # with its `fma` feature off here. Apple-silicon Node is clang-contracted → default.
+          - os: ubuntu-latest
+            label: x86-64 · fma off
+            cargo_flags: --no-default-features
+          - os: macos-latest
+            label: arm64 · fma on
+            cargo_flags: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Traces from the TypeScript reference, generated on THIS runner's Node build so the last-bit
+      # transcendental behaviour of the fixtures matches the runner. fly-brain has no runtime
+      # dependency, so no npm ci is needed; tsx is fetched by npx.
+      - name: Generate parity fixtures from packages/fly-brain
+        run: npx --yes tsx packages/fly-brain-rs/tests/gen/gen_fixtures.ts
+
+      - name: rustfmt · clippy (-D warnings)
+        working-directory: packages/fly-brain-rs
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets ${{ matrix.cargo_flags }} -- -D warnings
+
+      - name: Parity suite (cargo test --release)
+        working-directory: packages/fly-brain-rs
+        run: cargo test --release ${{ matrix.cargo_flags }}
+
+      - name: Core builds for wasm32-unknown-unknown
+        working-directory: packages/fly-brain-rs
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release --target wasm32-unknown-unknown ${{ matrix.cargo_flags }}
