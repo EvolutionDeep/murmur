@@ -70,33 +70,10 @@ export class LandLayer {
   _build() {
     this._planeGeo = new THREE.PlaneGeometry(PARCEL_SIZE - 0.5, PARCEL_SIZE - 0.5);
 
-    // grid lines — LineSegments, semi-transparent white
-    const pts = [];
-    const hw = GRID_W / 2, hh = GRID_H / 2;
-    // vertical lines
-    for (let i = 0; i <= GRID_X; i++) {
-      const x = -hw + i * PARCEL_SIZE;
-      pts.push(x, 0, -hh, x, 0, hh);
-    }
-    // horizontal lines
-    for (let j = 0; j <= GRID_Z; j++) {
-      const z = -hh + j * PARCEL_SIZE;
-      pts.push(-hw, 0, z, hw, 0, z);
-    }
-    const lineGeo = new THREE.BufferGeometry();
-    lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    const lineMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.18,
-      depthWrite: false,
-    });
-    this._gridLines = new THREE.LineSegments(lineGeo, lineMat);
-    this._gridLines.renderOrder = 2;
-    this._gridLines.position.y = 0.6;   // float slightly above terrain
-    this.group.add(this._gridLines);
+    // grid lines — LineSegments conforming to terrain
+    this._buildGridLines();
 
-    // hover highlight — a single plane that moves to the hovered parcel
+    // hover highlight — a subdivided plane that conforms to terrain
     this._hoverMat = new THREE.MeshBasicMaterial({
       color: 0xffd700,
       transparent: true,
@@ -104,8 +81,8 @@ export class LandLayer {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this._hoverMesh = new THREE.Mesh(this._planeGeo, this._hoverMat);
-    this._hoverMesh.rotation.x = -Math.PI / 2;
+    this._hoverGeo = this._createTerrainPlane(0, 0, 8);
+    this._hoverMesh = new THREE.Mesh(this._hoverGeo, this._hoverMat);
     this._hoverMesh.renderOrder = 4;
     this._hoverMesh.visible = false;
     this.group.add(this._hoverMesh);
@@ -128,6 +105,46 @@ export class LandLayer {
     // Synchronously populate all 360 instances so parcels are clickable
     // immediately — don't wait for the async API response.
     this._populateDefaultGrid();
+  }
+
+  // ---- build grid lines conforming to terrain ----
+  _buildGridLines() {
+    const pts = [];
+    const hw = GRID_W / 2, hh = GRID_H / 2;
+    const SAMPLE_STEP = 10; // sample terrain every 10 units along each line
+    const Y_OFF = 0.45;     // slight offset above terrain
+
+    // vertical lines (along Z axis)
+    for (let i = 0; i <= GRID_X; i++) {
+      const x = -hw + i * PARCEL_SIZE;
+      for (let s = -hh; s < hh; s += SAMPLE_STEP) {
+        const s2 = Math.min(s + SAMPLE_STEP, hh);
+        const y1 = this._heightAt(x, s) + Y_OFF;
+        const y2 = this._heightAt(x, s2) + Y_OFF;
+        pts.push(x, y1, s, x, y2, s2);
+      }
+    }
+    // horizontal lines (along X axis)
+    for (let j = 0; j <= GRID_Z; j++) {
+      const z = -hh + j * PARCEL_SIZE;
+      for (let s = -hw; s < hw; s += SAMPLE_STEP) {
+        const s2 = Math.min(s + SAMPLE_STEP, hw);
+        const y1 = this._heightAt(s, z) + Y_OFF;
+        const y2 = this._heightAt(s2, z) + Y_OFF;
+        pts.push(s, y1, z, s2, y2, z);
+      }
+    }
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+    });
+    this._gridLines = new THREE.LineSegments(lineGeo, lineMat);
+    this._gridLines.renderOrder = 2;
+    this.group.add(this._gridLines);
   }
 
   // ---- fill _emptyMesh with all parcels at default height (sync, no API needed) ----
@@ -198,10 +215,7 @@ export class LandLayer {
     // remove old filled meshes
     for (const m of this._filledMeshes) {
       this.group.remove(m);
-      if (m.material && m.material.map) {
-        // don't dispose shared textures
-      }
-      m.geometry !== this._planeGeo && m.geometry.dispose();
+      m.geometry.dispose();
       m.material.dispose();
     }
     this._filledMeshes = [];
@@ -213,7 +227,7 @@ export class LandLayer {
     for (const p of this.parcels) {
       if (p.owner) {
         owned.add(p.id);
-        // purchased parcel — textured plane
+        // purchased parcel — terrain-conforming textured mesh
         this._addFilledParcel(p);
       }
     }
@@ -239,14 +253,40 @@ export class LandLayer {
     if (this._emptyMesh.instanceColor) this._emptyMesh.instanceColor.needsUpdate = true;
     this._emptyMesh.computeBoundingSphere();
 
-    // reposition grid lines to average terrain height
-    this._gridLines.position.y = 0.6;
+    // rebuild grid lines to conform to (possibly sculpted) terrain
+    if (this._gridLines) {
+      this.group.remove(this._gridLines);
+      this._gridLines.geometry.dispose();
+      this._gridLines.material.dispose();
+    }
+    this._buildGridLines();
   }
 
-  // ---- add a textured plane for a purchased parcel ----
+  // ---- create a terrain-conforming subdivided plane geometry ----
+  // Returns a PlaneGeometry(PARCEL_SIZE, PARCEL_SIZE, segs, segs) rotated horizontal
+  // with each vertex displaced to terrain height + yOffset.
+  _createTerrainPlane(centerX, centerZ, segs, yOffset) {
+    const yOff = yOffset != null ? yOffset : 0.35;
+    const size = PARCEL_SIZE - 0.5;
+    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+    geo.rotateX(-Math.PI / 2); // lay flat: local Y becomes world Y
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const lx = pos.getX(i);
+      const lz = pos.getZ(i);
+      const wx = centerX + lx;
+      const wz = centerZ + lz;
+      pos.setY(i, this._heightAt(wx, wz) + yOff);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  // ---- add a terrain-conforming textured mesh for a purchased parcel ----
   _addFilledParcel(parcel) {
     const { x, z } = this.parcelWorldPos(parcel.id);
-    const y = this._groundY(x, z) + 0.7;
 
     const mat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -256,9 +296,10 @@ export class LandLayer {
       depthWrite: false,
     });
 
-    const mesh = new THREE.Mesh(this._planeGeo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, y, z);
+    // 8×8 subdivision conforms to terrain undulations within the parcel
+    const geo = this._createTerrainPlane(x, z, 8, 0.35);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, 0, z); // vertices already in world-space Y
     mesh.renderOrder = 3;
     mesh.userData = { parcelId: parcel.id };
     this.group.add(mesh);
@@ -297,6 +338,14 @@ export class LandLayer {
   _groundY(x, z) {
     if (this.ts && typeof this.ts.groundY === 'function') {
       return this.ts.groundY(x, z, PARCEL_SIZE * 0.4);
+    }
+    return 0;
+  }
+
+  // ---- single-point terrain height (bilinear sample) ----
+  _heightAt(x, z) {
+    if (this.ts && typeof this.ts.heightAt === 'function') {
+      return this.ts.heightAt(x, z);
     }
     return 0;
   }
@@ -433,8 +482,10 @@ export class LandLayer {
       return;
     }
     const { x, z } = this.parcelWorldPos(this.hoveredId);
-    const y = this._groundY(x, z) + 0.9;
-    this._hoverMesh.position.set(x, y, z);
+    // Rebuild hover geometry to conform to terrain at the hovered position
+    this._hoverMesh.geometry.dispose();
+    this._hoverMesh.geometry = this._createTerrainPlane(x, z, 6, 0.55);
+    this._hoverMesh.position.set(x, 0, z);
     this._hoverMesh.visible = true;
   }
 
@@ -467,8 +518,14 @@ export class LandLayer {
     }
     if (this.ts && this.ts.scene) this.ts.scene.remove(this.group);
     this._planeGeo.dispose();
+    if (this._hoverGeo) this._hoverGeo.dispose();
+    if (this._hoverMesh && this._hoverMesh.geometry !== this._hoverGeo) this._hoverMesh.geometry.dispose();
     this._hoverMat.dispose();
     this._emptyMat.dispose();
+    if (this._gridLines) {
+      this._gridLines.geometry.dispose();
+      this._gridLines.material.dispose();
+    }
     for (const tex of this._textures.values()) tex.dispose();
     this._textures.clear();
   }
