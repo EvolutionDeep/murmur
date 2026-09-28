@@ -5268,27 +5268,35 @@ body.lv-active #lv-ui { display: block; }
 }
 
 /* ============================================================================
-   TASK 39 · A2 — CANVAS-SWITCH CAPSULES
-   High-contrast gilt pills anchored bottom-left (away from the dock steles).
-   #switch-to-atlas lives OUTSIDE the rail so it stays reachable on phones.
-   #switch-to-3d lives inside #lv-ui so it auto-hides with the atlas.
-   No backdrop-filter, no box-shadow, no filter — outline for focus.
+   TASK 39 · A2 — CANVAS-SWITCH CAPSULES  (task 36 follow-up: centre-bottom)
+   A single prominent gilt pill pinned to the horizontal centre of the stage,
+   24px above the bottom edge — never bottom-left, never drifting with scroll
+   or canvas drag. #switch-to-atlas lives OUTSIDE the rail (reachable on phones);
+   #switch-to-3d lives inside #lv-ui (auto-hides with the atlas). Both share this
+   rule, so the two canvases stay perfectly symmetrical. Solid gold fill + dark
+   ink label + lift shadow read as the primary "leave this view" affordance.
    ============================================================================ */
 .canvas-switch {
-  position: fixed; z-index: 22; pointer-events: auto;
-  bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
-  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 36px; padding: 0 14px; cursor: pointer;
-  border: 1.5px solid rgba(var(--gold-rgb), 0.6); border-radius: var(--r-pill);
-  background: var(--panel); background-image: var(--leaf-grain);
-  color: var(--gold-deep);
-  font: 600 var(--fs-cap)/1 var(--sans); letter-spacing: var(--ls-cap); text-transform: uppercase;
-  transition: background-color var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+  position: fixed; z-index: 40; pointer-events: auto;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 12px 28px; cursor: pointer;
+  border: 1.5px solid var(--gold-deep); border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--gold-lit) 0%, var(--gold) 58%, var(--gold-deep) 100%);
+  color: var(--ink);
+  font: 700 15px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase;
+  box-shadow: 0 8px 24px rgba(var(--ink-rgb), 0.45), 0 2px 6px rgba(var(--ink-rgb), 0.30),
+              inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  transition: transform var(--t-fast) ease, box-shadow var(--t-fast) ease, filter var(--t-fast) ease;
 }
-.canvas-switch:hover { background: rgba(var(--gold-rgb), 0.16); border-color: var(--gold-deep); }
-.canvas-switch:active { transform: translateY(1px); }
-.canvas-switch:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.65); outline-offset: 2px; }
+.canvas-switch:hover {
+  transform: translateX(-50%) scale(1.05); filter: brightness(1.07);
+  box-shadow: 0 12px 32px rgba(var(--ink-rgb), 0.52), 0 3px 8px rgba(var(--ink-rgb), 0.34),
+              inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+.canvas-switch:active { transform: translateX(-50%) scale(0.98); }
+.canvas-switch:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 /* task 42 · P2-F — the inline icon. flex:none so a long localised label (German/French/Arabic all run
    wider than the English "swarm") squeezes the TEXT, never the glyph; the 6px gutter is the pill's own
    `gap`, so the icon needs no margin of its own and RTL gets the mirror for free. currentColor is set on
@@ -5296,23 +5304,25 @@ body.lv-active #lv-ui { display: block; }
 .canvas-switch .cs-ico { flex: none; width: 16px; height: 16px; display: block; }
 /* mutual exclusion: hide #switch-to-atlas when the atlas owns the stage */
 body.lv-active #switch-to-atlas { display: none; }
-/* the lineage-side capsule is absolute inside #lv-ui (it already has pointer-events:none on the wrapper) */
+/* the lineage-side capsule mirrors the atlas one exactly: fixed, centre-bottom, above the
+   legend (z:14) and panel (z:12) inside #lv-ui's stacking context. #lv-ui is inert
+   (pointer-events:none), so the pill re-enables its own hits. */
 .canvas-switch-3d {
-  position: absolute; bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
-  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+  position: fixed; z-index: 40;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%; transform: translateX(-50%);
 }
-/* coarse-pointer: enlarge the touch target */
+/* coarse-pointer: keep the pill prominent, give it a roomier touch target */
 @media (hover: none), (pointer: coarse) {
-  .canvas-switch { height: 44px; padding: 0 18px; font-size: 11px; }
+  .canvas-switch { padding: 14px 30px; font-size: 15px; }
 }
-/* phones / short viewports: the capsule stays visible — this is the C26-A fix */
+/* phones / short viewports: still dead-centre at the bottom, just a touch lower and
+   slightly smaller so it never collides with the home indicator — this is the C26-A fix */
 @media (max-width: 680px), (max-height: 600px) {
-  .canvas-switch {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-    left: calc(env(safe-area-inset-left, 0px) + 12px);
-  }
+  .canvas-switch,
   .canvas-switch-3d {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-    left: calc(env(safe-area-inset-left, 0px) + 12px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+    left: 50%; transform: translateX(-50%);
+    padding: 11px 22px; font-size: 14px;
   }
 }
