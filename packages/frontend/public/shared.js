@@ -631,6 +631,37 @@ export async function sha256HexText(text) {
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+// ---- neuromodulator fallback helpers (graceful when worker hasn't deployed daHz/oaHz yet) ----
+// Reference full-scale Hz for the scope axis. The normalised 0..1 dopamine/octopamine maps to ~0..40 Hz.
+export const NM_REF_HZ = 40;
+/** Extract DA Hz from a neuromod object; falls back to dopamine*NM_REF_HZ when daHz is absent. */
+export function nmDaHz(nm) {
+  if (!nm) return 0;
+  if (typeof nm.daHz === "number" && Number.isFinite(nm.daHz)) return nm.daHz;
+  return (typeof nm.dopamine === "number" ? nm.dopamine : 0) * NM_REF_HZ;
+}
+/** Extract OA Hz from a neuromod object; falls back to octopamine*NM_REF_HZ when oaHz is absent. */
+export function nmOaHz(nm) {
+  if (!nm) return 0;
+  if (typeof nm.oaHz === "number" && Number.isFinite(nm.oaHz)) return nm.oaHz;
+  return (typeof nm.octopamine === "number" ? nm.octopamine : 0) * NM_REF_HZ;
+}
+/** True when the raw Hz fields came from the server (not our fallback). Used for the "≈" axis annotation. */
+export function nmHzIsReal(nm) {
+  return !!(nm && typeof nm.daHz === "number" && Number.isFinite(nm.daHz));
+}
+/** Compute mean DA/OA Hz from a flies array's neuromod fields (front-end fallback when collective.mean* is absent). */
+export function nmCollectiveMean(flies) {
+  if (!Array.isArray(flies) || !flies.length) return { daHz: 0, oaHz: 0, n: 0 };
+  let daSum = 0, oaSum = 0, n = 0;
+  for (const f of flies) {
+    const nm = f && f.neuromod;
+    if (!nm) continue;
+    daSum += nmDaHz(nm); oaSum += nmOaHz(nm); n++;
+  }
+  return n ? { daHz: daSum / n, oaHz: oaSum / n, n } : { daHz: 0, oaHz: 0, n: 0 };
+}
+
 // seq → verdict (survives repaints + language switches)
 export const lrNum = (x, dp) => (typeof x === "number" && Number.isFinite(x)) ? x.toFixed(dp == null ? 3 : dp) : "–";
 export const arenaClock = (s) => {
@@ -857,4 +888,39 @@ export const state = {
   landBusy: false,
   synthPhase: Math.random() * 100,
   synthTick: 0,
+  // ---- neuromodulator scope (task nm1): ring buffer + offscreen canvas for the inspector's DA/OA trace ----
+  scopeRing: [],            // [{t, daHz, oaHz}] — max ~120 points
+  scopeOff: null,
+  scopeOffCtx: null,
+  scopeLast: 0,
+  scopeHzReal: false,       // true when raw Hz fields came from the server
+  // ---- collective neuromod means (computed front-end until worker ships collective.mean*) ----
+  nmMean: { daHz: 0, oaHz: 0, n: 0 },
+  // ---- provenance badge (top bar): lazy one-shot verify per session ----
+  provHash: "",             // first 8 chars of the manifest hash
+  provStatus: "idle",       // idle | loading | ok | fail | chain?
+  // ---- task 15: the inspector's four neural views (bloom / raster / spike-density heatmap / membrane map) ----
+  // Only ONE view is on stage at a time, so the leaf stays inside its provable max-height cap and the
+  // animation loop pays for a single offscreen rebuild + a single blit per frame instead of three.
+  nview: "bloom",           // "bloom" | "raster" | "heat" | "memb" — mirrored onto #inspector[data-nview]
+  heatCols: [],             // [{t, rows: Uint8Array(HEAT_ROWS)}] — one entry per /snapshot poll, ring ≤ HEAT_COLS
+  heatOff: null,            // offscreen canvas at the internal cell resolution (HEAT_COLS × HEAT_ROWS)
+  heatOffCtx: null,
+  heatImg: null,            // reusable ImageData for the heatmap cell rebuild (no per-frame allocation)
+  membData: null,           // latest /snapshot membrane[] — null when the field is absent (view then shows a placeholder)
+  membRange: null,          // {min, max} of the last membrane read-out, drives the legend
+  nmapOff: null,            // offscreen canvas shared by the membrane map
+  nmapOffCtx: null,
+  nmapImg: null,            // reusable ImageData for the pixel-cell rebuild (no per-frame allocation)
+  nmapLast: 0,
+  // ---- task 15: the connectome atlas (static FAFB_783 metadata folded into the prove-the-brain drawer) ----
+  atlasOpen: false,         // fold state lives here so a re-render (language switch / verify repaint) keeps it
+  atlasMeta: null,          // cached ./flywire-meta.json — fetched once on first expand, never refetched
+  atlasLoading: false,
+  atlasFailed: false,
+  // ---- task 22: the second main canvas (lineage / technical view) ----
+  lineageViewActive: false, // true ⇒ #field is hidden, main.js loop pauses 3D + runs lineageView.lvFrame only
+  lvLineage: null,          // full /lineage?limit=5000 payload for the view (separate from the drawer's 500-row cache)
+  lvLastLineagePoll: 0,     // throttle stamp for pollLineageView (300 s)
+  econRecent: null,         // /economy.recent[48] netted settlement rows — the lineage view's trade-flow source
 };

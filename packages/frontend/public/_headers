@@ -111,8 +111,20 @@
 /landDrawer.js
   Cache-Control: no-cache, must-revalidate
 
+# task 22: the lineage / technical view — a new bare-imported module (main.js → lineageView.js, no ?v on the
+# specifier), so it needs the same etag-revalidation treatment or returning readers run stale bytes.
+/lineageView.js
+  Cache-Control: no-cache, must-revalidate
+
 # NSFW filter model weights (self-hosted binary, loaded by landDrawer.js via nsfwjs).
 # The 2.6MB shard + 129KB manifest are immutable content — cache aggressively so the
 # lazy load on first upload is cheap for returning visitors. Rename the dir to bust.
 /assets/nsfw/*
   Cache-Control: public, max-age=31536000, immutable
+
+# task 15: the connectome atlas metadata (a verbatim copy of fly-brain's fafb783-mb-cx-meta.json,
+# fetched once when the prove-the-brain drawer's atlas fold is first expanded). It is a bare-path new
+# file with no ?v cache-buster, so force etag revalidation (same treatment as /landLayer.js) — a
+# returning reader must never run stale atlas bytes after a subgraph re-cut.
+/flywire-meta.json
+  Cache-Control: no-cache, must-revalidate

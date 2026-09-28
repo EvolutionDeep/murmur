@@ -1,7 +1,7 @@
 // economy.js — applyEconomy/applySnapshot/applyState/applyTopology + HUD 更新
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, shortHash, sim } from './shared.js';
-import { currentLang, gl, t as T } from './i18n.js?v=100';
+import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, nmCollectiveMean, shortHash, sim } from './shared.js';
+import { currentLang, gl, t as T } from './i18n.js?v=103';
 import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js';
 import { fillInspectorFromSim } from './inspector.js';
 import { synthAgents } from './polling.js';
@@ -71,6 +71,9 @@ export function applyEconomy(econ) {
   if (econ.works) { state.econWorks = econ.works; renderWorksSection(); }
   if (econ.guardians) { state.econGuardians = econ.guardians; renderGuardiansSection(); }
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
+  // task 22: stash the netted settlement rows so the lineage view's trade-flow layer can accumulate them
+  // (additive read-out; the existing payEdges path above is untouched).
+  if (Array.isArray(econ.recent)) state.econRecent = econ.recent;
   if (state.selectedId != null) {
     const bal = state.econBalances.get(state.selectedId);
     if (bal != null) { const el = $("ins-bal"); if (el) el.textContent = bal.toFixed(4); }
@@ -274,7 +277,18 @@ export function applySnapshot(snap) {
     if (typeof r.heading === "number") f.tHeading = r.heading;
     if (r.role) f.role = r.role;
     if (Array.isArray(r.bouts)) f.bouts = r.bouts;
+    // task 22: keep the per-fly DA/OA read-out on the sim fly so the lineage view can pulse each node with its
+    // OWN neuromodulation (additive; the collective state.nmMean path below is unchanged).
+    if (r.neuromod) f.neuromod = r.neuromod;
   }
+  // ---- neuromodulator collective means: prefer server-shipped collective.mean*, else compute from flies ----
+  const col = snap.collective;
+  if (typeof col.meanDaHz === "number" && Number.isFinite(col.meanDaHz)) {
+    state.nmMean = { daHz: col.meanDaHz, oaHz: col.meanOaHz || 0, n: col.size || snap.flies.length };
+  } else {
+    state.nmMean = nmCollectiveMean(snap.flies);
+  }
+
   // retire flies that vanished from the snapshot
   for (const [id, f] of sim) if (!seen.has(id) && !f.dying) f.dying = true;
 

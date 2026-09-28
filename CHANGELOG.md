@@ -8,13 +8,16 @@ All notable changes to **murmur** are documented in this file. The format is bas
 > into an **agent economy on Arc** that now settles **real USDC on mainnet**. The legacy trading stack was removed
 > wholesale; see `0.2.0` below, and `[Unreleased]` for the go-live.
 
-> **Current live numbers — single source of truth.** The **30,800-neuron** LIF connectome is the on-chain committed
-> *species/genesis spec* (the `@fly/fly-brain` library *default* is 1,080; production `BRAIN_N_*` sets the spec) —
-> each **live** fly's brain is grown from its own genome instead, so individuals vary (**~10,800 neurons today**),
-> sharded **one fly per isolate** across 100 `FlyShardDO` shards. The population **founds at 24 and breeds live
-> toward a 100 cap** (`EVOLUTION_MAX_LIVE_POPULATION`) — 24 is genesis, not a fixed cast. **642 unit tests** pass
-> (53 `fly-brain` + 565 `trader-worker` + 24 `arc-circle-x402`). The dated entries below are historical snapshots and
-> legitimately reflect the smaller values of their own release.
+> **Current live numbers — single source of truth.** The production topology is the **literal FAFB_783 FlyWire MB+CX
+> subgraph** — **10,361 neurons / 467,314 neurotransmitter-signed synapses** (Eckstein et al. 2024, CC-BY 4.0) —
+> committed on-chain (**manifestHash `100712db…ef9c`**, `NeuralManifestRegistry`, Arc mainnet `5042`). **Every live fly
+> (genesis and bred alike) instantiates the same literal connectome**; each genome parameterizes only the synaptic
+> weights and neuromodulatory traits on that fixed anatomy — so neuron count no longer varies per fly. Flies are sharded
+> **one per isolate** across 100 `FlyShardDO` shards. The population **founds at 24 and breeds live toward a 100 cap**
+> (`EVOLUTION_MAX_LIVE_POPULATION`) — 24 is genesis, not a fixed cast. **642 unit tests** pass
+> (53 `fly-brain` + 565 `trader-worker` + 24 `arc-circle-x402`). The previous **30,800-neuron procedural PRNG species
+> spec is superseded**; `BRAIN_N_*` sizing remains only as a **legacy procedural fallback** and hatch memory-budget
+> estimator. The dated entries below are historical snapshots and legitimately reflect the values of their own release.
 
 ## [Unreleased]
 

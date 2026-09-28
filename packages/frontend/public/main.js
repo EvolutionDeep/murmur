@@ -1,11 +1,11 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=100';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=103';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
-import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
+import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
-import { bindBloomScale, deselect, fillInspectorFromSim, renderBloom, renderRaster } from './inspector.js';
+import { bindBloomScale, bindNeuralViews, deselect, fillInspectorFromSim, pushScopeCollective, renderBloom, renderNmap, renderRaster, renderScope } from './inspector.js';
 import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js';
 import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js';
 import { ThreeScene } from './scene3d.js';
@@ -14,9 +14,12 @@ import { LandLayer } from './landLayer.js';
 import { openLand, closeLand, paintLand } from './landDrawer.js';
 import { loadDelaunay } from './nations.js';
 import { updateMotes, updateSim } from './sim.js';
+// task 22: the second main canvas (lineage / technical atlas). Bare import — NO ?v cache-buster;
+// _headers forces etag revalidation on /lineageView.js so a stale copy is never served.
+import { closeLineageView, initLineageView, lvFrame, lvPerf, lvRelocalise, toggleLineageView } from './lineageView.js';
 
 // read-only perf probe for diagnostics (never writes anything): frame cost, adaptive quality, swarm & ledger size
-window.__murmurPerf = () => ({ frameMsAvg: Math.round(state.frameMsAvg * 10) / 10, qualityCoeff: Math.round(state.qualityCoeff * 100) / 100, flies: sim.size, graves: graveField.length });
+window.__murmurPerf = () => Object.assign({ frameMsAvg: Math.round(state.frameMsAvg * 10) / 10, qualityCoeff: Math.round(state.qualityCoeff * 100) / 100, flies: sim.size, graves: graveField.length }, lvPerf());
 // task 49: hooks for the tick-driven day/night cycle. The DayNight instance lives on the ThreeScene
 // (it binds the scene's lights/sky/fog), so main.js only exposes it — it never drives a second copy.
 //   __murmurDayNight()      → the live instance (phase / nightFactor / watch / icon)
@@ -45,11 +48,27 @@ export function loop(now) {
     const pal = paletteAt(state.tempSmoothed);
     if (state.frame % 6 === 0) applyPaletteToDOM(pal);
     sampleHistory();
-    updateSim(dt, now);
-    if (state.qualityCoeff > 0.3) updateMotes(dt);
-    render(pal, now);
-    if (state.frame % 3 === 0) drawTempHistory();
-    if (state.selectedId != null) { renderBloom(now); renderRaster(now); }
+    // task 22: the two main canvases are mutually exclusive. While the lineage atlas owns the stage the 3D
+    // canvas is display:none, so we skip updateSim / render / every neural blit — literally zero 3D work —
+    // and drive only lvFrame (which keeps its own offscreen bake + particle budget). Switching back resumes
+    // the sim exactly where it paused: fly positions are simply not advanced while the atlas is on stage.
+    if (state.lineageViewActive) {
+      lvFrame(now);
+    } else {
+      updateSim(dt, now);
+      if (state.qualityCoeff > 0.3) updateMotes(dt);
+      render(pal, now);
+      if (state.frame % 3 === 0) drawTempHistory();
+      if (state.selectedId != null) {
+        // task 15: only the on-stage neural view pays for a rebuild + blit; the scope is never gated (always visible).
+        const nv = state.nview;
+        if (nv === "bloom") renderBloom(now);
+        else if (nv === "raster") renderRaster(now);
+        else renderNmap(now);                 // "heat" | "memb" share the #nmap stage
+        renderScope(now);
+      }
+      else if (state.frame % 60 === 0) { pushScopeCollective(); renderScope(now); }   // collective fallback ~1 Hz
+    }
   } catch (e) {
     if (!state.loopWarned) { state.loopWarned = true; console.warn("[murmur] loop error (self-healed):", e); }
   } finally {
@@ -126,6 +145,8 @@ export function rerenderAll() {
     if (state.landOpen) paintLand();
     if (state.landLayer) state.landLayer.refreshLeaderboard();   // task 56: re-localise the land leaderboard labels
     if (state.walkMode) state.walkMode.paintChrome();   // task 48: re-localise walk button tooltip
+    lvRelocalise();   // task 22: re-localise the atlas legend + any open focus panel in the new language
+    refreshProvBadge();   // task nm5: re-localise the provenance badge title
   } catch { /* never let a re-render break the scene */ }
 }
 window.__onLangChange = rerenderAll;
@@ -163,6 +184,7 @@ export function bindUI() {
       case "canary": toggleCanary(); break;
       case "temple": toggleTemple(); break;
       case "walk": if (state.walkMode) state.walkMode.toggle(); break;
+      case "lineageview": toggleLineageView(); break;   // task 22: switch to the second main canvas
       case "wallets": toggleWallets(); break;
       case "proofs": toggleProofs(); break;
       case "history": toggleHistory(); break;
@@ -182,6 +204,7 @@ export function bindUI() {
   const lsel = $("lang-select");
   if (lsel) lsel.addEventListener("change", () => setLang(lsel.value));
   bindBloomScale();
+  bindNeuralViews();   // task 15: the inspector's four-view neural switch (bloom / raster / heatmap / membrane)
   const lt = $("layer-toggles");
   if (lt) lt.addEventListener("click", (e) => {
     const b = e.target.closest(".layer-btn"); if (!b) return;
@@ -230,6 +253,8 @@ export function bindUI() {
   });
   const bb = $("brain-btn"); if (bb) bb.addEventListener("click", toggleBrain);
   const bc = $("brain-close"); if (bc) bc.addEventListener("click", closeBrain);
+  // provenance badge: click opens the brain drawer
+  const pbadge = $("prov-badge"); if (pbadge) pbadge.addEventListener("click", toggleBrain);
   const lb = $("lineage-btn"); if (lb) lb.addEventListener("click", toggleLineage);
   const lc = $("lineage-close"); if (lc) lc.addEventListener("click", closeLineage);
   // the lineage drawer rebuilds each render, so bind row/parent-select + breed by delegation once
@@ -304,7 +329,7 @@ export function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else deselect();
+    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else if (state.lineageViewActive) closeLineageView(); else deselect();
   });
 }
 // ================= boot =================
@@ -346,11 +371,13 @@ export async function boot() {
     { const tca = $("tca-copy"); if (tca) tca.title = T("econ.copyTip", { ca: tca.dataset.ca || "" }); }   // fill the {ca} param applyDom can't
   bindPointer();
     bindZoomControls();
+  initLineageView();   // task 22: wire the second canvas (hit-test, toolbar, focus panel) — inert until toggled on
   offlineTick();   // seed the field + the agent economy so it is alive immediately
   applyPaletteToDOM(paletteAt(state.tempSmoothed));
   setStatusKind("connecting");
   poll();
   setInterval(poll, POLL_MS);
+  lazyProvCheck();   // task nm5: one-shot provenance verify per session (never retries)
   pollHistory();                              // seed the ribbon + since-launch summary from D1 on load
   setInterval(pollHistory, HIST_POLL_MS);     // the archive advances ~1×/min; a slow poll keeps it fresh
   pollChron();                                // seed the chronicle panel so it is live on load

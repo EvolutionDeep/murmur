@@ -20,8 +20,10 @@
 // brain: the taste feeding-initiation circuit (Shiu et al. 2022/2024), the Johnston's-organ → aBN → aDN
 // antennal-grooming circuit (Hampel/Seeds), the protocerebral-bridge ring attractor for head direction
 // (Kakaria & de Bivort 2017), context-specific halting (Sapkal et al. 2023), and the feeding↔locomotion
-// competition (Mann & Scott 2013). These are FUNCTIONAL emulations at the read-out layer, consistent with
-// CONNECTOME_PROVENANCE.flywireLiteral = false — we do not claim the literal FlyWire adjacency matrix.
+// competition (Mann & Scott 2013). These are FUNCTIONAL emulations at the read-out layer. The underlying
+// connectome IS now the literal FAFB 783 FlyWire subgraph (FLYWIRE_PROVENANCE.flywireLiteral = true), but
+// the ethogram motifs remain decoder-level approximations of published circuits, not a claim that this
+// read-out layer replicates the exact published wiring diagrams neuron-for-neuron.
 
 import type { Bout, EthogramReading, Fap, MotorOutput, SensoryChannel, SensoryInput } from "./types.js";
 
@@ -98,7 +100,9 @@ export const FAP_ROLE: Record<Fap, string> = {
 /**
  * HONEST map of which published real-fly circuits each FAP functionally emulates. Recorded so the
  * frontend/API can present a "behavioural circuit atlas" without overstating the claim: these are
- * decoder-level functional emulations, not the literal FlyWire adjacency graph (flywireLiteral=false).
+ * decoder-level functional emulations of published circuits. The underlying connectome is now the
+ * literal FAFB 783 FlyWire subgraph (flywireLiteral=true), but the ethogram layer itself is a
+ * higher-level read-out abstraction, not a neuron-for-neuron replication of each cited circuit.
  */
 export const ETHOGRAM_MOTIFS: Record<Fap, { circuit: string; reference: string }> = {
   FEED: { circuit: "taste feeding-initiation: sugar GRN → pre-MN → proboscis MN (MN6/8/9/11)", reference: "Shiu et al. 2024 Nature; Gordon & Scott 2009" },

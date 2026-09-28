@@ -29,6 +29,18 @@ import { Institutions, computeInstitutionSpots } from './institutions.js';
 // 青-砂-金家族里，使每一档读起来都是同一个沙盘世界处于其文明的不同时辰。由 setCivStage()
 // 应用、_updateCivFade() 在 ≤2s 内交叉淡入；空闲时每帧只花一个布尔判断（零分配）。
 const CIV_FADE_S = 2.0;   // 过渡预算（任务硬约束：≤2s，到点自停）
+
+// ---- task 20 (click arbitration pass): fly visibility constants --------------------------------
+// FLY_VISUAL_SCALE — user-approved moderate enlargement of the instanced drosophila bodies.
+// One knob for build-time geometry is unnecessary: every visual part (body/eyes/wings) rides the
+// same per-instance matrix, so multiplying the per-frame `sz` scales the whole fly coherently.
+// Kept restrained (×1.4) so a fully loaded swarm of 100+ flies never muddies the diorama.
+const FLY_VISUAL_SCALE = 1.4;
+// FLY_PROXY_RADIUS — invisible pick-proxy sphere radius in body-local units. The merged body
+// geometry spans x∈[−1.2, 1.22] (visual radius ≈1.2 local), so 2.3 local ≈1.9× visual — inside the
+// 1.6–2.0× band and safely below the mean inter-fly spacing of a 100-fly swarm over 720×450.
+const FLY_PROXY_RADIUS = 2.3;
+const FLY_PROXY_SEG = 10;          // shared low-poly sphere segments — hit testing only, never rendered
 const CIV_PALETTES = [
   // 0 部落晨雾 — 冷青雾 + 低饱和草色光（尚未营造的蜂群）
   { hemiSky: 0xa9c6c4, hemiGround: 0x9aa88a, sun: 0xdfe8dc, fog: 0xc3d8d6, water: 0x33858f },
@@ -84,6 +96,8 @@ export class ThreeScene {
     // task 18: per-frame scratch containers — allocated once, never re-created inside update()
     this._ownerMap = new Map(); this._ownerPairs = []; this._rankArr = []; this._flyArr = [];
     this._flyCount = 0;                            // task 20⑤: live fly instance count (for picking)
+    this._flyProxies = null;                       // task 20: Group of invisible per-fly pick-proxy spheres
+    this._flyProxyList = [];                       // task 20: the 120 proxy meshes (index-aligned with flyBody instances)
     this._meshList = []; this._faithSeen = new Set(); this._terrParts = [];
     this.nationBorderGroup = null;  // nations border mesh group (mounted by _applyNations — task 6)
     this.villageGroup = new THREE.Group();   // KayKit village buildings (task 6, _rebuildVillages)
@@ -867,6 +881,30 @@ export class ThreeScene {
       w.frustumCulled = false;   // task 20③
       this.scene.add(w);
     }
+
+    // task 20 (click arbitration pass): invisible per-fly pick proxies. The exact-body InstancedMesh
+    // raycast stays the primary hit path; these fat spheres are the generous near-miss layer BETWEEN
+    // it and the 28px screen-space fallback. One shared SphereGeometry + one shared material, 120
+    // meshes (the instance cap). verified against the live three@0.160.0 source (the exact build the
+    // importmap resolves): Raycaster's module-level intersectObject() only tests
+    // `object.layers.test(raycaster.layers)` — it NEVER checks `visible` — so visible=false meshes
+    // are still hittable (the same guarantee the necropolis proxies in _pickGrave rely on).
+    // Belt-and-braces: colorWrite=false + castShadow/receiveShadow=false, so even a stray visibility
+    // flip could not paint a pixel, and no shadow/outline/visual path ever sees these meshes.
+    const proxyGeo = new THREE.SphereGeometry(FLY_PROXY_RADIUS, FLY_PROXY_SEG, FLY_PROXY_SEG);
+    const proxyMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, transparent: true, opacity: 0 });
+    this._flyProxies = new THREE.Group();
+    this._flyProxies.visible = false;      // never rendered; children keep world matrices (Object3D.updateMatrixWorld)
+    this._flyProxies.frustumCulled = false;
+    for (let i = 0; i < 120; i++) {
+      const m = new THREE.Mesh(proxyGeo, proxyMat);
+      m.visible = false;
+      m.castShadow = false; m.receiveShadow = false;
+      m.userData.flyId = null;
+      this._flyProxyList.push(m);
+      this._flyProxies.add(m);
+    }
+    this.scene.add(this._flyProxies);
   }
 
   // ---- task 18: _rDistAt / _buildForest / _buildGrass all removed. The 800 merged-geometry
@@ -2030,6 +2068,15 @@ export class ThreeScene {
   // bows out in 3D mode (state.threeScene guard), so this handler owns every click semantic here.
   // Order: flies first (primary target), then headstones (only while the necropolis layer is on),
   // then an empty click clears both. A near-stationary pointerup only — a camera drag is not a tap.
+  // task 20 arbitration: landLayer.js registers its own `click` on the SAME canvas after this one
+  // (main.js builds ThreeScene before LandLayer), and addEventListener chains are not short-circuited
+  // by a plain `return` — so a click that lands on a fly used to ALSO open the land parcel drawer
+  // underneath it. Any real hit (fly / institution / headstone) now finishes its own handling and
+  // then calls stopImmediatePropagation(), which suppresses every later-registered click listener on
+  // this canvas. Audit of #field click listeners: landLayer.js L387 is the ONLY one registered after
+  // scene3d's (camera.js binds pointer* only; its click handlers live on the zoom DOM buttons), so
+  // nothing else is starved. Empty clicks deliberately do NOT stop propagation — the land drawer
+  // keeps its entry, and landLayer's own walk-mode/enabled/visible guards still apply there.
   _onCanvasClick(e) {
     if (!this.renderer || !this.camera) return;
     if (cameraMode() === "walk") return;   // task 48: walk mode owns the pointer, never pick
@@ -2040,9 +2087,9 @@ export class ThreeScene {
     this._ndc.set((px / rect.width) * 2 - 1, -(py / rect.height) * 2 + 1);
     this._raycaster.setFromCamera(this._ndc, this.camera);
 
-    // ① flies — double insurance (raycast InstancedMesh, then <28px screen-space nearest)
+    // ① flies — triple insurance (raycast InstancedMesh, invisible proxy spheres, <28px screen-space nearest)
     const fly = this._pickFly(px, py, rect);
-    if (fly != null) { selectFly(fly); return; }
+    if (fly != null) { selectFly(fly); e.stopImmediatePropagation(); return; }
 
     // ①b (task 52) institution landmarks — a tap on a building opens its chronicle volume. The
     // raycaster is already set from this click's NDC above; the buildings sit under the sky-patrolling
@@ -2053,6 +2100,7 @@ export class ThreeScene {
         if (typeof this.onInstitutionClick === "function") {
           try { this.onInstitutionClick(rec.def.vol, rec.def.key); } catch (err) { console.warn("institutionClick", err); }
         }
+        e.stopImmediatePropagation();
         return;
       }
     }
@@ -2060,10 +2108,11 @@ export class ThreeScene {
     // ② a headstone, but only while the necropolis layer is showing
     if (state.showGraves && this._graveGroup && this._graveGroup.visible) {
       const g = this._pickGrave(px, py, rect);
-      if (g) { showEpitaph({ ...g, uid: graveUid(g.id, g.bornTick) }); return; }
+      if (g) { showEpitaph({ ...g, uid: graveUid(g.id, g.bornTick) }); e.stopImmediatePropagation(); return; }
     }
 
-    // ③ empty click — clear both selections
+    // ③ empty click — clear both selections. NO stopImmediatePropagation here: landLayer's parcel
+    // click (registered later on the same canvas) must still run for empty-space taps.
     deselectFly();
     hideEpitaph();
   }
@@ -2105,6 +2154,25 @@ export class ThreeScene {
     if (hits.length && hits[0].instanceId != null) {
       const f = this._flyArr[hits[0].instanceId];
       if (f && f.id != null) return f.id;
+    }
+    // ①b (task 20) invisible proxy spheres — the generous near-miss layer between the exact body
+    // raycast and the crude 28px screen fallback. Proxies are ≈1.9× the visual radius (well under
+    // mean inter-fly spacing, so overlaps are rare; when they do overlap, intersectObjects sorts by
+    // distance and the nearest fly wins). updateMatrixWorld(true) is forced first: the proxies are
+    // repositioned every frame in update(), and a click between renders must not raycast stale
+    // matrices (same camera-matrix staleness class the grave picker guards against).
+    if (this._flyProxies) {
+      this._flyProxies.updateMatrixWorld(true);
+      const proxies = this._pickA;
+      proxies.length = 0;
+      for (let i = 0; i < n; i++) {
+        const m = this._flyProxyList[i];
+        if (m && m.userData.flyId != null) proxies.push(m);
+      }
+      if (proxies.length) {
+        const ph = this._raycaster.intersectObjects(proxies, false);
+        if (ph.length && ph[0].object.userData.flyId != null) return ph[0].object.userData.flyId;
+      }
     }
     // ② screen-space fallback — nearest live fly within 28px of the click
     const v = this._v1, m = this._m4;
@@ -2212,7 +2280,7 @@ export class ThreeScene {
       const x = (f.x / state.VW - 0.5) * this._WSX;
       const z = (f.y / state.VH - 0.5) * this._WSZ;
       const balN = f.balN != null ? f.balN : 0.5;
-      const sz = (0.7 + balN * 0.6) * 2.3;   // task 24: diorama insects — the swarm shrinks to ≈1/5 of a castle so the island reads as a tabletop model
+      const sz = (0.7 + balN * 0.6) * 2.3 * FLY_VISUAL_SCALE;   // task 24: diorama insects — the swarm shrinks to ≈1/5 of a castle so the island reads as a tabletop model; task 20: ×FLY_VISUAL_SCALE user-approved enlargement (eyes/wings ride the same matrix)
       // task 24 — the shrunken flies patrol the SKY above the island, not the grass: lift them a
       // fixed 14 units over the highest ground under the body so they read as insects buzzing over
       // the diorama (never below sea level), with the ±2 hover bob riding on top.
@@ -2236,6 +2304,20 @@ export class ThreeScene {
       this._m4.copy(d.matrix).multiply(this._hingeR);
       this._m5.makeRotationX(flap);
       this.flyWingR.setMatrixAt(i, this._m4.multiply(this._m5));
+      // task 20: the invisible pick proxy rides the exact rendered world position (same x/y/z the
+      // instance matrix carries — bob and relief lift included) and scales with the body, so its
+      // world radius stays ≈1.9× the visual radius at every wealth tier.
+      const pm = this._flyProxyList[i];
+      if (pm) {
+        pm.position.set(x, y, z);
+        pm.scale.setScalar(sz);
+        pm.userData.flyId = f.id;
+      }
+    }
+    // task 20: park the proxies of instances beyond the live count so _pickFly can never resolve a dead slot
+    for (let i = n; i < this._flyProxyList.length; i++) {
+      const pm = this._flyProxyList[i];
+      if (pm) { pm.userData.flyId = null; pm.scale.setScalar(0); }
     }
     this.flyBody.count = n;
     this._flyCount = n;   // task 20⑤: live instance count for _pickFly (instanceId → this._flyArr[id])
@@ -3020,17 +3102,20 @@ export class ThreeScene {
     if (!C) { mesh.visible = false; return; }
     const aro = clamp(Number(C.arousal) || 0);
     const coh = clamp(Number(C.cohesion) || 0);
+    // neuromod pulse (task nm3): DA boosts opacity + warmth; OA offsets the breathing phase. Gated by qualityCoeff.
+    const nmDa = state.qualityCoeff > 0.3 ? clamp((state.nmMean.daHz || 0) / 40) : 0;
+    const nmOa = state.qualityCoeff > 0.3 ? clamp((state.nmMean.oaHz || 0) / 40) : 0;
     const VW = state.VW, VH = state.VH, W = this._WSX, H = this._WSZ;
     const cfx = state.centroidX || VW / 2, cfy = state.centroidY || VH / 2;
     const x = (cfx / VW - 0.5) * W, z = (cfy / VH - 0.5) * H;
-    const R = (55 + coh * 95) * (W / (VW || 1)) * (1 + 0.05 * Math.sin(now / 700));
+    const R = (55 + coh * 95) * (W / (VW || 1)) * (1 + 0.05 * Math.sin(now / 700 + nmOa * 1.8));
     mesh.position.set(x, Math.max(this.heightAt(x, z), 0) + R * 0.45, z);
     mesh.scale.setScalar(Math.max(R, 2));
-    mesh.material.opacity = clamp(0.03 + aro * 0.10, 0.02, 0.2);
+    mesh.material.opacity = clamp(0.03 + aro * 0.10 + nmDa * 0.04, 0.02, 0.24);
     mesh.material.color.setRGB(
-      (106 + 92 * aro) / 255,
-      (148 - 88 * aro) / 255,
-      (224 - 180 * aro) / 255, THREE.SRGBColorSpace);
+      (106 + 92 * aro + 30 * nmDa) / 255,
+      (148 - 88 * aro - 18 * nmDa) / 255,
+      (224 - 180 * aro - 20 * nmDa) / 255, THREE.SRGBColorSpace);
     mesh.visible = true;
   }
 

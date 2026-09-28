@@ -16,7 +16,7 @@ function drive(id: number, over: Partial<FlyReading> = {}): FlyReading {
     arousal: 0.5, turnBias: 0, cohesion: 0.5,
     wingbeat: 0.5, rest: 0.2, temperament: 0.5,
     fingerprint: `fp${id}`,
-    fap: "FEED", valence: 0, heading: 0, role: FAP_ROLE.FEED, bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0 },
+    fap: "FEED", valence: 0, heading: 0, role: FAP_ROLE.FEED, bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0, daHz: 0, oaHz: 0 },
     ...over,
   };
 }

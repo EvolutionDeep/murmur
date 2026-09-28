@@ -1,7 +1,7 @@
 // render2d.js — 2D fallback 渲染：render 主循环 + drawFly + parchment/frame + 全部世界层绘制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ASH_GREY, BLOSSOM, CIV_SHADOW, COIN_GOLD, COLONY_COLORS, COLONY_NAMES, CONTINENT, CRACK_RED, ECON_EDGE_MS, FAITH_GOLD, FIRE_HOT, FIRE_LO, FIRE_MID, GARDEN, GILT, GILT_HI, GOLD_THREAD, GOOD_COL, GRAVE_CAP, HIST_SAMPLE_MS, HULL, INK, LAW_GOLD, MIND_REBUILD_MS, MONUMENT_MS, MUD, MUD_HI, MUD_SH, PALM, PLAZA, POOL, PROVINCES, RIBBON_WINDOW, RIVER_BLUE, SAIL, SMOKE, SOCIETY_BOND_MIN, SOCIETY_CAP_GAP, SOCIETY_FEUD_MAX, SOCIETY_MINCAP, SOCIETY_PAD, STATE_RGB, TAU, TECH_BRONZE, TERRA, UNCLAIMED, VELLUM, WK_AGE_TICKS, WORK_SLOT, canvas, clamp, fnv1a, graveField, graveUid, houseColor, houseOf, lerp, mix, paletteAt, rgb, rgba, sim, wealthColorAt } from './shared.js';
-import { ct, gl, t as T } from './i18n.js?v=100';
+import { ct, gl, t as T } from './i18n.js?v=103';
 import { applyCam, mw } from './camera.js';
 import { keeperIds, prophetIds } from './economy.js';
 import { refreshInspectorSocial } from './inspector.js';
@@ -67,14 +67,17 @@ export function rebuildMind(pal) {
   g.addColorStop(1, rgba(acc, 0));
   x.fillStyle = g; x.beginPath(); x.arc(c, c, c * 0.95, 0, TAU); x.fill();
   // filaments — reach shimmers with mean arousal; agitation adds jitter, aggregation/rest pull them in
-  const FIL = 96, R0 = c * 0.10, R1 = c * (0.50 + aro * 0.34);
+  // neuromod pulse (task nm3): DA extends reach + boosts glow; OA offsets shimmer phase. Gated by qualityCoeff.
+  const nmDa = state.qualityCoeff > 0.3 ? clamp((state.nmMean.daHz || 0) / 40) : 0;
+  const nmOa = state.qualityCoeff > 0.3 ? clamp((state.nmMean.oaHz || 0) / 40) : 0;
+  const FIL = 96, R0 = c * 0.10, R1 = c * (0.50 + aro * 0.34 + nmDa * 0.12);
   x.lineWidth = 1;
   for (let i = 0; i < FIL; i++) {
     const a = (i / FIL) * TAU;
-    const shimmer = 0.72 + 0.28 * Math.sin(state.flowTime * 0.6 + i * 0.7);
+    const shimmer = 0.72 + 0.28 * Math.sin(state.flowTime * 0.6 + i * 0.7 + nmOa * 2.4);
     const jitter = 1 + agitate * 0.5 * (Math.sin(i * 12.9898 + state.flowTime) * 0.5 + 0.5) - aggregate * 0.22 - rest * 0.18;
     const r1 = R0 + (R1 - R0) * clamp(shimmer * jitter, 0.15, 1.3);
-    x.strokeStyle = rgba(acc, 0.015 + aro * 0.045);
+    x.strokeStyle = rgba(acc, 0.015 + aro * 0.045 + nmDa * 0.02);
     x.beginPath();
     x.moveTo(c + Math.cos(a) * R0, c + Math.sin(a) * R0);
     x.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1);

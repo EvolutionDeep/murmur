@@ -49,7 +49,7 @@ function reading(id: number, over: Partial<FlyReading> = {}): FlyReading {
     arousal: 0.5, turnBias: 0, cohesion: 0.5,
     wingbeat: 0.5, rest: 0.2, temperament: ((id * 7919) % 1000) / 1000,
     fingerprint: (id.toString(16).padStart(2, "0") + "abcdef0123456789").slice(0, 32),
-    fap: FAP, valence: 0, heading: 0, role: FAP_ROLE[FAP], bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0 },
+    fap: FAP, valence: 0, heading: 0, role: FAP_ROLE[FAP], bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0, daHz: 0, oaHz: 0 },
     ...over,
   };
 }

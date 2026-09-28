@@ -107,6 +107,20 @@ export interface CollectiveState {
   faps: Record<string, number>;
   /** Mean appetitive−aversive valence across the swarm, −1..1 (the collective approach/avoid mood). */
   valence: number;
+  /**
+   * --- A3 collective neuromodulatory pulse (pure read-out; never a settlement input) ---
+   * Mean normalized DA/OA tone across the LIVE roster, 0..1 — the swarm-level twin of each fly's
+   * `neuromod.dopamine` / `neuromod.octopamine`. 0 for an empty roster.
+   */
+  meanDopamine: number;
+  meanOctopamine: number;
+  /**
+   * Mean RAW DA-like / OA-like half firing rate (Hz) across the LIVE roster — the un-normalized twin of the
+   * two fields above (meanDaHz/refHz ≈ meanDopamine while no fly saturates the 0..1 clamp; refHz = 40).
+   * Lets a consumer plot the collective modulatory drive in absolute Hz. 0 for an empty roster.
+   */
+  meanDaHz: number;
+  meanOaHz: number;
 }
 
 export interface PopulationSnapshot {
@@ -432,6 +446,12 @@ export function reduceReadOuts(
   const states = EMPTY_STATES();
   const faps: Record<string, number> = {};
   let sumAro = 0, sumCoh = 0, sumRest = 0, sumWing = 0, sumVal = 0;
+  // A3 collective neuromodulatory pulse: four more O(1) accumulators over the SAME per-fly read-outs the
+  // reduce already walks. The per-fly neuromod scalars already cross the shard boundary inside FlyReadOut
+  // (a fixed handful of floats, independent of neuron count), so NO shard transport changes — the means are
+  // folded here, coordinator-side, exactly like arousal/cohesion/rest. `hz()` keeps a stale or mixed-version
+  // read-out (a shard still serving a neuromod without the raw pair) from poisoning the aggregate with NaN.
+  let sumDa = 0, sumOa = 0, sumDaHz = 0, sumOaHz = 0;
   for (const entry of roster) {
     const r = byId.get(entry.id);
     const b = entry.decoder.decode(
@@ -450,6 +470,10 @@ export function reduceReadOuts(
     sumRest += b.rest;
     sumWing += b.wingbeat;
     sumVal += b.valence;
+    sumDa += hz(b.neuromod?.dopamine);
+    sumOa += hz(b.neuromod?.octopamine);
+    sumDaHz += hz(b.neuromod?.daHz);
+    sumOaHz += hz(b.neuromod?.oaHz);
     readings.push({
       id: entry.id,
       state: b.state,
@@ -485,6 +509,11 @@ export function reduceReadOuts(
     states,
     faps,
     valence: sumVal / n,
+    // An empty roster divides by n = 1 over zero accumulators ⇒ all four means are exactly 0.
+    meanDopamine: sumDa / n,
+    meanOctopamine: sumOa / n,
+    meanDaHz: sumDaHz / n,
+    meanOaHz: sumOaHz / n,
   };
 
   return { readings, collective, behaviors, vitality };
@@ -492,4 +521,9 @@ export function reduceReadOuts(
 
 function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/** NaN/undefined-safe scalar for the collective accumulators (a missing or poisoned field reads as 0). */
+function hz(x: unknown): number {
+  return typeof x === "number" && Number.isFinite(x) ? x : 0;
 }

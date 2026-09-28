@@ -44,7 +44,7 @@ function reading(id: number, state: FlyReading["state"], over: Partial<FlyReadin
     arousal: 0.9, turnBias: id % 2 ? 0.4 : -0.4, cohesion: 0.5,
     wingbeat: 0.8, rest: 0.05, temperament: (id * 7919) % 1000 / 1000,
     fingerprint: `fp${id}`,
-    fap: "FORAGE", valence: 0, heading: 0, role: "signal-seeker", bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0 },
+    fap: "FORAGE", valence: 0, heading: 0, role: "signal-seeker", bouts: [], neuromod: { dopamine: 0, octopamine: 0, learningRateGate: 0, daHz: 0, oaHz: 0 },
     ...over,
   };
 }
@@ -55,6 +55,7 @@ function collective(temperature = 0.8): CollectiveState {
     vitality: temperature, size: 24, arousal: 0.7, cohesion: 0.5, rest: 0.1, wingbeat: 0.6,
     states: { AGITATE: 0, EXPLORE: 0, AGGREGATE: 0, REST: 0 },
     faps: {}, valence: 0,
+    meanDopamine: 0, meanOctopamine: 0, meanDaHz: 0, meanOaHz: 0,
   };
 }
 

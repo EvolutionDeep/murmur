@@ -30,6 +30,26 @@ const API_ERROR = {
   },
 } as const;
 
+/**
+ * The A3 neuromodulatory read-out of one fly's modulatory layer (fly-brain/neuromod.ts). A PURE,
+ * manifest-neutral read-out: these scalars never enter the brain-manifest hash and never touch the frozen
+ * neural evidence behind a settlement, so they are safe to serve and safe to ignore.
+ */
+const NEUROMOD = {
+  type: "object",
+  description:
+    "One fly's DA/OA-like neuromodulatory state, reduced from its modulatory layer's firing rates. The modulatory population is split deterministically by index into a lower DA-like half and an upper OA-like half. Each half is reported TWICE: as a normalized 0..1 tone and as its RAW mean firing rate in Hz (refHz = 40 maps raw → normalized). Observed only unless NEUROMOD_GATING is enabled (production default off), in which case octopamine additionally shades arousal.",
+  additionalProperties: false,
+  required: ["dopamine", "octopamine", "learningRateGate", "daHz", "oaHz"],
+  properties: {
+    dopamine: { type: "number", description: "DA-like reward/reinforcement tone, normalized 0..1 = clamp01(daHz / 40)." },
+    octopamine: { type: "number", description: "OA-like arousal/exploration tone, normalized 0..1 = clamp01(oaHz / 40)." },
+    learningRateGate: { type: "number", description: "RESERVED A1 plasticity gate ∈ [0.05, 1], derived from dopamine. Not consumed by any synaptic weight update yet." },
+    daHz: { type: "number", description: "RAW (un-normalized) mean firing rate of the DA-like modulatory half, in Hz. 0 when that half is silent or empty; never NaN." },
+    oaHz: { type: "number", description: "RAW (un-normalized) mean firing rate of the OA-like modulatory half, in Hz. 0 when that half is silent or empty; never NaN." },
+  },
+} as const;
+
 const COLLECTIVE = {
   type: "object",
   description: "The swarm's aggregate neural read-out this tick (a single reduced 'mood').",
@@ -54,6 +74,10 @@ const COLLECTIVE = {
         REST: { type: "integer" },
       },
     },
+    meanDopamine: { type: "number", description: "Mean normalized DA tone across the live roster, 0..1 (0 when the roster is empty). The swarm-level twin of each fly's `neuromod.dopamine`." },
+    meanOctopamine: { type: "number", description: "Mean normalized OA tone across the live roster, 0..1 (0 when the roster is empty)." },
+    meanDaHz: { type: "number", description: "Mean RAW DA-like half firing rate (Hz) across the live roster — the collective modulatory pulse in absolute units (0 when the roster is empty)." },
+    meanOaHz: { type: "number", description: "Mean RAW OA-like half firing rate (Hz) across the live roster (0 when the roster is empty)." },
   },
 } as const;
 
@@ -71,6 +95,7 @@ const FLY = {
     rest: { type: "number" },
     temperament: { type: "number", description: "Per-fly fixed trait derived from its seed." },
     fingerprint: { type: "string", description: "Short hex identity of the fly's current neural reading." },
+    neuromod: { $ref: "#/components/schemas/Neuromod" },
   },
 } as const;
 
@@ -158,6 +183,41 @@ const STRUCTURAL_SPEC = {
   },
 } as const;
 
+/** The PROCEDURAL (PRNG) generator sizing — the legacy deterministic path (discriminant: no `mode` field). */
+const CONNECTOME_SIZING_PRNG = {
+  type: "object",
+  description: "Procedural generator sizing: the per-kind neuron counts + connection density a verifier rebuilds every connectome from (production is the 10x brain). Present when FLYWIRE_TOPOLOGY is off.",
+  additionalProperties: false,
+  properties: {
+    nSensory: { type: "integer" },
+    nInterL1: { type: "integer" },
+    nInterL2: { type: "integer" },
+    nModulatory: { type: "integer" },
+    nMotorPerChannel: { type: "integer" },
+    density: { type: "number" },
+  },
+} as const;
+
+/** The FLYWIRE-LITERAL topology recorded when FLYWIRE_TOPOLOGY is on (production): the fixed real FAFB 783
+ *  MB+CX subgraph + the seed-driven jitter gains (discriminant: `mode: "flywire"`). */
+const CONNECTOME_FLYWIRE = {
+  type: "object",
+  description:
+    "FlyWire-literal topology: the FIXED real FAFB 783 (FlyWire, CC-BY 4.0) Mushroom-Body + Central-Complex subgraph every fly shares, plus the gains that the per-fly seed applies as multiplicative weight/LIF jitter. The topology is not seedable — only the perturbation is. Recognised by `mode: \"flywire\"`.",
+  additionalProperties: false,
+  required: ["mode", "nNeurons", "nSynapses"],
+  properties: {
+    mode: { type: "string", enum: ["flywire"], description: "Discriminant for the FlyWire-literal shape." },
+    nNeurons: { type: "integer", description: "Neurons in the fixed subgraph.", example: 10361 },
+    nSynapses: { type: "integer", description: "Synapses in the fixed subgraph.", example: 467314 },
+    fanInMean: { type: "number", description: "Mean fan-in per neuron (synapses/neurons).", example: 45.1 },
+    weightGain: { type: "number", description: "Multiplicative gain (and weight ceiling) applied to the literal synaptic weights." },
+    weightJitter: { type: "number", description: "Seed-driven multiplicative jitter amplitude on each synaptic weight." },
+    threshGain: { type: "number", description: "Seed-driven gain on the LIF firing threshold." },
+    tauGain: { type: "number", description: "Seed-driven gain on the LIF membrane time constant." },
+  },
+} as const;
+
 const BRAIN_MANIFEST = {
   type: "object",
   description:
@@ -183,17 +243,9 @@ const BRAIN_MANIFEST = {
       },
     },
     connectome: {
-      type: "object",
-      description: "The generator sizing (production is the 10x brain).",
-      additionalProperties: false,
-      properties: {
-        nSensory: { type: "integer" },
-        nInterL1: { type: "integer" },
-        nInterL2: { type: "integer" },
-        nModulatory: { type: "integer" },
-        nMotorPerChannel: { type: "integer" },
-        density: { type: "number" },
-      },
+      description:
+        "The generator identity of the swarm's brains — ONE OF two shapes: the procedural (PRNG) sizing, or the FlyWire-literal topology served in production. Discriminate on `mode: \"flywire\"`.",
+      oneOf: [CONNECTOME_SIZING_PRNG, CONNECTOME_FLYWIRE],
     },
     lif: { type: "object", description: "The LIF integrator constants.", additionalProperties: { type: "number" } },
     neuronBaseParams: { type: "object", description: "Per-kind base membrane parameters (sensory/inter/modulatory/motor).", additionalProperties: true },
@@ -206,7 +258,7 @@ const BRAIN_MANIFEST = {
       properties: {
         name: { type: "string" },
         architecture: { type: "string" },
-        flywireLiteral: { type: "boolean", description: "False: connectomes are generated deterministically, not copied literally from FlyWire." },
+        flywireLiteral: { type: "boolean", description: "True = the connectomes ARE the literal FlyWire FAFB_783 MB+CX subgraph (10,361 neurons / 467,314 synapses, CC-BY 4.0): the topology is fixed and the seed only jitters synaptic weights + LIF parameters (production). False = connectomes are generated deterministically from the seed — FlyWire-architecture-inspired, not a literal copy." },
         generatedDeterministically: { type: "boolean" },
         reproducibleFromSeed: { type: "boolean" },
         llmInvolved: { type: "boolean", description: "Always false — no LLM anywhere in the loop." },
@@ -421,7 +473,8 @@ export const OPENAPI_SPEC = {
     version: "1.0.0",
     summary: "Read-only JSON API into a live, autonomous economy of fruit-fly nervous systems (24 genesis, breeding toward 100) settling real USDC on Arc.",
     description: [
-      "**murmur** is a population of spiking LIF connectomes (~30,800 neurons each) — 24 founders, breeding live toward a 100 cap — grown deterministically from a real",
+      "**murmur** is a population of spiking LIF connectomes (10,361 FlyWire-literal neurons / 467,314 synapses each —",
+      "the literal FAFB 783 FlyWire MB+CX subgraph) — 24 founders, breeding live toward a 100 cap — grown deterministically from a real",
       "Drosophila brain architecture. Each fly is an autonomous economic agent: its neural drives decide what to buy and from",
       "whom, and agents settle with each other in **real USDC on Arc mainnet** over **x402 / EIP-3009**. There is **no LLM**",
       "anywhere in the loop.",
@@ -1157,7 +1210,7 @@ export const OPENAPI_SPEC = {
         tags: ["swarm"],
         operationId: "getSnapshot",
         summary: "Full neural state of one fly (large)",
-        description: "The complete per-neuron arrays for one fly: firing rates, membrane potentials, last-step spikes, neuron kinds/channels, the decoded motor channels, and the fly's agent wallet. ~1.7 MB in production (30,800 neurons) — fetch sparingly.",
+        description: "The complete per-neuron arrays for one fly: firing rates, membrane potentials, last-step spikes, neuron kinds/channels, the decoded motor channels, the DA/OA neuromodulatory read-out (normalized + raw Hz), and the fly's agent wallet. ≈0.5 MB in production (10,361 FlyWire-literal neurons) — fetch sparingly.",
         parameters: [{ name: "flyId", in: "query", required: true, schema: { type: "integer", minimum: 0, maximum: 23 }, description: "The 0-based fly index.", example: 0 }],
         ...ok(
           obj({
@@ -1173,6 +1226,7 @@ export const OPENAPI_SPEC = {
             neuronKinds: { type: "array", items: { type: "string" } },
             neuronChannels: { type: "array", items: { type: "string" } },
             neuronCount: { type: "integer" },
+            neuromod: { $ref: "#/components/schemas/Neuromod" },
             agent: { $ref: "#/components/schemas/Agent" },
           }, ["flyId", "neuronCount"]),
           "One fly's full neural snapshot.",
@@ -1487,6 +1541,7 @@ export const OPENAPI_SPEC = {
       ApiError: API_ERROR,
       Collective: COLLECTIVE,
       Fly: FLY,
+      Neuromod: NEUROMOD,
       EconTotals: ECON_TOTALS,
       Agent: AGENT,
       Trade: TRADE,

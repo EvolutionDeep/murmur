@@ -58,9 +58,12 @@ races. Brains are persisted via `serialize()/deserialize()` so the swarm keeps i
    richness). Every fly receives the **same** pulse through its sensory channels **plus its own** stable internal
    arousal (its *temperament*, derived from its seed) so individuals keep a tempo. A pending visitor stimulus, if
    any, rides on top.
-4. **Spike** (`@fly/fly-brain`). Each fly advances its own genome-sized LIF network (the on-chain species spec is
-   **30,800 neurons**; live bred flies vary, ~10,800 today; the library default is 1,080) independently for
-   `SIM_STEPS_PER_TICK` (500) ms.
+4. **Spike** (`@fly/fly-brain`). Each fly advances its LIF network — the literal **FAFB_783 FlyWire MB+CX subgraph**,
+   **10,361 neurons / 467,314 neurotransmitter-signed synapses** (Eckstein et al. 2024, CC-BY 4.0), committed on-chain
+   (manifestHash `100712db…ef9c`). Every live fly instantiates the same literal connectome; its genome parameterizes only
+   synaptic weights and neuromodulatory traits on that fixed anatomy (the previous 30,800-neuron procedural PRNG species
+   spec is superseded — `BRAIN_N_*` remains only as a legacy procedural fallback and hatch memory-budget estimator;
+   library default 1,080) — independently for `SIM_STEPS_PER_TICK` (500) ms.
 5. **Decode, peer-relative** (`motor-decoder.ts`). Read each fly's motor firing rates → raw drives
    (arousal / turn / cohesion / rest), compute the population bands (robust 10–90 percentiles) for this tick, and
    decode each fly **relative to its peers** with the temperature as the collective anchor → a `FlyBehavior`
@@ -142,7 +145,7 @@ npm run smoke     # end-to-end neural smoke: grow brains, spike, decode, settle
 
 | Suite | Package | What it pins down |
 |---|---|---|
-| `connectome.test.ts` | fly-brain | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** sizing (production overrides `BRAIN_N_*` to 30,800): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the gustatory→proboscis reflex, and deterministic-per-seed / distinct-across-seeds wiring. |
+| `connectome.test.ts` | fly-brain | The graph is the documented ~1,080-neuron laminar **downsample of FlyWire** (~138k n / ~5M syn) at the library **default** procedural sizing (production now runs the **literal FAFB_783 FlyWire MB+CX subgraph — 10,361 neurons / 467,314 synapses**; `BRAIN_N_*` is retained only as a legacy procedural fallback and hatch memory-budget estimator): layer sizes + order, sparse fan-in, excitatory feedforward, **mutually-inhibitory** L2 left↔right (the winner-take-all), ipsilateral leg projections, the gustatory→proboscis reflex, and deterministic-per-seed / distinct-across-seeds wiring. |
 | `lif.test.ts` | fly-brain | Resting leak, threshold→spike→reset, the refractory blackout, one-step-delayed weighted synaptic propagation (excitatory **and** inhibitory), and **spike-frequency adaptation** — the fatigue current that provably reduces sustained firing so the WTA alternates instead of hard-latching. Plus exact `toJSON`/`fromJSON` round-trip. |
 | `motor-decoder.test.ts` | fly-brain | The two-layer read-out: HOT→aroused/dispersed vs COLD→huddled/restful collective base, population-relative individual spread, `[0,1]`/`[−1,1]` clamping, regime selection through hysteresis, robust 10–90 percentile bands, and fingerprint determinism. |
 | `economy.test.ts` | trader-worker | The economy is a strict **one-directional read-out** — a frozen neural input is provably bit-for-bit unchanged after a settlement round (no feedback into the connectome). Plus behaviour→good mapping, buyer/seller value transfer, money conservation, the solvency floor, full determinism, and the per-agent wallet roster. |

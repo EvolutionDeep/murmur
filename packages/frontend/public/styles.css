@@ -393,6 +393,18 @@ dd, .fp, .micro dd, .econ-vol, .temp-value, .wallet-bal b, .ar-vs-big, .pb-amt, 
 }
 .link-dot.live { background: var(--accent); animation: breathe 3.4s ease-in-out infinite; }
 .link-dot.off  { background: rgba(var(--ink-rgb), 0.3); }
+/* provenance badge: the top-bar manifest-hash chip (task nm5) */
+.prov-badge {
+  font: inherit; font-family: var(--mono); font-size: max(9px, var(--fs-floor, 0px));
+  letter-spacing: 0.06em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--hair); background: transparent; color: var(--muted);
+  cursor: pointer; white-space: nowrap;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+.prov-badge:hover { color: var(--ink); border-color: rgba(var(--accent-rgb), 0.5); }
+.prov-badge.is-ok { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.6); background: rgba(var(--accent-rgb), 0.08); }
+.prov-badge.is-fail { color: #b04a3a; border-color: rgba(176, 74, 58, 0.5); }
+.prov-badge.is-chain { color: var(--muted); border-color: var(--hair); opacity: 0.75; }
 /* a 6px dot is the ONE thing allowed to animate a box-shadow: it is 36px² of paint, it is not
    in the render loop (a CSS animation on a composited layer), and it never grows the layout. */
 @keyframes breathe {
@@ -753,7 +765,7 @@ body.ins-open .panel-pop, body.ins-open .panel-econ, body.ins-open .panel-temp {
 .bloom-wrap { position: relative; margin-bottom: 8px; }
 #bloom { width: 100%; height: auto; max-width: 240px; margin: 0 auto; display: block; opacity: 0.9; }
 
-/* brain-size compare: makes the 1,080 → 10,800 (10×) upgrade something you can SEE, not just read */
+/* brain-size compare: makes the 1,080 → 10,361 (~9.6×) upgrade something you can SEE, not just read */
 .bloom-scale {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   margin: 4px 0 12px; font-family: var(--mono); font-size: max(9px, var(--fs-floor, 0px));
@@ -876,7 +888,7 @@ body[class*="-open"] .canary-btn,
 body[class*="-open"] .temple-btn,
 body[class*="-open"] .walk-btn { opacity: 0; pointer-events: none; }
 
-/* the fly's live spike raster: 10,800 neurons firing over time (newest on the right) */
+/* the fly's live spike raster: 10,361 neurons firing over time (newest on the right) */
 .raster-wrap { margin-bottom: 14px; }
 .raster-label {
   font-family: var(--mono); font-size: max(9px, var(--fs-floor, 0px)); letter-spacing: 0.14em; text-transform: uppercase;
@@ -885,6 +897,20 @@ body[class*="-open"] .walk-btn { opacity: 0; pointer-events: none; }
 .raster-label span { float: right; opacity: 0.8; }
 #raster {
   width: 100%; height: 96px; display: block;
+  background: rgba(var(--ink-rgb), 0.02);
+  border: 1px solid var(--hair); border-radius: 3px;
+}
+
+/* neuromodulator scope (task nm4): dual-trace DA/OA oscilloscope */
+.scope-wrap { margin-bottom: 14px; }
+.scope-label {
+  font-family: var(--mono); font-size: max(9px, var(--fs-floor, 0px)); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink); opacity: 0.45; margin-bottom: 3px;
+  display: flex; justify-content: space-between;
+}
+.scope-label .scope-hz { opacity: 0.7; letter-spacing: 0.06em; }
+#scope {
+  width: 100%; height: 72px; display: block;
   background: rgba(var(--ink-rgb), 0.02);
   border: 1px solid var(--hair); border-radius: 3px;
 }
@@ -4470,3 +4496,379 @@ body.layers-pop .layer-toggles {
 
 /* Heal drawer-header meta clipping (#chron-sub and siblings): let the status line wrap instead of single-line ellipsis. */
 .wallets-sub, .drawer-sub { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* ==========================================================================
+   task 15 · the inspector's four neural views + the connectome atlas
+   --------------------------------------------------------------------------
+   Everything below is additive. The view switch only ever HIDES a wrap (it never
+   force-shows one), so the responsive regimes that drop .bloom-wrap on touch and
+   narrow viewports keep winning exactly where they already did. Both new pixel
+   views are rebuilt into an offscreen canvas at ≤4 Hz and reach the screen as one
+   drawImage per frame — the same red line #bloom / #raster / #scope obey. */
+
+/* ---- the segmented view switch: a vellum tray with the lit segment in gold leaf ---- */
+.nview {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px;
+  margin: 0 0 10px; padding: 3px;
+  background: var(--vellum-2);
+  border: var(--edge-soft); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-inset);
+  font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px));
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+.nview .nv-btn {
+  flex: 1 1 auto; white-space: nowrap;
+  font: inherit; letter-spacing: 0.08em; padding: 3px 9px;
+  border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease, opacity var(--t-fast) ease;
+}
+.nview .nv-btn:hover { color: var(--gall); background-color: rgba(var(--gold-rgb), 0.14); }
+.nview .nv-btn:focus-visible { box-shadow: var(--ring); }
+.nview .nv-btn:not(.is-on) { opacity: 0.66; }
+.nview .nv-btn.is-on {
+  opacity: 1; color: #2a2114;
+  background-image: linear-gradient(180deg, var(--gold-lit) 0%, var(--gold) 58%, var(--gold-deep) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 249, 230, 0.6), 0 1px 2px rgba(60, 46, 28, 0.26);
+}
+
+/* ---- the shared pixel stage: spike-density heatmap / folded membrane map ---- */
+.nmap-wrap { margin-bottom: 14px; }
+.nmap-label {
+  font-family: var(--mono); font-size: max(9px, var(--fs-floor, 0px)); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink); opacity: 0.45; margin-bottom: 3px;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.nmap-label #nmap-sub { opacity: 0.8; letter-spacing: 0.06em; text-transform: none; font-variant-numeric: var(--num); }
+.nmap-stage { position: relative; }
+#nmap {
+  width: 100%; height: 140px; display: block;
+  background: var(--vellum-3);
+  border: 1px solid var(--hair); border-radius: 3px;
+  /* the cells are data, not decoration — keep them hard-edged when the buffer is scaled up */
+  image-rendering: pixelated;
+}
+.nmap-idle {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  padding: 0 12px; text-align: center;
+  font-family: var(--mono); font-size: max(9.5px, var(--fs-floor, 0px)); letter-spacing: 0.06em;
+  color: var(--muted); opacity: 0.85;
+  background: rgba(245, 240, 229, 0.78);
+  border: 1px solid var(--hair); border-radius: 3px;
+}
+.nmap-scale {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px;
+  font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px)); color: var(--muted);
+  font-variant-numeric: var(--num);
+}
+.nmap-scale .nmap-end { flex: none; min-width: 34px; opacity: 0.8; }
+.nmap-scale .nmap-end:last-child { text-align: right; }
+.nmap-scale .nmap-ramp {
+  flex: 1 1 auto; height: 5px; border-radius: 3px;
+  border: 1px solid var(--hair);
+  background: linear-gradient(90deg,
+    var(--vellum-3) 0%, rgba(var(--gold-rgb), 0.55) 45%,
+    var(--gold) 72%, var(--rust) 100%);
+}
+/* the membrane map is a DIVERGING scale (hyperpolarised → rest → depolarised), not a density ramp */
+.nmap-wrap[data-nvmap="memb"] .nmap-ramp {
+  background: linear-gradient(90deg,
+    var(--verdigris) 0%, #7d94a0 26%, var(--vellum-3) 50%,
+    rgba(var(--gold-rgb), 0.85) 74%, var(--rust) 100%);
+}
+
+/* ---- view gating: exactly one neural wrap on stage, keyed off #inspector[data-nview] ---- */
+.inspector[data-nview="raster"] .bloom-wrap,
+.inspector[data-nview="raster"] .bloom-scale,
+.inspector[data-nview="heat"] .bloom-wrap,
+.inspector[data-nview="heat"] .bloom-scale,
+.inspector[data-nview="memb"] .bloom-wrap,
+.inspector[data-nview="memb"] .bloom-scale,
+.inspector[data-nview="bloom"] .raster-wrap,
+.inspector[data-nview="heat"] .raster-wrap,
+.inspector[data-nview="memb"] .raster-wrap,
+.inspector[data-nview="bloom"] .nmap-wrap,
+.inspector[data-nview="raster"] .nmap-wrap { display: none; }
+
+/* ---- the connectome atlas: a folded plate inside the prove-the-brain drawer ---- */
+.cw-fold {
+  margin-bottom: 9px; border: 1px solid var(--hair); border-radius: 2px;
+  background: rgba(var(--accent-rgb), 0.03);
+}
+.cw-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 8px 10px; border: 0; background: transparent; cursor: pointer;
+  font: inherit; text-align: start;
+  transition: background-color var(--t-fast) ease;
+}
+.cw-head:hover { background-color: rgba(var(--gold-rgb), 0.1); }
+.cw-head:focus-visible { box-shadow: var(--ring); }
+.cw-head .cw-chev {
+  flex: none; margin-inline-start: auto; align-self: center;
+  font-family: var(--mono); font-size: 12px; line-height: 1; color: var(--muted);
+  transition: transform var(--t-med) ease;
+}
+.cw-fold.is-open .cw-head .cw-chev { transform: rotate(90deg); }
+.cw-head .cw-title {
+  font-family: var(--title); font-size: var(--fs-title); font-weight: 700;
+  letter-spacing: var(--ls-title); text-transform: uppercase; color: var(--gall);
+}
+.cw-head .cw-sub {
+  font-family: var(--mono); font-size: max(8px, var(--fs-floor, 0px));
+  letter-spacing: 0.06em; color: var(--muted); opacity: 0.85;
+}
+.cw-body { padding: 2px 10px 10px; }
+.cw-body[hidden] { display: none; }
+.cw-totals {
+  margin: 0 0 8px; padding-bottom: 7px;
+  font-family: var(--mono); font-size: max(9.5px, var(--fs-floor, 0px));
+  letter-spacing: 0.04em; color: var(--gall-2); font-variant-numeric: var(--num);
+  background-image: var(--rule-gold); background-size: 100% 1px;
+  background-position: 0 100%; background-repeat: no-repeat;
+}
+#cw-chart { width: 100%; height: auto; display: block; margin-bottom: 9px; }
+.cw-sec {
+  font-family: var(--mono); font-size: max(8px, var(--fs-floor, 0px));
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  margin: 9px 0 4px;
+}
+.cw-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 0; }
+.cw-stats > div {
+  min-width: 0; padding: 5px 7px; border: 1px solid var(--hair); border-radius: 2px;
+  background: rgba(255, 253, 246, 0.4);
+}
+.cw-stats dt {
+  font-size: max(7.5px, var(--fs-floor, 0px)); letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.cw-stats dd {
+  margin: 1px 0 0; font-family: var(--mono); font-size: max(12px, var(--fs-floor, 0px));
+  font-weight: 600; color: var(--gall); font-variant-numeric: var(--num);
+}
+.cw-nt { display: flex; flex-wrap: wrap; gap: 4px; }
+.cw-nt .cw-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border: 1px solid var(--hair); border-radius: var(--r-pill);
+  font-family: var(--mono); font-size: max(8px, var(--fs-floor, 0px));
+  letter-spacing: 0.04em; color: var(--gall-2); background: rgba(255, 253, 246, 0.4);
+}
+.cw-nt .cw-chip i {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--accent); opacity: 0.85;
+}
+.cw-src { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.cw-src > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.cw-src dt {
+  flex: none; font-size: max(8px, var(--fs-floor, 0px));
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.cw-src dd {
+  margin: 0; min-width: 0; text-align: right;
+  font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px));
+  color: var(--ink); opacity: 0.88; overflow-wrap: anywhere; word-break: break-word;
+}
+.cw-src dd a { color: var(--gold-deep); text-decoration: underline; text-underline-offset: 2px; }
+.cw-src dd a:hover { color: var(--rust); }
+.cw-hash {
+  margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--hair);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.cw-hash .cw-hrow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cw-hash .cw-hlab {
+  font-size: max(7.5px, var(--fs-floor, 0px)); letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.cw-hash .cw-hval {
+  font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px));
+  color: var(--moss); letter-spacing: 0.02em;
+}
+.cw-empty {
+  padding: 12px 4px; text-align: center;
+  font-family: var(--mono); font-size: max(9.5px, var(--fs-floor, 0px));
+  color: var(--muted); opacity: 0.8;
+}
+
+/* ---- regime A parity: under a finger the view switch is a 40px target too ---- */
+@media (pointer: coarse) {
+  .nview { flex-wrap: wrap; gap: 4px; }
+  .nview .nv-btn {
+    min-width: 40px; min-height: 40px; padding: 10px 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: max(10px, var(--fs-floor));
+  }
+  .cw-head { min-height: 44px; }
+  .cw-head .cw-chev { min-width: 40px; min-height: 40px; display: grid; place-items: center; }
+}
+
+/* ============================================================================
+   TASK 22 — THE SECOND MAIN CANVAS (lineage / technical atlas)
+   ----------------------------------------------------------------------------
+   Additive chrome for #lineage-field and its overlay (#lv-ui). The atlas is cut
+   from the same vellum / iron-gall / gilt cloth as every other leaf: no glass, no
+   blur, high-alpha fills only (the canvas repaints every frame, so a blurred
+   backdrop would force a full re-composite — the same red line the field obeys).
+   The two main canvases are mutually exclusive: body.lv-active hides #field and
+   the 3D-only ambient chrome, and shows #lineage-field + #lv-ui. z-index sits the
+   overlay above the grain/vignette (3) and the topbar (10) but BELOW the drawers
+   (12) and the command rail (13), so an opened drawer covers the atlas and the
+   rail switch is always reachable.
+   ============================================================================ */
+:root { --lv-panel-w: clamp(258px, 25vw, 320px); }
+
+/* the atlas canvas: the same fixed full-bleed plane as #field, hidden until activated.
+   touch-action:none so a tap/drag on a node never scrolls or pinch-zooms the page. */
+#lineage-field {
+  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  display: none; z-index: 0; cursor: crosshair; touch-action: none;
+}
+
+/* ---- the canvas swap + a clean stage (hide the 3D-only ambient chrome) ---- */
+body.lv-active #field { display: none; }
+body.lv-active #lineage-field { display: block; }
+body.lv-active .panel-pop, body.lv-active .panel-temp, body.lv-active .panel-econ,
+body.lv-active .layer-toggles, body.lv-active .zoom-controls, body.lv-active .hint-select,
+body.lv-active #era-hud, body.lv-active #land-leaderboard, body.lv-active #walk-hud,
+body.lv-active #walk-cross, body.lv-active .temple-btn, body.lv-active .walk-btn,
+body.lv-active .canary-btn, body.lv-active .chron-btn, body.lv-active #inspector,
+body.lv-active #epitaph {
+  display: none !important;
+}
+/* the lineage rail button reads as "on stage" exactly like the drawer toggles do */
+body.lv-active .rail-btn[data-act="lineageview"] {
+  background-color: rgba(var(--gold-rgb), 0.18); color: var(--gold-deep);
+}
+
+/* ---- overlay container: inert (pointer-events:none) until a child re-enables it ---- */
+#lv-ui { position: fixed; inset: 0; z-index: 11; pointer-events: none; display: none; }
+body.lv-active #lv-ui { display: block; }
+#lv-ui[hidden] { display: none; }   /* the JS [hidden] flip is the source of truth on close */
+
+/* ---- toolbar: layer toggles + refresh + close, floating under the topbar, right of the rail ---- */
+#lv-toolbar {
+  position: absolute; top: calc(var(--topbar-total) + 6px);
+  left: calc(var(--rail-w) + var(--pad));
+  display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto;
+  max-width: calc(100vw - var(--rail-w) - var(--lv-panel-w) - var(--pad) - var(--sp-8));
+  padding: 6px; border-radius: var(--r-leaf);
+  background: var(--panel); background-image: var(--leaf-grain);
+  border: var(--edge); box-shadow: var(--shadow-1);
+}
+.lv-tb {
+  flex: none; display: inline-flex; align-items: center;
+  height: 30px; padding: 0 12px; cursor: pointer;
+  border: var(--edge-soft); border-radius: var(--r-pill);
+  background: rgba(255, 253, 246, 0.5); color: var(--gall-2);
+  font: 500 var(--fs-cap)/1 var(--sans); letter-spacing: var(--ls-cap); text-transform: uppercase;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.lv-tb:hover { background: rgba(var(--gold-rgb), 0.14); color: var(--gold-deep); }
+.lv-tb:active { transform: translateY(1px); }
+.lv-tb:focus-visible { box-shadow: var(--ring); outline: none; }
+.lv-tb[aria-pressed="true"] {
+  background: rgba(var(--gold-rgb), 0.20); color: var(--gold-deep);
+  border-color: rgba(var(--gold-rgb), 0.52);
+}
+.lv-tb-close:hover { background: rgba(156, 59, 46, 0.16); color: var(--rust); }
+
+/* ---- legend: bottom-left key (goods, alliance/antagonism, ghost, tomb) ---- */
+#lv-legend {
+  position: absolute; left: calc(var(--rail-w) + var(--pad));
+  bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+  max-width: min(360px, 44vw); padding: 9px 11px; border-radius: var(--r-leaf);
+  background: var(--panel); background-image: var(--leaf-grain);
+  border: var(--edge); box-shadow: var(--shadow-1);
+  font-family: var(--sans); color: var(--gall-2);
+}
+.lv-lg-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lv-lg-t {
+  font-family: var(--title); font-size: var(--fs-title); letter-spacing: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep);
+}
+.lv-lg-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-body); color: var(--gall-2); }
+.lv-lg-chip i { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+.lv-lg-chip i.lv-lg-ally, .lv-lg-chip i.lv-lg-foe { width: 15px; height: 0; border-radius: 0; background: transparent; }
+.lv-lg-chip i.lv-lg-ally { border-top: 2px solid rgb(120, 154, 96); }
+.lv-lg-chip i.lv-lg-foe  { border-top: 2px dashed rgb(198, 60, 44); }
+.lv-lg-chip i.lv-lg-ghost { width: 8px; height: 8px; background: transparent; border: 1px solid rgba(33, 29, 22, 0.45); }
+.lv-lg-chip i.lv-lg-tomb { width: 9px; height: 9px; background: transparent; border-radius: 0; position: relative; }
+.lv-lg-chip i.lv-lg-tomb::before, .lv-lg-chip i.lv-lg-tomb::after {
+  content: ""; position: absolute; left: 0; top: 4px; width: 9px; height: 1px; background: rgba(122, 90, 50, 0.78);
+}
+.lv-lg-chip i.lv-lg-tomb::before { transform: rotate(45deg); }
+.lv-lg-chip i.lv-lg-tomb::after  { transform: rotate(-45deg); }
+.lv-lg-note {
+  font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
+  color: var(--muted); font-variant-numeric: var(--num);
+}
+
+/* ---- focus sidebar: the selected fly's brain + provenance (built on demand by lineageView) ---- */
+#lv-panel {
+  position: absolute; top: var(--topbar-total); right: 0;
+  width: var(--lv-panel-w); max-height: calc(100vh - var(--topbar-total));
+  overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 13px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel); background-image: var(--leaf-grain);
+  border-left: var(--edge); box-shadow: var(--shadow-2);
+}
+#lv-panel[hidden] { display: none; }
+.lv-p-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lv-p-id { font-family: var(--title); font-size: var(--fs-lead); letter-spacing: 0.04em; color: var(--gall); overflow-wrap: anywhere; }
+.lv-p-x {
+  flex: none; width: 24px; height: 24px; border: 0; border-radius: var(--r-chip);
+  background: transparent; cursor: pointer; color: var(--gall-2); font-size: 16px; line-height: 1;
+}
+.lv-p-x:hover { background: rgba(156, 59, 46, 0.14); color: var(--rust); }
+.lv-p-prov { display: flex; flex-direction: column; gap: 3px; padding-bottom: 9px; border-bottom: 1px solid var(--hair); }
+.lv-prov-r { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lv-prov-r > span {
+  flex: none; font-size: var(--fs-cap); letter-spacing: var(--ls-cap);
+  text-transform: uppercase; color: var(--muted);
+}
+.lv-prov-r > b {
+  min-width: 0; text-align: right; font-family: var(--mono); font-weight: 500;
+  font-size: var(--fs-body); color: var(--gall); overflow-wrap: anywhere;
+}
+.lv-prov-r > b.fp { color: var(--gold-deep); }
+.lv-prov-r a { color: var(--gold-deep); text-decoration: underline; text-underline-offset: 2px; }
+.lv-prov-r a:hover { color: var(--rust); }
+.lv-verify {
+  align-self: flex-start; margin-top: 5px; padding: 4px 11px; cursor: pointer;
+  border: var(--edge-gilt); border-radius: var(--r-pill); background: rgba(var(--gold-rgb), 0.10);
+  font: 500 var(--fs-cap)/1.4 var(--sans); letter-spacing: var(--ls-cap); text-transform: uppercase; color: var(--gold-deep);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.lv-verify:hover:not(:disabled) { background: rgba(var(--gold-rgb), 0.22); }
+.lv-verify:disabled { opacity: 0.62; cursor: default; }
+.lv-verify.ok { border-color: rgba(63, 90, 58, 0.5); background: rgba(63, 90, 58, 0.14); color: var(--moss); }
+.lv-verify.fail { border-color: rgba(156, 59, 46, 0.5); background: rgba(156, 59, 46, 0.12); color: var(--rust); }
+.lv-p-sec {
+  font-family: var(--title); font-size: var(--fs-title); letter-spacing: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep);
+}
+.lv-layers, .lv-nm { display: flex; flex-direction: column; gap: 5px; }
+.lv-bar { display: grid; grid-template-columns: 64px 1fr auto; align-items: center; gap: 7px; }
+.lv-bar-n { font-size: var(--fs-cap); letter-spacing: 0.03em; color: var(--gall-2); }
+.lv-bar-t { position: relative; height: 7px; border-radius: var(--r-pill); background: rgba(122, 96, 58, 0.14); overflow: hidden; }
+.lv-bar-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: var(--r-pill); background: var(--accent); transition: width var(--t-med) ease; }
+.lv-bar-v { min-width: 42px; text-align: right; font-family: var(--mono); font-size: var(--fs-micro); color: var(--muted); font-variant-numeric: var(--num); }
+#lv-raster, #lv-memb { display: block; width: 100%; height: auto; border-radius: var(--r-card); border: var(--edge-soft); background: rgba(255, 253, 246, 0.42); }
+.lv-beh { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.lv-fap-badge {
+  padding: 3px 9px; border-radius: var(--r-pill); color: #fff;
+  font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.lv-fap-gloss { font-family: var(--display); font-style: italic; font-size: var(--fs-body); color: var(--gall-2); }
+.lv-fap-role { font-size: var(--fs-cap); letter-spacing: var(--ls-cap); text-transform: uppercase; color: var(--muted); }
+
+/* ---- phones / short viewports: the rail hides, so the chrome re-slots to the raw edges and the
+       focus panel becomes a bottom sheet under the toolbar (legacy mobile layout, unchanged) ---- */
+@media (max-width: 680px), (max-height: 600px) {
+  #lv-toolbar { left: var(--pad); right: var(--pad); max-width: none; }
+  #lv-legend { display: none; }
+  #lv-panel {
+    top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 54vh;
+    border-left: 0; border-top: var(--edge); border-radius: var(--r-leaf) var(--r-leaf) 0 0;
+  }
+}

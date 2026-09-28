@@ -6,7 +6,8 @@ deterministic spiking-network library the Worker drives. Everything a fly "decid
 ```
 src/
   lif.ts            the Leaky Integrate-and-Fire network + spike-frequency adaptation (SFA)
-  connectome.ts     buildConnectome(): the wiring grown from a seed (1,080 n default · 30,800 n species spec · live genome-sized ~10,800)
+  connectome.ts     buildConnectome(): the procedural PRNG wiring grown from a seed (1,080 n library default)
+  connectome-data/  buildFromFlyWire(): the REAL FAFB 783 FlyWire MB+CX subgraph (10,361 n / 467,314 syn) — production topology
   fly-brain.ts      FlyBrain: inject → advance → read motor; snapshot; serialize/deserialize
   motor-decoder.ts  motor firing rates → drives → behaviour (decoded relative to the population)
   stimuli.ts        market pulse + visitor stimulus → sensory-channel currents
@@ -15,13 +16,23 @@ src/
 
 ---
 
-## The connectome (1,080 neurons default · 30,800 species spec · ~10,800 live)
+## The connectome (FlyWire literal 10,361 neurons · procedural PRNG 1,080 library default)
 
-`buildConnectome(opts)` grows a fruit-fly-shaped network deterministically from a seed. Defaults (overridable via
-`BRAIN_N_*` / `BRAIN_DENSITY` vars) produce exactly **1,080 neurons**; the production `wrangler.toml` scales every
-layer ~28× (`5200/11400/11400/1100/340`) to the **30,800-neuron** species/genesis spec committed on-chain (a live
-bred fly's brain is grown from its own genome instead — ~10,800 neurons today), dropping `BRAIN_DENSITY` to `0.0007` so fan-in —
-and thus the synapse count — stays linear in layer size (~404k synapses/fly) instead of exploding quadratically:
+Production runs `FLYWIRE_TOPOLOGY=true`: every live fly — genesis and bred alike — instantiates the **real
+FAFB 783 FlyWire** Mushroom Body + Central Complex subgraph (**10,361 neurons / 467,314 synapses**, fan-in ~45;
+Eckstein et al. 2024 neurotransmitter sign assignment; CC-BY 4.0). The topology is **fixed**; each genome
+parameterizes only synaptic weights (`weightGain`, `weightJitter`) and LIF neuron properties (`threshGain`,
+`tauGain`) on that shared anatomy.
+
+The on-chain brain-manifest identity (`manifestHash 100712db…ef9c`, Arc mainnet `NeuralManifestRegistry`,
+commitCount 3) commits this literal subgraph’s structural spec for all 24 genesis seeds.
+
+`buildConnectome(opts)` remains available as the **procedural PRNG fallback** (active when
+`FLYWIRE_TOPOLOGY=false`). Its defaults produce exactly **1,080 neurons**; the `BRAIN_N_*` vars in
+`wrangler.toml` (`5200/11400/11400/1100/340`, totalling 30,800) scale it to the previous procedural
+species spec (now superseded). `BRAIN_DENSITY = 0.0007` keeps fan-in linear at that size (~404k synapses).
+These vars are retained for the **hatch memory-budget estimator** (`hatchBudgetFromGenesis`) and as a
+rollback path; they do not affect the live FlyWire topology.
 
 | Layer | Count | Role |
 |---|---|---|
@@ -51,8 +62,8 @@ temporarily raises its threshold.
 one motor leg pins at maximum rate, its antagonist goes silent, and the fly never flips — the swarm freezes. SFA
 (tuned `adaptIncrement = 0.05`) lets the winner tire so the population keeps oscillating. `FlyBrain.serialize()`
 writes **version 4** archives — a compact base64 pack of the six per-neuron float32 arrays (lossless, ~2.9× smaller
-than spelling every float out in decimal, and what keeps a 30,800-neuron brain's ~963 KB archive under the Durable
-Object 2 MB single-value cap); `deserialize()` reads both v4 and the legacy **version 3** text archives. It
+than spelling every float out in decimal, and what keeps a 10,361-neuron FlyWire brain’s archive well under the
+Durable Object 2 MB single-value cap); `deserialize()` reads both v4 and the legacy **version 3** text archives. It
 deliberately **discards the electrical state of pre-v3 archives** (v1 pre-SFA, v2 latched under a too-weak 0.03 SFA)
 and wakes them fresh while keeping the simulation clock — SFA then prevents re-latching. The connectome is rebuilt
 from the seed, so identity is preserved.

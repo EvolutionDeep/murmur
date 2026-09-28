@@ -89,6 +89,9 @@ export interface MotorOutput {
  *   octopamine       OA-like arousal/exploration tone, 0..1 (upper modulatory half).
  *   learningRateGate RESERVED learning-rate gate for the A1 STDP plasticity step, 0..1 — derived from
  *                    `dopamine`, but NOT wired to any synaptic weight update yet (A3 only observes it).
+ *   daHz / oaHz      the RAW (un-normalized) mean firing rate in Hz of the DA-like / OA-like half of the
+ *                    modulatory population — the same two reductions the normalized pair is derived from,
+ *                    surfaced so a consumer can plot absolute rates and aggregate them across a swarm.
  * Like the ethogram this is manifest-neutral: it reads signals the connectome already produces, never
  * writes back, and never touches a hashed manifest input, so the on-chain brain-manifest hash is
  * unchanged. Consumers that predate it can ignore it safely.
@@ -100,6 +103,14 @@ export interface NeuromodState {
   octopamine: number;
   /** RESERVED learning-rate gate for A1 plasticity (derived from dopamine); not consumed by any weight yet. */
   learningRateGate: number;
+  /**
+   * RAW mean firing rate (Hz) of the DA-like half of the modulatory population — the un-normalized value
+   * `dopamine` is derived from: at the production-default unit gain, dopamine === clamp01(daHz / refHz)
+   * with refHz = NEUROMOD_CONFIG.refHz (40). 0 when the half is empty or every rate is non-finite.
+   */
+  daHz: number;
+  /** RAW mean firing rate (Hz) of the OA-like half; octopamine === clamp01(oaHz / refHz) at unit gain. */
+  oaHz: number;
 }
 
 export interface BrainSnapshot {

@@ -69,7 +69,10 @@ export interface FlyNeuralSnapshot {
   neuronKinds: string[];
   neuronChannels: (string | null)[];
   neuronCount: number;
-  /** A3 DA/OA-like neuromodulatory read-out of the modulatory layer (pure, manifest-neutral). */
+  /**
+   * A3 DA/OA-like neuromodulatory read-out of the modulatory layer (pure, manifest-neutral): the normalized
+   * {dopamine, octopamine, learningRateGate} plus the RAW half-population mean rates {daHz, oaHz} in Hz.
+   */
   neuromod: NeuromodState;
 }
 
@@ -149,7 +152,11 @@ function clamp01(x: number): number {
 
 /** Build the full neural read-out of one fly for GET /snapshot. Shared by the single-DO LocalSwarm and
  *  by each shard (shard.ts) so both return an identical shape no matter where the brain physically
- *  lives — the coordinator passes it straight through to the inspector. */
+ *  lives — the coordinator passes it straight through to the inspector. NOTE: `neuromod` is forwarded as
+ *  the WHOLE object (never field-picked), so every field the read-out grows — today the normalized
+ *  dopamine/octopamine/learningRateGate plus the raw daHz/oaHz — reaches GET /snapshot unchanged. Keep it
+ *  a whole-object pass-through (or add new fields here explicitly) or the published contract silently
+ *  narrows. */
 export function neuralSnapshotOf(fly: AdvanceableFly): FlyNeuralSnapshot {
   const snap = fly.brain.snapshot();
   return {

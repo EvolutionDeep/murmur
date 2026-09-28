@@ -2,7 +2,7 @@
   "name": "@fly/fly-brain",
   "version": "0.1.0",
   "private": true,
-  "description": "Deterministic LIF connectome (1,080 neurons by default; production sizes the species spec to 30,800 via BRAIN_N_*, while each live bred fly is genome-sized ~10,800), motor decoder and market stimuli for the murmur fly agents — pure TypeScript, with no native or WASM dependency.",
+  "description": "Deterministic LIF connectome library for murmur fly agents — production topology is the real FAFB 783 FlyWire MB+CX subgraph (10,361 neurons / 467,314 synapses, CC-BY 4.0); a procedural PRNG generator (1,080 n default) remains as fallback. Motor decoder, ethogram engine and market stimuli included. Pure TypeScript, no native or WASM dependency.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",

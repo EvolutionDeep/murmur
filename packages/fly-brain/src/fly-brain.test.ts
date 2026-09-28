@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FlyBrain, LifNetwork } from "./index.js";
 import type { NeuronMeta } from "./types.js";
 
-// Small, fast options so the archive tests stay quick (production runs 10,800–30,800 neurons).
+// Small, fast options so the archive tests stay quick (production runs the 10,361-neuron FlyWire subgraph).
 const tiny = { seed: 7, nSensory: 12, nInterL1: 16, nInterL2: 16, nModulatory: 6, nMotorPerChannel: 3, density: 0.08 };
 
 // net/noiseState are private by design (the public surface is advance/serialize/readAllMotor);
@@ -96,6 +96,6 @@ test("the compact form is strictly smaller than the v3 text form", () => {
   const v3 = JSON.stringify({ version: 3, net: internals(brain).net.toJSON(), noiseState: internals(brain).noiseState }).length;
   // base64 inflates raw bytes by 4/3, so the win comes from not spelling floats out in decimal.
   // On this tiny network many values are still short defaults ("-65", "0") so the ratio is ~0.77;
-  // at production scale (10,800+ neurons, fully decimal floats) it approaches ~0.35.
+  // at production scale (10,361 FlyWire neurons, fully decimal floats) it approaches ~0.35.
   assert.ok(v4 < v3 * 0.8, `v4 ${v4}B is <80% of v3 ${v3}B`);
 });

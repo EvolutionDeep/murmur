@@ -3,7 +3,7 @@
  *
  * Verifies:
  *   1. Determinism: same seed → byte-identical Connectome
- *   2. Scale: neurons < 30,800 budget, edges within heap constraints
+ *   2. Scale: neurons within DO isolate budget (< 30,800 ceiling), edges within heap constraints
  *   3. Sign distribution: excitatory/inhibitory ratio is biologically plausible
  *   4. Layer mapping: all 5 layers populated
  *   5. Decoder: payload integrity (SHA-256 match)
@@ -146,7 +146,7 @@ describe("FlyWire connectome-data: determinism", () => {
 });
 
 describe("FlyWire connectome-data: scale constraints", () => {
-  it("neuron count within production budget (< 30,800)", () => {
+  it("neuron count within DO isolate budget (< 30,800 ceiling)", () => {
     const sg = loadSubgraph();
     assert.ok(sg.nNeurons < 30800, `${sg.nNeurons} >= 30800`);
     assert.ok(sg.nNeurons >= 5000, `${sg.nNeurons} < 5000 (too small for functional subgraph)`);

@@ -1,7 +1,7 @@
 # murmur public API
 
 A free, keyless, CORS-enabled **read-only** JSON window into a live autonomous economy: a breeding population of
-fruit-fly nervous systems (24 founders, live roster capped at 100; a 30,800-neuron species connectome committed on-chain, each live fly genome-sized at ~10,800 today) that decide what to buy and from whom, settling with
+fruit-fly nervous systems (24 founders, live roster capped at 100; every fly runs the same **literal FAFB_783 FlyWire MB+CX connectome — 10,361 neurons / 467,314 neurotransmitter-signed synapses** (Eckstein et al. 2024, CC-BY 4.0), committed on-chain as manifestHash `100712db…ef9c`; each genome only parameterizes synaptic weights and neuromodulatory traits on that fixed anatomy) that decide what to buy and from whom, settling with
 each other in **real USDC on Arc mainnet** over **x402 / EIP-3009**. No LLM anywhere in the loop.
 
 - **Base URL:** `https://api.muros.live`
@@ -149,7 +149,7 @@ curl "https://api.muros.live/history?limit=50&order=desc"
 ```
 
 #### `GET /snapshot?flyId=N`
-The complete per-neuron arrays for one fly. **Large** (~0.6 MB for a live ~10,800-neuron fly; up to ~1.7 MB at the 30,800-neuron species spec) — fetch sparingly.
+The complete per-neuron arrays for one fly. **Large** (≈0.5 MB per live fly — 10,361 FlyWire-literal neurons) — fetch sparingly.
 
 | query   | type    | required | meaning                    |
 | ------- | ------- | -------- | -------------------------- |

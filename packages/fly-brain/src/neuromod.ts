@@ -2,12 +2,14 @@
 // diffuse wiring into an OBSERVABLE DA/OA-like state, and (behind a config switch) a behavioural gate.
 //
 // WHY THIS IS MANIFEST-NEUTRAL. Like the ethogram, this module is a PURE READ-OUT: it consumes the
-// modulatory neurons' firing rates that the connectome ALREADY produces and reduces them to two scalars.
-// It never adds neurons, never changes the connectome topology/sizing (BRAIN_N_*/BRAIN_DENSITY), never
-// writes back into the network, and never touches a hashed manifest input (DEFAULT_DECODER_CONFIG,
+// modulatory neurons' firing rates that the connectome ALREADY produces and reduces them to a handful of
+// scalars. It never adds neurons, never changes the connectome topology/sizing (BRAIN_N_*/BRAIN_DENSITY),
+// never writes back into the network, and never touches a hashed manifest input (DEFAULT_DECODER_CONFIG,
 // LIF_CONSTANTS, NEURON_BASE_PARAMS, CONNECTOME_PROVENANCE or any structural spec). So the on-chain
-// brain-manifest hash is byte-for-byte unchanged and provenance receipts stay identical. All tunables
-// live in NEUROMOD_CONFIG, which is deliberately NOT part of the hashed manifest.
+// brain-manifest hash is byte-for-byte unchanged and provenance receipts stay identical — including for the
+// RAW Hz pair (daHz/oaHz) added for the frontend's modulatory oscilloscope: they are two more reductions of
+// the SAME already-computed firing rates, published alongside the normalized ones. All tunables live in
+// NEUROMOD_CONFIG, which is deliberately NOT part of the hashed manifest.
 //
 // PURE + DETERMINISTIC. No clock, no Math.random, no I/O. computeNeuromod() is a function of
 // (firingRates, modulatoryIds) only, so a fly's neuromodulatory state is replayable offline exactly like
@@ -59,11 +61,18 @@ export const NEUTRAL_NEUROMOD: NeuromodState = {
   dopamine: 0,
   octopamine: 0,
   learningRateGate: 0,
+  daHz: 0,
+  oaHz: 0,
 };
 
 function clamp01(x: number): number {
   // NaN-safe: any non-finite input collapses to 0 rather than poisoning the read-out (see config.ts clamp pitfall).
   return Number.isFinite(x) ? (x < 0 ? 0 : x > 1 ? 1 : x) : 0;
+}
+
+/** NaN-safe identity for a raw Hz reduction: a non-finite mean collapses to 0 instead of propagating. */
+function finiteHz(x: number): number {
+  return Number.isFinite(x) ? x : 0;
 }
 
 /**
@@ -95,6 +104,11 @@ function meanRate(firingRates: ArrayLike<number>, ids: readonly number[]): numbe
  * DETERMINISTIC: a function of (firingRates, modulatoryIds, cfg) only — no clock, no RNG, no I/O — so the
  * same neural archive always reproduces the same scalars (offline-replayable, like the ethogram).
  *
+ * Each half is reduced to its RAW mean rate (Hz) exactly ONCE; the normalized 0..1 scalar is then derived
+ * from that same number, so the two views can never disagree: at the default unit gains
+ * dopamine === clamp01(daHz / refHz) and octopamine === clamp01(oaHz / refHz) with refHz = 40. A non-unit
+ * daGain/oaGain scales the normalized scalar only — daHz/oaHz always stay the honest raw rates.
+ *
  * @param firingRates  per-neuron moving-average firing rate (Hz), indexed by neuron id (LifNetwork.firingRate).
  * @param modulatoryIds the connectome's modulatory neuron ids (Connectome.byKind.modulatory).
  */
@@ -106,9 +120,15 @@ export function computeNeuromod(
   const c = { ...NEUROMOD_CONFIG, ...cfg };
   const { da, oa } = neuromodPartition(modulatoryIds);
   const ref = Number.isFinite(c.refHz) && c.refHz > 0 ? c.refHz : 1;
-  const dopamine = clamp01((meanRate(firingRates, da) / ref) * (Number.isFinite(c.daGain) ? c.daGain : 1));
-  const octopamine = clamp01((meanRate(firingRates, oa) / ref) * (Number.isFinite(c.oaGain) ? c.oaGain : 1));
+  // RAW half-population mean rates (Hz) — 0 for an empty half, and never NaN (meanRate skips non-finite
+  // entries; finiteHz guards the residual case so a poisoned rate cannot leak into the published read-out).
+  const daHz = finiteHz(meanRate(firingRates, da));
+  const oaHz = finiteHz(meanRate(firingRates, oa));
+  const daGain = Number.isFinite(c.daGain) ? c.daGain : 1;
+  const oaGain = Number.isFinite(c.oaGain) ? c.oaGain : 1;
+  const dopamine = clamp01((daHz / ref) * daGain);
+  const octopamine = clamp01((oaHz / ref) * oaGain);
   const floor = clamp01(Number.isFinite(c.lrGateFloor) ? c.lrGateFloor : 0);
   const learningRateGate = clamp01(floor + (1 - floor) * dopamine);
-  return { dopamine, octopamine, learningRateGate };
+  return { dopamine, octopamine, learningRateGate, daHz, oaHz };
 }

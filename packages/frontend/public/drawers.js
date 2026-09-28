@@ -1,7 +1,7 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=100';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=103';
 import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js';
 import { select } from './inspector.js';
 import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js';
@@ -2322,7 +2322,7 @@ export function renderBrain() {
     `<div><dt>${T("brain.metaChain")}</dt><dd>${m.chainTag || "–"} (${m.chainId ?? "–"})</dd></div>` +
     `<div><dt>${T("brain.metaPopulation")}</dt><dd>${pop.size ?? "–"} · ${T("brain.metaBase")} ${pop.seedBase ?? "–"}</dd></div>` +
     `<div><dt>${T("brain.metaSeedRule")}</dt><dd class="fp">${pop.seedFormula || "–"}</dd></div>` +
-    `<div><dt>${T("brain.metaConnectome")}</dt><dd>${c.nSensory ?? "–"}/${c.nInterL1 ?? "–"}/${c.nInterL2 ?? "–"} · ρ${c.density ?? "–"}</dd></div>` +
+    `<div><dt>${T("brain.metaConnectome")}</dt><dd>${c.mode === "flywire" ? `${(c.nNeurons ?? 0).toLocaleString()} n / ${(c.nSynapses ?? 0).toLocaleString()} s / fan-in ${(c.fanInMean ?? 0).toFixed(1)}` : `${c.nSensory ?? "\u2013"}/${c.nInterL1 ?? "\u2013"}/${c.nInterL2 ?? "\u2013"} \u00b7 \u03c1${c.density ?? "\u2013"}`}</dd></div>` +
     `<div><dt>${T("brain.metaPolicyProof")}</dt><dd>${m.policy || "–"} · v${m.proofV ?? "–"}</dd></div>` +
     `</dl>`;
   body.appendChild(auto);
@@ -2356,6 +2356,142 @@ export function renderBrain() {
   }
   t.appendChild(tbl);
   body.appendChild(t);
+
+  // task 15: the connectome atlas — a folded plate of the static FAFB_783 metadata, drawn ONCE on first expand.
+  // A pure read-out of a bundled JSON file: it moves no money, touches no neuron and never re-renders per frame.
+  body.appendChild(atlasFold());
+}
+// ================= task 15: the connectome atlas (static FAFB_783 metadata, drawn once on first expand) =================
+// The atlas folds ./flywire-meta.json (a verbatim copy of fly-brain's fafb783-mb-cx-meta.json) into the prove-the-brain
+// drawer. It is fetched once, cached on state.atlasMeta, and painted as static DOM + a one-shot canvas — there is no
+// animation loop, no per-frame work, and nothing here reads or writes the purse. All copy goes through T(); the proper
+// nouns (FAFB_783, FlyWire, the ten neurotransmitter names, CC-BY 4.0, the sha256 digests) stay verbatim by design.
+function atlasEsc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function atlasShortUrl(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } }
+/** Build the folded atlas plate. Its open state lives on state.atlasOpen so a re-render (language switch) keeps it. */
+function atlasFold() {
+  const fold = document.createElement("div");
+  fold.className = "cw-fold" + (state.atlasOpen ? " is-open" : "");
+  fold.id = "cw-fold";
+  const head = document.createElement("button");
+  head.type = "button"; head.className = "cw-head";
+  head.setAttribute("aria-expanded", state.atlasOpen ? "true" : "false");
+  head.setAttribute("aria-controls", "cw-body");
+  head.setAttribute("aria-label", T("brain.atlasAria"));
+  head.innerHTML =
+    `<span class="cw-title">${T("brain.atlasFold")}</span>` +
+    `<span class="cw-sub">${T("brain.atlasSub")}</span>` +
+    `<span class="cw-chev" aria-hidden="true">\u25b6</span>`;
+  head.addEventListener("click", toggleAtlas);
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "cw-body"; bodyEl.id = "cw-body";
+  if (!state.atlasOpen) bodyEl.hidden = true;
+  fold.appendChild(head); fold.appendChild(bodyEl);
+  if (state.atlasOpen) ensureAtlas();   // re-opened after a rebuild: paint straight from cache (no refetch)
+  return fold;
+}
+function toggleAtlas() {
+  state.atlasOpen = !state.atlasOpen;
+  const fold = $("cw-fold");
+  const head = fold ? fold.querySelector(".cw-head") : null;
+  const bodyEl = $("cw-body");
+  if (fold) fold.classList.toggle("is-open", state.atlasOpen);
+  if (head) head.setAttribute("aria-expanded", state.atlasOpen ? "true" : "false");
+  if (bodyEl) bodyEl.hidden = !state.atlasOpen;
+  if (state.atlasOpen) ensureAtlas();
+}
+/** Fetch ./flywire-meta.json once (cached on state.atlasMeta), then paint. Never refetches, never animates. */
+function ensureAtlas() {
+  const bodyEl = $("cw-body"); if (!bodyEl) return;
+  if (state.atlasMeta) { paintAtlas(bodyEl, state.atlasMeta); return; }
+  if (state.atlasFailed) { bodyEl.innerHTML = `<div class="cw-empty">${T("brain.atlasFail")}</div>`; return; }
+  if (state.atlasLoading) { bodyEl.innerHTML = `<div class="cw-empty">${T("brain.atlasLoading")}</div>`; return; }
+  state.atlasLoading = true;
+  bodyEl.innerHTML = `<div class="cw-empty">${T("brain.atlasLoading")}</div>`;
+  fetch("./flywire-meta.json", { cache: "no-cache" })
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then((meta) => { state.atlasMeta = meta; state.atlasLoading = false; const b = $("cw-body"); if (b) paintAtlas(b, meta); })
+    .catch(() => { state.atlasLoading = false; state.atlasFailed = true; const b = $("cw-body"); if (b) b.innerHTML = `<div class="cw-empty">${T("brain.atlasFail")}</div>`; });
+}
+/** Paint the static atlas plate (totals, one-shot layer chart, sign bar, fan-in, NT legend, source, integrity). */
+function paintAtlas(host, meta) {
+  if (!host || !meta) return;
+  const st = meta.stats || {}, sd = st.sign_distribution || {}, fi = st.fan_in || {};
+  const src = meta.source || {}, enc = meta.encoding || {}, integ = meta.integrity || {};
+  const nt = Array.isArray(enc.nt_names) ? enc.nt_names : [];
+  const cits = Array.isArray(src.citations) ? src.citations : [];
+  const n = Number(st.n_neurons || 0), e = Number(st.n_edges || 0);
+  const exc = sd.excitatory_pct != null ? sd.excitatory_pct : 93.3;
+  const inh = sd.inhibitory_pct != null ? sd.inhibitory_pct : 6.7;
+  const shaRaw = String(integ.raw_sha256 || ""), shaGz = String(integ.compressed_sha256 || "");
+  const url = String(src.url || "");
+  const cite1 = cits.length ? atlasEsc(cits[0]) : "\u2013";
+  const moreC = cits.length > 1 ? ` <em style="opacity:0.7">(+${cits.length - 1})</em>` : "";
+  host.innerHTML =
+    `<div class="cw-totals">${T("brain.atlasTotals", { n: n.toLocaleString(), e: e.toLocaleString() })}</div>` +
+    `<canvas id="cw-chart" width="520" height="150" role="img" aria-label="${atlasEsc(T("brain.atlasLayers"))}"></canvas>` +
+    `<div class="cw-sec">${T("brain.atlasSign")}</div>` +
+    `<div class="cw-sign" style="display:flex;height:18px;border:1px solid var(--hair);border-radius:2px;overflow:hidden">` +
+      `<span title="${T("brain.atlasExc")} \u00b7 ${exc}%" style="flex:${exc} 1 0;background:rgba(196,150,60,0.92);color:#2a2114;font:9px/18px var(--mono);padding-inline-start:7px;white-space:nowrap;overflow:hidden">${T("brain.atlasExc")} \u00b7 ${exc}%</span>` +
+      `<span title="${T("brain.atlasInh")} \u00b7 ${inh}%" style="flex:${inh} 1 0;background:rgba(176,74,58,0.92);color:#f7f0e2;font:9px/18px var(--mono);padding-inline-start:5px;white-space:nowrap;overflow:hidden">${inh}%</span>` +
+    `</div>` +
+    `<div class="cw-sec">${T("brain.atlasFanIn")}</div>` +
+    `<dl class="cw-stats">` +
+      `<div><dt>${T("brain.atlasMean")}</dt><dd>${(Number(fi.mean) || 0).toFixed(1)}</dd></div>` +
+      `<div><dt>${T("brain.atlasMax")}</dt><dd>${(Number(fi.max) || 0).toLocaleString()}</dd></div>` +
+      `<div><dt>${T("brain.atlasMedian")}</dt><dd>${(Number(fi.median) || 0).toFixed(0)}</dd></div>` +
+    `</dl>` +
+    `<div class="cw-sec">${T("brain.atlasNt")}</div>` +
+    `<div class="cw-nt">${nt.map((name) => `<span class="cw-chip"><i></i>${atlasEsc(name)}</span>`).join("")}</div>` +
+    `<div class="cw-sec">${T("brain.atlasSource")}</div>` +
+    `<dl class="cw-src">` +
+      `<div><dt>${T("brain.atlasDataset")}</dt><dd>${atlasEsc(src.dataset || "\u2013")}${src.version ? " \u00b7 " + atlasEsc(src.version) : ""}</dd></div>` +
+      `<div><dt>${T("brain.atlasLicense")}</dt><dd>${atlasEsc(src.license || "\u2013")}</dd></div>` +
+      `<div><dt>${T("brain.atlasCite")}</dt><dd>${cite1}${moreC}</dd></div>` +
+      `<div><dt>${T("brain.atlasHost")}</dt><dd>${url ? `<a href="${atlasEsc(url)}" target="_blank" rel="noopener noreferrer">${atlasEsc(atlasShortUrl(url))}</a>` : "\u2013"}</dd></div>` +
+    `</dl>` +
+    `<div class="cw-hash">` +
+      `<div class="cw-hrow"><span class="cw-hlab">${T("brain.atlasIntegrity")}</span></div>` +
+      `<div class="cw-hrow"><span class="cw-hlab">${T("brain.atlasShaRaw")}</span><span class="cw-hval" title="${atlasEsc(shaRaw)}">${atlasEsc(shaRaw.slice(0, 16))}\u2026</span></div>` +
+      `<div class="cw-hrow"><span class="cw-hlab">${T("brain.atlasShaGz")}</span><span class="cw-hval" title="${atlasEsc(shaGz)}">${atlasEsc(shaGz.slice(0, 16))}\u2026</span></div>` +
+    `</div>`;
+  const cv = $("cw-chart");
+  if (cv) drawAtlasChart(cv, meta);
+}
+/** One-shot horizontal bar chart of the five functional layers (static data — drawn once, never animated). */
+function drawAtlasChart(cv, meta) {
+  const lc = (meta.stats || {}).layer_counts || {};
+  const rows = [
+    [Number(lc.sensory) || 0, T("brain.atlasSensory")],
+    [Number(lc.inter_l1) || 0, T("brain.atlasInterL1")],
+    [Number(lc.inter_l2) || 0, T("brain.atlasInterL2")],
+    [Number(lc.modulatory) || 0, T("brain.atlasModul")],
+    [Number(lc.motor) || 0, T("brain.atlasMotor")],
+  ];
+  const W = 520, headH = 16, barH = 15, gap = 7, padB = 4;
+  const H = headH + rows.length * (barH + gap) + padB;
+  const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const x = cv.getContext("2d");
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, W, H);
+  x.textBaseline = "middle";
+  const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
+  x.font = "600 10px " + mono; x.fillStyle = "rgba(96,84,62,0.8)"; x.textAlign = "left";
+  x.fillText(T("brain.atlasLayers").toUpperCase(), 2, headH / 2 + 1);
+  const maxV = Math.max(1, ...rows.map((r) => r[0]));
+  const labelW = 96, valW = 48, barX = labelW, barMaxW = W - labelW - valW - 4;
+  let y = headH;
+  for (const [v, label] of rows) {
+    const bw = Math.max(2, (v / maxV) * barMaxW);
+    x.font = "9px " + mono; x.textAlign = "left"; x.fillStyle = "rgba(58,50,36,0.92)";
+    x.fillText(label, 2, y + barH / 2);
+    x.fillStyle = "rgba(196,150,60,0.9)"; x.fillRect(barX, y, bw, barH);
+    x.fillStyle = "rgba(120,90,34,0.3)"; x.fillRect(barX, y + barH - 2, bw, 2);   // a soft underside for depth
+    x.textAlign = "right"; x.fillStyle = "rgba(58,50,36,0.85)";
+    x.fillText(v.toLocaleString(), W - 2, y + barH / 2);
+    y += barH + gap;
+  }
 }
 export function brainVerifyCard() {
   const m = state.brainData || {};
@@ -3870,6 +4006,41 @@ function templeKindGrid() {
     html += `</div>`;
   }
   return html;
+}
+
+// ================= provenance badge (task nm5): top-bar manifest hash + verify status =================
+/** Update the provenance badge DOM from state.provHash / state.provStatus. */
+export function refreshProvBadge() {
+  const el = $("prov-badge");
+  if (!el) return;
+  const h = state.provHash;
+  const s = state.provStatus;
+  const sym = s === "ok" ? "\u2713" : s === "fail" ? "\u2717" : s === "chain?" ? "?" : s === "loading" ? "\u2026" : "\u00b7";
+  el.textContent = h ? h.slice(0, 8) + " " + sym : "\u2026";
+  el.className = "prov-badge" + (s === "ok" ? " is-ok" : s === "fail" ? " is-fail" : s === "chain?" ? " is-chain" : "");
+  el.title = T("top.provTitle", { hash: h ? h.slice(0, 8) : "\u2013", status: s });
+}
+/** Lazy one-shot provenance check: fetch /manifest, recompute sha256, read on-chain anchor.
+ *  Called once per session from boot(). Never retries on failure (no storm). */
+export async function lazyProvCheck() {
+  if (state.provStatus !== "idle") return;   // already ran or running
+  state.provStatus = "loading";
+  refreshProvBadge();
+  try {
+    const m = await getJSON("/manifest", 10000);
+    if (!m || !m.manifest) { state.provStatus = "fail"; refreshProvBadge(); return; }
+    const hash = await sha256HexClient(m.manifest);
+    state.provHash = hash;
+    // on-chain anchor (best-effort; eth_call failure → "chain?" not a crash)
+    const reg = m.registry || (m.chain && m.chain.registry);
+    const chain = await readManifestOnchain(reg, hash).catch(() => null);
+    if (chain && chain.committed) state.provStatus = "ok";
+    else if (chain) state.provStatus = "chain?";
+    else state.provStatus = "chain?";
+  } catch {
+    state.provStatus = "fail";
+  }
+  refreshProvBadge();
 }
 
 function templeParamsArea() {
