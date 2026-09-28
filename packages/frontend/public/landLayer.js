@@ -521,27 +521,54 @@ export class LandLayer {
   _initLeaderboard() {
     this._lbEl = document.getElementById('land-leaderboard');
     this._onResize = null;
+    this._lbUserToggled = false;   // set the first time a visitor taps the header; see _autoCollapse
+    this._lbRaf = 0;
+    this._lbRO = null;
     if (!this._lbEl) return;
 
-    // small screens start collapsed so the leaf never crowds the field
-    try {
-      if (window.matchMedia && window.matchMedia('(max-width: 680px), (max-height: 600px)').matches) {
-        this._lbEl.classList.add('is-collapsed');
-        const h0 = this._lbEl.querySelector('#land-lb-head');
-        if (h0) h0.setAttribute('aria-expanded', 'false');
-      }
-    } catch (e) { /* matchMedia unsupported — stay expanded */ }
+    // tight viewports start collapsed so the leaf never crowds the field
+    if (this._isFlowLayout()) {
+      this._lbEl.classList.add('is-collapsed');
+      const h0 = this._lbEl.querySelector('#land-lb-head');
+      if (h0) h0.setAttribute('aria-expanded', 'false');
+    }
 
     const head = this._lbEl.querySelector('#land-lb-head');
     if (head) {
       head.addEventListener('click', () => {
+        // an explicit tap wins over the automatic collapse for the rest of the session
+        this._lbUserToggled = true;
         const collapsed = this._lbEl.classList.toggle('is-collapsed');
         head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       });
     }
 
-    this._onResize = () => this._positionLeaderboard();
+    // rAF-coalesced: a desktop window drag fires resize on every frame, and each call reads
+    // getBoundingClientRect on three elements (a forced layout). One read per frame is enough.
+    this._onResize = () => {
+      if (this._lbRaf) return;
+      this._lbRaf = requestAnimationFrame(() => {
+        this._lbRaf = 0;
+        this._positionLeaderboard();
+      });
+    };
     window.addEventListener('resize', this._onResize);
+
+    // A window resize is only HALF of what moves this leaf. It is seated against .panel-pop's
+    // bottom edge and the dock's top edge, and .panel-pop grows on its own: it renders 223px tall
+    // from the cached snapshot and then reaches its 272px cap once the population poll lands,
+    // seconds after load and with no resize in sight. Measured at 768x1024, that left the leaf
+    // parked at top:375 while the panel's bottom edge had already moved to 412 — a 200x37 overlap
+    // that no amount of resize handling could ever catch. So observe the two neighbours directly.
+    // _lbEl is deliberately NOT in the list: _positionLeaderboard() writes its own maxHeight,
+    // which would make the observer self-triggering.
+    if (typeof ResizeObserver === 'function') {
+      this._lbRO = new ResizeObserver(() => { if (this._onResize) this._onResize(); });
+      for (const sel of ['.panel-pop', '#walk-btn', '.temple-btn']) {
+        const n = document.querySelector(sel);
+        if (n) this._lbRO.observe(n);
+      }
+    }
   }
 
   // ---- aggregate parcels by owner and paint the top-10 list ----
@@ -589,44 +616,93 @@ export class LandLayer {
     this._syncLeaderboardVisibility();
   }
 
+  // ---- which layout regime is the stylesheet in? ----
+  // Must agree with styles.css, or the JS positions a leaf the CSS has already put in the flow.
+  //   FLOW   regimes E + G: (max-width:680px) OR (max-height:480px) — the leaf is
+  //          position:relative inside the scrolling column; there is nothing to position.
+  //   FIXED  regimes B/C/D/F: 681px+ wide and 481px+ tall — the leaf hangs off the right edge.
+  // This is deliberately NOT the CSS's own `(max-width:680px), (max-height:600px)` test: regime F
+  // pulls 681px+-wide, ≤600px-tall laptops (1280x600, 1366x600) back into the fixed corner layout,
+  // so those windows still need JS positioning even though they match the flow media query.
+  _isFlowLayout() {
+    return window.innerWidth <= 680 || window.innerHeight <= 480;
+  }
+
   // ---- seat the leaf just below the top-right population panel ----
-  // On mobile (≤680px / ≤600px tall) the leaderboard is position:relative in the scrolling
-  // column, so no JS positioning is needed — clear any inline styles and bail.
-  // On desktop, also caps maxHeight so the leaf never overlaps the right-edge dock stack.
-  // GUARANTEE: maxHeight is always ≥ 160px so the leaderboard is never collapsed to invisibility.
+  // The old code carried a "GUARANTEE: maxHeight is always ≥ 160px" floor. That guarantee was
+  // exactly the bug: at 1280x720 there is only ~50px of room between .panel-pop and .walk-btn, so
+  // enforcing 160px drove the leaf 17px into the walk button. The contract is now the honest one —
+  // never taller than the space that actually exists, and when that space cannot hold the list,
+  // collapse to the header row instead of spilling over the dock.
   _positionLeaderboard() {
     if (!this._lbEl) return;
-    const isMobile = window.innerWidth <= 680 || window.innerHeight <= 600;
-    if (isMobile) {
+    if (this._isFlowLayout()) {
       this._lbEl.style.top = '';
       this._lbEl.style.maxHeight = '';
       return;
     }
+
+    // WHERE IT STARTS: 12px below .panel-pop. Progressive disclosure hides .panel-pop under 700px
+    // of height, so fall back to the second rail (--band-2 = topbar + tray + 20), measured from the
+    // live DOM rather than from the hard-coded `topbar-h + 44` that stopped being true the day the
+    // layer tray grew from 28px to 48px under a coarse pointer.
+    let top = 0;
     const pop = document.querySelector('.panel-pop');
-    if (!pop) return;
-    const rect = pop.getBoundingClientRect();
-    if (rect.bottom > 0) {
-      const top = Math.round(rect.bottom + 12);
-      this._lbEl.style.top = `${top}px`;
-      // Cap height: never extend into the right-edge dock (walk-btn is the topmost rung).
-      // Check walk-btn visibility first — if hidden (display:none / zero rect), use a safe fallback.
-      const walkBtn = document.getElementById('walk-btn');
-      let dockTop = 0;
-      if (walkBtn) {
-        const wRect = walkBtn.getBoundingClientRect();
-        // visible = has non-zero height AND is attached to the layout (offsetParent non-null)
-        if (wRect.height > 0 && walkBtn.offsetParent !== null) {
-          dockTop = wRect.top;
-        }
-      }
-      // Fallback: if walk-btn not measurable, use viewport-based estimate (bottom dock ≈ 378px tall)
-      if (dockTop <= 0) dockTop = window.innerHeight - 378;
-      // CSS fallback ceiling: min(320px, vh - 320px) — JS only tightens, never goes below 160px
-      const cssFallback = Math.min(320, window.innerHeight - 320);
-      const computed = Math.round(dockTop - 12 - top);
-      const maxH = Math.max(160, Math.min(computed, Math.max(cssFallback, 160)));
-      this._lbEl.style.maxHeight = `${maxH}px`;
+    if (pop) {
+      const r = pop.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > 0) top = Math.round(r.bottom + 12);
     }
+    if (top <= 0) {
+      const tb = document.querySelector('.topbar');
+      const tray = document.querySelector('.layer-toggles');
+      const tbH = tb && tb.offsetHeight > 0 ? tb.offsetHeight : 56;
+      // Only count the tray when it is parked under the topbar. In the tablet regime (≤820px) the
+      // tray lives on the BOTTOM edge, and adding its height here would push the leaf off-screen.
+      let trayH = 0;
+      if (tray) {
+        const tr = tray.getBoundingClientRect();
+        if (tr.height > 0 && tr.top < window.innerHeight / 2) trayH = tr.height;
+      }
+      top = Math.round(tbH + trayH + 20);
+    }
+    this._lbEl.style.top = `${top}px`;
+
+    // WHERE IT STOPS: 12px above .walk-btn, the topmost rung of the right-edge dock ladder.
+    // offsetParent is ALWAYS null for a position:fixed element, so the previous
+    // `walkBtn.offsetParent !== null` visibility guard could never fire — dockTop fell through to
+    // the `innerHeight - 378` guess on every single viewport. Measure the rect instead.
+    let dockTop = 0;
+    const walkBtn = document.getElementById('walk-btn');
+    if (walkBtn) {
+      const w = walkBtn.getBoundingClientRect();
+      if (w.width > 0 && w.height > 0) dockTop = w.top;
+    }
+    if (!(dockTop > 0)) {
+      // walk mode off / button not on stage: the rung below it is the real ceiling
+      const temple = document.querySelector('.temple-btn');
+      if (temple) {
+        const t = temple.getBoundingClientRect();
+        if (t.width > 0 && t.height > 0) dockTop = t.top;
+      }
+    }
+    if (!(dockTop > 0)) dockTop = window.innerHeight - 12;
+
+    const avail = Math.round(dockTop - 12 - top);
+    const maxH = Math.max(44, Math.min(avail, 320));
+    this._lbEl.style.maxHeight = `${maxH}px`;
+    this._autoCollapseLeaderboard(avail);
+  }
+
+  // ---- fold the list away when the right flank genuinely has no room for it ----
+  // 44px is the header row on its own; 320px is the CSS ceiling. Under 120px of room the ten rows
+  // would be clipped to an unreadable stub, so the leaf collapses to its header instead. Latches
+  // off the moment the visitor taps the header (_lbUserToggled) — a resize must never fight an
+  // explicit choice.
+  _autoCollapseLeaderboard(avail) {
+    if (!this._lbEl || this._lbUserToggled) return;
+    const head = this._lbEl.querySelector('#land-lb-head');
+    const collapsed = this._lbEl.classList.toggle('is-collapsed', avail < 120);
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   }
 
   // ---- show the leaf only while the land layer is live ----
@@ -652,6 +728,8 @@ export class LandLayer {
       if (this._onClick) cvEl.removeEventListener('click', this._onClick);
     }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
+    if (this._lbRO) { this._lbRO.disconnect(); this._lbRO = null; }
+    if (this._lbRaf) { cancelAnimationFrame(this._lbRaf); this._lbRaf = 0; }
     if (this.ts && this.ts.scene) this.ts.scene.remove(this.group);
     this._planeGeo.dispose();
     if (this._hoverGeo) this._hoverGeo.dispose();
