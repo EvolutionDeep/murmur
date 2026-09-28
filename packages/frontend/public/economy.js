@@ -1,9 +1,15 @@
 // economy.js — applyEconomy/applySnapshot/applyState/applyTopology + HUD 更新
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, nmCollectiveMean, shortHash, sim } from './shared.js';
-import { currentLang, gl, t as T } from './i18n.js?v=103';
+import { currentLang, gl, t as T } from './i18n.js?v=109';
 import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js';
 import { fillInspectorFromSim } from './inspector.js';
+// task 29 · C5 — the lineage atlas used to rebuild its layout on a 45 s catch-all timer, so a birth or a
+// death took up to 45 s to appear. It is now arrival-driven: these two appliers are the moment membership and
+// balances actually change, so they raise the dirty bits and lvData.lvPumpData drains them on the next atlas
+// frame (floored at 12 s, and it only RE-BAKES the static layer when the structural signature moved).
+// lvState.js imports nothing but shared.js, so this cannot close an import cycle.
+import { lvMarkDirty, LV_DIRTY_LAYOUT, LV_DIRTY_SOCIAL, LV_DIRTY_FEED } from './lvState.js';
 import { synthAgents } from './polling.js';
 import { rebuildGraveField, rebuildSocieties, rebuildTerritoryPolities } from './render2d.js';
 import { spawnFly } from './sim.js';
@@ -73,7 +79,14 @@ export function applyEconomy(econ) {
   if (Array.isArray(econ.lastTick)) spawnPaymentEdges(econ.lastTick);
   // task 22: stash the netted settlement rows so the lineage view's trade-flow layer can accumulate them
   // (additive read-out; the existing payEdges path above is untouched).
-  if (Array.isArray(econ.recent)) state.econRecent = econ.recent;
+  // task 29 · C1 NOTE: this branch is effectively unreachable — applyEconomy is handed /population's economy
+  // object, which carries NO `recent` key (measured). The real recent[48] arrives on the standalone /economy
+  // endpoint and is written by polling.pollRoster. Kept because it costs nothing and starts working the
+  // moment the worker folds `recent` into the /population payload too.
+  if (Array.isArray(econ.recent)) { state.econRecent = econ.recent; lvMarkDirty(LV_DIRTY_FEED); }
+  // task 29 · C5 — graves (dynasty) and bonds/grudges (social) both moved on this arrival
+  if (econ.dynasty) lvMarkDirty(LV_DIRTY_LAYOUT);
+  if (econ.social) lvMarkDirty(LV_DIRTY_SOCIAL);
   if (state.selectedId != null) {
     const bal = state.econBalances.get(state.selectedId);
     if (bal != null) { const el = $("ins-bal"); if (el) el.textContent = bal.toFixed(4); }
@@ -299,6 +312,10 @@ export function applySnapshot(snap) {
   // a new on-chain tick → fire one shard fan-out pulse (the isolates compute in parallel each cron)
   const ti = snap.tickIndex;
   if (ti != null && (state.lastTickIndex == null || ti > state.lastTickIndex)) { state.lastTickIndex = ti; state.shardPulseT = performance.now(); }
+  // task 29 · C5 — membership (the spawnFly loop and the `dying` sweep above) and per-fly traits just
+  // changed. This is the ~5 s heartbeat the atlas now rebuilds on instead of the old 45 s timer; the flag
+  // costs one integer OR and is drained only while the atlas is on stage.
+  lvMarkDirty(LV_DIRTY_LAYOUT);
 }
 export function applyState(st) {
   if (!st) return;

@@ -6,7 +6,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "npx serve public -l 8788",
-    "deploy": "wrangler pages deploy public --project-name=murmur --branch=main"
+    "deploy": "wrangler pages deploy public --project-name=murmur --branch=main",
+    "check": "node scripts/check-syntax.mjs",
+    "audit:i18n": "node scripts/audit-i18n.mjs",
+    "test": "npm run check && npm run audit:i18n",
+    "lint": "npm run check"
   },
   "devDependencies": {
     "wrangler": "^4.133.0"

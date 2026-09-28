@@ -829,9 +829,9 @@ body.ins-open .panel-pop, body.ins-open .panel-econ, body.ins-open .panel-temp {
 }
 
 /* ============ camera controls: a vertical pill stack on the free LEFT-MIDDLE edge ============
-   Why the left flank: render2d.drawTerritoryLegend() paints the map key on the CANVAS at the right
-   flank, vertically centred (bx = VW-194, by = (VH-136)/2), so the right-middle is spoken for even
-   though no DOM element owns it. The left-middle is the one band that is free — and it is kept free
+   Why the left flank: the territory map key that used to paint on the CANVAS at the right flank
+   (vertically centred) was removed with the Poise legend, but the right-middle stays reserved for
+   the dock column, so the left-middle remains the one band that is free — and it is kept free
    arithmetically: panel-econ is capped to end 12px above the cluster and panel-temp to start 12px
    below it (see the responsive block), so the three storeys of the left column never touch.
    Cluster box = 100px tall, centred on 50vh ⇒ it owns [50vh-50, 50vh+50].
@@ -2622,8 +2622,8 @@ body.walk-active .hint-select {
 
 /* ---- the no-overlap caps (corner layout only) -------------------------------------------
    Every cap below is derived, not guessed. With Z = --zoom-h (100), the zoom cluster owns
-   [50vh-50, 50vh+50] on the left edge; the canvas map key (render2d.drawTerritoryLegend) owns
-   [50vh-68, 50vh+68] x [VW-194, VW-14] on the right; and the right dock owns the bottom 232px.
+   [50vh-50, 50vh+50] on the left edge; the right-middle band formerly owned by the canvas map key
+   (removed with the Poise legend) is now free, and the right dock owns the bottom 232px.
      panel-econ  top = topbar-h + 44,   must end 12px above the cluster
                  ⇒ max-height = 50vh - topbar-h - 106
      panel-temp  bottom = VH - pad - temp-lift, must start 12px below the cluster
@@ -2650,7 +2650,6 @@ body.walk-active .hint-select {
   .net-note { display: none; }
 }
 @media (min-width: 681px) and (min-height: 601px) and (max-height: 700px) {
-  .panel-pop { display: none; }
   .panel-econ .micro, .panel-temp .micro { display: none; }
 }
 
@@ -2727,6 +2726,13 @@ body.walk-active .hint-select {
     position: relative; left: auto; right: auto; top: auto; bottom: auto;
     width: auto; max-width: min(90vw, 460px); max-height: none;
     margin: 0 auto 12px;
+  }
+  /* B3: panel-pop as a compact fixed chip on narrow screens (visible above the fold) */
+  .panel-pop {
+    position: fixed; right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+    top: calc(env(safe-area-inset-top, 0px) + 108px);
+    width: min(56vw, 200px); max-height: 40vh; overflow-y: auto;
+    z-index: 9; margin: 0;
   }
   /* first leaf clears the (wrapping) pinned topbar + the era HUD + the watchdog banner, and leaves
      a band of artwork above it */
@@ -3411,7 +3417,6 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
 @media (min-width: 681px) and (max-height: 900px) { .econ-feed { display: none; } }
 @media (min-width: 681px) and (max-height: 800px) { .temp-history, .net-note { display: none; } }
 @media (min-width: 681px) and (max-height: 700px) {
-  .panel-pop { display: none; }
   .panel-econ .micro, .panel-temp .micro { display: none; }
 }
 
@@ -4097,94 +4102,59 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
 }
 
 /* ============================================================================================
-   TASK 60⑩ — #terr-legend-3d, the one HUD that has no stylesheet
+   task 42 · P1-D — the population leaf must be ON the first screen of a phone
    ============================================================================================
-   scene3d.js builds the territory map key with an inline cssText —
-   `position:fixed; right:14px; top:50%; transform:translateY(-50%); max-width:210px; z-index:3`
-   — and appends it to <body>. There is no CSS rule for it anywhere else in this file, which is why
-   it was the last standing overlap in the matrix: the right edge it pins itself to is exactly the
-   edge the right-hand column (.panel-pop, #land-leaderboard) and the dock (.temple-btn, .walk-btn)
-   already own. At 1280x800 it clipped all four at once (196x29, 196x44, 172x63, 44x44).
+   Measured at 390×844 and 360×800: .panel-pop was `position: relative` in regime E's flow column and
+   landed at y≈1640 inside a 2061px scrollHeight, i.e. two screens below the fold. main.js autoFoldPop()
+   only adds .is-folded — folding a leaf that is already off-screen changes nothing about reachability.
+   The rule that was supposed to fix this is the B3 chip at the head of the (max-width:680px) regime; it
+   is dead because THREE later blocks re-declare the same selector at the SAME specificity and win on
+   source order: regime E's `.panel-econ, .panel-temp, .panel-pop, #land-leaderboard { position: relative }`,
+   regime G's identical declaration, and (on a short desktop) regime F's `position: fixed` restore.
+   So this block sits after all of them, and it is scoped to (max-width: 680px) ONLY — adding the
+   (max-height: 600px) half would fight regime F, which already puts the leaf back in a fixed corner for
+   1280×600 and is measured correct.
 
-   Every declaration below therefore needs !important: an author rule only beats an INLINE style
-   when it is important. `display` is deliberately never touched — JS toggles that inline
-   (block/none) from _updateLegend(), and an !important here would freeze the legend on screen.
+   WHERE it goes is arithmetic, not taste. Regime E's own comments pin the first-screen ladder:
+     .topbar            [0, flow]                       flow = --pad + 64 = 76 at 390 wide
+     #era-hud           [flow+6,   flow+42]   = [82, 118]
+     .cron-warn         [flow+52,  flow+98]   = [128, 174]
+     .panel-econ        [flow+110, +180 cap]  = [186, 366]
+     .layer-toggles     bottom = safe+176, height ≤ 96  = [572, 668]
+     dock (four rungs)  [668, 844]
+   The only untouched band is [366, 572]. Bottom-anchoring the chip 284px up (176 tray anchor + 96 tray
+   height + 12 gutter) puts its floor at y=560 and its cap is derived from what is genuinely left above
+   it, so the top edge can never climb into .panel-econ and the bottom edge can never climb into the tray:
+     390×844  flow=76  cap = min(180, 844-76-586) = 180  => y[380,560]   14px under econ, 12px over tray  ∎
+     360×800  flow=78  cap = min(180, 800-78-586) = 136  => y[380,516]   12px / 12px                      ∎
+     320×568  flow=76  cap = max(56, -94)         = 56   => a title-only stub; that viewport's flow column
+                                                          already overlaps its own tray, so there is no band
+                                                          to win and the floor keeps the sheet on screen.
+   586 = 284 (tray stack) + 302 (panel-econ's flow+110 offset, its 180px cap, and a 12px gutter). Using
+   panel-econ's CAP rather than its live height over-reserves on short viewports, which is the safe side.
 
-   New home: the LEFT edge of the centre channel (--chan-l), vertically centred. That slot is
-   provably empty in the corner layout:
-     left  edge = pad + col-l + 12          ⇒ 12px clear of .panel-econ / .panel-temp
-     right edge ≤ chan-l + (chan-w - 24) = chan-r - 24 = (right column's left edge) - 36
-     the dock sits at right:pad with --dock-w ≤ --col-r in every width tier, so it is strictly
-     right of --chan-r too ⇒ no horizontal constraint against the dock at all.
-   Vertically it is centred and then CLAMPED, because at 210px wide the worst-case key renders
-   258px tall and a centred 258px box reaches up into .cron-warn once the viewport is under ~660px
-   tall. max-height = 2 x the smaller of the two air gaps keeps a 12px margin top and bottom:
-     top gap    100vh/2 - h/2 ≥ band-2 + cron-h + 12   ⇒ h ≤ 100vh - 2*(band-2 + cron-h + 12)
-     bottom gap 100vh/2 + h/2 ≤ 100vh - 76 - era-h - 12 ⇒ h ≤ 100vh - 2*(88 + era-h)          */
-/* The two flow regimes (E phone column, G phone landscape) turn the corner panels into a scrolling
-   column, so a fixed legend would hover over it. It joins the column instead — and since scene3d
-   appends it to <body> LAST, it naturally lands at the foot of that column, above the 300px of
-   padding-bottom that reserves the dock zone. Same shape as the panels in each regime, and stated in
-   the SAME order as the regimes themselves (E-flow, then corner, then G-flow) so the cascade
-   resolves identically for all five cases — order is the whole trick, because
-   (max-width:680px),(max-height:600px) also matches the wide-short laptops that regime F puts back
-   into the corner layout, and the corner block has to come AFTER it to win:
-     w ≤ 680                      → E-flow      (1st only)
-     w ≤ 680 and h ≤ 480          → G-flow      (1st + 3rd, 3rd wins)
-     w ≥ 681 and h ≤ 480          → G-flow      (1st + 3rd; the corner block cannot match)
-     w ≥ 681 and 481 ≤ h ≤ 600    → corner      (1st + 2nd, 2nd wins — regime F's shape)
-     w ≥ 681 and h ≥ 601          → corner      (2nd only)                                  */
-@media (max-width: 680px), (max-height: 600px) {
-  #terr-legend-3d {
-    position: relative !important;
-    left: auto !important; right: auto !important; top: auto !important; bottom: auto !important;
-    transform: none !important;
-    width: max-content;
-    max-width: min(90vw, 460px) !important;
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 auto 12px;
-    z-index: 1 !important;          /* in the column, under .topbar — same demotion as the panels */
-    overflow-wrap: anywhere;
-  }
-}
-@media (min-width: 681px) and (min-height: 481px) {
-  #terr-legend-3d {
-    position: fixed !important;
-    left: var(--chan-l) !important;
-    right: auto !important;
-    top: 50% !important;
-    bottom: auto !important;
-    transform: translateY(-50%) !important;
-    width: auto;
-    margin: 0;
-    max-width: min(210px, calc(var(--chan-w) - 24px)) !important;
-    max-height: min(
-      calc(100vh - 2 * (var(--band-2) + var(--cron-h) + 12px)),
-      calc(100vh - 2 * (88px + var(--era-h)))
-    ) !important;
-    overflow: hidden !important;
-    overflow-wrap: anywhere;
-    z-index: 4 !important;          /* above .grain (3), below every panel and sheet (10+) */
-  }
-  /* the inspector claims the right edge; the legend is aria-hidden furniture and bows out with
-     the rest of it rather than floating over the artwork the user is trying to read. */
-  body.ins-open #terr-legend-3d { opacity: 0 !important; }
-}
-@media (max-height: 480px) {
-  #terr-legend-3d {
-    position: relative !important;
-    left: auto !important; right: auto !important; top: auto !important; bottom: auto !important;
-    transform: none !important;
-    width: max-content;
-    /* regime G hugs the LEFT gutter and stops 190px short of the right edge, where the pill dock
-       lives; the legend shares that column so it can never slide under a dock button. */
-    max-width: calc(100vw - 2 * var(--pad) - 190px) !important;
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 0 12px var(--pad);
-    z-index: 1 !important;
-    overflow-wrap: anywhere;
+   The (min-height: 720px) half of the query is that same algebra solved for the height at which the band
+   first exists: cap ≥ 56 needs 100vh ≥ flow + 642, and flow is 76 on every phone in this regime, so 720 is
+   the exact threshold and it is provable at the boundary itself —
+     375×667  cap = 56  => y[327,383] but panel-econ ends at 366: 39px of overlap, so 667 must be excluded
+     375×720  cap = 58  => y[378,436], econ ends 366 (+12), tray starts 448 (+12)                       ∎
+   Below 720px the leaf keeps regime E's in-flow position — that is today's measured behaviour, so this rule
+   is a strict improvement everywhere it applies and a no-op everywhere it cannot be satisfied. 844/800/
+   896/852/812 — every current portrait phone — are all above it.
+   z-index 9 is the value the dead B3 rule chose and it is still right: above #field (0) and the flow
+   column (1), below .topbar (10), the dock (20), the drawers (11/12) and .inspector (22). */
+@media (max-width: 680px) and (min-height: 720px) {
+  .panel-pop {
+    position: fixed;
+    top: auto; left: auto;
+    right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 284px);
+    width: min(52vw, 190px); max-width: none;
+    max-height: max(56px, min(180px,
+      calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+           - var(--topbar-flow) - 586px)));
+    overflow-y: auto; overscroll-behavior: contain;
+    margin: 0; z-index: 9;
   }
 }
 
@@ -4228,9 +4198,6 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
   body:has(#epitaph:not([hidden])) .panel-econ,
   body:has(#epitaph:not([hidden])) .panel-temp,
   body:has(#epitaph:not([hidden])) #land-leaderboard { opacity: 0.1; pointer-events: none; }
-  /* the legend is aria-hidden furniture and already bows out for the inspector; !important because
-     scene3d.js writes its geometry as an inline cssText. */
-  body:has(#epitaph:not([hidden])) #terr-legend-3d { opacity: 0 !important; }
   /* The dock is z 20 and the plaque is z 24. Without this the pills still LOOK tappable underneath
      a card that covers them, and the ✕ row shares a line with buttons that no longer do anything. */
   body:has(#epitaph:not([hidden])) .layer-toggles,
@@ -4743,12 +4710,33 @@ body.lv-active .rail-btn[data-act="lineageview"] {
 body.lv-active #lv-ui { display: block; }
 #lv-ui[hidden] { display: none; }   /* the JS [hidden] flip is the source of truth on close */
 
+/* ---- task 42 · P0-A / P1-E — measured-chrome tokens --------------------------------------------
+   #lv-toolbar / #lv-prov-bar / #lv-filters / #lv-panel / #lv-replay / #lv-legend used to hang off
+   --topbar-total and --rail-w, which are STATIC tokens. Regime E/G turn .topbar into a wrapping
+   in-flow bar whose real height is --topbar-flow (76px at 390 wide) while --topbar-total stays at
+   ~61px, so the atlas chrome started 9.2px INSIDE the bar. And --rail-w stays 56px on a phone even
+   though #command-rail is display:none there.
+   lvState.lvHudMeasure() now writes the MEASURED values back onto this element every time the chrome
+   moves (resize, language switch, legend fold, inspector open). The declarations below are only the
+   pre-JS defaults, so the first paint is already sane.
+   --lv-tb-h is the toolbar's own measured height: it lets #lv-prov-bar take a row of its own instead
+   of sitting at the same top edge and being overdrawn by the toolbar (the 18344px² overlap). */
+#lv-ui {
+  --lv-top: max(var(--topbar-total), calc(var(--topbar-flow, 0px) + env(safe-area-inset-top, 0px)));
+  --lv-rail-w: var(--rail-w);
+  --lv-tb-h: 42px;
+  --lv-cap-h: 44px;   /* #switch-to-3d height + 8px gutter: #lv-legend parks above it */
+}
+@media (hover: none), (pointer: coarse) {
+  #lv-ui { --lv-cap-h: 52px; }   /* .canvas-switch grows to 44px on a coarse pointer */
+}
+
 /* ---- toolbar: layer toggles + refresh + close, floating under the topbar, right of the rail ---- */
 #lv-toolbar {
-  position: absolute; top: calc(var(--topbar-total) + 6px);
-  left: calc(var(--rail-w) + var(--pad));
+  position: absolute; top: calc(var(--lv-top) + 6px);
+  left: calc(var(--lv-rail-w) + var(--pad));
   display: flex; flex-wrap: wrap; gap: 6px; pointer-events: auto;
-  max-width: calc(100vw - var(--rail-w) - var(--lv-panel-w) - var(--pad) - var(--sp-8));
+  max-width: calc(100vw - var(--lv-rail-w) - var(--lv-panel-w) - var(--pad) - var(--sp-8));
   padding: 6px; border-radius: var(--r-leaf);
   background: var(--panel); background-image: var(--leaf-grain);
   border: var(--edge); box-shadow: var(--shadow-1);
@@ -4770,12 +4758,91 @@ body.lv-active #lv-ui { display: block; }
 }
 .lv-tb-close:hover { background: rgba(156, 59, 46, 0.16); color: var(--rust); }
 
-/* ---- legend: bottom-left key (goods, alliance/antagonism, ghost, tomb) ---- */
+/* ---- task 32 · C24 — the atlas search box (the first input in #lv-ui, lives inside the toolbar so a
+       click never reaches the canvas pointerdown). No glass, no blur, no shadowBlur — flat tokens only. ---- */
+.lv-search { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.lv-search-input {
+  height: 30px; width: 190px; padding: 0 11px; cursor: text;
+  border: var(--edge-soft); border-radius: var(--r-pill);
+  background: rgba(255, 253, 246, 0.5); color: var(--gall);
+  font: 500 var(--fs-cap)/1 var(--sans); letter-spacing: var(--ls-cap);
+  transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.lv-search-input::placeholder { color: var(--muted); opacity: 0.85; text-transform: none; letter-spacing: 0; }
+.lv-search-input:hover { background: rgba(var(--gold-rgb), 0.10); }
+.lv-search-input:focus {
+  outline: none; border-color: rgba(var(--gold-rgb), 0.52); box-shadow: var(--ring);
+  background: rgba(255, 253, 246, 0.72);
+}
+.lv-search-status {
+  flex: none; max-width: 120px; font-family: var(--mono); font-size: var(--fs-micro);
+  letter-spacing: var(--ls-micro); color: var(--muted); font-variant-numeric: var(--num);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* the filter button reads as "open" while its popover is expanded (mirrors aria-pressed styling) */
+.lv-tb[aria-expanded="true"] {
+  background: rgba(var(--gold-rgb), 0.20); color: var(--gold-deep);
+  border-color: rgba(var(--gold-rgb), 0.52);
+}
+
+/* ---- task 32 · C24 — the filter popover, floating under the toolbar. Filtered-out nodes are DIMMED
+       to 0.06α on the canvas (spatial memory kept), never removed from the layout. ---- */
+#lv-filters {
+  position: absolute; top: calc(var(--lv-top) + var(--lv-tb-h) + 72px);
+  left: calc(var(--lv-rail-w) + var(--pad));
+  display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
+  width: min(282px, calc(100vw - var(--lv-rail-w) - var(--pad) * 2));
+  padding: 11px 12px 12px; border-radius: var(--r-leaf);
+  background: var(--panel); background-image: var(--leaf-grain);
+  border: var(--edge); box-shadow: var(--shadow-1);
+  font-family: var(--sans); color: var(--gall-2);
+}
+#lv-filters[hidden] { display: none; }
+.lv-fl-row { display: flex; align-items: center; gap: 7px; }
+.lv-fl-lbl {
+  flex: none; width: 74px; font-size: var(--fs-cap); letter-spacing: var(--ls-cap);
+  text-transform: uppercase; color: var(--muted);
+}
+.lv-fl-num, .lv-fl-sel {
+  flex: 1 1 0; min-width: 0; height: 28px; padding: 0 8px;
+  border: var(--edge-soft); border-radius: var(--r-chip);
+  background: rgba(255, 253, 246, 0.5); color: var(--gall);
+  font: 500 var(--fs-cap)/1 var(--sans);
+}
+.lv-fl-num { font-family: var(--mono); font-variant-numeric: var(--num); }
+.lv-fl-num:focus, .lv-fl-sel:focus { outline: none; border-color: rgba(var(--gold-rgb), 0.52); box-shadow: var(--ring); }
+.lv-fl-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--hair);
+}
+.lv-fl-count {
+  min-width: 0; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
+  color: var(--muted); font-variant-numeric: var(--num);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lv-fl-reset {
+  flex: none; padding: 4px 11px; cursor: pointer;
+  border: var(--edge-gilt); border-radius: var(--r-pill); background: rgba(var(--gold-rgb), 0.10);
+  font: 500 var(--fs-cap)/1.4 var(--sans); letter-spacing: var(--ls-cap); text-transform: uppercase; color: var(--gold-deep);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.lv-fl-reset:hover { background: rgba(var(--gold-rgb), 0.22); }
+
+/* ---- legend: bottom-left key (goods, alliance/antagonism, ghost, tomb) ----
+   task 42 · P1-E — #switch-to-3d lives at the very same bottom-left corner, so the two measured
+   2754px² of overlap at 390×844 and the fold toggle only answered 67.2% of a nine-point hit grid.
+   The capsule keeps the corner (it is the way out of the atlas) and the legend is LIFTED clear of it
+   by --lv-cap-h, which lvHudMeasure keeps equal to the capsule's real height + 8px.
+   task 42 · P0-C(附加) — max-width drops from min(360px,44vw) to min(320px,40vw) and the padding
+   tightens: at 1440×900 the old 336px box reached x=420 while the tree bbox starts at x=402, which
+   is what the audit logged as "树擦 legend 489.7px²". Narrowing it buys the dendrogram its radius
+   back instead of paying for the clearance with a smaller circle. */
 #lv-legend {
-  position: absolute; left: calc(var(--rail-w) + var(--pad));
-  bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+  position: absolute; left: calc(var(--lv-rail-w) + var(--pad));
+  bottom: calc(var(--lv-rt-h) + var(--pad) + var(--lv-cap-h) + env(safe-area-inset-bottom, 0px));
+  z-index: 14;   /* task 41 · C2: above #lv-panel (z:12) so the fold toggle stays clickable */
   display: flex; flex-direction: column; gap: 6px; pointer-events: none;
-  max-width: min(360px, 44vw); padding: 9px 11px; border-radius: var(--r-leaf);
+  max-width: min(320px, 40vw); padding: 8px 10px; border-radius: var(--r-leaf);
   background: var(--panel); background-image: var(--leaf-grain);
   border: var(--edge); box-shadow: var(--shadow-1);
   font-family: var(--sans); color: var(--gall-2);
@@ -4790,7 +4857,16 @@ body.lv-active #lv-ui { display: block; }
 .lv-lg-chip i.lv-lg-ally, .lv-lg-chip i.lv-lg-foe { width: 15px; height: 0; border-radius: 0; background: transparent; }
 .lv-lg-chip i.lv-lg-ally { border-top: 2px solid rgb(120, 154, 96); }
 .lv-lg-chip i.lv-lg-foe  { border-top: 2px dashed rgb(198, 60, 44); }
-.lv-lg-chip i.lv-lg-ghost { width: 8px; height: 8px; background: transparent; border: 1px solid rgba(33, 29, 22, 0.45); }
+/* task 29 · A4-5/A4-6: the "unborn ancestor" hollow ring chip is gone — it documented an empty set (0 of 139
+   lineage entries in production have an uncommitted parent). In its place: the chronicle MARK (a dashed ring,
+   the one-actor hostile/positive events C2 made reachable) and the COMMITTED ANCESTOR disc (a dim gold fill,
+   the 64 of 139 committed genomes that no living fly occupies — the canvas's largest population, and until
+   now the only one with no legend entry at all). */
+.lv-lg-chip i.lv-lg-mark {
+  width: 9px; height: 9px; background: transparent;
+  border: 1px dashed rgba(156, 59, 46, 0.72); border-radius: 50%;
+}
+.lv-lg-chip i.lv-lg-anc { width: 7px; height: 7px; background: rgba(184, 146, 62, 0.55); }
 .lv-lg-chip i.lv-lg-tomb { width: 9px; height: 9px; background: transparent; border-radius: 0; position: relative; }
 .lv-lg-chip i.lv-lg-tomb::before, .lv-lg-chip i.lv-lg-tomb::after {
   content: ""; position: absolute; left: 0; top: 4px; width: 9px; height: 1px; background: rgba(122, 90, 50, 0.78);
@@ -4801,11 +4877,15 @@ body.lv-active #lv-ui { display: block; }
   font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
   color: var(--muted); font-variant-numeric: var(--num);
 }
+/* task 29 · C4 — a recycled slot whose identity stamp was invalidated and is being re-resolved. Rust, not
+   red: it is a bookkeeping state, not an antagonism. No blur, no glass (see the file header). */
+.lv-lg-note.lv-stale, .lv-prov-r.lv-stale > span { color: var(--rust); }
+.lv-prov-r.lv-stale > b { color: var(--rust); font-variant-numeric: var(--num); }
 
 /* ---- focus sidebar: the selected fly's brain + provenance (built on demand by lineageView) ---- */
 #lv-panel {
-  position: absolute; top: var(--topbar-total); right: 0;
-  width: var(--lv-panel-w); max-height: calc(100vh - var(--topbar-total));
+  position: absolute; top: var(--lv-top); right: 0; z-index: 12;
+  width: var(--lv-panel-w); max-height: calc(100vh - var(--lv-top));
   overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   display: flex; flex-direction: column; gap: 10px;
   padding: 12px 13px calc(14px + env(safe-area-inset-bottom, 0px));
@@ -4862,13 +4942,377 @@ body.lv-active #lv-ui { display: block; }
 .lv-fap-gloss { font-family: var(--display); font-style: italic; font-size: var(--fs-body); color: var(--gall-2); }
 .lv-fap-role { font-size: var(--fs-cap); letter-spacing: var(--ls-cap); text-transform: uppercase; color: var(--muted); }
 
+/* ---- task 30 · Phase C: motor discharge bars (C6), spike-source label (C7), genotype structural spec (C11)
+       and the bloodline breadcrumb trail (C10). No box-shadow, no backdrop-filter (styles.css: no glass no blur). ---- */
+.lv-p-gen { display: flex; flex-direction: column; gap: 9px; }
+.lv-motor-bars { display: flex; flex-direction: column; gap: 5px; }
+.lv-spike-src { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: 0.04em; color: var(--muted); }
+.lv-geno-spec { display: flex; flex-direction: column; gap: 3px; }
+.lv-geno-note > b { color: var(--muted); font-style: italic; font-weight: 400; }
+.lv-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.lv-crumb {
+  padding: 1px 7px; border: var(--edge-soft); border-radius: var(--r-pill);
+  font-family: var(--mono); font-size: var(--fs-micro); color: var(--gall-2);
+  background: rgba(255, 253, 246, 0.42);
+}
+.lv-crumb-cur { border-color: var(--edge-gilt); color: var(--gold-deep); background: rgba(var(--gold-rgb), 0.12); }
+.lv-crumb-sep { color: var(--muted); font-size: var(--fs-micro); }
+
 /* ---- phones / short viewports: the rail hides, so the chrome re-slots to the raw edges and the
        focus panel becomes a bottom sheet under the toolbar (legacy mobile layout, unchanged) ---- */
 @media (max-width: 680px), (max-height: 600px) {
-  #lv-toolbar { left: var(--pad); right: var(--pad); max-width: none; }
-  #lv-legend { display: none; }
+  /* task 42 · P0-C / P1-E — .command-rail is display:none in this regime (see the PHONE block below), so
+     the left inset genuinely is 0. Declared here as the FIRST-PAINT fallback only: lvHudMeasure() then
+     overwrites --lv-rail-w with the live rect on every resize, which is what keeps the canvas corner
+     widgets and the generation ruler correct if the rail ever comes back (regime F short desktops). */
+  #lv-ui { --lv-rail-w: 0px; }
+  #lv-toolbar { left: var(--pad); right: var(--pad); max-width: none; width: fit-content; }
+  /* task 33 · C26 — the legend is NO LONGER `display:none` here. A phone reader used to get no key at all,
+     so the coloured discs / dashed rings on the canvas were unreadable. It stays on screen at every width and
+     is simply FOLDED by default (lvInteract.lvLegendSync reads lvNarrow()), which reduces it to one ~24px
+     title chip with a chevron. It only re-slots to the raw edge and narrows, exactly like the toolbar. */
+  /* `left` is inherited from the base rule as calc(var(--lv-rail-w) + var(--pad)), which already resolves
+     to var(--pad) once the token above zeroes the rail. Restating it here is what used to desync the two. */
+  #lv-legend { max-width: min(300px, 78vw); }
   #lv-panel {
-    top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 54vh;
+    top: auto; bottom: calc(var(--lv-rt-h) + var(--pad) + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; width: auto;
+    max-height: calc(54vh - var(--lv-rt-h));
     border-left: 0; border-top: var(--edge); border-radius: var(--r-leaf) var(--r-leaf) 0 0;
+  }
+}
+
+/* ---- task 31 · C20: provenance status bar (top persistent strip inside #lv-ui) ---- */
+/* task 42 · P0-A — this bar used to share #lv-toolbar's exact anchor (top: --topbar-total + 6px,
+   left: --rail-w + --pad) while sitting EARLIER in the DOM, so the toolbar painted straight over it:
+   18344px² of mutual overlap at 2560×1080. Worse, `right: calc(--lv-panel-w + --pad + 60px)` stretched
+   the box to ~2042px while its content only filled ~250px, and because it carries pointer-events:auto
+   that empty 1800px of transparent strip swallowed canvas clicks — elementFromPoint(1500, 92) returned
+   #lv-prov-bar, not the canvas, which is the "empty long bar behind the toolbar" the user reported.
+   It now owns its own row BELOW the toolbar (tb-h + 12px of gutter) and shrinks to its content, so the
+   overlap is 0 by construction and there is no invisible hit area left to steal a click. */
+#lv-prov-bar {
+  position: absolute; top: calc(var(--lv-top) + var(--lv-tb-h) + 12px);
+  left: calc(var(--lv-rail-w) + var(--pad)); right: auto;
+  width: fit-content; max-width: calc(100vw - var(--lv-rail-w) - var(--lv-panel-w) - 3 * var(--pad));
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; pointer-events: auto;
+  padding: 4px 9px; border-radius: var(--r-leaf);
+  background: var(--panel); background-image: var(--leaf-grain);
+  border: var(--edge); font-family: var(--mono); font-size: var(--fs-micro);
+  letter-spacing: 0.02em; color: var(--gall-2); font-variant-numeric: var(--num);
+  max-height: 52px; overflow: hidden;
+}
+/* task 41 · C4: mobile override MUST come after the base rule so source-order wins at equal specificity.
+   On a phone the rail is gone (--lv-rail-w: 0px above) and the bar shrinks to 8px for density. Note there
+   is deliberately NO `right:` here any more — task 41's `right: var(--pad)` defeated width:fit-content and
+   stretched the strip full-bleed again, which is exactly the empty-hit-area bug P0-A is fixing. */
+@media (max-width: 680px), (max-height: 600px) {
+  #lv-prov-bar { max-width: calc(100vw - 2 * var(--pad)); font-size: 8px; }
+}
+.lv-prov-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.lv-prov-badge {
+  padding: 1px 6px; border-radius: var(--r-pill); white-space: nowrap;
+  background: rgba(63, 90, 58, 0.14); color: var(--moss); font-weight: 500;
+}
+.lv-prov-btn {
+  flex: none; padding: 2px 8px; cursor: pointer;
+  border: var(--edge-gilt); border-radius: var(--r-pill);
+  background: rgba(var(--gold-rgb), 0.08); color: var(--gold-deep);
+  font: 500 var(--fs-micro)/1.4 var(--mono); letter-spacing: 0.03em;
+  transition: background-color var(--t-fast) ease;
+}
+.lv-prov-btn:hover:not(:disabled) { background: rgba(var(--gold-rgb), 0.20); }
+.lv-prov-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* ---- task 31 · C22: neural evidence panel (trade-arc drill-down) ---- */
+.lv-evid-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lv-evid-col { display: flex; flex-direction: column; gap: 2px; }
+.lv-evid-role {
+  font-family: var(--title); font-size: var(--fs-title); letter-spacing: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep); margin-bottom: 3px;
+}
+.lv-evid-chain {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--hair);
+}
+.lv-evid-empty { font-family: var(--mono); font-size: var(--fs-micro); color: var(--muted); font-style: italic; }
+
+/* ============================================================================
+   TASK 33 · PHASE F — C25 TIME REPLAY + C26 MOBILE ADAPTATION
+   ----------------------------------------------------------------------------
+   Same cloth as the rest of the atlas: flat high-alpha fills, no glass, no blur,
+   and not one glow/veil declaration anywhere in this block (the gate-7 red line —
+   the two forbidden properties are named nowhere below, even in prose). Focus is
+   an outline ring. The block is appended LAST on purpose:
+   it overrides #lv-panel / #lv-legend geometry by source order at equal
+   specificity, and it DEFINES --lv-rt-h, which the mobile media query above
+   already consumes (undefined ⇒ calc() invalid ⇒ the sheet would collapse).
+   ============================================================================ */
+
+/* the replay bar's reserved height. 0 on desktop (the bar floats top-right and takes nothing from the
+   sheet); 34vh on a phone, where it becomes the bottom-most strip and the sheet must sit on top of it. */
+#lv-ui { --lv-rt-h: 0px; }
+
+/* ---- long-press on a phone must not select chrome text / raise the callout menu. The provenance hashes in
+       the focus sheet ARE meant to be copyable, and the search box must stay selectable, so both opt back in. */
+#lv-ui { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#lv-search, #lv-panel { -webkit-user-select: text; user-select: text; }
+
+/* ================= C25 — the replay transport ================= */
+#lv-replay {
+  /* task 42 · P1-E — --lv-top, not --topbar-total: on a phone .topbar is a wrapping in-flow bar whose real
+     bottom is --topbar-flow (76px at 390 wide) while the static --topbar-total token stays ~61px, which is
+     how the whole atlas chrome ended up 9.2px INSIDE the bar. 54px keeps the offset the toolbar always had. */
+  position: absolute; top: calc(var(--lv-top) + 54px);
+  right: calc(var(--lv-panel-w) + var(--pad));
+  display: flex; flex-direction: column; gap: 6px; pointer-events: auto;
+  width: min(340px, 30vw); max-height: calc(100vh - var(--lv-top) - 120px);
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 10px 10px; border-radius: var(--r-leaf);
+  background: var(--panel); background-image: var(--leaf-grain);
+  border: var(--edge);
+  font-family: var(--sans); color: var(--gall-2);
+}
+#lv-replay[hidden] { display: none; }
+.lv-rt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.lv-rt-btn {
+  flex: none; width: 30px; height: 28px; padding: 0; cursor: pointer;
+  display: grid; place-items: center;
+  border: var(--edge-soft); border-radius: var(--r-chip);
+  background: rgba(255, 253, 246, 0.5); color: var(--gall-2);
+  font: 500 var(--fs-cap)/1 var(--mono);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.lv-rt-btn:hover { background: rgba(var(--gold-rgb), 0.14); color: var(--gold-deep); }
+.lv-rt-btn:active { transform: translateY(1px); }
+.lv-rt-btn:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.55); outline-offset: 1px; }
+.lv-rt-x { margin-left: auto; }
+.lv-rt-x:hover { background: rgba(156, 59, 46, 0.16); color: var(--rust); }
+.lv-rt-clock {
+  font-family: var(--title); font-size: var(--fs-title); letter-spacing: var(--ls-title);
+  text-transform: uppercase; color: var(--gold-deep); white-space: nowrap;
+}
+.lv-rt-when {
+  font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
+  color: var(--muted); font-variant-numeric: var(--num); white-space: nowrap;
+}
+.lv-rt-regime {
+  flex: none; padding: 1px 7px; border: var(--edge-soft); border-radius: var(--r-pill);
+  font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--gall-2); white-space: nowrap;
+}
+.lv-rt-regime[data-r="CALM"] { border-color: rgba(63, 90, 58, 0.5); background: rgba(63, 90, 58, 0.14); color: var(--moss); }
+.lv-rt-regime[data-r="HOT"]  { border-color: rgba(156, 59, 46, 0.5); background: rgba(156, 59, 46, 0.12); color: var(--rust); }
+
+/* the scrubber. touch-action:pan-x so a thumb drag never scrolls the page / the bar itself vertically. */
+.lv-rt-scrub {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 20px; margin: 0; padding: 0;
+  background: transparent; cursor: pointer; touch-action: pan-x;
+}
+.lv-rt-scrub::-webkit-slider-runnable-track {
+  height: 6px; border: var(--edge-soft); border-radius: var(--r-pill);
+  background: rgba(122, 96, 58, 0.16);
+}
+.lv-rt-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; margin-top: -6px; border-radius: 50%;
+  background: rgba(var(--gold-rgb), 0.85); border: 1px solid rgba(90, 68, 24, 0.6);
+}
+.lv-rt-scrub::-moz-range-track {
+  height: 6px; border: var(--edge-soft); border-radius: var(--r-pill);
+  background: rgba(122, 96, 58, 0.16);
+}
+.lv-rt-scrub::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(var(--gold-rgb), 0.85); border: 1px solid rgba(90, 68, 24, 0.6);
+}
+.lv-rt-scrub:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.55); outline-offset: 2px; }
+
+/* the growth-curve sparkline: decorative (aria-hidden) — every number it draws is also printed as text. */
+.lv-rt-spark {
+  display: block; width: 100%; height: 40px;
+  border: var(--edge-soft); border-radius: var(--r-card);
+  background: rgba(255, 253, 246, 0.42);
+}
+.lv-rt-body { display: flex; flex-direction: column; gap: 7px; }
+.lv-rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.lv-rt-cell { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "k v" "b b"; gap: 2px 6px; min-width: 0; }
+.lv-rt-k {
+  grid-area: k; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-micro); letter-spacing: var(--ls-micro); text-transform: uppercase; color: var(--muted);
+}
+.lv-rt-v {
+  grid-area: v; text-align: right; font-family: var(--mono); font-weight: 500;
+  font-size: var(--fs-micro); color: var(--gall); font-variant-numeric: var(--num); white-space: nowrap;
+}
+.lv-rt-bar {
+  grid-area: b; position: relative; display: block; height: 4px; overflow: hidden;
+  border-radius: var(--r-pill); background: rgba(122, 96, 58, 0.14);
+}
+.lv-rt-bar > i {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; display: block;
+  border-radius: var(--r-pill); background: var(--accent);
+  transition: width var(--t-fast) linear;
+}
+.lv-rt-states { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--hair); }
+.lv-rt-st { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.lv-rt-st > b { display: flex; flex: 1 1 44%; align-items: center; gap: 4px; min-width: 0; font-weight: 400; }
+.lv-rt-st > b > i { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.lv-rt-st > b > u {
+  flex: none; text-decoration: none; font-family: var(--mono); font-size: var(--fs-micro);
+  color: var(--gall); font-variant-numeric: var(--num);
+}
+.lv-rt-stb {
+  position: relative; flex: 1 1 auto; min-width: 16px; height: 4px; overflow: hidden;
+  border-radius: var(--r-pill); background: rgba(122, 96, 58, 0.14);
+}
+.lv-rt-stb > em {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; display: block; font-style: normal;
+  background: rgba(var(--gold-rgb), 0.7);
+}
+.lv-rt-foot {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding-top: 6px; border-top: 1px solid var(--hair);
+}
+.lv-rt-mono {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: var(--fs-micro); color: var(--muted); font-variant-numeric: var(--num);
+}
+.lv-rt-hint {
+  font-family: var(--mono); font-size: var(--fs-micro); line-height: 1.45;
+  color: var(--muted); font-style: italic;
+}
+.lv-rt-status {
+  font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: var(--ls-micro);
+  color: var(--muted); overflow-wrap: anywhere;
+}
+
+/* ================= C26 — foldable legend chip (the ≤680px `display:none` is gone) ================= */
+.lv-lg-head { justify-content: space-between; gap: 8px; }
+.lv-lg-tog {
+  /* #lv-legend is pointer-events:none, so the toggle must opt back in or the chip can never be unfolded. */
+  flex: none; width: 26px; height: 26px; padding: 0; cursor: pointer; pointer-events: auto;
+  display: grid; place-items: center;
+  border: var(--edge-soft); border-radius: var(--r-chip);
+  background: rgba(255, 253, 246, 0.5); color: var(--gall-2);
+  font: 500 var(--fs-body)/1 var(--mono);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.lv-lg-tog:hover { background: rgba(var(--gold-rgb), 0.14); color: var(--gold-deep); }
+.lv-lg-tog:active { transform: translateY(1px); }
+.lv-lg-tog:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.55); outline-offset: 1px; }
+.lv-lg-body { display: flex; flex-direction: column; gap: 6px; }
+#lv-legend.lv-fold { gap: 0; padding: 5px 8px; }
+#lv-legend.lv-fold .lv-lg-body { display: none; }
+#lv-legend.lv-fold .lv-lg-t { font-size: var(--fs-cap); letter-spacing: var(--ls-cap); }
+
+/* ================= C26 — segmented (collapsible) focus sheet ================= */
+.lv-p-seg { display: flex; flex-direction: column; gap: 10px; }
+.lv-p-seg-h { position: relative; cursor: pointer; padding-right: 18px; }
+.lv-p-seg-h::after {
+  content: "\25BE"; position: absolute; right: 0; top: 0;
+  font-family: var(--mono); font-size: var(--fs-micro); color: var(--muted);
+}
+.lv-p-seg-h:hover { color: var(--rust); }
+.lv-p-seg-h:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.55); outline-offset: 2px; border-radius: var(--r-chip); }
+/* task 41 · C3: raised specificity (#lv-panel prefix) so the fold hides #lv-raster/#lv-memb whose base
+   rule `#lv-raster, #lv-memb { display: block }` (id selector) would otherwise win over a class-only rule. */
+#lv-panel .lv-p-seg-fold > :not(.lv-p-seg-h) { display: none; }
+.lv-p-seg-fold .lv-p-seg-h::after { content: "\25B8"; }
+
+/* ================= C26 — touch targets (only where there is no hover device, so desktop is untouched) */
+@media (hover: none), (pointer: coarse) {
+  .lv-tb, .lv-search-input, .lv-fl-num, .lv-fl-sel { height: 34px; }
+  .lv-tb { padding: 0 13px; }
+  .lv-rt-btn { width: 36px; height: 34px; }
+  .lv-lg-tog { width: 32px; height: 32px; }
+  .lv-fl-reset, .lv-verify { min-height: 34px; }
+  .lv-prov-btn { min-height: 30px; }
+  .lv-p-x { width: 36px; height: 36px; font-size: 18px; }
+  /* manipulation, never none: these are DOM controls, and `none` would also kill the tap. */
+  .lv-tb, .lv-rt-btn, .lv-lg-tog, .lv-p-seg-h, .lv-fl-reset, .lv-verify, .lv-prov-btn,
+  .lv-p-x { touch-action: manipulation; }
+  .lv-rt-scrub { height: 28px; }
+  .lv-rt-scrub::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
+  .lv-rt-scrub::-moz-range-thumb { width: 22px; height: 22px; }
+}
+
+/* ================= C26 — phones / short viewports: the replay bar owns the bottom strip ================= */
+@media (max-width: 680px), (max-height: 600px) {
+  body.lv-rt-open #lv-ui { --lv-rt-h: 34vh; }
+  #lv-replay {
+    top: auto; left: var(--pad); right: var(--pad); width: auto;
+    /* iOS Safari: keep the transport above the home indicator, exactly like #lv-legend / #lv-panel do. */
+    bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+    max-height: var(--lv-rt-h);
+  }
+  .lv-rt-grid { grid-template-columns: 1fr; }
+  /* the legend must clear the transport, or the two overlap; folded it is one ~26px chip. */
+  body.lv-rt-open #lv-legend {
+    bottom: calc(var(--lv-rt-h) + var(--pad) + env(safe-area-inset-bottom, 0px));
+    max-width: min(240px, 62vw);
+  }
+  /* the sheet already carries `padding-bottom: calc(14px + env(safe-area-inset-bottom))` from the base rule,
+     so when the transport is closed its last row still clears the home indicator. */
+  #lv-panel { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  /* the filter popover is left-anchored with no RTL mirror (Phase E's decision, kept): on a phone the rail is
+     gone, so it re-slots to the raw edge like the toolbar does, and drops below the toolbar's wrapped rows. */
+  #lv-filters {
+    left: var(--pad); right: var(--pad); width: auto; max-width: none;
+    /* task 42 · P0-A — clears the provenance row that now sits under the toolbar (tb-h + 12 + its 52px
+       max-height = tb-h + 64), so the popover can never land on top of it. */
+    top: calc(var(--lv-top) + var(--lv-tb-h) + 72px);
+    max-height: calc(100vh - var(--lv-top) - 120px);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+}
+
+/* ============================================================================
+   TASK 39 · A2 — CANVAS-SWITCH CAPSULES
+   High-contrast gilt pills anchored bottom-left (away from the dock steles).
+   #switch-to-atlas lives OUTSIDE the rail so it stays reachable on phones.
+   #switch-to-3d lives inside #lv-ui so it auto-hides with the atlas.
+   No backdrop-filter, no box-shadow, no filter — outline for focus.
+   ============================================================================ */
+.canvas-switch {
+  position: fixed; z-index: 22; pointer-events: auto;
+  bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 14px; cursor: pointer;
+  border: 1.5px solid rgba(var(--gold-rgb), 0.6); border-radius: var(--r-pill);
+  background: var(--panel); background-image: var(--leaf-grain);
+  color: var(--gold-deep);
+  font: 600 var(--fs-cap)/1 var(--sans); letter-spacing: var(--ls-cap); text-transform: uppercase;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.canvas-switch:hover { background: rgba(var(--gold-rgb), 0.16); border-color: var(--gold-deep); }
+.canvas-switch:active { transform: translateY(1px); }
+.canvas-switch:focus-visible { outline: 2px solid rgba(var(--gold-rgb), 0.65); outline-offset: 2px; }
+/* task 42 · P2-F — the inline icon. flex:none so a long localised label (German/French/Arabic all run
+   wider than the English "swarm") squeezes the TEXT, never the glyph; the 6px gutter is the pill's own
+   `gap`, so the icon needs no margin of its own and RTL gets the mirror for free. currentColor is set on
+   the <svg> in markup, which is why the hover/active colour change reaches it with no extra rule. */
+.canvas-switch .cs-ico { flex: none; width: 16px; height: 16px; display: block; }
+/* mutual exclusion: hide #switch-to-atlas when the atlas owns the stage */
+body.lv-active #switch-to-atlas { display: none; }
+/* the lineage-side capsule is absolute inside #lv-ui (it already has pointer-events:none on the wrapper) */
+.canvas-switch-3d {
+  position: absolute; bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+  left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+}
+/* coarse-pointer: enlarge the touch target */
+@media (hover: none), (pointer: coarse) {
+  .canvas-switch { height: 44px; padding: 0 18px; font-size: 11px; }
+}
+/* phones / short viewports: the capsule stays visible — this is the C26-A fix */
+@media (max-width: 680px), (max-height: 600px) {
+  .canvas-switch {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    left: calc(env(safe-area-inset-left, 0px) + 12px);
+  }
+  .canvas-switch-3d {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    left: calc(env(safe-area-inset-left, 0px) + 12px);
   }
 }

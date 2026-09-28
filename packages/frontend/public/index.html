@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=116" />
+  <link rel="stylesheet" href="./styles.css?v=124" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -30,7 +30,7 @@
   }
   </script>
 </head>
-<body>
+<body class="lv-active">
   <!-- The generative field: the whole page IS the artwork. Everything else floats above it. -->
   <canvas id="field" data-i18n-aria="field.aria" aria-label="a living population of fruit-fly agents reacting to and settling on the arc market"></canvas>
   <!-- task 22: the SECOND main canvas — a radial lineage / technical atlas. It has its OWN 2D context and is
@@ -742,18 +742,118 @@
        canvas owns the stage: JS flips #lv-ui's [hidden] on open/close and CSS keys visibility off
        body.lv-active, so a hidden atlas costs nothing. Every button/label is localised through data-i18n*. -->
   <div id="lv-ui" hidden>
+    <!-- task 39 · A2: capsule to switch back to the 3D swarm canvas.
+         task 42 · P2-F: the label moved into an inner <span> on purpose. i18n.js applyDom() localises a
+         [data-i18n] element with `el.textContent = t(key)`, which DELETES every child node — an inline SVG
+         placed as a sibling of the text would be wiped on the first language switch and never come back.
+         The icon therefore sits outside the localised node, carries aria-hidden (the button already exposes
+         data-i18n-aria / data-i18n-title) and strokes with currentColor so it follows the pill's colour and
+         re-orders itself with the flex row under RTL. -->
+    <button type="button" class="canvas-switch canvas-switch-3d" id="switch-to-3d" data-i18n-aria="lv.switchTo3d" data-i18n-title="lv.switchTo3d" aria-label="3D swarm" title="3D swarm"><svg class="cs-ico" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.7 14 5.1v5.8L8 14.3 2 10.9V5.1z"/><path d="M2 5.1 8 8.5l6-3.4"/><path d="M8 8.5v5.8"/></svg><span data-i18n="lv.switchTo3d">swarm</span></button>
+    <div id="lv-prov-bar" role="status" aria-label="provenance status" data-i18n-aria="lv.provBarAria"></div>
     <div id="lv-toolbar" role="toolbar" aria-label="lineage atlas controls" data-i18n-aria="lv.tbAria">
+      <!-- task 32 · C24 — the atlas search box. It is the FIRST input inside #lv-ui, sits in the toolbar
+           (pointer-events:auto, a sibling ABOVE the canvas) so a click never reaches the canvas pointerdown,
+           and lvInteract stopPropagation's every keydown so the document Escape-close never fires mid-type. -->
+      <span class="lv-search">
+        <input type="search" id="lv-search" class="lv-search-input" autocomplete="off" spellcheck="false"
+               data-i18n-ph="lv.searchPh" data-i18n-aria="lv.searchAria"
+               placeholder="search #id / hash / house / gen" aria-label="search the lineage atlas">
+        <span id="lv-search-status" class="lv-search-status" role="status" aria-live="polite"></span>
+      </span>
       <button type="button" class="lv-tb" data-lv="shards" aria-pressed="false" data-i18n="lv.tbShards" data-i18n-title="lv.tbShardsTitle" title="overlay the shard grid">shards</button>
       <button type="button" class="lv-tb" data-lv="social" aria-pressed="true" data-i18n="lv.tbSocial" data-i18n-title="lv.tbSocialTitle" title="draw social bonds &amp; grudges">social</button>
       <button type="button" class="lv-tb" data-lv="trade" aria-pressed="true" data-i18n="lv.tbTrade" data-i18n-title="lv.tbTradeTitle" title="animate the live trade flow">trade</button>
+      <button type="button" class="lv-tb" data-lv="pnl" data-i18n-title="lv.tbPnlTitle" title="cycle node colour: house / net PnL / genome">house</button>
+      <button type="button" class="lv-tb" data-lv="filter" aria-pressed="false" aria-expanded="false" aria-controls="lv-filters" data-i18n="lv.tbFilter" data-i18n-title="lv.tbFilterTitle" title="filter nodes by generation / house / life / balance / op / commit">filter</button>
+      <button type="button" class="lv-tb" data-lv="replay" aria-pressed="false" aria-controls="lv-replay" data-i18n="lv.tbReplay" data-i18n-title="lv.tbReplayTitle" title="replay the colony's history">replay</button>
       <button type="button" class="lv-tb" data-lv="refresh" data-i18n="lv.tbRefresh" data-i18n-title="lv.tbRefreshTitle" title="re-fetch the lineage now">refresh</button>
       <button type="button" class="lv-tb lv-tb-close" data-lv="close" data-i18n="lv.tbClose" data-i18n-title="lv.tbCloseTitle" title="back to the swarm">close</button>
     </div>
-    <div id="lv-legend" aria-hidden="true"></div>
+    <!-- task 32 · C24 — the filter popover. hidden by default; lvToggleFilters flips [hidden] and refreshes
+         the house list on open. Filtered-out nodes are DIMMED to 0.06α (spatial memory kept), never removed. -->
+    <div id="lv-filters" class="lv-filters" hidden role="group" aria-label="node filters" data-i18n-aria="lv.flAria">
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-genmin" data-i18n="lv.flGen">generation</label>
+        <input type="number" id="lv-fl-genmin" class="lv-fl-num" min="0" step="1" placeholder="min" inputmode="numeric" data-i18n-aria="lv.flGenMinAria" aria-label="minimum generation">
+        <input type="number" id="lv-fl-genmax" class="lv-fl-num" min="0" step="1" placeholder="max" inputmode="numeric" data-i18n-aria="lv.flGenMaxAria" aria-label="maximum generation">
+      </div>
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-house" data-i18n="lv.flHouse">house</label>
+        <select id="lv-fl-house" class="lv-fl-sel"><option value="">all</option></select>
+      </div>
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-life" data-i18n="lv.flLife">life</label>
+        <select id="lv-fl-life" class="lv-fl-sel">
+          <option value="all" data-i18n="lv.flAll">all</option>
+          <option value="live" data-i18n="lv.flLive">live</option>
+          <option value="tomb" data-i18n="lv.flTomb">tomb</option>
+          <option value="ancestor" data-i18n="lv.flAnc">ancestor</option>
+        </select>
+      </div>
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-balmin" data-i18n="lv.flBal">balance</label>
+        <input type="number" id="lv-fl-balmin" class="lv-fl-num" step="any" placeholder="min" inputmode="decimal" data-i18n-aria="lv.flBalMinAria" aria-label="minimum balance">
+        <input type="number" id="lv-fl-balmax" class="lv-fl-num" step="any" placeholder="max" inputmode="decimal" data-i18n-aria="lv.flBalMaxAria" aria-label="maximum balance">
+      </div>
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-op" data-i18n="lv.flOp">op</label>
+        <select id="lv-fl-op" class="lv-fl-sel">
+          <option value="all" data-i18n="lv.flAll">all</option>
+          <option value="genesis">genesis</option>
+          <option value="mutate">mutate</option>
+          <option value="cross">cross</option>
+        </select>
+      </div>
+      <div class="lv-fl-row">
+        <label class="lv-fl-lbl" for="lv-fl-commit" data-i18n="lv.flCommit">committed</label>
+        <select id="lv-fl-commit" class="lv-fl-sel">
+          <option value="all" data-i18n="lv.flAll">all</option>
+          <option value="yes" data-i18n="lv.flYes">yes</option>
+          <option value="no" data-i18n="lv.flNo">no</option>
+        </select>
+      </div>
+      <div class="lv-fl-foot">
+        <span id="lv-fl-count" class="lv-fl-count" role="status" aria-live="polite"></span>
+        <button type="button" id="lv-fl-reset" class="lv-fl-reset" data-i18n="lv.flReset">reset</button>
+      </div>
+    </div>
+    <!-- task 33 · C26 — the legend is no longer `display:none` under 680px; it is a foldable chip whose body
+         is hidden by lvInteract.lvLegendSync (body-class lv-fold). aria-hidden is GONE because the chip now
+         carries a real <button> that assistive tech must be able to reach. -->
+    <div id="lv-legend"></div>
     <aside id="lv-panel" hidden role="complementary" aria-label="focused fly" data-i18n-aria="lv.panelAria"></aside>
+    <!-- task 33 · C25 — the time-replay chrome. [hidden] until the toolbar's replay button is pressed; JS
+         flips [hidden] + body.lv-rt-open. Like the Phase E search box it is a DOM sibling ABOVE the canvas
+         inside #lv-ui (pointer-events:auto), so a scrub never reaches #lineage-field: lvInteractBind's
+         pointercapture gesture stack is not bypassed, it is simply never involved. #lv-rt-body (the metric
+         cells + top-state chips) is built by lvTimeReplay.rtBuildBody; every label is localised through
+         data-i18n* or by T() in JS. The sparkline canvas is decorative (aria-hidden) — the same numbers are
+         printed as text in #lv-rt-body, so nothing is conveyed by pixels alone. -->
+    <div id="lv-replay" class="lv-replay" hidden role="group" aria-label="time replay" data-i18n-aria="lv.rtAria">
+      <div class="lv-rt-head">
+        <button type="button" class="lv-rt-btn" id="lv-rt-play" aria-label="play" data-i18n-aria="lv.rtPlay">&#9654;</button>
+        <button type="button" class="lv-rt-btn" id="lv-rt-back" aria-label="step back" data-i18n-aria="lv.rtBack" data-i18n-title="lv.rtBack" title="step back">&#171;</button>
+        <button type="button" class="lv-rt-btn" id="lv-rt-fwd" aria-label="step forward" data-i18n-aria="lv.rtFwd" data-i18n-title="lv.rtFwd" title="step forward">&#187;</button>
+        <button type="button" class="lv-rt-btn" id="lv-rt-speed" title="playback speed" data-i18n-title="lv.rtSpeedTitle">1&#215;</button>
+        <span class="lv-rt-clock" id="lv-rt-clock">&#8212;</span>
+        <span class="lv-rt-when" id="lv-rt-when">&#8212;</span>
+        <span class="lv-rt-regime" id="lv-rt-regime">&#8212;</span>
+        <button type="button" class="lv-rt-btn lv-rt-x" id="lv-rt-close" aria-label="close" data-i18n-aria="lv.rtClose">&#215;</button>
+      </div>
+      <input type="range" id="lv-rt-scrub" class="lv-rt-scrub" min="0" max="0" step="1" value="0"
+             aria-label="replay position" data-i18n-aria="lv.rtScrubAria">
+      <canvas id="lv-rt-spark" class="lv-rt-spark" width="300" height="40" aria-hidden="true"></canvas>
+      <div class="lv-rt-body" id="lv-rt-body"></div>
+      <div class="lv-rt-status" id="lv-rt-status" role="status" aria-live="polite"></div>
+    </div>
   </div>
 
+  <!-- task 39 · A2: the two canvas-switch capsules. #switch-to-atlas is OUTSIDE the rail (visible on phones
+       where the rail is display:none); #switch-to-3d lives inside #lv-ui (auto-hidden with the atlas). -->
+  <button type="button" class="canvas-switch" id="switch-to-atlas" data-i18n-aria="lv.switchToAtlas" data-i18n-title="lv.switchToAtlas" aria-label="lineage atlas" title="lineage atlas"><svg class="cs-ico" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="2.7"/><path d="M8 1.7v3.6M8 10.7v3.6M1.7 8h3.6M10.7 8h3.6"/></svg><span data-i18n="lv.switchToAtlas">atlas</span></button>
+
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=146" type="module"></script>
+  <script src="./main.js?v=155" type="module"></script>
 </body>
 </html>

@@ -17,9 +17,12 @@
  *   2. DETERMINISM. No RNG, no clock, no LLM inside the layer. verifyBurn is a pure function of the receipt
  *      it is handed; priceOf is a pure function of the stored override count; serialize/deserialize round-trips
  *      byte-identically (BigInts as decimal strings).
- *   3. BOUNDED. The parcel ledger is capped at 360 entries, the dedup ring at 100, the pending chronicle
- *      events at EVENTS_CAP, and every image at MAX_IMAGE_BYTES; a corrupt blob restarts a COLD grid, never a
- *      poisoned one.
+ *   3. BOUNDED. The parcel ledger is capped at 360 entries, the pending chronicle events at EVENTS_CAP,
+ *      and every image at MAX_IMAGE_BYTES; a corrupt blob restarts a COLD grid, never a poisoned one.
+ *      The replay guard is PERMANENT: each honoured burn tx hash is written as an independent DO storage
+ *      key (`land:burn:<txHash>`), so it survives eviction and is never bounded by a ring size. The
+ *      in-memory `dedupRing` (DEDUP_RING_SIZE) is a small hot cache + backward-compat for the serialized
+ *      blob; state.ts migrates its entries to independent keys on first load.
  *
  * LAND_ENABLED=false ⇒ state.ts never constructs the layer (ensureLand returns null), folds no `land` key into
  * the historian's context ⇒ the two land chronicle kinds can never speak ⇒ every old line is byte-for-byte the
@@ -56,7 +59,8 @@ export const MURMUR_TOKEN = "0x8faae5592b9acc27a79fca745c6b872adf514a5d";
 export const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
-/** The replay-protection ring: a tx hash is honoured once, ever (persisted, so a restart cannot replay). */
+/** The in-memory hot-cache ring (backward compat for the serialized blob). The AUTHORITATIVE replay guard
+ *  is the storage-backed `BurnDedupStore` (one independent DO key per honoured hash, permanent). */
 export const DEDUP_RING_SIZE = 100;
 /** The hard ceiling on one parcel image, AFTER base64 decode (256 KB). A larger upload is rejected. */
 export const MAX_IMAGE_BYTES = 256 * 1024;
@@ -142,6 +146,19 @@ export interface LandReceipt { status?: unknown; to?: unknown; logs?: LandReceip
 /** The read-only client contract; state.ts adapts viem's PublicClient (which takes { hash }) to it. */
 export interface LandChainClient {
   getTransactionReceipt(txHash: string): Promise<LandReceipt>;
+}
+
+/**
+ * Storage-backed permanent dedup for burn tx hashes. Each honoured hash is written as an independent
+ * DO storage key (`land:burn:<txHash>`), so the replay guard survives eviction and is never bounded
+ * by a ring size. state.ts wires this up; the in-memory `dedupRing` remains as a small hot cache +
+ * backward-compat for the serialized blob (migration reads it on first load).
+ */
+export interface BurnDedupStore {
+  /** True when this tx hash has already been honoured (authoritative, storage-backed). */
+  has(txHash: string): Promise<boolean>;
+  /** Record that this tx hash has been honoured (persisted, survives eviction). */
+  add(txHash: string): Promise<void>;
 }
 
 // ─── pure helpers (the house discipline: finiteness-checked coercion, never `Number(v) || d`) ──────────
@@ -232,7 +249,8 @@ export interface LandConfig { enabled: boolean; }
 export class LandLayer {
   /** parcelId → the claimed parcel. Public so tests + state.ts can read the ledger directly. */
   parcels: Map<number, LandParcel> = new Map();
-  /** The persisted tx-hash replay guard (a burn is honoured once, ever). */
+  /** The persisted tx-hash replay guard (a burn is honoured once, ever). Kept as a small hot cache +
+   *  backward-compat for the serialized blob; the authoritative check goes through `dedupStore`. */
   dedupRing: string[] = [];
   /** Cumulative MURMUR (atomic) destroyed through the land grid. BigInt → string on serialize. */
   totalBurned = 0n;
@@ -243,11 +261,16 @@ export class LandLayer {
   private client: LandChainClient | null = null;
   /** The sub-tick the next purchase stamps as purchasedAt; state.ts sets it from the last snapshot. */
   private tick = 0;
+  /** Storage-backed permanent dedup (state.ts wires it up); null ⇒ fall back to the in-memory ring only. */
+  private dedupStore: BurnDedupStore | null = null;
 
   constructor(private readonly cfg: LandConfig) {}
 
   /** Inject the read-only chain client (viem's PublicClient, adapted). Null ⇒ verifyBurn always fails. */
   setChainClient(client: LandChainClient | null): void { this.client = client; }
+
+  /** Inject the storage-backed permanent dedup store. Null ⇒ fall back to the bounded in-memory ring. */
+  setDedupStore(store: BurnDedupStore | null): void { this.dedupStore = store; }
 
   /** Stamp the sub-tick the next purchase records as purchasedAt (informational; never a clock read here). */
   setTick(t: number): void { this.tick = Math.max(0, Math.trunc(num(t, 0))); }
@@ -331,8 +354,13 @@ export class LandLayer {
       return { ok: false, reason: "malformed txHash", code: "bad_request" };
     }
     const tx = txHash.toLowerCase();
-    // 4. dedup (a burn is honoured once, ever)
-    if (this.dedupRing.includes(tx)) return { ok: false, reason: "duplicate txHash", code: "bad_request" };
+    // 4. dedup (a burn is honoured once, ever) — storage-backed when wired, so the guard survives eviction
+    //    and is never bounded by a ring size. The in-memory ring is a fast-path hot cache + backward compat.
+    if (this.dedupStore) {
+      if (await this.dedupStore.has(tx)) return { ok: false, reason: "duplicate txHash", code: "bad_request" };
+    } else if (this.dedupRing.includes(tx)) {
+      return { ok: false, reason: "duplicate txHash", code: "bad_request" };
+    }
     // 5. image decode + size ceiling
     const cleaned = cleanBase64(imageBase64);
     if (!cleaned) return { ok: false, reason: "missing image", code: "bad_request" };
@@ -347,7 +375,8 @@ export class LandLayer {
     const verified = await this.verifyBurn(tx, address, price);
     if (!verified) return { ok: false, reason: "burn verification failed", code: "payment_required" };
 
-    // 7. commit — dedup ring, image store, parcel write, cumulative burn, narratable edge
+    // 7. commit — permanent dedup (storage-backed), image store, parcel write, cumulative burn, narratable edge
+    if (this.dedupStore) await this.dedupStore.add(tx);
     this.dedupRing.push(tx);
     if (this.dedupRing.length > DEDUP_RING_SIZE) this.dedupRing = this.dedupRing.slice(-DEDUP_RING_SIZE);
 

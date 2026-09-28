@@ -1,10 +1,11 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=103';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=109';
 import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js';
 import { select } from './inspector.js';
 import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js';
+import { closeLand } from './landDrawer.js';
 
 // ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
 export const PROF_ICON = { forager: "❍", mooder: "❂", trader: "⇅", brooder: "❄" };
@@ -2621,8 +2622,9 @@ export async function doBreed() {
   if (breeder.trim()) body.breeder = breeder.trim();
   state.lineageBreedMsg = "breeding …"; renderLineage();
   try {
-    const r = await fetch(API + "/breed?token=" + encodeURIComponent(LIN_ADMIN_TOKEN), {
-      method: "POST", cache: "no-store", headers: { "content-type": "application/json" },
+    const r = await fetch(API + "/breed", {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json", "x-admin-token": LIN_ADMIN_TOKEN },
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => null);
@@ -4126,4 +4128,24 @@ function templeWondersHeroes(d) {
     html += `</div>`;
   }
   return html;
+}
+
+// ================= task 26 · closeActiveDrawer — click-empty-dismisses-drawer =================
+// Follows the SAME priority order as the Escape chain in main.js bindUI(). Returns true if any
+// drawer was closed. Does NOT touch the inspector selection or the lineageView canvas switch.
+export function closeActiveDrawer() {
+  if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); return true; }
+  if (state.canaryOpen) { closeCanary(); return true; }
+  if (state.landOpen) { closeLand(); return true; }
+  if (state.laureateOpen) { closeLaureate(); return true; }
+  if (state.proofsOpen) { closeProofs(); return true; }
+  if (state.brainOpen) { closeBrain(); return true; }
+  if (state.lineageOpen) { closeLineage(); return true; }
+  if (state.pulseOpen) { closePulse(); return true; }
+  if (state.arenaOpen) { closeArena(); return true; }
+  if (state.templeOpen) { closeTemple(); return true; }
+  if (state.predictOpen) { closePredict(); return true; }
+  if (state.historyOpen) { closeHistory(); return true; }
+  if (state.walletsOpen) { closeWallets(); return true; }
+  return false;
 }

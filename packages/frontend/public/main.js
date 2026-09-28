@@ -1,7 +1,7 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=103';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=109';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
 import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
@@ -16,7 +16,7 @@ import { loadDelaunay } from './nations.js';
 import { updateMotes, updateSim } from './sim.js';
 // task 22: the second main canvas (lineage / technical atlas). Bare import — NO ?v cache-buster;
 // _headers forces etag revalidation on /lineageView.js so a stale copy is never served.
-import { closeLineageView, initLineageView, lvFrame, lvPerf, lvRelocalise, toggleLineageView } from './lineageView.js';
+import { closeLineageView, initLineageView, lvFrame, lvPerf, lvRelocalise, openLineageView, toggleLineageView } from './lineageView.js';
 
 // read-only perf probe for diagnostics (never writes anything): frame cost, adaptive quality, swarm & ledger size
 window.__murmurPerf = () => Object.assign({ frameMsAvg: Math.round(state.frameMsAvg * 10) / 10, qualityCoeff: Math.round(state.qualityCoeff * 100) / 100, flies: sim.size, graves: graveField.length }, lvPerf());
@@ -312,6 +312,9 @@ export function bindUI() {
   const ldc = $("land-close"); if (ldc) ldc.addEventListener("click", closeLand);
   // task 48: walk mode button
   const wkb = $("walk-btn"); if (wkb) wkb.addEventListener("click", () => { if (state.walkMode) state.walkMode.toggle(); });
+  // task 39 · A2: canvas-switch capsules (independent of the command-rail — works on phones where the rail is hidden)
+  const swAtlas = $("switch-to-atlas"); if (swAtlas) swAtlas.addEventListener("click", openLineageView);
+  const sw3d = $("switch-to-3d"); if (sw3d) sw3d.addEventListener("click", closeLineageView);
   // the proofs drawer rebuilds its cards each render, so bind verify/expand by delegation once
   const pbd = $("proofs-body");
   if (pbd) pbd.addEventListener("click", (e) => {
@@ -331,6 +334,18 @@ export function bindUI() {
     if (e.key !== "Escape") return;
     if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else if (state.lineageViewActive) closeLineageView(); else deselect();
   });
+}
+// ================= task 38 · B2+B3: auto-fold panel-pop on short/narrow screens =================
+// Fold to just the title row on: narrow (≤680) so the fixed chip stays compact, or short desktop (≥681 wide, ≤700 tall).
+let _popAutoFolded = false;
+function autoFoldPop() {
+  const shouldFold = window.innerWidth <= 680 || (window.innerWidth >= 681 && window.innerHeight <= 700);
+  if (shouldFold === _popAutoFolded) return;
+  _popAutoFolded = shouldFold;
+  const panel = document.querySelector('.panel-pop');
+  if (!panel) return;
+  if (shouldFold && !panel.classList.contains('is-folded')) toggleCardFold('pop');
+  else if (!shouldFold && panel.classList.contains('is-folded')) toggleCardFold('pop');
 }
 // ================= boot =================
 export async function boot() {
@@ -372,6 +387,10 @@ export async function boot() {
   bindPointer();
     bindZoomControls();
   initLineageView();   // task 22: wire the second canvas (hit-test, toolbar, focus panel) — inert until toggled on
+  openLineageView();    // task 39 · A1: the atlas is now the DEFAULT stage — 3D resumes via the switch capsule
+  // task 38 · B2: auto-fold panel-pop on short screens (≥681 wide, ≤700 tall) so it stays visible but compact
+  autoFoldPop();
+  window.addEventListener('resize', autoFoldPop);
   offlineTick();   // seed the field + the agent economy so it is alive immediately
   applyPaletteToDOM(paletteAt(state.tempSmoothed));
   setStatusKind("connecting");

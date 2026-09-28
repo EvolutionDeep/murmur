@@ -5,6 +5,10 @@ import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLa
 import { applyEconAgents, applyEconomy, applySnapshot, applyState, applyTopology, setStatusKind, updateCronWatchdog } from './economy.js';
 import { spawnChronFx } from './render2d.js';
 import { evaluateCivStage } from './civstage.js';   // task 32: civStage 选择器（事件驱动，数据到达时评估）
+// task 29 · Phase B: the lineage atlas is now ARRIVAL-DRIVEN instead of timer-driven. Each poll below raises
+// a dirty bit on the feed it just refreshed; lvData.lvPumpData drains them on the next atlas frame (and does
+// nothing at all while the atlas is hidden). lvState.js imports only shared.js, so this cannot close a cycle.
+import { lvMarkDirty, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT } from './lvState.js';
 
 // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -36,6 +40,7 @@ export async function pollChron() {
     if (r && r.enabled) {
       state.chronEnabled = true;
       state.chronRows = Array.isArray(r.entries) ? r.entries.slice() : [];   // already desc by seq
+      lvMarkDirty(LV_DIRTY_SOCIAL);   // task 29 · C2: the atlas folds the chronicle's actors[] in on arrival
       state.chronMeta = { era: r.era, eraName: r.eraName, eraRegime: r.eraRegime, seq: r.seq,
         eraShock: r.eraShock || null, eraShockWilled: !!r.eraShockWilled,
         headHash: r.headHash || null, chroniclerHash: r.chroniclerHash || null, version: r.version || null,
@@ -84,6 +89,7 @@ export async function pollProofs(force) {
     if (p && p.enabled) {
       state.proofs = Array.isArray(p.proofs) ? p.proofs : [];
       state.proofsMeta = { version: p.version, policy: p.policy, chainHead: p.chainHead, count: p.count, ipfsGateway: p.ipfsGateway || "" };
+      lvMarkDirty(LV_DIRTY_FEED);   // task 29 · C1: receipt.constituents are the un-netted trade rows
       if (state.proofsOpen) renderProofs();
     }
   } catch { /* best-effort: provenance is a nicety and must never block the scene */ }
@@ -193,6 +199,21 @@ export async function pollRoster(force) {
   try {
     const econ = await getJSON("/economy", 8000);
     if (econ && Array.isArray(econ.agents)) applyEconAgents(econ.agents);   // → rebuildHouseMap → rebuildTerritoryPolities
+    // task 29 · C1 (root cause) — `state.econRecent` was permanently null. Its ONLY writer was economy.js's
+    // `if (Array.isArray(econ.recent))` inside applyEconomy, but applyEconomy is handed `/population`'s
+    // `economy` object, whose keys are {lastTick,totals,balances,social,dynasty,zones,culture,…} and contain
+    // NO `recent`. The real `recent[48]` lives on THIS endpoint (/economy), which until now only ever had its
+    // `agents` array consumed. So the atlas's whole trade-flow layer ran on /proofs constituents alone and,
+    // with emission gated to a 6 s window on a 45 s timer, was empty ~87 % of the time.
+    if (econ && Array.isArray(econ.recent)) {
+      state.econRecent = econ.recent;
+      lvMarkDirty(LV_DIRTY_FEED);
+    }
+    // task 31 · C17 — the lineage atlas's order-book tape needs market.books/marks even when the wallets
+    // drawer is closed. pollRoster already pays for the full /economy body, so store the market sub-object.
+    if (econ && econ.market) state.econMarket = econ.market;
+    if (econ && econ.social) lvMarkDirty(LV_DIRTY_SOCIAL);
+    if (econ && econ.dynasty) lvMarkDirty(LV_DIRTY_LAYOUT);   // graves moved → tombstones must re-join
   } catch { /* best-effort: the map simply keeps its last roster if the feed hiccups */ }
 }
 export async function poll() {
@@ -210,6 +231,9 @@ export async function poll() {
     if (pop && pop.economy) applyEconomy(pop.economy);
     if (pop && pop.topology) applyTopology(pop.topology);
     applyState(st);
+    // task 31 · C14 — the lineage atlas's temperature environment field needs the raw /state.market object
+    // (txPerBlock, baselineTx, temperature, regime) for its derivation chain. applyState only writes DOM.
+    if (st && st.market) state.arcMarket = st.market;
     evaluateCivStage();   // task 32: 种群（sim.size）+ 膜层载荷（econXxx）刚刷新 → 评估文明档位（签名去重）
     // Full agent roster (addresses + per-agent ledgers) for the wallets drawer. Best-effort and
     // non-blocking: a hiccup here must never flip the whole scene offline, so it's off Promise.all.
@@ -235,9 +259,16 @@ export async function poll() {
     if (econ.treaty) { state.econTreaty = econ.treaty; renderTreatySection(); }
     if (econ.works) { state.econWorks = econ.works; renderWorksSection(); }
     if (econ.guardians) { state.econGuardians = econ.guardians; renderGuardiansSection(); }
+    // task 29 · C1 — the wallets drawer already pays for the full /economy body, so take the settlement ring
+    // from it too instead of letting pollRoster fetch the same endpoint a second time.
+    if (Array.isArray(econ.recent)) { state.econRecent = econ.recent; lvMarkDirty(LV_DIRTY_FEED); }
     }).catch(() => {});
-    // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown
-    if (state.showTerritory && !state.walletsOpen) pollRoster();
+    // territory map (opt-in, default off): it needs the house roster, so fetch it — but only while shown.
+    // task 29 · C1 — the lineage atlas ALSO needs /economy (that is where `recent` lives), and it is a full
+    // screen of its own with the territory layer switched off, so gating on showTerritory alone would have
+    // left the trade-flow layer starved exactly when the reader is looking at it. pollRoster is throttled to
+    // one call per 15 s internally, so this adds at most one already-budgeted request.
+    if (state.lineageViewActive || (state.showTerritory && !state.walletsOpen)) pollRoster();
     pollProofs();   // throttled internally (≤ once / 30s); keeps the provenance drawer fresh
     pollLaureate();  // throttled internally; keeps the Laureate drawer's head + collection fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron

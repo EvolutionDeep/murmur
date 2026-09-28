@@ -80,10 +80,12 @@ import { ReformLayer, type ReformReadout, type ReformStepResult, type ReformIouR
 import {
   TempleLayer, isTempleKind, KIND_TIER,
   type TempleReadout, type TempleStepContext, type TempleStepResult, type TempleChainClient, type TempleReceipt,
+  type BurnDedupStore as TempleBurnDedupStore,
 } from "./temple.js";
 import {
   LandLayer, LAND_PARCEL_COUNT, BURN_ADDRESS, MURMUR_TOKEN, wholeMurmur, landBase64ToBytes, landBytesToBase64,
   type LandReadout, type LandImageStore, type LandChainClient, type LandReceipt, type LandEvent,
+  type BurnDedupStore as LandBurnDedupStore,
 } from "./land.js";
 import { socialStimuli } from "./socialStimulus.js";
 import {
@@ -365,6 +367,8 @@ export class FlyStateDO {
   private poetGrammarHashCache: string | null = null;
   /** Lazily-assembled brain manifest + its sha256 (a pure function of cfg, so cached for this DO's life). */
   private manifestCache: { manifest: BrainManifest; hash: string } | null = null;
+  /** Cached replayVerifyManifest result (a pure function of the cached manifest, so computed once per DO life). */
+  private replayCache: { manifestHash: string; ok: boolean; checked: number; mismatches: unknown[] } | null = null;
   private prediction: PredictionMarket | null = null;
   private arenaState: ArenaState | null = null;
   /** The on-chain WAR coffer resolver cursor + per-pair cooldowns (persisted under KEY_WAR; null while war is inert). */
@@ -765,30 +769,69 @@ export class FlyStateDO {
   /**
    * ㉙ Lazily load the Temple layer (null while TEMPLE_ENABLED=false — byte-for-byte inert rollback). A
    * corrupt/absent blob restarts a COLD temple (empty queue, no heroes, no buffs): no burn is back-dated and
-   * no intervention is replayed, so an eviction can never double-honour a tx hash — the persisted dedup ring
-   * is the replay guard. The temple is pure read-out + its own bounded bookkeeping; its ONLY chain touch is
-   * verifyBurn (a read-only getTransactionReceipt), so it can never spend or sign.
+   * no intervention is replayed, so an eviction can never double-honour a tx hash — the PERMANENT storage-
+   * backed dedup (one independent DO key per honoured hash) is the replay guard. The temple is pure read-out
+   * + its own bounded bookkeeping; its ONLY chain touch is verifyBurn (a read-only getTransactionReceipt),
+   * so it can never spend or sign.
    */
   private async ensureTemple(): Promise<TempleLayer | null> {
     if (!this.cfg.temple.enabled) return null;
     if (this.templeLayer) return this.templeLayer;
     const stored = await this.state.storage.get<string>(KEY_TEMPLE);
     this.templeLayer = stored ? TempleLayer.deserialize(stored) : new TempleLayer({ enabled: true });
+
+    // Wire the storage-backed permanent dedup: each honoured burn hash lives as an independent DO key
+    // (`temple:burn:<txHash>`), so the replay guard survives eviction and is never bounded by a ring size.
+    const storage = this.state.storage;
+    const dedupStore: TempleBurnDedupStore = {
+      has: async (txHash) => !!(await storage.get(`temple:burn:${txHash}`)),
+      add: async (txHash) => { await storage.put(`temple:burn:${txHash}`, true); },
+    };
+    this.templeLayer.setDedupStore(dedupStore);
+
+    // One-time migration: fold the legacy in-memory ring into independent storage keys so hashes honoured
+    // before this build can never be replayed after the ring would have evicted them.
+    const legacyRing = (this.templeLayer as unknown as { dedupRing?: string[] }).dedupRing;
+    if (Array.isArray(legacyRing) && legacyRing.length) {
+      const batch: Record<string, boolean> = {};
+      for (const tx of legacyRing) batch[`temple:burn:${tx}`] = true;
+      await storage.put(batch);
+    }
+
     return this.templeLayer;
   }
 
   /**
    * ㉚ Lazily load the Land layer (null while LAND_ENABLED=false — byte-for-byte inert rollback). A
    * corrupt/absent blob restarts a COLD grid (no parcels, an empty dedup ring): no burn is back-dated and no
-   * claim is replayed, so an eviction can never double-honour a tx hash — the persisted dedup ring is the
-   * replay guard. The land layer is pure read-out + its own bounded bookkeeping; its ONLY chain touch is
-   * verifyBurn (a read-only getTransactionReceipt), so it can never spend or sign.
+   * claim is replayed, so an eviction can never double-honour a tx hash — the PERMANENT storage-backed dedup
+   * (one independent DO key per honoured hash) is the replay guard. The land layer is pure read-out + its own
+   * bounded bookkeeping; its ONLY chain touch is verifyBurn (a read-only getTransactionReceipt), so it can
+   * never spend or sign.
    */
   private async ensureLand(): Promise<LandLayer | null> {
     if (!this.cfg.land.enabled) return null;
     if (this.landLayer) return this.landLayer;
     const stored = await this.state.storage.get<string>(KEY_LAND);
     this.landLayer = stored ? LandLayer.deserialize(stored) : new LandLayer({ enabled: true });
+
+    // Wire the storage-backed permanent dedup: each honoured burn hash lives as an independent DO key
+    // (`land:burn:<txHash>`), so the replay guard survives eviction and is never bounded by a ring size.
+    const storage = this.state.storage;
+    const dedupStore: LandBurnDedupStore = {
+      has: async (txHash) => !!(await storage.get(`land:burn:${txHash}`)),
+      add: async (txHash) => { await storage.put(`land:burn:${txHash}`, true); },
+    };
+    this.landLayer.setDedupStore(dedupStore);
+
+    // One-time migration: fold the legacy in-memory ring into independent storage keys so hashes honoured
+    // before this build can never be replayed after the ring would have evicted them.
+    if (this.landLayer.dedupRing.length) {
+      const batch: Record<string, boolean> = {};
+      for (const tx of this.landLayer.dedupRing) batch[`land:burn:${tx}`] = true;
+      await storage.put(batch);
+    }
+
     return this.landLayer;
   }
 
@@ -3532,7 +3575,42 @@ export class FlyStateDO {
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
-    return json({ snapshot: snap, economy, topology: this.topology() });
+    // ── LINEAGE PROJECTION: enrich each fly reading with its genetic identity (genomeHash, generation,
+    // parents) so the frontend's second canvas can resolve individual identity without a separate /lineage
+    // call. Pure read-out — these fields NEVER enter the manifest hash body (manifest-neutral).
+    let enrichedSnap = snap;
+    if (snap && snap.flies.length > 0) {
+      try {
+        const entries = await this.ensureLineage();
+        const genesis = entries.filter((e) => e.op === "genesis");
+        const byHash = new Map(entries.map((e) => [e.genomeHash, e]));
+        // Resolve hatched offspring genomes → genomeHash (coordinator-local, no shard round-trip).
+        const liveGenomes = this.swarm?.liveGenomes() ?? [];
+        const hashById = new Map<number, string>();
+        if (liveGenomes.length > 0) {
+          const hashed = await Promise.all(
+            liveGenomes.map(async (g) => ({ id: g.id, hash: await genomeHash(g.genome) })),
+          );
+          for (const h of hashed) hashById.set(h.id, h.hash);
+        }
+        const flies = snap.flies.map((fly) => {
+          // Hatched offspring (or recycled slot): look up by computed genomeHash.
+          const hash = hashById.get(fly.id);
+          const entry = hash ? byHash.get(hash) : (fly.id < genesis.length ? genesis[fly.id] : undefined);
+          return {
+            ...fly,
+            genomeHash: entry ? `0x${entry.genomeHash}` : "",
+            generation: entry?.generation ?? 0,
+            parents: entry ? entry.parents.map((p) => `0x${p}`) : [],
+          };
+        });
+        enrichedSnap = { ...snap, flies };
+      } catch (e) {
+        // Never block /population on a lineage enrichment failure — serve the raw snapshot.
+        console.warn("[DO] lineage projection failed (serving raw snapshot):", (e as Error).message);
+      }
+    }
+    return json({ snapshot: enrichedSnap, economy, topology: this.topology() });
   }
 
   /**
@@ -3903,7 +3981,13 @@ export class FlyStateDO {
    */
   private async getManifestReplay(): Promise<Response> {
     const { manifest, hash } = await this.ensureManifest();
-    const replay = replayVerifyManifest(manifest);
+    // The replay is a pure function of the (already-cached) manifest, so cache its result too —
+    // a few seconds of CPU paid once per DO lifetime instead of on every /manifest-replay request.
+    if (!this.replayCache || this.replayCache.manifestHash !== hash) {
+      const replay = replayVerifyManifest(manifest);
+      this.replayCache = { manifestHash: hash, ok: replay.ok, checked: replay.checked, mismatches: replay.mismatches };
+    }
+    const { manifestHash: _mh, ...replay } = this.replayCache;
     return json({ manifestHash: hash, ...replay });
   }
 
@@ -4928,7 +5012,7 @@ export class FlyStateDO {
 
     const tier = KIND_TIER[kind];
     const tickIndex = (await this.loadSnapshot())?.tickIndex ?? 0;
-    const sub = temple.submit({ txHash, kind, params, address, burnAmount: verdict.burnAmount, tier, submittedAt: tickIndex });
+    const sub = await temple.submit({ txHash, kind, params, address, burnAmount: verdict.burnAmount, tier, submittedAt: tickIndex });
     if (!sub.ok) return jsonError("bad_request", sub.error ?? "submission rejected", 400);
     // Persist NOW so the dedup ring survives an eviction before the next cron drains the queue.
     await this.state.storage.put(KEY_TEMPLE, temple.serialize());
@@ -5086,15 +5170,15 @@ export class FlyStateDO {
 
   /**
    * Guard the mutating debug endpoints (POST /tick, /reset). When the optional ADMIN_TOKEN secret is
-   * set, a caller must present it (x-admin-token header or ?token=); with no token configured these
-   * stay open so local dev and the documented onchain-arming flow (which POSTs /reset) keep working.
+   * set, a caller must present it via the x-admin-token header ONLY (query-string tokens leak into
+   * access logs, browser history and referrer headers); with no token configured these stay open so
+   * local dev and the documented onchain-arming flow (which POSTs /reset) keep working.
    * An operator can lock them on the live deployment with `wrangler secret put ADMIN_TOKEN`.
    */
   private adminGate(req: Request): Response | null {
     const token = (this.env.ADMIN_TOKEN ?? "").trim();
     if (!token) return null;
-    const url = new URL(req.url);
-    const provided = req.headers.get("x-admin-token") ?? url.searchParams.get("token") ?? "";
+    const provided = req.headers.get("x-admin-token") ?? "";
     return provided === token ? null : jsonError("forbidden", "forbidden", 403);
   }
 

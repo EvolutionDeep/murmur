@@ -16,6 +16,7 @@ import { DayNight } from './dayNight.js';
 import { createTerrainTextures } from './terrainTex.js';
 import { ParticleSystem, EVENT_MAP as PARTICLE_EVENT_MAP, WEATHER as PARTICLE_WEATHER } from './particles.js';
 import { Institutions, computeInstitutionSpots } from './institutions.js';
+import { closeActiveDrawer } from './drawers.js';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:
@@ -135,7 +136,6 @@ export class ThreeScene {
     this._civFadeDone = true;         // idle flag — _updateCivFade() returns on this one boolean when settled
     this._civFrom = { hemiSky: new THREE.Color(), hemiGround: new THREE.Color(), sun: new THREE.Color(), fog: new THREE.Color(), water: new THREE.Color() };
     this._civTo = { hemiSky: new THREE.Color(), hemiGround: new THREE.Color(), sun: new THREE.Color(), fog: new THREE.Color(), water: new THREE.Color() };
-    this._legendEl = null; this._legendSig = ""; this._legendT = -1e9;   // territory legend DOM
     this._raycaster = null; this._ndc = null; this._downX = 0; this._downY = 0;
     this._fwd = new THREE.Vector3(); this._v1 = new THREE.Vector3();
     this._fxSeen = new WeakSet();              // chronFx entries already turned into particles
@@ -1928,15 +1928,6 @@ export class ThreeScene {
       this._shardRings.push(m);
     }
 
-    // ---- ⑪ territory legend DOM (3D mode has no canvas overlay: render2d's render() returns early) ----
-    const el = document.createElement("div");
-    el.id = "terr-legend-3d";
-    el.setAttribute("aria-hidden", "true");
-    el.style.cssText = "position:fixed;right:14px;top:50%;transform:translateY(-50%);display:none;z-index:3;" +
-      "padding:10px 12px;border:1px solid rgba(96,74,52,0.45);border-radius:6px;background:rgba(248,244,236,0.88);" +
-      "font:600 11px Georgia,serif;color:#28201a;pointer-events:none;max-width:210px;line-height:16px;";
-    document.body.appendChild(el);
-    this._legendEl = el;
 
     // ---- task 50: GPU particle weather — one Points object for every chronicle burst + the ambient
     // rain/snow layer. Built LAST so the renderer + scene already exist; isolated so a shader-compile
@@ -2111,10 +2102,12 @@ export class ThreeScene {
       if (g) { showEpitaph({ ...g, uid: graveUid(g.id, g.bornTick) }); e.stopImmediatePropagation(); return; }
     }
 
-    // ③ empty click — clear both selections. NO stopImmediatePropagation here: landLayer's parcel
-    // click (registered later on the same canvas) must still run for empty-space taps.
+    // ③ empty click — clear both selections + dismiss any open drawer (task 26).
+    // NO stopImmediatePropagation here: landLayer's parcel click (registered later on the same
+    // canvas) must still run for empty-space taps.
     deselectFly();
     hideEpitaph();
+    closeActiveDrawer();
   }
 
   // task 52 — hover feedback for the institution landmarks. A cheap raycast against the ~10 building
@@ -2365,7 +2358,6 @@ export class ThreeScene {
     try { this._updateShardRings(now); } catch (e) { console.warn("shardRings", e); }
     try { this._updateTemple(now, dt); } catch (e) { console.warn("temple", e); }
     try { if (this.institutions) this.institutions.update(dt, now); } catch (e) { console.warn("institutions", e); }
-    try { this._updateLegend(sim, now); } catch (e) { console.warn("legend", e); }
     // ---- task 50: GPU particle weather — consume new chronicle rows as bursts, roll the ambient
     // weather, then advance the shader clock. Fully isolated: a particle fault never vetoes the frame.
     try { this._updateParticleWeather(now, dt); } catch (e) { console.warn("particles", e); }
@@ -3162,49 +3154,6 @@ export class ThreeScene {
     }
   }
 
-  // ⑪ territory legend — the 2D map key as a DOM overlay (render2d's render() never runs in 3D mode)
-  _updateLegend(sim, now) {
-    const el = this._legendEl;
-    if (!el) return;
-    if (now - this._legendT < 320) return;                 // ~3Hz: the tally is a read-out, not a hot path
-    this._legendT = now;
-    const pol = [];
-    if (state.showTerritory && Array.isArray(state.territories)) {
-      for (const p of state.territories) {
-        let cnt = 0;
-        if (Array.isArray(p.ids)) for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) cnt++; }
-        if (cnt > 0) pol.push({ p, n: cnt });
-      }
-      pol.sort((a, b) => b.n - a.n || (a.p.name < b.p.name ? -1 : 1));   // biggest houses first (the 2D ranking)
-    }
-    if (!pol.length) { if (el.style.display !== "none") el.style.display = "none"; this._legendSig = ""; return; }
-    const ranked = pol.slice(0, 6);
-    const era = (state.chronMeta && state.chronMeta.eraName) ? state.chronMeta.eraName : "the swarm's dominions";
-    let sig = era + "|";
-    for (const o of ranked) sig += o.p.name + ":" + o.n + ":" + (Array.isArray(o.p.color) ? o.p.color.join(",") : "") + ";";
-    if (sig !== this._legendSig) {
-      this._legendSig = sig;
-      el.textContent = "";
-      const title = document.createElement("div");
-      title.style.cssText = "font:700 12px Fraunces, Cinzel, Georgia, serif;color:rgba(40,32,26,0.9);margin-bottom:4px;";
-      title.textContent = era;
-      el.appendChild(title);
-      for (const o of ranked) {
-        const cc = Array.isArray(o.p.color) ? o.p.color : [120, 116, 108];
-        const row = document.createElement("div");
-        row.style.cssText = "display:flex;align-items:center;gap:6px;margin-top:2px;";
-        const sw = document.createElement("span");
-        sw.style.cssText = "width:10px;height:10px;border:1px solid rgba(40,32,26,0.5);flex:0 0 auto;background:rgb(" +
-          (cc[0] | 0) + "," + (cc[1] | 0) + "," + (cc[2] | 0) + ");";
-        const tx = document.createElement("span");
-        tx.textContent = o.p.name + "  \u00b7  " + o.n;
-        row.appendChild(sw); row.appendChild(tx);
-        el.appendChild(row);
-      }
-    }
-    if (el.style.display !== "block") el.style.display = "block";
-  }
-
   render() {
     this.renderer.render(this.scene, this.camera);
   }
@@ -3224,7 +3173,6 @@ export class ThreeScene {
       if (this._onClick) this._cvEl.removeEventListener("click", this._onClick);
       if (this._onMove) this._cvEl.removeEventListener("pointermove", this._onMove);
     }
-    if (this._legendEl && this._legendEl.parentNode) this._legendEl.parentNode.removeChild(this._legendEl);
     // task 50: tear the particle system down first — it removes its Points from the scene so the
     // traverse below never double-disposes the shared geometry/material — and drop the debug hooks.
     if (this.particles) { try { this.particles.dispose(); } catch (_) { /* already gone */ } this.particles = null; }

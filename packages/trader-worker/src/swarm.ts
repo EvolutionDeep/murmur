@@ -140,6 +140,12 @@ export interface SwarmBackend {
    * (e.g. a shard rejected the id), so the caller knows the live population did not grow.
    */
   hatchLiveFly(id: number, genome: Genome, storage: DurableObjectStorage): Promise<boolean>;
+  /**
+   * Return the stored genomes of live HATCHED offspring (coordinator-local; no shard round-trip).
+   * Genesis flies are omitted — their genome is derivable from config seeds. Used by the /population
+   * enrichment to resolve each live fly's genomeHash → lineage entry (generation, parents).
+   */
+  liveGenomes(): Array<{ id: number; genome: Genome }>;
   /** Persist coordinator-owned swarm state into `storage` (brains persist in shards when sharded). */
   persist(storage: DurableObjectStorage): Promise<void>;
   /** Reset to a fresh founding swarm (fresh brains everywhere; shards reset too when sharded). */
@@ -273,6 +279,14 @@ export class LocalSwarm implements SwarmBackend {
     if (!inst) return true;                       // already live — idempotent success
     await storage.put(KEY_POPULATION, this.population.serialize());
     return true;
+  }
+
+  liveGenomes(): Array<{ id: number; genome: Genome }> {
+    const out: Array<{ id: number; genome: Genome }> = [];
+    for (const f of this.population.flies) {
+      if (f.vitals.genome) out.push({ id: f.id, genome: f.vitals.genome });
+    }
+    return out;
   }
 
   async persist(storage: DurableObjectStorage): Promise<void> {
@@ -725,6 +739,10 @@ export class ShardedSwarm implements SwarmBackend {
     await storage.put(KEY_ROSTER, this.bred);   // persist immediately so an eviction can't drop the new live fly
     await storage.put(KEY_RETIRED, Array.from(this.retired).sort((a, b) => a - b));
     return true;
+  }
+
+  liveGenomes(): Array<{ id: number; genome: Genome }> {
+    return this.bred.map((b) => ({ id: b.id, genome: b.genome }));
   }
 
   async persist(storage: DurableObjectStorage): Promise<void> {

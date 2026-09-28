@@ -759,7 +759,6 @@ export const state = {
   terrOff: null,
   terrOffCtx: null,
   terrKey: "",
-  terrPol: null,
   civOff: null,
   civOffCtx: null,
   civKey: "",

@@ -125,8 +125,8 @@ ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per U
 # sub-ticks. Reciprocal trades cancel (net=0 ⇒ zero tx), dust carries forward, and nets above
 # ECONOMY_MAX_DEAL split into chunks. The internal ledger/volume/caps move ONLY on a mined receipt,
 # so a failed flush never invents money. Inert in simulated mode.
-ECONOMY_NET_MIN_BROADCAST = "0.004"          # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (~2× base price, so gas stays a minority of face value)
-ECONOMY_NET_FLUSH_TICKS = "30"               # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
+ECONOMY_NET_MIN_BROADCAST = "0.01"           # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (~2× base price, so gas stays a minority of face value)
+ECONOMY_NET_FLUSH_TICKS = "360"              # force-flush any nonzero pending net at least every N sub-ticks (30 = 5 crons ≈ 5 min); 0 = never force
 
 # ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
 # Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.

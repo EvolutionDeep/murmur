@@ -1,10 +1,11 @@
 /**
  * ㉙ TEMPLE — unit tests (node:test, mirrors reform.test.ts's fixture style).
  *
- * Covers: the tier cost ladder at every boundary (999/1000 … 999999/1000000), the persisted dedup ring (a
- * burn is honoured once, ever), the queue cap, the per-cron execution budget (MAX_PER_CRON + MAX_TIER3_PER_CRON),
- * an oracle whisper's arousal stimulus, a nation blessing's sub-tick expiry, a wonder's permanence, the
- * serialize/deserialize round trip, invalid-kind rejection, and the standing read-out's shape.
+ * Covers: the tier cost ladder at every boundary (999/1000 … 999999/1000000), the PERMANENT storage-backed
+ * dedup (a burn is honoured once, ever, surviving eviction and never bounded by a ring size), the queue cap,
+ * the per-cron execution budget (MAX_PER_CRON + MAX_TIER3_PER_CRON), an oracle whisper's arousal stimulus,
+ * a nation blessing's sub-tick expiry, a wonder's permanence, the serialize/deserialize round trip,
+ * invalid-kind rejection, and the standing read-out's shape.
  *
  * The chain touch (verifyBurn) is exercised through a mock TempleChainClient that hands back a viem-shaped
  * receipt, so the tests never leave the process — the layer's only I/O is a pure function of that receipt.
@@ -30,6 +31,7 @@ import {
   type TempleStepContext,
   type TempleChainClient,
   type TempleReceipt,
+  type BurnDedupStore,
 } from "./temple.js";
 
 /** A valid 0x + 40-hex submitter wallet. */
@@ -102,6 +104,16 @@ function ctx(over: Partial<TempleStepContext> = {}): TempleStepContext {
   };
 }
 
+/** An in-memory permanent dedup store (mirrors the DO-storage-backed store state.ts wires up). */
+function memDedup(): BurnDedupStore & { seen: Set<string> } {
+  const seen = new Set<string>();
+  return {
+    seen,
+    has: async (txHash) => seen.has(txHash),
+    add: async (txHash) => { seen.add(txHash); },
+  };
+}
+
 // ─── 1. the tier cost ladder at every boundary ──────────────────────────────────────────────────────────
 
 test("temple: verifyBurn clears each tier exactly at its minimum and refuses one atom below", async () => {
@@ -140,43 +152,65 @@ test("temple: verifyBurn rejects a non-burn, a failed tx and a wrong contract", 
   assert.equal((await layer.verifyBurn(TX, "ORACLE_WHISPER", {}, ADDR, wrongTo)).valid, false);
 });
 
-// ─── 2. the persisted dedup ring ────────────────────────────────────────────────────────────────────────
+// ─── 2. the permanent dedup (storage-backed, never bounded by a ring size) ──────────────────────────────
 
-test("temple: the dedup ring honours a tx hash once, ever (even across a round trip)", () => {
+test("temple: the storage-backed dedup honours a tx hash once, ever (even across a round trip)", async () => {
   const layer = new TempleLayer({ enabled: true });
-  const first = layer.submit(entry({ txHash: txAt(1) }));
+  const dedup = memDedup();
+  layer.setDedupStore(dedup);
+  const first = await layer.submit(entry({ txHash: txAt(1) }));
   assert.equal(first.ok, true);
   assert.equal(first.queuePosition, 1);
 
-  const replay = layer.submit(entry({ txHash: txAt(1), kind: "CULTURAL_SEED" }));
+  const replay = await layer.submit(entry({ txHash: txAt(1), kind: "CULTURAL_SEED" }));
   assert.equal(replay.ok, false, "a replayed hash is refused");
   assert.match(replay.error ?? "", /duplicate/i);
 
-  // The ring survives persistence, so an eviction cannot let a burn be honoured twice.
+  // The permanent dedup survives persistence, so an eviction cannot let a burn be honoured twice.
   const restored = TempleLayer.deserialize(layer.serialize());
-  assert.equal(restored.submit(entry({ txHash: txAt(1) })).ok, false, "the dedup ring is persisted");
+  restored.setDedupStore(dedup); // re-wire the same backing store
+  assert.equal((await restored.submit(entry({ txHash: txAt(1) }))).ok, false, "the permanent dedup is persisted");
 });
 
-test("temple: the dedup ring is bounded to DEDUP_RING_SIZE", () => {
+test("temple: the storage-backed dedup honours a burn once, ever — even past DEDUP_RING_SIZE", async () => {
   const layer = new TempleLayer({ enabled: true });
+  const dedup = memDedup();
+  layer.setDedupStore(dedup);
   // The queue cap would block submits long before the ring fills, so drain a cron each round: +1 admitted,
-  // up to MAX_PER_CRON executed, so the queue stays low and every distinct hash reaches the ring.
-  for (let i = 0; i < DEDUP_RING_SIZE + 40; i++) {
-    layer.submit(entry({ txHash: txAt(i) }));
+  // up to MAX_PER_CRON executed, so the queue stays low and every distinct hash reaches the dedup.
+  const total = DEDUP_RING_SIZE + 40;
+  for (let i = 0; i < total; i++) {
+    await layer.submit(entry({ txHash: txAt(i) }));
     layer.step(ctx({ tickIndex: i }));
   }
+  // The in-memory ring is still bounded (hot cache only).
   const ring = JSON.parse(layer.serialize()).dedupRing as string[];
-  assert.equal(ring.length, DEDUP_RING_SIZE, "the ring never grows past its cap");
+  assert.equal(ring.length, DEDUP_RING_SIZE, "the in-memory ring stays bounded");
+  // But the storage-backed dedup remembers ALL hashes — the oldest are still rejected.
+  assert.equal(dedup.seen.size, total, "the permanent dedup remembers every hash");
+  const replayOldest = await layer.submit(entry({ txHash: txAt(0) }));
+  assert.equal(replayOldest.ok, false, "the oldest hash (evicted from the ring) is STILL refused");
+  assert.match(replayOldest.error ?? "", /duplicate/i);
+});
+
+test("temple: the dedup falls back to the in-memory ring when no store is wired", async () => {
+  const layer = new TempleLayer({ enabled: true });
+  // No dedupStore wired — the legacy bounded ring is the only guard.
+  const first = await layer.submit(entry({ txHash: txAt(1) }));
+  assert.equal(first.ok, true);
+  const replay = await layer.submit(entry({ txHash: txAt(1), kind: "CULTURAL_SEED" }));
+  assert.equal(replay.ok, false, "a replayed hash is refused by the in-memory ring");
+  assert.match(replay.error ?? "", /duplicate/i);
 });
 
 // ─── 3. the queue cap ───────────────────────────────────────────────────────────────────────────────────
 
-test("temple: the queue refuses a submit past MAX_QUEUE", () => {
+test("temple: the queue refuses a submit past MAX_QUEUE", async () => {
   const layer = new TempleLayer({ enabled: true });
   for (let i = 0; i < MAX_QUEUE; i++) {
-    assert.equal(layer.submit(entry({ txHash: txAt(i) })).ok, true, `slot ${i} admitted`);
+    assert.equal((await layer.submit(entry({ txHash: txAt(i) }))).ok, true, `slot ${i} admitted`);
   }
-  const overflow = layer.submit(entry({ txHash: txAt(MAX_QUEUE) }));
+  const overflow = await layer.submit(entry({ txHash: txAt(MAX_QUEUE) }));
   assert.equal(overflow.ok, false, "the 21st submit is refused");
   assert.match(overflow.error ?? "", /full/i);
   assert.equal(layer.readout().queueLength, MAX_QUEUE);
@@ -184,19 +218,19 @@ test("temple: the queue refuses a submit past MAX_QUEUE", () => {
 
 // ─── 4. the per-cron execution budget ───────────────────────────────────────────────────────────────────
 
-test("temple: step executes at most MAX_PER_CRON interventions per cron", () => {
+test("temple: step executes at most MAX_PER_CRON interventions per cron", async () => {
   const layer = new TempleLayer({ enabled: true });
-  for (let i = 0; i < 5; i++) layer.submit(entry({ txHash: txAt(i), kind: "ORACLE_WHISPER", tier: 1 }));
+  for (let i = 0; i < 5; i++) await layer.submit(entry({ txHash: txAt(i), kind: "ORACLE_WHISPER", tier: 1 }));
   const res = layer.step(ctx({ tickIndex: 0 }));
   assert.equal(res.executed.length, MAX_PER_CRON, "a slow burn, never a flood");
   assert.equal(layer.readout().queueLength, 5 - MAX_PER_CRON, "the rest stay queued");
 });
 
-test("temple: step executes at most MAX_TIER3_PER_CRON Tier-3+ interventions per cron", () => {
+test("temple: step executes at most MAX_TIER3_PER_CRON Tier-3+ interventions per cron", async () => {
   const layer = new TempleLayer({ enabled: true });
   // Two decrees (Tier 3) queued back to back: only one may fire this cron.
-  layer.submit(entry({ txHash: txAt(1), kind: "DIVINE_DECREE", tier: 3, burnAmount: 100_000n * SCALE }));
-  layer.submit(entry({ txHash: txAt(2), kind: "DIVINE_DECREE", tier: 3, burnAmount: 100_000n * SCALE }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "DIVINE_DECREE", tier: 3, burnAmount: 100_000n * SCALE }));
+  await layer.submit(entry({ txHash: txAt(2), kind: "DIVINE_DECREE", tier: 3, burnAmount: 100_000n * SCALE }));
   const res = layer.step(ctx({ tickIndex: 0 }));
   const decrees = res.executed.filter((e) => e.kind === "DIVINE_DECREE");
   assert.equal(decrees.length, MAX_TIER3_PER_CRON, "at most one Tier-3+ per cron");
@@ -205,9 +239,9 @@ test("temple: step executes at most MAX_TIER3_PER_CRON Tier-3+ interventions per
 
 // ─── 5. an oracle whisper's arousal stimulus ────────────────────────────────────────────────────────────
 
-test("temple: ORACLE_WHISPER emits an arousal stimulus of the right sign and duration", () => {
+test("temple: ORACLE_WHISPER emits an arousal stimulus of the right sign and duration", async () => {
   const layer = new TempleLayer({ enabled: true });
-  layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 2, direction: "down" } }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 2, direction: "down" } }));
   const down = layer.step(ctx({ tickIndex: 0 }));
   assert.equal(down.stimuliToInject.length, 1);
   assert.deepEqual(down.stimuliToInject[0], {
@@ -216,16 +250,16 @@ test("temple: ORACLE_WHISPER emits an arousal stimulus of the right sign and dur
   assert.equal(down.executed[0].detail.flyName, "Cato", "the chronicle token carries the fly's name");
 
   const layer2 = new TempleLayer({ enabled: true });
-  layer2.submit(entry({ txHash: txAt(2), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 3, direction: "up" } }));
+  await layer2.submit(entry({ txHash: txAt(2), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 3, direction: "up" } }));
   const up = layer2.step(ctx({ tickIndex: 0 }));
   assert.equal(up.stimuliToInject[0].intensity, 0.3, "an upward stir is positive");
 });
 
 // ─── 6. a nation blessing's sub-tick expiry ─────────────────────────────────────────────────────────────
 
-test("temple: NATION_BLESSING expires after BLESSING_DURATION crons (×6 sub-ticks)", () => {
+test("temple: NATION_BLESSING expires after BLESSING_DURATION crons (×6 sub-ticks)", async () => {
   const layer = new TempleLayer({ enabled: true });
-  layer.submit(entry({ txHash: txAt(1), kind: "NATION_BLESSING", tier: 2, burnAmount: 10_000n * SCALE, params: { nationId: 0 } }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "NATION_BLESSING", tier: 2, burnAmount: 10_000n * SCALE, params: { nationId: 0 } }));
   layer.step(ctx({ tickIndex: 0 }));
   assert.equal(layer.readout().activeBuffs.length, 1, "the blessing is in force");
   assert.equal(layer.readout().activeBuffs[0].expiresAt, BLESSING_DURATION * 6);
@@ -240,9 +274,9 @@ test("temple: NATION_BLESSING expires after BLESSING_DURATION crons (×6 sub-tic
 
 // ─── 7. a wonder's permanence ───────────────────────────────────────────────────────────────────────────
 
-test("temple: WONDER_FOUNDATION raises a permanent buff that never expires", () => {
+test("temple: WONDER_FOUNDATION raises a permanent buff that never expires", async () => {
   const layer = new TempleLayer({ enabled: true });
-  layer.submit(entry({
+  await layer.submit(entry({
     txHash: txAt(1), kind: "WONDER_FOUNDATION", tier: 4, burnAmount: 1_000_000n * SCALE,
     params: { nationId: 1, wonder: "library" },
   }));
@@ -261,12 +295,12 @@ test("temple: WONDER_FOUNDATION raises a permanent buff that never expires", () 
 
 // ─── 8. the serialize/deserialize round trip ────────────────────────────────────────────────────────────
 
-test("temple: serialize/deserialize is a byte-identical round trip", () => {
+test("temple: serialize/deserialize is a byte-identical round trip", async () => {
   const layer = new TempleLayer({ enabled: true });
-  layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 2 } }));
-  layer.submit(entry({ txHash: txAt(2), kind: "WONDER_FOUNDATION", tier: 4, burnAmount: 1_000_000n * SCALE, params: { nationId: 1, wonder: "library" } }));
-  layer.submit(entry({ txHash: txAt(3), kind: "HERO_SUMMONING", tier: 3, burnAmount: 100_000n * SCALE, params: { name: "Gilgamesh" } }));
-  layer.submit(entry({ txHash: txAt(4), kind: "NATION_BLESSING", tier: 2, burnAmount: 10_000n * SCALE, params: { nationId: 0 } }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 2 } }));
+  await layer.submit(entry({ txHash: txAt(2), kind: "WONDER_FOUNDATION", tier: 4, burnAmount: 1_000_000n * SCALE, params: { nationId: 1, wonder: "library" } }));
+  await layer.submit(entry({ txHash: txAt(3), kind: "HERO_SUMMONING", tier: 3, burnAmount: 100_000n * SCALE, params: { name: "Gilgamesh" } }));
+  await layer.submit(entry({ txHash: txAt(4), kind: "NATION_BLESSING", tier: 2, burnAmount: 10_000n * SCALE, params: { nationId: 0 } }));
   layer.step(ctx({ tickIndex: 10 }));
   layer.step(ctx({ tickIndex: 16 }));
 
@@ -302,7 +336,7 @@ test("temple: an invalid kind is refused by isTempleKind, submit and verifyBurn"
   assert.equal(isTempleKind(undefined), false);
 
   const layer = new TempleLayer({ enabled: true });
-  const bad = layer.submit(entry({ kind: "BOGUS_RITE" as unknown as TempleKind }));
+  const bad = await layer.submit(entry({ kind: "BOGUS_RITE" as unknown as TempleKind }));
   assert.equal(bad.ok, false);
   assert.match(bad.error ?? "", /invalid kind/i);
 
@@ -313,7 +347,7 @@ test("temple: an invalid kind is refused by isTempleKind, submit and verifyBurn"
 
 // ─── 10. the standing read-out's shape ──────────────────────────────────────────────────────────────────
 
-test("temple: readout exposes the full standing summary and tracks the last execution", () => {
+test("temple: readout exposes the full standing summary and tracks the last execution", async () => {
   const layer = new TempleLayer({ enabled: true });
   const cold = layer.readout();
   assert.deepEqual(Object.keys(cold).sort(), [
@@ -328,7 +362,7 @@ test("temple: readout exposes the full standing summary and tracks the last exec
   assert.deepEqual(cold.activeBuffs, []);
   assert.equal(cold.lastExecution, null);
 
-  layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 1 } }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 1 } }));
   layer.step(ctx({ tickIndex: 7 }));
   const warm = layer.readout();
   assert.equal(warm.historyCount, 1);
@@ -336,9 +370,9 @@ test("temple: readout exposes the full standing summary and tracks the last exec
   assert.deepEqual(warm.lastExecution, { kind: "ORACLE_WHISPER", tick: 7, address: ADDR });
 });
 
-test("temple: a disabled layer executes nothing", () => {
+test("temple: a disabled layer executes nothing", async () => {
   const layer = new TempleLayer({ enabled: false });
-  layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 1 } }));
+  await layer.submit(entry({ txHash: txAt(1), kind: "ORACLE_WHISPER", tier: 1, params: { flyId: 1 } }));
   const res = layer.step(ctx({ tickIndex: 0 }));
   assert.equal(res.executed.length, 0, "TEMPLE_ENABLED=false ⇒ the layer is inert");
   assert.equal(res.stimuliToInject.length, 0);

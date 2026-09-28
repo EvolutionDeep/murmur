@@ -1,7 +1,7 @@
 // render2d.js — 2D fallback 渲染：render 主循环 + drawFly + parchment/frame + 全部世界层绘制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ASH_GREY, BLOSSOM, CIV_SHADOW, COIN_GOLD, COLONY_COLORS, COLONY_NAMES, CONTINENT, CRACK_RED, ECON_EDGE_MS, FAITH_GOLD, FIRE_HOT, FIRE_LO, FIRE_MID, GARDEN, GILT, GILT_HI, GOLD_THREAD, GOOD_COL, GRAVE_CAP, HIST_SAMPLE_MS, HULL, INK, LAW_GOLD, MIND_REBUILD_MS, MONUMENT_MS, MUD, MUD_HI, MUD_SH, PALM, PLAZA, POOL, PROVINCES, RIBBON_WINDOW, RIVER_BLUE, SAIL, SMOKE, SOCIETY_BOND_MIN, SOCIETY_CAP_GAP, SOCIETY_FEUD_MAX, SOCIETY_MINCAP, SOCIETY_PAD, STATE_RGB, TAU, TECH_BRONZE, TERRA, UNCLAIMED, VELLUM, WK_AGE_TICKS, WORK_SLOT, canvas, clamp, fnv1a, graveField, graveUid, houseColor, houseOf, lerp, mix, paletteAt, rgb, rgba, sim, wealthColorAt } from './shared.js';
-import { ct, gl, t as T } from './i18n.js?v=103';
+import { ct, gl, t as T } from './i18n.js?v=109';
 import { applyCam, mw } from './camera.js';
 import { keeperIds, prophetIds } from './economy.js';
 import { refreshInspectorSocial } from './inspector.js';
@@ -2289,7 +2289,7 @@ export function layoutTerritoryMap(pol) {
  *  other frame is a single drawImage. This keeps the default-on map off the hot path so it can never
  *  nudge frameMsAvg over the 30ms budget and collapse fly detail to blobs. */
 export function renderTerritoryMap() {
-  if (!state.showTerritory || !state.territories || !state.territories.length) { state.terrKey = ""; state.terrPol = null; return; }
+  if (!state.showTerritory || !state.territories || !state.territories.length) { state.terrKey = ""; return; }
   const pol = [];
   for (const p of state.territories) {
     let cnt = 0; for (const id of p.ids) { const f = sim.get(id); if (f && !f.dying) cnt++; }
@@ -2310,7 +2310,6 @@ export function renderTerritoryMap() {
     const g = state.terrOffCtx; g.setTransform(state.DPR, 0, 0, state.DPR, 0, 0); g.clearRect(0, 0, state.VW, state.VH);
     paintTerritoryMap(g, pol);
   }
-  state.terrPol = pol;
   state.ctx.drawImage(state.terrOff, 0, 0, state.VW, state.VH);
 }
 /** Actually draw the dominions onto a target context `g` (the offscreen): each house's province is an organic
@@ -2410,31 +2409,7 @@ export function renderUnclaimed() {
   if (!state.uncOff || state.uncKey !== state.VW + "x" + state.VH + "@" + state.DPR) bakeUnc();
   state.ctx.drawImage(state.uncOff, 0, 0);
 }
-/** The map key, pinned to the RIGHT EDGE of the SCREEN (screen space, so it never zooms or pans with the map):
- *  the era title + the largest dominions with their colour swatches (the ref's legend). */
-export function drawTerritoryLegend(g, pol) {
-  const ranked = pol.slice(0, 6);
-  const era = (state.chronMeta && state.chronMeta.eraName) ? state.chronMeta.eraName : "the swarm's dominions";
-  const pad = 12, lh = 16, w = 180, h = pad * 2 + lh * (ranked.length + 1);
-  // the bottom-left is claimed by the temperature DOM panel and the bottom-right by the chronicle button,
-  // so the map key lives in the clear band on the right flank, vertically centred (never under a panel).
-  const bx = state.VW - w - 14, by = Math.round((state.VH - h) / 2);
-  g.save();
-  g.fillStyle = rgba([248, 244, 236], 0.88); g.strokeStyle = rgba([96, 74, 52], 0.45); g.lineWidth = 1;
-  if (g.roundRect) { g.beginPath(); g.roundRect(bx, by, w, h, 6); g.fill(); g.stroke(); }
-  else { g.fillRect(bx, by, w, h); g.strokeRect(bx, by, w, h); }
-  g.textBaseline = "middle"; g.textAlign = "left";
-  g.font = "700 12px Fraunces, Cinzel, Georgia, serif"; g.fillStyle = rgba(INK, 0.9);
-  g.fillText(era, bx + pad, by + pad + lh * 0.5);
-  for (let i = 0; i < ranked.length; i++) {
-    const y = by + pad + lh * (i + 1.5);
-    g.fillStyle = rgba(ranked[i].p.color, 0.95); g.fillRect(bx + pad, y - 5, 10, 10);
-    g.strokeStyle = rgba(INK, 0.5); g.lineWidth = 0.8; g.strokeRect(bx + pad + 0.5, y - 4.5, 9, 9);
-    g.font = "600 11px Georgia, serif"; g.fillStyle = rgba(INK, 0.85);
-    g.fillText(ranked[i].p.name + "  ·  " + ranked[i].n, bx + pad + 16, y);
-  }
-  g.restore();
-}
+
 export function render(pal, now) {
   // 3D scene mode: Three.js owns the canvas, DOM panels float above
   if (state.threeScene) {
@@ -2558,9 +2533,6 @@ export function render(pal, now) {
 
   // the current era, announced at the BOTTOM-CENTRE of the field as a monumental gilded banner
   drawEraHeader(pal);
-
-  // the map key (era + house swatches) pinned to the RIGHT EDGE of the SCREEN — screen space, never zooms
-  if (state.terrPol) drawTerritoryLegend(state.ctx, state.terrPol);
 
   // the epic centre-caption (chronicle banner) — pinned to the screen centre, independent of the camera
   renderChronBanner(pal, now);

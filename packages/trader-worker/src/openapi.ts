@@ -96,6 +96,9 @@ const FLY = {
     temperament: { type: "number", description: "Per-fly fixed trait derived from its seed." },
     fingerprint: { type: "string", description: "Short hex identity of the fly's current neural reading." },
     neuromod: { $ref: "#/components/schemas/Neuromod" },
+    genomeHash: { type: "string", description: "0x-prefixed 64-hex sha256 of the fly's canonical genome (empty string when unresolved)." },
+    generation: { type: "integer", description: "Lineage generation (genesis = 0, offspring = max(parents) + 1)." },
+    parents: { type: "array", items: { type: "string" }, description: "Parent genomeHashes (0x-prefixed): [] genesis, [a] mutate, [a,b] cross." },
   },
 } as const;
 

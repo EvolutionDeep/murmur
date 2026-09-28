@@ -116,6 +116,47 @@
 /lineageView.js
   Cache-Control: no-cache, must-revalidate
 
+# task 29 · Phase B: lineageView.js was split into a bare-ESM module tree. Every one of these is imported with
+# a BARE specifier (no ?v — adding one would fork duplicate module instances of the shared LV singleton and
+# split its state in two), so each needs the same etag-revalidation treatment as /lineageView.js above.
+#   lvState.js      the shared singleton + camera + qualityCoeff gate (imports only shared.js ⇒ cycle-free)
+#   lvData.js       every fetch + accumulation table, and the arrival-driven dirty-flag pump
+#   lvNeural.js     Phase C seam · lvGenetics.js Phase D · lvEnv.js + lvInteract.js Phase E · lvProvenance.js F
+/lvState.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvData.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvNeural.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvGenetics.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvEnv.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvProvenance.js
+  Cache-Control: no-cache, must-revalidate
+
+/lvInteract.js
+  Cache-Control: no-cache, must-revalidate
+
+# task 33 · Phase F: lvTimeReplay.js — the C25 time-replay seam, a new BARE-imported module (imported by
+# lineageView.js, lvInteract.js and lvNeural.js, no ?v on any of the three specifiers). Same treatment: without
+# etag revalidation a returning reader would run the cached pre-C25 core against a stale/missing replay module.
+/lvTimeReplay.js
+  Cache-Control: no-cache, must-revalidate
+
+# task 33 · gate 5 found this PRE-EXISTING gap while auditing bare-module coverage: sim.js is imported with a
+# BARE specifier by camera.js, economy.js, main.js and render2d.js (the task-8 ESM split) but was never given
+# the etag-revalidation entry its four siblings all have, so a returning reader can run a stale swarm core
+# against fresh neighbours. Purely additive cache metadata — sim.js itself is NOT touched. Drop this block if
+# the 3D owner prefers to land it separately.
+/sim.js
+  Cache-Control: no-cache, must-revalidate
+
 # NSFW filter model weights (self-hosted binary, loaded by landDrawer.js via nsfwjs).
 # The 2.6MB shard + 129KB manifest are immutable content — cache aggressively so the
 # lazy load on first upload is cheap for returning visitors. Rename the dir to bust.

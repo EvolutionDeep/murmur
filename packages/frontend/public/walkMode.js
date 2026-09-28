@@ -22,7 +22,7 @@
 //     only DOM it makes is the touch joystick, and only on a touch device.
 // ============================================================================
 import { state, $ } from './shared.js';
-import { t as T } from './i18n.js?v=103';
+import { t as T } from './i18n.js?v=109';
 import { setCameraMode } from './camera.js';
 
 const DEG = Math.PI / 180;

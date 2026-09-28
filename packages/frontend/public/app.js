@@ -7869,8 +7869,9 @@ async function doBreed() {
   if (breeder.trim()) body.breeder = breeder.trim();
   lineageBreedMsg = "breeding …"; renderLineage();
   try {
-    const r = await fetch(API + "/breed?token=" + encodeURIComponent(LIN_ADMIN_TOKEN), {
-      method: "POST", cache: "no-store", headers: { "content-type": "application/json" },
+    const r = await fetch(API + "/breed", {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json", "x-admin-token": LIN_ADMIN_TOKEN },
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => null);

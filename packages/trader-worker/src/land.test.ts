@@ -2,9 +2,10 @@
  * ㉚ LAND — unit tests (node:test, mirrors temple.test.ts's fixture style).
  *
  * Covers: the price ratchet at every override boundary (the 5,000 floor, +100 per seizure), a successful
- * claim, an override that changes hands and ratchets the count, the persisted dedup ring (a burn is honoured
- * once, ever), an insufficient burn, an out-of-range parcelId, an oversized image, the serialize/deserialize
- * round trip (BigInt as a decimal string), a corrupt blob restarting a COLD grid, and the dedup ring's cap.
+ * claim, an override that changes hands and ratchets the count, the PERMANENT storage-backed dedup (a burn
+ * is honoured once, ever, surviving eviction and never bounded by a ring size), an insufficient burn, an
+ * out-of-range parcelId, an oversized image, the serialize/deserialize round trip (BigInt as a decimal
+ * string), and a corrupt blob restarting a COLD grid.
  *
  * The chain touch (verifyBurn) is exercised through a mock LandChainClient that hands back a viem-shaped
  * receipt, so the tests never leave the process — the layer's only I/O is a pure function of that receipt.
@@ -28,6 +29,7 @@ import {
   type LandChainClient,
   type LandReceipt,
   type LandImageStore,
+  type BurnDedupStore,
 } from "./land.js";
 
 /** A valid 0x + 40-hex submitter wallet. */
@@ -83,6 +85,16 @@ const IMG = landBytesToBase64(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10
 /** A fresh, enabled layer. */
 function layer(): LandLayer {
   return new LandLayer({ enabled: true });
+}
+
+/** An in-memory permanent dedup store (mirrors the DO-storage-backed store state.ts wires up). */
+function memDedup(): BurnDedupStore & { seen: Set<string> } {
+  const seen = new Set<string>();
+  return {
+    seen,
+    has: async (txHash) => seen.has(txHash),
+    add: async (txHash) => { seen.add(txHash); },
+  };
 }
 
 // ─── 1-3. the price ratchet (a pure function of the stored override count) ──────────────────────────────
@@ -337,20 +349,42 @@ test("land: deserialize of a corrupt blob yields a cold, empty grid", () => {
   assert.equal(LandLayer.deserialize("").readout().parcelsSold, 0);
 });
 
-// ─── 12. the dedup ring is bounded ───────────────────────────────────────────────────────────────────────
+// ─── 12. the permanent dedup (storage-backed, never bounded by a ring size) ─────────────────────────────
 
-test("land: the dedup ring is bounded to DEDUP_RING_SIZE", async () => {
+test("land: the storage-backed dedup honours a burn once, ever — even past DEDUP_RING_SIZE", async () => {
   const l = layer();
+  const dedup = memDedup();
+  l.setDedupStore(dedup);
   l.setChainClient(burnClient(LAND_BASE_PRICE));
   const store = memStore();
-  for (let i = 0; i < DEDUP_RING_SIZE + 20; i++) {
-    const res = await l.submit(i, txAt(i), ADDR, IMG, store); // distinct parcel + distinct hash, all fresh
-    assert.equal(res.ok, true, `parcel ${i} claimed`);
+
+  // Submit more than DEDUP_RING_SIZE distinct burns; the in-memory ring evicts the oldest, but the
+  // storage-backed dedup remembers EVERY hash permanently.
+  const total = DEDUP_RING_SIZE + 20;
+  for (let i = 0; i < total; i++) {
+    const res = await l.submit(i % LAND_PARCEL_COUNT, txAt(i), ADDR, IMG, store);
+    assert.equal(res.ok, true, `burn ${i} honoured`);
   }
-  assert.equal(l.dedupRing.length, DEDUP_RING_SIZE, "the ring never grows past its cap");
-  const ring = JSON.parse(l.serialize()).dedupRing as string[];
-  assert.equal(ring.length, DEDUP_RING_SIZE);
-  // The oldest hashes have been evicted; the newest is still honoured-once.
-  assert.equal(ring.includes(txAt(DEDUP_RING_SIZE + 19)), true);
-  assert.equal(ring.includes(txAt(0)), false);
+
+  // The in-memory ring is still bounded (hot cache only).
+  assert.equal(l.dedupRing.length, DEDUP_RING_SIZE, "the in-memory ring stays bounded");
+  // But the storage-backed dedup remembers ALL hashes — the oldest are still rejected.
+  assert.equal(dedup.seen.size, total, "the permanent dedup remembers every hash");
+  const replayOldest = await l.submit(0, txAt(0), ADDR, IMG, store);
+  assert.equal(replayOldest.ok, false, "the oldest hash (evicted from the ring) is STILL refused");
+  assert.match(replayOldest.reason ?? "", /duplicate/i);
+  const replayNewest = await l.submit(0, txAt(total - 1), ADDR, IMG, store);
+  assert.equal(replayNewest.ok, false, "the newest hash is refused too");
+  assert.match(replayNewest.reason ?? "", /duplicate/i);
+});
+
+test("land: the dedup falls back to the in-memory ring when no store is wired", async () => {
+  const l = layer();
+  // No dedupStore wired — the legacy bounded ring is the only guard.
+  l.setChainClient(burnClient(LAND_BASE_PRICE));
+  const store = memStore();
+  assert.equal((await l.submit(0, TX, ADDR, IMG, store)).ok, true);
+  const replay = await l.submit(1, TX, ADDR, IMG, store);
+  assert.equal(replay.ok, false, "a replayed hash is refused by the in-memory ring");
+  assert.match(replay.reason ?? "", /duplicate/i);
 });

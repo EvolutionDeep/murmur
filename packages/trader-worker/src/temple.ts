@@ -22,9 +22,13 @@
  *   2. DETERMINISM. No RNG, no clock, no LLM inside step(). Every "random" victim, migrant, whisper target
  *      or discovery is a hash draw over (tickIndex, txHash, kind), so the same context series replays
  *      byte-identically. verifyBurn is a pure function of the receipt it is handed.
- *   3. BOUNDED. The queue, the dedup ring, the history, the heroes and the active buffs are all hard-capped;
+ *   3. BOUNDED. The queue, the history, the heroes and the active buffs are all hard-capped;
  *      serialize() is one small JSON (BigInts as decimal strings, permanent buffs as null); a corrupt blob
- *      restarts a COLD temple, never a poisoned one.
+ *      restarts a COLD temple, never a poisoned one. The replay guard is PERMANENT: each honoured burn
+ *      tx hash is written as an independent DO storage key (`temple:burn:<txHash>`), so it survives
+ *      eviction and is never bounded by a ring size. The in-memory `dedupRing` (DEDUP_RING_SIZE) is a
+ *      small hot cache + backward-compat for the serialized blob; state.ts migrates its entries to
+ *      independent keys on first load.
  *
  * TEMPLE_ENABLED=false ⇒ state.ts never constructs the layer (ensureTemple returns null), folds no `temple`
  * key into the historian's context ⇒ the twelve chronicle kinds can never speak ⇒ every old line is
@@ -55,7 +59,8 @@ export const MAX_QUEUE = 20;
 export const MAX_PER_CRON = 2;
 /** Of those, at most this many may be Tier-3+ (decree/hero/epoch/wonder are rare by construction). */
 export const MAX_TIER3_PER_CRON = 1;
-/** The replay-protection ring: a tx hash is honoured once, ever (persisted, so a restart cannot replay). */
+/** The in-memory hot-cache ring (backward compat for the serialized blob). The AUTHORITATIVE replay guard
+ *  is the storage-backed `BurnDedupStore` (one independent DO key per honoured hash, permanent). */
 export const DEDUP_RING_SIZE = 100;
 /** Simultaneous blessings + wonders in force (a full temple evicts the soonest-expiring mortal buff). */
 export const MAX_ACTIVE_BUFFS = 5;
@@ -248,6 +253,19 @@ export interface TempleChainClient {
   getTransactionReceipt(txHash: string): Promise<TempleReceipt>;
 }
 
+/**
+ * Storage-backed permanent dedup for burn tx hashes. Each honoured hash is written as an independent
+ * DO storage key (`temple:burn:<txHash>`), so the replay guard survives eviction and is never bounded
+ * by a ring size. state.ts wires this up; the in-memory `dedupRing` remains as a small hot cache +
+ * backward-compat for the serialized blob (migration reads it on first load).
+ */
+export interface BurnDedupStore {
+  /** True when this tx hash has already been honoured (authoritative, storage-backed). */
+  has(txHash: string): Promise<boolean>;
+  /** Record that this tx hash has been honoured (persisted, survives eviction). */
+  add(txHash: string): Promise<void>;
+}
+
 /** verifyBurn's verdict: whether the burn is real, and how much MURMUR (atomic) went to the sink. */
 export interface BurnVerification {
   valid: boolean;
@@ -350,14 +368,20 @@ export interface TempleConfig { enabled: boolean; }
 export class TempleLayer {
   private queue: TempleQueueEntry[] = [];
   private history: TempleHistoryEntry[] = [];
+  /** In-memory hot cache + backward-compat for the serialized blob; the authoritative check goes through `dedupStore`. */
   private dedupRing: string[] = [];
   private totalBurned = 0n;
   private heroes: TempleHero[] = [];
   private wonders: Record<number, WonderKind> = {};
   private activeBuffs: TempleBuff[] = [];
   private lastExecution: { kind: TempleKind; tick: number; address: string } | null = null;
+  /** Storage-backed permanent dedup (state.ts wires it up); null ⇒ fall back to the in-memory ring only. */
+  private dedupStore: BurnDedupStore | null = null;
 
   constructor(private readonly cfg: TempleConfig) {}
+
+  /** Inject the storage-backed permanent dedup store. Null ⇒ fall back to the bounded in-memory ring. */
+  setDedupStore(store: BurnDedupStore | null): void { this.dedupStore = store; }
 
   // ── 1. on-chain burn verification (the ONLY chain touch — a read, never a spend) ──────────────────────
 
@@ -414,21 +438,28 @@ export class TempleLayer {
     return { valid: true, burnAmount };
   }
 
-  // ── 2. queue admission (dedup ring + queue cap) ───────────────────────────────────────────────────────
+  // ── 2. queue admission (permanent dedup + queue cap) ─────────────────────────────────────────────────
 
   /**
-   * Admit a VERIFIED intervention to the queue. Refuses an unknown kind, a replayed tx hash (the persisted
-   * dedup ring — a burn is honoured once, ever) and a full queue. Returns the 1-based queue position so the
-   * POST response can tell the submitter where they stand.
+   * Admit a VERIFIED intervention to the queue. Refuses an unknown kind, a replayed tx hash (the
+   * storage-backed permanent dedup — a burn is honoured once, ever, surviving eviction) and a full queue.
+   * Returns the 1-based queue position so the POST response can tell the submitter where they stand.
    */
-  submit(entry: TempleQueueEntry): SubmitResult {
+  async submit(entry: TempleQueueEntry): Promise<SubmitResult> {
     if (!entry || typeof entry !== "object") return { ok: false, error: "malformed entry", queuePosition: 0 };
     if (!isTempleKind(entry.kind)) return { ok: false, error: "invalid kind", queuePosition: 0 };
     const txHash = typeof entry.txHash === "string" ? entry.txHash : "";
     if (!txHash) return { ok: false, error: "missing txHash", queuePosition: 0 };
-    if (this.dedupRing.includes(txHash)) return { ok: false, error: "duplicate txHash", queuePosition: 0 };
+    // Permanent dedup: storage-backed when wired (survives eviction, never bounded by a ring size);
+    // the in-memory ring is a fast-path hot cache + backward compat for the serialized blob.
+    if (this.dedupStore) {
+      if (await this.dedupStore.has(txHash)) return { ok: false, error: "duplicate txHash", queuePosition: 0 };
+    } else if (this.dedupRing.includes(txHash)) {
+      return { ok: false, error: "duplicate txHash", queuePosition: 0 };
+    }
     if (this.queue.length >= MAX_QUEUE) return { ok: false, error: "queue full", queuePosition: 0 };
 
+    if (this.dedupStore) await this.dedupStore.add(txHash);
     this.dedupRing.push(txHash);
     if (this.dedupRing.length > DEDUP_RING_SIZE) this.dedupRing = this.dedupRing.slice(-DEDUP_RING_SIZE);
 
