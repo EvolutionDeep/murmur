@@ -4,7 +4,7 @@
 // transaction, and POST /land with X-Payment-Proof header.
 
 import { state, $, API, shortHash } from './shared.js';
-import { t as T } from './i18n.js?v=98';
+import { t as T } from './i18n.js?v=100';
 import { getJSON } from './polling.js';
 
 // ---- constants (mirror the backend land.ts) ----
@@ -159,7 +159,7 @@ export function paintLandDrawer() {
   // image preview (if owned)
   if (parcel && parcel.owner && parcel.imageUrl) {
     const imgUrl = parcel.imageUrl.startsWith("http") ? parcel.imageUrl : API + parcel.imageUrl;
-    html += `<div class="ld-preview"><img src="${imgUrl}" alt="Parcel ${pid}" class="ld-img" /></div>`;
+    html += `<div class="ld-preview"><img src="${imgUrl}" alt="${T("land.parcelAlt", { id: pid })}" class="ld-img" /></div>`;
   }
 
   // upload area

@@ -1,10 +1,10 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=99';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=100';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
 import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
-import { renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
+import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
 import { bindBloomScale, deselect, fillInspectorFromSim, renderBloom, renderRaster } from './inspector.js';
 import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js';
 import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js';
@@ -77,7 +77,7 @@ export async function copyToClipboard(text) {
 export async function copyTokenCA(btn) {
   const ca = btn.dataset.ca; if (!ca) return;
   const ok = await copyToClipboard(ca);
-  btn.textContent = ok ? "copied ✓" : shortHash(ca);
+  btn.textContent = ok ? T("econ.copied") : shortHash(ca);
   btn.classList.toggle("copied", ok);
   clearTimeout(state.tcaTimer);
   state.tcaTimer = setTimeout(() => { btn.textContent = shortHash(ca); btn.classList.remove("copied"); }, 1400);
@@ -104,6 +104,7 @@ export function rerenderAll() {
     updateEconMode(); updateEconFoot();
     updateNetNote();
     const tca = $("tca-copy"); if (tca) tca.title = T("econ.copyTip", { ca: tca.dataset.ca || "" });
+    if (state.topology) applyTopology(state.topology);   // repaint the shard-isolates label in the new language
     if (state._lastDist) renderDist(state._lastDist.states, state._lastDist.size);   // repaint behaviour legend in the new language
     updateSinceLaunch();
     const dv = $("ins-drives"); if (dv) dv.innerHTML = "";   // force the cached drive labels to rebuild in the new language

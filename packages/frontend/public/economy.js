@@ -1,7 +1,7 @@
 // economy.js — applyEconomy/applySnapshot/applyState/applyTopology + HUD 更新
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, shortHash, sim } from './shared.js';
-import { currentLang, gl, t as T } from './i18n.js?v=98';
+import { currentLang, gl, t as T } from './i18n.js?v=100';
 import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js';
 import { fillInspectorFromSim } from './inspector.js';
 import { synthAgents } from './polling.js';
@@ -24,7 +24,7 @@ export function applyTopology(t) {
   if (!t || !Array.isArray(t.shards) || !t.shards.length) return;
   state.topology = t;
   const sb = document.querySelector('#layer-toggles [data-layer="shards"]');
-  if (sb && t.shardCount) sb.textContent = `${t.shardCount} isolates`;   // never hardcode the count
+  if (sb && t.shardCount) sb.textContent = T("topology.isolates", { n: t.shardCount });   // never hardcode the count
 }
 // cached stele signature (recomputed ≤ every 500ms)
 export const keeperIds = new Set();

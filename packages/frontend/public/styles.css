@@ -4242,12 +4242,29 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
       375px-tall landscape phone would run off the bottom. It therefore becomes the same shape as
       every other card here: a non-scrolling frame with ONE scroller inside it, which keeps
       .epitaph-close (absolute, top:6px) pinned while the lines roll under it. Margins are
-      unaffected — .epitaph-rule's 12px does not collapse with anything in either display mode. */
+      unaffected — .epitaph-rule's 12px does not collapse with anything in either display mode.
+
+   ③b, found by the 29-viewport matrix on the two short-laptop rows: centring alone is not enough
+      once a cap exists. At 1366×600 and 1280×600 the plaque measured y 30.3..329.8 against a topbar
+      that ends at 56.3 — `topbar~epitaph 360x26`, i.e. a z 24 card painting 26px over the wordmark.
+      Neither flow regime owns those viewports (regime F puts wide-short screens back in the corner
+      layout with --topbar-flow at 0), so they were still on the base centred rule, where the top
+      edge is 0.3VH − h/2: 180 − 149.75 = 30.25. The arithmetic is the whole story — a 60vh cap on a
+      600px-tall window allows a 336px card, and half of that is more than 30% of the height.
+      Rather than moving the plaque (which would drag it off the author's 30% line on every tall
+      desktop, where nothing is wrong), the CAP is derived from the clearance it has to leave:
+      0.3VH − h/2 ≥ safe + --topbar-h + 12  ⇔  h ≤ 60vh − 2·(safe + --topbar-h + 12).
+      Tall screens keep 60vh − 24 and therefore keep today's composition exactly; short ones shrink
+      until the centred box clears the bar and the body scroller takes up the slack. */
 .epitaph {
   display: flex; flex-direction: column;
-  /* centred case: the top edge is 30vh - h/2, so h ≤ 60vh - 24 keeps ≥12px of air above it and
-     puts the bottom edge at ≤60vh - 12. Below, each flow regime replaces this with an exact cap. */
-  max-height: calc(60vh - 24px);
+  /* the opaque band the plaque must not climb into: safe area + the bar itself + 12px of air */
+  --ep-floor: calc(env(safe-area-inset-top, 0px) + var(--topbar-h, 56px) + 12px);
+  /* centred case: the top edge is 30vh − h/2, so 60vh − 24 keeps ≥12px of air above it and puts
+     the bottom edge at ≤60vh − 12; the second term is ③b's clearance. 88px is the floor below
+     which the card would be too short to show a head plus one line, and it can only bind under
+     ~350px of height, which regime G below already owns. Each flow regime replaces this wholesale. */
+  max-height: max(88px, min(calc(60vh - 24px), calc(60vh - 2 * var(--ep-floor))));
 }
 .epitaph-head, .epitaph-rule { flex: none; }
 .epitaph-body {
@@ -4450,3 +4467,6 @@ body.layers-pop .layer-toggles {
   }
   .drawer, .wallets { top: 0; }
 }
+
+/* Heal drawer-header meta clipping (#chron-sub and siblings): let the status line wrap instead of single-line ellipsis. */
+.wallets-sub, .drawer-sub { white-space: normal; overflow: visible; text-overflow: clip; }

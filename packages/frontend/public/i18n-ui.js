@@ -8172,4 +8172,133 @@ Object.assign(ja, jaRail);
 Object.assign(ko, koRail);
 Object.assign(ar, arRail);
 
+// ---- i18n gap fixes: territory layer label, isolates count, parcel alt, rail/topbar aria,
+// zoom + temp-history + raster aria, brain-scale titles and the copy-token confirmation (7 languages) ----
+const enGap = {
+  "layers.territory": "territory",
+  "layers.territoryTitle": "redraw the swarm as a map of house dominions — each family a coloured territory with its borders, name and capital (a visualisation of the live dynasty; no economic change)",
+  "topology.isolates": "{n} isolates",
+  "land.parcelAlt": "Parcel {id}",
+  "rail.aria": "command rail",
+  "top.langAria": "language",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "murmur source code on GitHub",
+  "layers.aria": "ambient layers",
+  "zoom.aria": "zoom the field",
+  "temp.historyAria": "market temperature over recent time",
+  "ins.rasterAria": "live neural spike raster",
+  "ins.brainScale": "~28× the launch connectome",
+  "ins.brainScaleFull": "~28× the launch connectome (1,080 → 30,800 neurons)",
+  "econ.copied": "copied ✓",
+};
+const zhGap = {
+  "layers.territory": "领土",
+  "layers.territoryTitle": "将蜂群重绘为家族领地地图 —— 每个家族一块着色领土，含边界、名称与首府（活体王朝的可视化；不改变经济）",
+  "topology.isolates": "{n} 个隔离实例",
+  "land.parcelAlt": "地块 {id}",
+  "rail.aria": "指挥栏",
+  "top.langAria": "语言",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "murmur 源码在 GitHub 上",
+  "layers.aria": "氛围图层",
+  "zoom.aria": "缩放视野",
+  "temp.historyAria": "近期市场温度",
+  "ins.rasterAria": "实时神经脉冲栅格图",
+  "ins.brainScale": "约为发射版连接组的 28 倍",
+  "ins.brainScaleFull": "约为发射版连接组的 28 倍（1,080 → 30,800 个神经元）",
+  "econ.copied": "已复制 ✓",
+};
+const frGap = {
+  "layers.territory": "territoires",
+  "layers.territoryTitle": "redessine l’essaim en carte des domaines des maisons — chaque famille un territoire coloré avec ses frontières, son nom et sa capitale (une visualisation de la dynastie vivante ; aucun changement économique)",
+  "topology.isolates": "{n} isolats",
+  "land.parcelAlt": "Parcelle {id}",
+  "rail.aria": "barre de commande",
+  "top.langAria": "langue",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "code source de murmur sur GitHub",
+  "layers.aria": "couches ambiantes",
+  "zoom.aria": "zoomer le champ",
+  "temp.historyAria": "température du marché sur la période récente",
+  "ins.rasterAria": "raster des spikes neuraux en direct",
+  "ins.brainScale": "~28× le connectome de lancement",
+  "ins.brainScaleFull": "~28× le connectome de lancement (1 080 → 30 800 neurones)",
+  "econ.copied": "copié ✓",
+};
+const esGap = {
+  "layers.territory": "territorio",
+  "layers.territoryTitle": "redibuja el enjambre como un mapa de los dominios de las casas — cada familia un territorio de color con sus fronteras, nombre y capital (una visualización de la dinastía viva; sin cambios económicos)",
+  "topology.isolates": "{n} aislados",
+  "land.parcelAlt": "Parcela {id}",
+  "rail.aria": "riel de comandos",
+  "top.langAria": "idioma",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "código fuente de murmur en GitHub",
+  "layers.aria": "capas ambientales",
+  "zoom.aria": "acercar el campo",
+  "temp.historyAria": "temperatura del mercado en el tiempo reciente",
+  "ins.rasterAria": "ráster de picos neuronales en vivo",
+  "ins.brainScale": "~28× el conectoma de lanzamiento",
+  "ins.brainScaleFull": "~28× el conectoma de lanzamiento (1,080 → 30,800 neuronas)",
+  "econ.copied": "copiado ✓",
+};
+const jaGap = {
+  "layers.territory": "領土",
+  "layers.territoryTitle": "群れを家の支配圏の地図として描き直す —— 各家系が境界・名・首都を持つ色分けされた領土に（生きた王朝の可視化；経済への変更なし）",
+  "topology.isolates": "{n} アイソレート",
+  "land.parcelAlt": "区画 {id}",
+  "rail.aria": "コマンドレール",
+  "top.langAria": "言語",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "GitHub 上の murmur ソースコード",
+  "layers.aria": "アンビエントレイヤー",
+  "zoom.aria": "視野をズーム",
+  "temp.historyAria": "直近の市場温度",
+  "ins.rasterAria": "ライブ神経スパイクラスター",
+  "ins.brainScale": "ローンチ時コネクトームの約28倍",
+  "ins.brainScaleFull": "ローンチ時コネクトームの約28倍（1,080 → 30,800 ニューロン）",
+  "econ.copied": "コピーしました ✓",
+};
+const koGap = {
+  "layers.territory": "영토",
+  "layers.territoryTitle": "군집을 가문 지배권의 지도로 다시 그리기 —— 각 가문이 경계·이름·수도를 가진 색칠된 영토로 (살아있는 왕조의 시각화; 경제 변화 없음)",
+  "topology.isolates": "아이솔레이트 {n}개",
+  "land.parcelAlt": "필지 {id}",
+  "rail.aria": "커맨드 레일",
+  "top.langAria": "언어",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "GitHub의 murmur 소스 코드",
+  "layers.aria": "앰비언트 레이어",
+  "zoom.aria": "시야 확대/축소",
+  "temp.historyAria": "최근 시장 온도",
+  "ins.rasterAria": "실시간 신경 스파이크 래스터",
+  "ins.brainScale": "출시 커넥톰의 약 28배",
+  "ins.brainScaleFull": "출시 커넥톰의 약 28배 (1,080 → 30,800 뉴런)",
+  "econ.copied": "복사됨 ✓",
+};
+const arGap = {
+  "layers.territory": "الأراضي",
+  "layers.territoryTitle": "أعد رسم السرب كخريطة لنفوذ البيوت — كل عائلة إقليم ملوّن بحدوده واسمه وعاصمته (تجسيد للسلالة الحيّة؛ دون أي تغيير اقتصادي)",
+  "topology.isolates": "{n} معازل",
+  "land.parcelAlt": "القطعة {id}",
+  "rail.aria": "شريط الأوامر",
+  "top.langAria": "اللغة",
+  "top.langTitle": "language / 语言 / langue",
+  "top.ghAria": "الشفرة المصدرية لـ murmur على GitHub",
+  "layers.aria": "الطبقات المحيطة",
+  "zoom.aria": "تكبير المشهد",
+  "temp.historyAria": "حرارة السوق خلال الفترة الأخيرة",
+  "ins.rasterAria": "مخطط الاشتباكات العصبية الحية",
+  "ins.brainScale": "~28× الوصلة العصبية عند الإطلاق",
+  "ins.brainScaleFull": "~28× الوصلة العصبية عند الإطلاق (1,080 → 30,800 عصبون)",
+  "econ.copied": "تم النسخ ✓",
+};
+Object.assign(en, enGap);
+Object.assign(zh, zhGap);
+Object.assign(fr, frGap);
+Object.assign(es, esGap);
+Object.assign(ja, jaGap);
+Object.assign(ko, koGap);
+Object.assign(ar, arGap);
+
 export { en, zh, fr, es, ja, ko, ar };
