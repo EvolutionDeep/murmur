@@ -42,3 +42,14 @@ _connectome_data/
 *.swp
 *.swo
 .qoder/
+
+# Root-level scratch artifacts: one-off probes, deploy/verify logs, response dumps,
+# CDP/browser profiles (_shot_prof/, _rv_prof/, _cdp_*/, ...). None of these are tracked
+# (`git ls-files | grep '^_'` is empty), so ignoring them cannot change any tracked file.
+/_*
+
+# Legacy design exploration mockups — kept on disk for reference, never committed
+design-mockups/
+
+# TensorFlow Lite model blobs — binary weights never belong in git
+*.tflite
