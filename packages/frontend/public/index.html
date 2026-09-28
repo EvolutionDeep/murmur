@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=111" />
+  <link rel="stylesheet" href="./styles.css?v=112" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -35,6 +35,39 @@
   <canvas id="field" data-i18n-aria="field.aria" aria-label="a living population of fruit-fly agents reacting to and settling on the arc market"></canvas>
   <div class="grain" aria-hidden="true"></div>
   <div class="vignette" aria-hidden="true"></div>
+
+  <!-- ============ task 65 · Direction A icon sprite ============
+       One hidden <svg> holding every command-rail / dock / card glyph as a <symbol>, referenced by
+       <use href="#i-…">. Pure UI icons — no canvas/3D content lives here. -->
+  <svg class="ra-sprite" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13.5l9 5 9-5"/></symbol>
+    <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 8.2v7.6M9.6 10.1h4.2M9.6 13.4h4.2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.4" r="3.4"/><path d="M2.8 19c.8-3.6 3.3-5.4 6.2-5.4s5.4 1.8 6.2 5.4"/><circle cx="17.2" cy="9.4" r="2.7"/><path d="M16.4 13.7c2.5.4 4.3 2 4.9 4.6"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4.5l6 2 6-2v13l-6 2-6-2-6 2v-13l6-2z"/><path d="M9 4.5v13M15 6.5v13"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M5 16.5h14"/></symbol>
+    <symbol id="i-bird" viewBox="0 0 24 24"><path d="M4 14.5c4.2 1 7.2-1 8.2-5l.9-3.2 2.1 2.2h4.8l-2.9 2.9c-.2 5.8-5 8.9-12.6 7.9L2.6 21l1.4-4z"/></symbol>
+    <symbol id="i-temple" viewBox="0 0 24 24"><path d="M12 3l8 6H4l8-6z"/><path d="M5 10.5h14M6.5 10.5v7M11 10.5v7M15.5 10.5v7M19 10.5v7M3.5 20h17"/></symbol>
+    <symbol id="i-walk" viewBox="0 0 24 24"><circle cx="13" cy="4.6" r="2"/><path d="M13 8l-2.2 5 2.2 3.2V21M10.8 13l-2.9 2-1 4M13 10.6l3 2.2 2.2 1"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></symbol>
+  </svg>
+
+  <!-- ============ task 65 · Direction A left command rail ============
+       The single navigation spine: it replaces the scattered bottom-right dock steles (chronicle /
+       canary / temple / walk) and surfaces the layer tray + the two corner cards. Every button calls
+       an EXISTING toggle (see main.js bindUI rail delegation) — no drawer/economy logic is duplicated.
+       Drawer-entry buttons that live inside the cards (wallets / proofs / brain / …) stay reachable
+       there, so all 32 UI groups remain available. Hidden on phones (the tuned mobile layout takes over). -->
+  <nav class="command-rail" id="command-rail" role="toolbar" aria-label="command rail" aria-orientation="vertical">
+    <button type="button" class="rail-btn" data-act="layers" data-i18n-title="rail.layers" data-i18n-aria="rail.layers" title="layers" aria-label="layers"><svg class="ra-ic" aria-hidden="true"><use href="#i-layers"/></svg></button>
+    <button type="button" class="rail-btn" data-act="econ" data-i18n-title="rail.econ" data-i18n-aria="rail.econ" title="agent economy" aria-label="agent economy"><svg class="ra-ic" aria-hidden="true"><use href="#i-coin"/></svg></button>
+    <button type="button" class="rail-btn" data-act="pop" data-i18n-title="rail.pop" data-i18n-aria="rail.pop" title="population" aria-label="population"><svg class="ra-ic" aria-hidden="true"><use href="#i-users"/></svg></button>
+    <button type="button" class="rail-btn" data-act="land" data-i18n-title="rail.land" data-i18n-aria="rail.land" title="land" aria-label="land"><svg class="ra-ic" aria-hidden="true"><use href="#i-map"/></svg></button>
+    <span class="rail-sep" aria-hidden="true"></span>
+    <button type="button" class="rail-btn" data-act="chronicle" data-i18n-title="chron.openTitle" data-i18n-aria="chron.title" title="chronicle" aria-label="chronicle"><svg class="ra-ic" aria-hidden="true"><use href="#i-book"/></svg></button>
+    <button type="button" class="rail-btn" data-act="canary" data-i18n-title="canary.openTitle" data-i18n-aria="canary.aria" title="canary" aria-label="canary"><svg class="ra-ic" aria-hidden="true"><use href="#i-bird"/></svg></button>
+    <button type="button" class="rail-btn" data-act="temple" data-i18n-title="temple.title" data-i18n-aria="temple.aria" title="the temple" aria-label="the temple"><svg class="ra-ic" aria-hidden="true"><use href="#i-temple"/></svg></button>
+    <button type="button" class="rail-btn" data-act="walk" data-i18n-title="walk.title" data-i18n-aria="walk.aria" title="explore on foot" aria-label="explore on foot"><svg class="ra-ic" aria-hidden="true"><use href="#i-walk"/></svg></button>
+  </nav>
 
   <!-- ============ top bar: wordmark + link status ============ -->
   <header class="topbar">
@@ -72,6 +105,7 @@
     <div class="panel-title">
       <span data-i18n="econ.title">agent economy</span>
       <span class="econ-mode" id="econ-mode">x402</span>
+      <button type="button" class="card-fold" id="econ-fold" data-i18n-aria="rail.fold" aria-label="collapse" aria-expanded="true"><svg class="ra-ic sm" aria-hidden="true"><use href="#i-chev"/></svg></button>
     </div>
     <div class="econ-hero">
       <span class="econ-vol" id="econ-vol">0.000</span>
@@ -100,6 +134,7 @@
     <div class="regime-row">
       <span class="regime" id="regime">—</span>
       <span class="temp-value" id="temp">0.00</span>
+      <button type="button" class="card-fold" id="temp-fold" data-i18n-aria="rail.fold" aria-label="collapse" aria-expanded="true"><svg class="ra-ic sm" aria-hidden="true"><use href="#i-chev"/></svg></button>
     </div>
     <div class="meter" id="meter">
       <div class="meter-fill" id="meter-fill"></div>
@@ -122,7 +157,8 @@
 
   <!-- ============ population reaction (top-right) ============ -->
   <section class="panel panel-pop">
-    <div class="panel-title"><span data-i18n="pop.population">population</span> <span class="pop-size" id="size">–</span></div>
+    <div class="panel-title"><span data-i18n="pop.population">population</span> <span class="pop-size" id="size">–</span>
+      <button type="button" class="card-fold" id="pop-fold" data-i18n-aria="rail.fold" aria-label="collapse" aria-expanded="true"><svg class="ra-ic sm" aria-hidden="true"><use href="#i-chev"/></svg></button></div>
     <div class="dist" id="dist"></div>
     <ul class="dist-legend" id="dist-legend"></ul>
     <button class="brain-btn" id="brain-btn" type="button" data-i18n="pop.brainBtn" data-i18n-title="pop.brainTitle" title="Recompute the swarm's connectome-manifest hash in your browser and match it against the commitment on Arc — prove these are real deterministic connectomes, no LLM">prove the brain →</button>
@@ -662,6 +698,6 @@
        bottom-right stack is chron-btn → canary-btn → temple-btn; see the geometry table in the task-26 report. -->
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=141" type="module"></script>
+  <script src="./main.js?v=142" type="module"></script>
 </body>
 </html>

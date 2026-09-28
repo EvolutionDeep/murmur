@@ -8114,4 +8114,62 @@ Object.assign(ja, jaLand);
 Object.assign(ko, koLand);
 Object.assign(ar, arLand);
 
+// ---- task 65 · Direction A command rail (tooltips + aria + card-fold) ----
+const enRail = {
+  "rail.layers": "Layers",
+  "rail.econ": "Agent economy",
+  "rail.pop": "Population",
+  "rail.land": "Land leaders",
+  "rail.fold": "Collapse / expand",
+};
+const zhRail = {
+  "rail.layers": "\u56fe\u5c42",
+  "rail.econ": "\u667a\u80fd\u4f53\u7ecf\u6d4e",
+  "rail.pop": "\u79cd\u7fa4",
+  "rail.land": "\u571f\u5730\u6392\u884c",
+  "rail.fold": "\u6298\u53e0 / \u5c55\u5f00",
+};
+const frRail = {
+  "rail.layers": "Couches",
+  "rail.econ": "\u00c9conomie des agents",
+  "rail.pop": "Population",
+  "rail.land": "Classement des terres",
+  "rail.fold": "Replier / d\u00e9plier",
+};
+const esRail = {
+  "rail.layers": "Capas",
+  "rail.econ": "Econom\u00eda de agentes",
+  "rail.pop": "Poblaci\u00f3n",
+  "rail.land": "L\u00edderes de tierras",
+  "rail.fold": "Contraer / expandir",
+};
+const jaRail = {
+  "rail.layers": "\u30ec\u30a4\u30e4\u30fc",
+  "rail.econ": "\u30a8\u30fc\u30b8\u30a7\u30f3\u30c8\u7d4c\u6e08",
+  "rail.pop": "\u500b\u4f53\u7fa4",
+  "rail.land": "\u571f\u5730\u30e9\u30f3\u30ad\u30f3\u30b0",
+  "rail.fold": "\u6298\u308a\u305f\u305f\u3080 / \u5c55\u958b",
+};
+const koRail = {
+  "rail.layers": "\ub808\uc774\uc5b4",
+  "rail.econ": "\uc5d0\uc774\uc804\ud2b8 \uacbd\uc81c",
+  "rail.pop": "\uac1c\uccb4\uad70",
+  "rail.land": "\ud1a0\uc9c0 \uc21c\uc704",
+  "rail.fold": "\uc811\uae30 / \ud3bc\uce58\uae30",
+};
+const arRail = {
+  "rail.layers": "\u0627\u0644\u0637\u0628\u0642\u0627\u062a",
+  "rail.econ": "\u0627\u0642\u062a\u0635\u0627\u062f \u0627\u0644\u0648\u0643\u0644\u0627\u0621",
+  "rail.pop": "\u0627\u0644\u0633\u0643\u0627\u0646",
+  "rail.land": "\u062a\u0635\u0646\u064a\u0641 \u0627\u0644\u0623\u0631\u0627\u0636\u064a",
+  "rail.fold": "\u0637\u064a / \u062a\u0648\u0633\u064a\u0639",
+};
+Object.assign(en, enRail);
+Object.assign(zh, zhRail);
+Object.assign(fr, frRail);
+Object.assign(es, esRail);
+Object.assign(ja, jaRail);
+Object.assign(ko, koRail);
+Object.assign(ar, arRail);
+
 export { en, zh, fr, es, ja, ko, ar };

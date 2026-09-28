@@ -1,7 +1,7 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=98';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=99';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
 import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
@@ -133,7 +133,50 @@ window.__closeChron = closeChron;
 window.__closeCanary = closeCanary;
 window.__closeTemple = closeTemple;
 window.__closeWallets = closeWallets;
+// task 65 · Direction A: collapse a compact card to just its title row (and back). Pure DOM class
+// flip — the panel keeps its id and every live binding, so the data layer is untouched.
+export function toggleCardFold(which) {
+  const cls = which === "pop" ? "panel-pop" : which === "temp" ? "panel-temp" : "panel-econ";
+  const panel = document.querySelector("." + cls); if (!panel) return;
+  const folded = panel.classList.toggle("is-folded");
+  const btn = document.getElementById(which + "-fold");
+  if (btn) btn.setAttribute("aria-expanded", folded ? "false" : "true");
+  // the matching rail button mirrors the folded state so the rail reads as a card switch too
+  const rb = document.querySelector('#command-rail .rail-btn[data-act="' + which + '"]');
+  if (rb) rb.classList.toggle("is-off", folded);
+}
 export function bindUI() {
+  // ---- task 65 · Direction A: the left command rail is the single navigation spine. It only calls
+  // EXISTING toggles (mutual exclusion inside drawers.js already guarantees one drawer at a time),
+  // so the rail is a thin dispatcher — no drawer/economy logic is duplicated here. ----
+  const rail = $("command-rail");
+  if (rail) rail.addEventListener("click", (e) => {
+    const b = e.target.closest(".rail-btn"); if (!b) return;
+    const act = b.dataset.act;
+    switch (act) {
+      case "layers": document.body.classList.toggle("layers-pop"); break;
+      case "econ": toggleCardFold("econ"); break;
+      case "pop": toggleCardFold("pop"); break;
+      case "land": { const lb = document.querySelector('.layer-btn[data-layer="land"]'); if (lb) lb.click(); break; }
+      case "chronicle": toggleChron(); break;
+      case "canary": toggleCanary(); break;
+      case "temple": toggleTemple(); break;
+      case "walk": if (state.walkMode) state.walkMode.toggle(); break;
+      case "wallets": toggleWallets(); break;
+      case "proofs": toggleProofs(); break;
+      case "history": toggleHistory(); break;
+      case "brain": toggleBrain(); break;
+      case "lineage": toggleLineage(); break;
+      case "laureate": toggleLaureate(); break;
+      case "pulse": togglePulse(); break;
+      case "predict": togglePredict(); break;
+      case "arena": toggleArena(); break;
+    }
+  });
+  // the fold chevrons inside each compact card collapse it to just its title row
+  for (const fid of ["econ-fold", "pop-fold", "temp-fold"]) {
+    const fb = $(fid); if (fb) fb.addEventListener("click", () => toggleCardFold(fid.split("-")[0]));
+  }
   $("ins-close").addEventListener("click", deselect);
   const lsel = $("lang-select");
   if (lsel) lsel.addEventListener("change", () => setLang(lsel.value));

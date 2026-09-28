@@ -4276,3 +4276,177 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
                      - 166px - env(safe-area-inset-bottom, 0px) - 12px));
   }
 }
+
+/* ============================================================================
+   TASK 65 · DIRECTION A — COMMAND RAIL + UNIFIED DRAWER  (additive chrome layer)
+   ----------------------------------------------------------------------------
+   Appended LAST so it wins the cascade over the legacy layout above. It only
+   RE-SLOTS and RE-SKINS the existing chrome — the left command rail, a minimal
+   topbar, collapsible compact cards, an on-demand layer popover and a unified
+   380px right drawer. Every panel/drawer keeps its id, its bindings and its
+   content styles; the 3D field, the economy and the drawer render logic are
+   untouched. All legacy rules above stay valid on phones, where the rail hides
+   and the tuned mobile layout takes over unchanged.
+   ============================================================================ */
+:root {
+  --rail-w: 56px;              /* the left command spine */
+  --rail-ic: 21px;
+  --card-w: clamp(228px, 23vw, 292px);
+  --drawer-w: min(380px, 92vw);
+}
+.ra-ic { width: var(--rail-ic); height: var(--rail-ic); fill: none; stroke: currentColor;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.ra-ic.sm { width: 15px; height: 15px; stroke-width: 1.8; }
+
+/* ---------- the left command rail ---------- */
+.command-rail {
+  position: fixed; z-index: 13;
+  left: 0; top: var(--topbar-h); bottom: 0; width: var(--rail-w);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 0 calc(14px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+  background: var(--panel);
+  background-image: var(--leaf-grain);
+  border-right: var(--edge);
+  box-shadow: 6px 0 22px rgba(8, 14, 18, 0.10);
+}
+.command-rail::-webkit-scrollbar { width: 0; height: 0; }
+.rail-btn {
+  position: relative; flex: none;
+  width: 42px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: 10px; background: transparent; cursor: pointer;
+  color: var(--gall-2);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease,
+              transform var(--t-fast) ease, opacity var(--t-fast) ease;
+}
+.rail-btn:hover { background-color: rgba(var(--gold-rgb), 0.14); color: var(--gold-deep); transform: translateY(-1px); }
+.rail-btn:active { transform: translateY(0); }
+.rail-btn:focus-visible { box-shadow: var(--ring); }
+.rail-btn.is-off { opacity: 0.42; }
+.rail-sep { flex: none; width: 24px; height: 1px; margin: 6px 0; background: rgba(122, 96, 58, 0.30); }
+/* the hover tooltip reads the localized title attr (data-i18n-title keeps it in-language) */
+.rail-btn::after {
+  content: attr(title); position: absolute; left: 50px; top: 50%; transform: translateY(-50%);
+  z-index: 20; pointer-events: none; white-space: nowrap;
+  padding: 5px 9px; border-radius: 6px;
+  background: var(--gall); color: var(--vellum);
+  font: 500 10px/1 var(--mono); letter-spacing: 0.05em;
+  opacity: 0; transition: opacity var(--t-fast) ease;
+}
+.rail-btn:hover::after, .rail-btn:focus-visible::after { opacity: 1; }
+/* active = this rail button's drawer / mode is on stage (pure CSS, mirrors body.*-open) */
+body.chron-open    .rail-btn[data-act="chronicle"],
+body.canary-open   .rail-btn[data-act="canary"],
+body.temple-open   .rail-btn[data-act="temple"],
+body.land-open     .rail-btn[data-act="land"],
+body.wallets-open  .rail-btn[data-act="wallets"],
+body.proofs-open   .rail-btn[data-act="proofs"],
+body.history-open  .rail-btn[data-act="history"],
+body.brain-open    .rail-btn[data-act="brain"],
+body.lineage-open  .rail-btn[data-act="lineage"],
+body.laureate-open .rail-btn[data-act="laureate"],
+body.pulse-open    .rail-btn[data-act="pulse"],
+body.predict-open  .rail-btn[data-act="predict"],
+body.arena-open    .rail-btn[data-act="arena"],
+body.layers-pop    .rail-btn[data-act="layers"],
+body.walk-active   .rail-btn[data-act="walk"] {
+  background-color: rgba(var(--gold-rgb), 0.18); color: var(--gold-deep);
+}
+body.chron-open    .rail-btn[data-act="chronicle"]::before,
+body.canary-open   .rail-btn[data-act="canary"]::before,
+body.temple-open   .rail-btn[data-act="temple"]::before,
+body.wallets-open  .rail-btn[data-act="wallets"]::before,
+body.proofs-open   .rail-btn[data-act="proofs"]::before,
+body.history-open  .rail-btn[data-act="history"]::before,
+body.brain-open    .rail-btn[data-act="brain"]::before,
+body.lineage-open  .rail-btn[data-act="lineage"]::before,
+body.laureate-open .rail-btn[data-act="laureate"]::before,
+body.pulse-open    .rail-btn[data-act="pulse"]::before,
+body.predict-open  .rail-btn[data-act="predict"]::before,
+body.arena-open    .rail-btn[data-act="arena"]::before,
+body.layers-pop    .rail-btn[data-act="layers"]::before,
+body.walk-active   .rail-btn[data-act="walk"]::before {
+  content: ""; position: absolute; left: -7px; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 2px; background: var(--gold);
+}
+
+/* ---------- minimal topbar: a solid vellum band, cleared of the rail ---------- */
+.topbar {
+  background: linear-gradient(rgba(242, 238, 230, 0.94), rgba(240, 235, 225, 0.86));
+  border-bottom: var(--edge-soft);
+  box-shadow: 0 6px 22px rgba(8, 14, 18, 0.10);
+  padding-left: calc(var(--rail-w) + var(--pad) + env(safe-area-inset-left, 0px));
+}
+
+/* ---------- shift the left chrome clear of the rail ---------- */
+.panel-econ, .panel-temp {
+  left: calc(var(--rail-w) + var(--pad) + env(safe-area-inset-left, 0px));
+  width: var(--card-w);
+}
+.zoom-controls { left: calc(var(--rail-w) + var(--pad) + env(safe-area-inset-left, 0px)); }
+
+/* ---------- collapsible compact cards ---------- */
+.card-fold {
+  flex: none; margin-left: auto; align-self: center;
+  width: 22px; height: 22px; display: grid; place-items: center;
+  border: 0; border-radius: var(--r-pill); background: transparent; cursor: pointer;
+  color: var(--muted);
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.card-fold:hover { color: var(--gold-deep); background-color: rgba(var(--gold-rgb), 0.14); }
+.card-fold:focus-visible { box-shadow: var(--ring); }
+.card-fold .ra-ic { transition: transform var(--t-med) ease; }
+.panel-title .card-fold { margin-left: 6px; }
+/* folded = only the title row survives */
+.panel-econ.is-folded > *:not(.panel-title),
+.panel-pop.is-folded  > *:not(.panel-title),
+.panel-temp.is-folded > *:not(.regime-row) { display: none !important; }
+.panel.is-folded { padding-bottom: var(--sp-3); }
+.panel-econ.is-folded .panel-title,
+.panel-pop.is-folded  .panel-title { margin-bottom: 0; padding-bottom: 0; background-image: none; }
+.panel-temp.is-folded .regime-row { margin-bottom: 0; }
+.panel.is-folded .card-fold .ra-ic { transform: rotate(-90deg); }
+
+/* ---------- the layer tray becomes an on-demand popover (rail → layers) ---------- */
+.layer-toggles {
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transform: translateX(-50%) translateY(-6px);
+  transition: opacity var(--t-med) ease, transform var(--t-med) ease, visibility 0s linear var(--t-med);
+}
+body.layers-pop .layer-toggles {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+  transition: opacity var(--t-med) ease, transform var(--t-med) ease, visibility 0s linear 0s;
+}
+
+/* ---------- the unified right drawer: one 380px shell below the topbar ---------- */
+.drawer, .wallets { width: var(--drawer-w); top: var(--topbar-h); }
+.drawer.panel-canary { width: clamp(340px, 88vw, 1040px); }
+
+/* ---------- the legacy bottom-right steles are replaced by the rail ---------- */
+.chron-btn, .canary-btn, .temple-btn, .walk-btn { display: none; }
+
+/* ============================ TABLET (681–1024px) ============================ */
+@media (min-width: 681px) and (max-width: 1024px) {
+  :root { --rail-w: 50px; --card-w: clamp(210px, 30vw, 260px); --drawer-w: min(360px, 90vw); }
+  .rail-btn { width: 38px; height: 37px; }
+  .topmeta .x-handle { display: none; }
+}
+
+/* ============================ PHONE (≤680px) ============================
+   The rail hides and the tuned mobile layout above takes over verbatim: the
+   legacy steles return, the layer tray is always visible, panels keep their
+   flow-column positions. Nothing here re-flows the phone composition. */
+@media (max-width: 680px), (max-height: 600px) {
+  .command-rail { display: none; }
+  .topbar { padding-left: calc(var(--pad) + env(safe-area-inset-left, 0px)); }
+  .panel-econ, .panel-temp { left: initial; width: initial; }
+  .zoom-controls { left: initial; }
+  .chron-btn, .canary-btn, .temple-btn, .walk-btn { display: flex; }
+  /* the layer tray is permanent on phones — undo the desktop popover gating */
+  .layer-toggles {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translateX(-50%);
+  }
+  .drawer, .wallets { top: 0; }
+}
