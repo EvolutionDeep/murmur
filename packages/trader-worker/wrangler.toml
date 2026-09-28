@@ -67,7 +67,7 @@ SHARD_COUNT = "100"
 
 # ===== Visitor stimulus ("poke the swarm") =====
 STIMULUS_COOLDOWN_SEC = "30"                  # one injection per visitor per N seconds
-FRONTEND_ORIGIN = "*"                         # CORS origin for the frontend
+# FRONTEND_ORIGIN = "*"                        # EVICTED for FLYWIRE_TOPOLOGY + NEUROMOD_GATING binding slots — code default in config.ts is also "*", zero behavioural change
 
 # ===== Agent economy (x402 micropayments between fly agents) =====
 # Every fly is an autonomous agent with its own USDC micro-wallet; its neural drives decide what to buy and
@@ -168,7 +168,7 @@ LINEAGE_ADDRESS = "0x482b7a3bbef796c9627d86d5a23c67728a78096f"   # Arc mainnet (
 # and returns 403 registration_required once exhausted — for sustained high-volume mainnet use, add a Circle
 # API key (secret below) so auth switches to Bearer. Rollback = set the mode back to "off" and redeploy.
 ECONOMY_CIRCLE_FACILITATOR = "external"     # LIVE: Arc Pulse seller side settles via Circle's relayer (keyless trial; payTo 0x2b9a…055c signs the seller proof, Circle pays gas). Internal agent economy still self-broadcasts. "off"=self-broadcast all · "all"=+internal economy. Inert unless ECONOMY_FACILITATOR="onchain".
-CIRCLE_FACILITATOR_URL = "https://api.circle.com"   # Circle API base URL; sandbox = https://api-sandbox.circle.com. One host routes testnet+mainnet by the CAIP-2 network in the body.
+# CIRCLE_FACILITATOR_URL = "https://api.circle.com"  # EVICTED for FLYWIRE_TOPOLOGY + NEUROMOD_GATING binding slots — code default in config.ts is also "https://api.circle.com", zero behavioural change
 # CIRCLE_MAX_TIMEOUT_SECONDS = "12"       # EVICTED for ㉘ REFORM_ENABLED binding slot — code default in config.ts is also "12", zero behavioural change
 REFORM_ENABLED = "true"                    # ㉘ master switch — ARMED: estate duty, jubilee stabilizer and dark-age catalyst now live (pure read-out; set "false" for byte-for-byte rollback)
 # SECRET (optional) — set with `wrangler secret put CIRCLE_API_KEY`, NEVER written here: a Circle API key for
@@ -531,6 +531,16 @@ BRAIN_N_MODULATORY = "1100"
 BRAIN_N_MOTOR_PER_CHANNEL = "340"
 BRAIN_DENSITY = "0.0007"
 
+# ===== FlyWire FAFB 783 real connectome + neuromodulatory gating (A2/A3 go-live) =====
+# FLYWIRE_TOPOLOGY replaces the procedural PRNG generator with the REAL FAFB 783 MB+CX subgraph
+# (10,361 neurons / 467,314 synapses, fan-in ~45). The artifact lives in KV (FLYWIRE_ARTIFACT binding
+# below). This ROTATES manifestHash (new structural spec): 0xe97a2e16…0b29.
+# NEUROMOD_GATING lets the DA/OA-like neuromodulatory read-out gate exploration/arousal in the decoder
+# (manifest-neutral; pure behaviour enrichment).
+# Rollback: set either to "false" + redeploy ⇒ byte-for-byte the old PRNG path.
+FLYWIRE_TOPOLOGY = "true"                    # RE-ARMED after Task 64 perf fix: DO-storage subgraph cache (no cold-start KV stampede) + scheduled /tick abort 55s→90s + CRON_WEDGE_MS watchdog 900s→180s. Rollback: "false" + redeploy ⇒ byte-for-byte the old PRNG path.
+NEUROMOD_GATING = "true"                     # RE-ARMED with FLYWIRE_TOPOLOGY (decoder gating assumes FlyWire topology); manifest-neutral pure behaviour enrichment
+
 # ---------- Durable Object: population + market state ----------
 [[durable_objects.bindings]]
 name = "FLY_STATE"
@@ -565,6 +575,13 @@ new_sqlite_classes = ["FlyShardDO"]
 binding = "DB"
 database_name = "murmur-db"
 database_id = "a48ee596-6e94-433c-9d3e-b9e0e5c374ef"
+
+# ---------- Workers KV: FlyWire connectome artifact storage ----------
+# The FAFB 783 subgraph artifact (1.32 MB base64-gzip) lives here; loaded once per isolate by
+# flywire-loader.ts when FLYWIRE_TOPOLOGY="true". KV bindings do NOT count toward the 128 text-var wall.
+[[kv_namespaces]]
+binding = "FLYWIRE_ARTIFACT"
+id = "fc21e2dae15b45d09f786bb50250c5c3"
 
 # ---------- Observability ----------
 [observability]

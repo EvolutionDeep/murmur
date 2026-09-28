@@ -40,7 +40,7 @@ export interface Env {
   SIM_STEPS_PER_TICK?: string;      // LIF integration steps per sub-tick (default 500)
   NEUROMOD_GATING?: string;         // "true"/"false" (default false) — A3: let the DA/OA neuromodulatory read-out gate exploration/arousal in the decoder. OFF ⇒ the read-out is observed only and behaviour is byte-for-byte unchanged (dark deploy). Manifest-neutral either way.
   FLYWIRE_TOPOLOGY?: string;        // "true"/"false" (default false) — A2 online: use the REAL FAFB 783 FlyWire subgraph (10,361 neurons / 467k synapses) instead of the procedural PRNG generator. OFF ⇒ byte-for-byte the old buildConnectome path. When ON, genome operators mutate PARAMETERS (weight gain / threshold / tau) instead of layer sizes, and the topology is FIXED from the artifact. Manifest-affecting: rotates manifestHash (new structural spec). MUST stay false until shadow-verified + user-approved.
-  FLYWIRE_ARTIFACT?: R2Bucket;        // R2 bucket holding fafb783-mb-cx.bin.gz.b64 (1.32 MB). Only needed when FLYWIRE_TOPOLOGY=true.
+  FLYWIRE_ARTIFACT?: KVNamespace;     // KV namespace holding fafb783-mb-cx.bin.gz.b64 (1.32 MB). Only needed when FLYWIRE_TOPOLOGY=true.
   SHARD_COUNT?: string;             // swarm shards across N Durable Objects (default 1 = single DO; needs the FLY_SHARD binding)
   EVOLUTION_MAX_LIVE_POPULATION?: string; // live-population growth ceiling (default = POPULATION_SIZE = no growth). ALSO the STABLE basis for shard slices, so raising it MUST be paired with SHARD_COUNT = ceil(cap/2) to keep 2 flies/shard (no brain ever migrates as the population grows).
 
@@ -408,8 +408,8 @@ export interface RuntimeConfig {
    * spec changes (different neuronCount/synapseCount/edgeHash), so manifestHash rotates. Dark-deploy only.
    */
   flywireTopology: boolean;
-  /** R2 bucket holding the FlyWire artifact (only needed when flywireTopology=true). */
-  flywireArtifact?: R2Bucket;
+  /** KV namespace holding the FlyWire artifact (only needed when flywireTopology=true). */
+  flywireArtifact?: KVNamespace;
   /** Durable Objects the swarm is sharded across (1 = the single FlyStateDO, today's behaviour). */
   shardCount: number;
   /**

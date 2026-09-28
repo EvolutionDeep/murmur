@@ -153,12 +153,16 @@ export default {
     const url = `https://do.internal/tick`;
     // Backstop ceiling on the cron's own /tick call. A1 already bounds every coordinator→shard RPC
     // inside the DO's step(), and the cron persists the clock even when its body throws — so a healthy
-    // /tick finishes well under the 60s cadence. This signal ONLY fires if the whole DO handler wedges on
-    // some OTHER unbounded await; it stops ONE scheduled invocation from sitting at the ~900s wall (the
-    // freeze we caught) so the NEXT minute's cron isn't queued behind a corpse. Generous (55s) so it can
-    // never cancel a legitimate slow tick; the error is swallowed because a failed beat self-heals next minute.
+    // /tick finishes well under the 60s cadence (Task 64 bench: ~21s @66 alive, ~33s @100 cap warm).
+    // This signal ONLY fires if the whole DO handler wedges on some OTHER unbounded await; it stops ONE
+    // scheduled invocation from sitting at the ~900s wall (the freeze we caught) so the NEXT minute's cron
+    // isn't queued behind a corpse. Fix 2 (Task 64): raised 55s→90s. A single cron may now legitimately
+    // span >60s (a cold shard's first KV load, or a full 100-fly roster) without being aborted mid-fan-out
+    // — Cloudflare lets a scheduled handler run up to 15 min, and the DO reentrancy guard + P2 heartbeat
+    // already make an over-running cron SKIP (not double-drive) the next beat while keeping lastCron fresh.
+    // 90s stays well under the DO wall and under CRON_WEDGE_MS (180s) so the watchdog never false-fires.
     try {
-      await stub.fetch(new Request(url, { method: "POST", headers, signal: AbortSignal.timeout(55000) }));
+      await stub.fetch(new Request(url, { method: "POST", headers, signal: AbortSignal.timeout(90000) }));
     } catch (e) {
       console.error("[worker] scheduled /tick failed or timed out (next cron retries):", (e as Error).message);
     }

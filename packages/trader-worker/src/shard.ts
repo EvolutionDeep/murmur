@@ -16,7 +16,7 @@
 // never routes here — so they are internal by construction and need no auth gate or CORS of their own.
 
 import { FlyBrain, genomeToConnectomeOptions, buildFromGenomeFlyWire, buildFromFlyWire, FLYWIRE_DEFAULTS, type Genome, type MarketPulse, type StimulusEvent, type FlyWireSubgraph } from "@fly/fly-brain";
-import { loadSubgraph } from "./flywire-loader.js";
+import { loadSubgraphCached } from "./flywire-loader.js";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice } from "./config.js";
 import {
@@ -112,10 +112,13 @@ export class FlyShardDO {
     return this.flies;
   }
 
-  /** Load + cache the FlyWire subgraph (async; called once per isolate lifetime). */
+  /** Load + cache the FlyWire subgraph (async; called once per isolate lifetime).
+   *  Fix 1 (Task 64): prefer THIS shard's own DO-storage cache over the KV cold path, so a deploy that
+   *  cold-boots all ~100 shards at once no longer has every one of them KV-fetch + gunzip the same
+   *  1.32 MB artifact (the ~24 s/shard stampede that froze the swarm and blew the cron budget). */
   private async ensureSubgraph(): Promise<FlyWireSubgraph> {
     if (this.flywireSubgraph) return this.flywireSubgraph;
-    this.flywireSubgraph = await loadSubgraph(this.cfg.flywireArtifact);
+    this.flywireSubgraph = await loadSubgraphCached(this.state.storage, this.cfg.flywireArtifact);
     return this.flywireSubgraph;
   }
 

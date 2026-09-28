@@ -24,7 +24,7 @@ import {
   type NeuromodState,
   type StimulusEvent,
 } from "@fly/fly-brain";
-import { loadSubgraph } from "./flywire-loader.js";
+import { loadSubgraphCached } from "./flywire-loader.js";
 import type { Env, RuntimeConfig } from "./config.js";
 import { fliesPerShard, shardOf } from "./config.js";
 import type { Regime } from "./market.js";
@@ -186,7 +186,8 @@ export class LocalSwarm implements SwarmBackend {
   /** Load the persisted population (or found a fresh one) — the exact path ensurePopulation() used. */
   static async load(cfg: RuntimeConfig, storage: DurableObjectStorage): Promise<LocalSwarm> {
     // FlyWire topology: pre-load the subgraph so Population can build brains synchronously.
-    const subgraph: FlyWireSubgraph | null = cfg.flywireTopology ? await loadSubgraph(cfg.flywireArtifact) : null;
+    // Fix 1 (Task 64): DO-storage cache first, KV only on a miss (kills the cold-start gunzip stampede).
+    const subgraph: FlyWireSubgraph | null = cfg.flywireTopology ? await loadSubgraphCached(storage, cfg.flywireArtifact) : null;
     const stored = await storage.get<string>(KEY_POPULATION);
     let population: Population | null = null;
     if (stored) {
@@ -272,7 +273,7 @@ export class LocalSwarm implements SwarmBackend {
   }
 
   async reset(storage: DurableObjectStorage): Promise<void> {
-    const subgraph: FlyWireSubgraph | null = this.cfg.flywireTopology ? await loadSubgraph(this.cfg.flywireArtifact) : null;
+    const subgraph: FlyWireSubgraph | null = this.cfg.flywireTopology ? await loadSubgraphCached(storage, this.cfg.flywireArtifact) : null;
     this.population = new Population(this.cfg, undefined, subgraph);
     await storage.put(KEY_POPULATION, this.population.serialize());
   }
@@ -580,8 +581,13 @@ export class ShardedSwarm implements SwarmBackend {
       `[swarm] stepBatch fan-out: ${active.length}/${this.stubs.length} shards (empty skipped) × ${n} sub-tick(s) merged, commit=${commit}`,
     );
     // A merged advance integrates n segments in ONE isolate, so its ceiling scales with n — bounded well inside
-    // the 55s index.ts backstop (6 segments ⇒ 40s). Every signal is created at t=0 and the whole fan-out is
+    // the 90s index.ts backstop (Fix 2 / Task 64). Every signal is created at t=0 and the whole fan-out is
     // hard-bounded by this one ceiling, so a wedged shard still degrades instead of hanging the cron.
+    // Per-shard ceiling for n=6 is 40s: Fix 1's DO-storage subgraph cache makes a STEADY-state shard advance
+    // ~2s (bench) and a cached cold boot ~3s, so 40s is a ~13× margin that only ever bites a genuinely wedged
+    // shard. It is deliberately NOT tightened to ~30s because the ONE cold path that still hits KV (a shard's
+    // very first /advance after a deploy, before its cache is written) can take ~24s under fan-out contention —
+    // cutting that at 30s would abort it before writeSubgraphCache lands and re-herd KV every cron.
     const advanceTimeoutMs = n > 1 ? Math.min(45000, ADVANCE_TIMEOUT_MS * n + 10000) : ADVANCE_TIMEOUT_MS;
     const body = JSON.stringify({ pulse, stimuli, simSteps, persist: commit, subTicks: n });
     // One misbehaving shard must NOT abort the whole cron: a rejected Promise.all would skip the coordinator's

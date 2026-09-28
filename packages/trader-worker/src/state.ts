@@ -32,7 +32,8 @@ import { genomeWithinBudget, hatchBudgetFromGenesis } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
 import { netReceiptHash } from "./provenance.js";
-import { assembleManifest, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
+import { assembleManifest, assembleManifestFlyWire, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
+import { loadSubgraph } from "./flywire-loader.js";
 import {
   applyBreed,
   genesisLineage,
@@ -201,9 +202,13 @@ const KEY_EVOLUTION = "evolution:v1";
 const KEY_LAST_CRON = "lastCron";
 /** P2 watchdog: how long after a cron ENDS its DO alarm fires (a short, cheap health/heartbeat beat). */
 const ALARM_WATCHDOG_MS = 90_000;
-/** P2 watchdog: a cron whose guard has been held past this (the ~900s DO wall) is presumed killed or silently
- *  hung, so the alarm releases the reentrancy guard. Comfortably above a healthy post-P0 (<60s) cron. */
-const CRON_WEDGE_MS = 900_000;
+/** P2 watchdog (Fix 4 / Task 64): a cron whose guard has been held past this is presumed killed or silently
+ *  hung, so the alarm releases the reentrancy guard. Lowered 900s→180s: the scheduled /tick is now hard-aborted
+ *  at 90s (index.ts Fix 2), so NO legitimate cron invocation survives past ~90s — anything still "running" at
+ *  180s (2× the abort bound) is definitively wedged. Recovers the swarm 5× faster than the old ~900s wall while
+ *  staying clear of a healthy warm cron (bench ~21–33s) so it can never force-release mid-legit-tick (which
+ *  would let the next cron double-drive the same brains). */
+const CRON_WEDGE_MS = 180_000;
 const MAX_STIMULI = 200;
 /** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage.
  *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash).
@@ -2735,6 +2740,15 @@ export class FlyStateDO {
     } catch (e) {
       console.warn("[DO] cron start heartbeat failed (non-fatal):", (e as Error).message);
     }
+    // Fix 4 (Task 64): arm the watchdog at cron START, not only in the finally. If this cron is killed
+    // (DO wall / OOM / the 90s scheduled abort) before its finally runs, the guard would otherwise stay
+    // stuck true on a warm isolate with no alarm pending to release it. setAlarm is persistent + not a
+    // fan-out, so this adds no cron latency; the finally re-arms it on the healthy path (overwriting this).
+    try {
+      await this.state.storage.setAlarm(this.cronStartedAt + ALARM_WATCHDOG_MS);
+    } catch (e) {
+      console.warn("[DO] cron start watchdog arm failed (non-fatal):", (e as Error).message);
+    }
     try {
       await this.cronInner();
     } catch (e) {
@@ -3902,7 +3916,9 @@ export class FlyStateDO {
    */
   private async ensureManifest(): Promise<{ manifest: BrainManifest; hash: string }> {
     if (!this.manifestCache) {
-      const manifest = assembleManifest(this.cfg);
+      const manifest = this.cfg.flywireTopology
+        ? assembleManifestFlyWire(this.cfg, await loadSubgraph(this.cfg.flywireArtifact))
+        : assembleManifest(this.cfg);
       const hash = await manifestHash(manifest);
       this.manifestCache = { manifest, hash };
     }
