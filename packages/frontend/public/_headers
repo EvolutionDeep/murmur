@@ -169,3 +169,9 @@
 # returning reader must never run stale atlas bytes after a subgraph re-cut.
 /flywire-meta.json
   Cache-Control: no-cache, must-revalidate
+
+# task 51: the PoCA verifier pure core (pocaVerify.js) — a bare-ESM module imported with NO ?v cache-buster
+# by both the browser audit console (window.__pocaVerify) and, byte-for-byte, the Node CLI. Force etag
+# revalidation so a returning auditor never runs a stale crypto core against fresh chain data.
+/pocaVerify.js
+  Cache-Control: no-cache, no-store, must-revalidate

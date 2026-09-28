@@ -1,0 +1,198 @@
+{
+  "meta": {
+    "description": "Golden test vectors for the PoCA verifier pure core (packages/frontend/public/pocaVerify.js).",
+    "generatedBy": "an independent node:crypto (createHash) oracle, cross-validating the shipped WebCrypto module.",
+    "contract": "byte-for-byte packages/trader-worker/src/poca.ts + provenance.ts (canonical/sha256Hex).",
+    "codeCommitment": "2bd01a41b93d6b91d629a514f1d79d3bedb3341f7d3889f72bf3590afe181799",
+    "count": 14
+  },
+  "vectors": [
+    {
+      "id": "stateDigest-canonical",
+      "kind": "stateDigest",
+      "input": {
+        "tickIndex": 100,
+        "proofChainHead": "",
+        "chronicler": {
+          "headHash": "aa",
+          "era": 1,
+          "seq": 2
+        },
+        "arenaCursor": {
+          "openedRound": 3,
+          "resolvedRound": 2
+        },
+        "warCount": -1,
+        "pop": {
+          "size": 24,
+          "generation": 1,
+          "civLevel": 3
+        },
+        "econ": {
+          "volumeAtomic": "1000000",
+          "count": 5
+        }
+      },
+      "expected": "7425cb30e16d57ff2f0a0c351cc5d7e3de9c54bde8f3fdaf9e7c4f63d3615f3b"
+    },
+    {
+      "id": "cronDigest-chain-0-genesis",
+      "kind": "cronDigest",
+      "input": {
+        "prevDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "i": 0,
+        "stateDigest": "7425cb30e16d57ff2f0a0c351cc5d7e3de9c54bde8f3fdaf9e7c4f63d3615f3b",
+        "codeCommitment": "2bd01a41b93d6b91d629a514f1d79d3bedb3341f7d3889f72bf3590afe181799"
+      },
+      "expected": "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452"
+    },
+    {
+      "id": "cronDigest-chain-1",
+      "kind": "cronDigest",
+      "input": {
+        "prevDigest": "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452",
+        "i": 1,
+        "stateDigest": "adf9d0a0d73f3fde444e71250abbfc68c3584b633cfc6447fac0fe4a689fc813",
+        "codeCommitment": "2bd01a41b93d6b91d629a514f1d79d3bedb3341f7d3889f72bf3590afe181799"
+      },
+      "expected": "35c2baeaa1b8db20a15a745790bebdeb12745ebd3a96692cb74781a8116da246"
+    },
+    {
+      "id": "cronDigest-chain-2",
+      "kind": "cronDigest",
+      "input": {
+        "prevDigest": "35c2baeaa1b8db20a15a745790bebdeb12745ebd3a96692cb74781a8116da246",
+        "i": 2,
+        "stateDigest": "6ef8b5dfb9acac2bae2b252241f23161573a8b54756c05e6f187415bc057a99a",
+        "codeCommitment": "2bd01a41b93d6b91d629a514f1d79d3bedb3341f7d3889f72bf3590afe181799"
+      },
+      "expected": "4237d5e49d3fc7966e0618765e8af2e99c960e1a30eec7bf3b7dccc0ee5bbda9"
+    },
+    {
+      "id": "merkleRoot-empty",
+      "kind": "merkleRoot",
+      "input": {
+        "digests": []
+      },
+      "expected": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "id": "merkleRoot-1-leaf",
+      "kind": "merkleRoot",
+      "input": {
+        "digests": [
+          "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452"
+        ]
+      },
+      "expected": "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452"
+    },
+    {
+      "id": "merkleRoot-2-leaves",
+      "kind": "merkleRoot",
+      "input": {
+        "digests": [
+          "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452",
+          "35c2baeaa1b8db20a15a745790bebdeb12745ebd3a96692cb74781a8116da246"
+        ]
+      },
+      "expected": "7785305242c099db562c9b07f9405bdd50ce2fa218844cc5f4903ad72c7c4c0a"
+    },
+    {
+      "id": "merkleRoot-3-leaves",
+      "kind": "merkleRoot",
+      "input": {
+        "digests": [
+          "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452",
+          "35c2baeaa1b8db20a15a745790bebdeb12745ebd3a96692cb74781a8116da246",
+          "4237d5e49d3fc7966e0618765e8af2e99c960e1a30eec7bf3b7dccc0ee5bbda9"
+        ]
+      },
+      "expected": "9cce962c65077e0bd116337213bf8c6a93af61fec26d7c05cef77ccb28f702da"
+    },
+    {
+      "id": "merkleRoot-5-leaves",
+      "kind": "merkleRoot",
+      "input": {
+        "digests": [
+          "b449134a60ef2636cf566f0af292881550460ce45a0709a3edbf33d9df7a6452",
+          "35c2baeaa1b8db20a15a745790bebdeb12745ebd3a96692cb74781a8116da246",
+          "4237d5e49d3fc7966e0618765e8af2e99c960e1a30eec7bf3b7dccc0ee5bbda9",
+          "06a2fc3643ef38245d03b82dbc70205fdb9d155bdd4de26cdd4bdaddc8ce9377",
+          "b68e0d0406b8a04e2876450d9cc102999341fa77b5dbc574c83358bf5515667d"
+        ]
+      },
+      "expected": "a334b8caeaa9eee5340e7f79f6ec459515609b24d1410b466f2f5f85d02f5034"
+    },
+    {
+      "id": "merkleVerify-positive",
+      "kind": "merkleVerify",
+      "input": {
+        "leaf": "06a2fc3643ef38245d03b82dbc70205fdb9d155bdd4de26cdd4bdaddc8ce9377",
+        "path": [
+          {
+            "sibling": "4237d5e49d3fc7966e0618765e8af2e99c960e1a30eec7bf3b7dccc0ee5bbda9",
+            "direction": 1
+          },
+          {
+            "sibling": "7785305242c099db562c9b07f9405bdd50ce2fa218844cc5f4903ad72c7c4c0a",
+            "direction": 1
+          },
+          {
+            "sibling": "50ba7eb9b076af68738be32b86c137c8dbe8f3c5ede47c46642ff1d0330e5d77",
+            "direction": 0
+          }
+        ],
+        "root": "a334b8caeaa9eee5340e7f79f6ec459515609b24d1410b466f2f5f85d02f5034"
+      },
+      "expected": true
+    },
+    {
+      "id": "merkleVerify-negative-tampered-sibling",
+      "kind": "merkleVerify",
+      "input": {
+        "leaf": "06a2fc3643ef38245d03b82dbc70205fdb9d155bdd4de26cdd4bdaddc8ce9377",
+        "path": [
+          {
+            "sibling": "1868d6fac91d8fc11c456061b0bff3c00fcc09c2f77beaa8c76fb7ed0779c7fb",
+            "direction": 1
+          },
+          {
+            "sibling": "7785305242c099db562c9b07f9405bdd50ce2fa218844cc5f4903ad72c7c4c0a",
+            "direction": 1
+          },
+          {
+            "sibling": "50ba7eb9b076af68738be32b86c137c8dbe8f3c5ede47c46642ff1d0330e5d77",
+            "direction": 0
+          }
+        ],
+        "root": "a334b8caeaa9eee5340e7f79f6ec459515609b24d1410b466f2f5f85d02f5034"
+      },
+      "expected": false
+    },
+    {
+      "id": "u64be-zero",
+      "kind": "u64be",
+      "input": {
+        "n": 0
+      },
+      "expected": "0000000000000000"
+    },
+    {
+      "id": "u64be-2pow32",
+      "kind": "u64be",
+      "input": {
+        "n": 4294967296
+      },
+      "expected": "0000000100000000"
+    },
+    {
+      "id": "u64be-max-u64",
+      "kind": "u64be",
+      "input": {
+        "n": "18446744073709551615",
+        "bigint": true
+      },
+      "expected": "ffffffffffffffff"
+    }
+  ]
+}

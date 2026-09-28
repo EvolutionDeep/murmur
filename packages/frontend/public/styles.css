@@ -4047,6 +4047,125 @@ body.land-open .zoom-controls { opacity: 0; pointer-events: none; }
     padding-bottom: calc(var(--sp-8) + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ============ task 50: PoCA — proof-of-continuity anchor drawer ============
+   Right-edge sheet reusing the shared .drawer chrome (vellum + gilt spine). Innards:
+   continuity badge (green / amber / grey), a label-value status grid, the sealed-epoch
+   card flow, the admin-discontinuity log and the verifier pointer. Every hash runs
+   IBM Plex Mono with word-break so a full 64-hex title tooltip or a narrow phone
+   (≤680px, where .drawer already goes min(96vw, 440px)) can never overflow the sheet. */
+.drawer.poca-drawer { width: clamp(320px, 36vw, 460px); }
+body.poca-open .poca-drawer { pointer-events: auto; }
+
+.pc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.pc-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: var(--r-pill);
+  font: 700 max(9.5px, var(--fs-floor, 0px))/1 var(--sans);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.pc-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pc-badge.is-unbroken { color: #1c5c33; background: rgba(28, 92, 51, 0.09); }
+.pc-badge.is-pending  { color: #8a6116; background: rgba(176, 138, 54, 0.13); }
+.pc-badge.is-disabled { color: var(--muted); background: rgba(var(--ink-rgb), 0.05); }
+.pc-refresh {
+  margin-left: auto; flex: none;
+  width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer;
+  background: transparent; border: 1px solid var(--hair); border-radius: var(--r-pill);
+  font: 14px/1 var(--mono); color: var(--muted);
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.pc-refresh:hover { color: var(--gold-deep); border-color: rgba(var(--gold-rgb), 0.5); transform: rotate(180deg); }
+.pc-refresh:focus-visible { box-shadow: var(--ring); }
+html[dir="rtl"] .pc-refresh { margin-left: 0; margin-right: auto; }
+
+.pc-status { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-bottom: 12px; }
+.pc-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pc-k {
+  font: max(8px, var(--fs-floor, 0px))/1.3 var(--mono);
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.pc-v {
+  font: 600 max(10.5px, var(--fs-floor, 0px))/1.35 var(--sans); color: var(--ink);
+  word-break: break-all; overflow-wrap: anywhere;
+}
+.pc-v em { font-style: normal; font-weight: 400; font-size: max(8.5px, var(--fs-floor, 0px)); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.pc-v .fp { font-family: var(--mono); font-weight: 400; }
+.pc-dim { color: var(--muted); opacity: 0.6; }
+
+.pc-ci {
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  padding: 8px 10px; margin-bottom: 14px;
+  border: 1px dashed rgba(var(--accent-rgb), 0.4); border-radius: 2px;
+  background: rgba(var(--ink-rgb), 0.03);
+  font: max(9px, var(--fs-floor, 0px))/1.5 var(--mono); color: var(--muted);
+}
+.pc-ci-item { word-break: break-all; overflow-wrap: anywhere; }
+.pc-ci-item b { font-weight: 600; color: var(--accent); }
+
+.pc-section { margin-bottom: 18px; }
+
+.pc-epochs { display: flex; flex-direction: column; gap: 8px; }
+.pc-epoch {
+  padding: 9px 11px;
+  border: 1px solid var(--hair); border-radius: 2px;
+  background: rgba(var(--accent-rgb), 0.03);
+}
+.pc-ep-top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 9px; }
+.pc-ep-idx { font: 700 max(11px, var(--fs-floor, 0px))/1 var(--mono); color: var(--gold-deep); }
+.pc-reason {
+  padding: 2px 8px; border-radius: var(--r-pill);
+  font: 700 max(8px, var(--fs-floor, 0px))/1.5 var(--sans);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.pc-reason.is-threshold  { color: #1c5c33; background: rgba(28, 92, 51, 0.07); }
+.pc-reason.is-reset      { color: var(--rust); background: rgba(156, 59, 46, 0.07); }
+.pc-reason.is-code-change { color: #8a6116; background: rgba(176, 138, 54, 0.10); }
+.pc-ep-ticks { margin-left: auto; font: max(9px, var(--fs-floor, 0px))/1 var(--mono); color: var(--muted); }
+.pc-ep-dur { font: max(9px, var(--fs-floor, 0px))/1 var(--mono); color: var(--accent); }
+html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
+.pc-ep-times { margin-top: 5px; font: max(9px, var(--fs-floor, 0px))/1.5 var(--mono); color: var(--muted); }
+.pc-ep-hashes { display: flex; flex-wrap: wrap; gap: 3px 14px; margin-top: 5px; }
+.pc-h {
+  font: max(9px, var(--fs-floor, 0px))/1.6 var(--mono); color: var(--muted);
+  word-break: break-all; overflow-wrap: anywhere;
+}
+.pc-h b { font-weight: 600; color: var(--ink); }
+.pc-h .tx-link { font-family: var(--mono); }
+
+.pc-admin { display: flex; flex-direction: column; }
+.pc-admin-row {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 7px 0; border-bottom: 1px solid rgba(var(--gold-rgb), 0.18);
+}
+.pc-admin-row:last-child { border-bottom: none; }
+.pc-admin-ico { flex: none; width: 15px; color: var(--gold-deep); margin-top: 2px; }
+.pc-admin-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pc-admin-kind { font: 600 max(10px, var(--fs-floor, 0px))/1.3 var(--sans); color: var(--ink); }
+.pc-admin-ts { font: max(8.5px, var(--fs-floor, 0px))/1.4 var(--mono); color: var(--muted); }
+.pc-admin-note {
+  font: max(9.5px, var(--fs-floor, 0px))/1.5 var(--sans); color: var(--muted);
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.pc-admin-hash {
+  font-size: max(8.5px, var(--fs-floor, 0px)); color: var(--accent); opacity: 0.85;
+  word-break: break-all; overflow-wrap: anywhere;
+}
+.pc-admin-tx { flex: none; align-self: center; }
+
+.pc-note { font: max(10px, var(--fs-floor, 0px))/1.65 var(--sans); color: var(--muted); margin: 0 0 8px; }
+
+@media (max-width: 820px) {
+  .drawer.poca-drawer { width: min(94vw, 460px); }
+}
+/* ≤480px: the shared full-bleed rule only targets `.drawer` (0,1,0); this compound
+   selector (0,2,0) matches the base `.drawer.poca-drawer` width and, coming later in
+   source, wins — so the sheet pins to both edges exactly like temple / land / canary. */
+@media (max-width: 480px) {
+  .drawer.poca-drawer { left: 0; right: 0; width: auto; max-width: none; }
+}
 @media (max-width: 360px) {
   .layer-toggles .layer-btn { padding: 8px 7px; font-size: max(9.5px, var(--fs-floor)); }
   .wordmark .name { font-size: 15px; letter-spacing: 0.12em; text-indent: 0.12em; }

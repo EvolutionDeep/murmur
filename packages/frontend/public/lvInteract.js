@@ -24,7 +24,7 @@ import {
   lvTouchNote, lvNarrow,
 } from './lvState.js';
 import { clamp, $, houseOf } from './shared.js';
-import { t as T } from './i18n.js?v=109';
+import { t as T } from './i18n.js?v=110';
 // task 33 · C25 — the replay clock. lvTimeReplay never imports this module, so core → lvInteract →
 // lvTimeReplay → lvState stays a one-way chain (no cycle).
 import { lvReplayAdvance } from './lvTimeReplay.js';

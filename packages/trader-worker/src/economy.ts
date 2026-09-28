@@ -3424,6 +3424,51 @@ export class AgentEconomy {
     try { return await f.arenaRoundInfo(roundId); } catch { return null; }
   }
 
+  // ---------- proof of continuous agency (on-chain mirror of the cron-digest epoch chain) ----------
+  //
+  // Thin, best-effort delegators to the facilitator's PoCARegistry wiring (see x402.ts). The PoCA engine
+  // (poca.ts) calls these to mirror its off-chain epoch lifecycle on-chain: open an epoch (pinning the code
+  // commitment + genesis head), seal an epoch (Merkle root over its digests), and log each administrative
+  // discontinuity. Every delegator degrades to null when the registry is unwired / zero-address (DISABLED
+  // mode) or the chain call fails, so PoCA can NEVER block or fail a live tick — exactly the arenaOpen
+  // discipline. The off-chain epoch chain is authoritative and runs identically either way.
+
+  /** True when an on-chain PoCA registry is wired (non-zero); false ⇒ the engine runs off-chain only. */
+  get pocaOnchainEnabled(): boolean {
+    const f = this.facilitator as { hasPoca?: boolean };
+    return f.hasPoca === true;
+  }
+
+  /** Open a PoCA epoch on-chain (pins codeCommitment + genesisHead); tx hash, or null when disabled/failed. */
+  async pocaOpenEpoch(codeCommitment: string, genesisHead: string): Promise<string | null> {
+    const f = this.facilitator as { pocaOpenEpoch?: (cc: string, gh: string) => Promise<string | null> };
+    if (typeof f.pocaOpenEpoch !== "function") return null;
+    try { return await f.pocaOpenEpoch(codeCommitment, genesisHead); } catch { return null; }
+  }
+
+  /** Seal a PoCA epoch on-chain (Merkle root over its digests); tx hash, or null when disabled/failed. */
+  async pocaSealEpoch(epochIndex: number, sealedHead: string, tickCount: number, merkleRoot: string): Promise<string | null> {
+    const f = this.facilitator as {
+      pocaSealEpoch?: (i: number, head: string, ticks: number, root: string) => Promise<string | null>;
+    };
+    if (typeof f.pocaSealEpoch !== "function") return null;
+    try { return await f.pocaSealEpoch(epochIndex, sealedHead, tickCount, merkleRoot); } catch { return null; }
+  }
+
+  /** Log a PoCA admin discontinuity on-chain (kind 1–7 + payloadHash); tx hash, or null when disabled/failed. */
+  async pocaAdminAction(kind: number, payloadHash: string): Promise<string | null> {
+    const f = this.facilitator as { pocaAdminAction?: (kind: number, payloadHash: string) => Promise<string | null> };
+    if (typeof f.pocaAdminAction !== "function") return null;
+    try { return await f.pocaAdminAction(kind, payloadHash); } catch { return null; }
+  }
+
+  /** Read the registry's authorized committer address (the wallet it expects writes from); null when disabled. */
+  async pocaCommitter(): Promise<string | null> {
+    const f = this.facilitator as { pocaCommitter?: () => Promise<string | null> };
+    if (typeof f.pocaCommitter !== "function") return null;
+    try { return await f.pocaCommitter(); } catch { return null; }
+  }
+
   // ---------- on-chain house WAR + TAXATION (real-USDC coffer; the contract derives the winner) ----------
   //
   // Thin, best-effort delegators to the facilitator's WarCoffer wiring (see x402.ts) + the ledger-side MIRROR

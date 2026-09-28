@@ -15,17 +15,24 @@
 //
 // Usage:
 //   npx tsx scripts/replay-brain.ts                       # build the default config offline and verify
+//   npx tsx scripts/replay-brain.ts --flywire             # FlyWire mode (real FAFB 783 subgraph)
 //   npx tsx scripts/replay-brain.ts --population 24 --seed-base 42
 //   npx tsx scripts/replay-brain.ts --file ./manifest.json --expect 3f9a...   # verify a saved manifest
 //   npx tsx scripts/replay-brain.ts --url  https://<worker>/manifest          # verify the live one
 //   npx tsx scripts/replay-brain.ts --out ./manifest.json                     # also dump the artifact
+//
+// FlyWire mode activates when: --flywire flag, FLYWIRE_TOPOLOGY=true env, or wrangler.toml says true.
+// It loads packages/fly-brain/src/connectome-data/fafb783-mb-cx.bin.gz.b64 locally (same artifact
+// production reads from KV) and calls assembleManifestFlyWire to produce the hash that matches on-chain.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { decodeFlyWireArtifact, type FlyWireSubgraph } from "@fly/fly-brain";
 import { loadConfig, type Env } from "../src/config.js";
 import {
   assembleManifest,
+  assembleManifestFlyWire,
   manifestHash,
   replayVerifyManifest,
   type BrainManifest,
@@ -33,6 +40,10 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WRANGLER = path.resolve(here, "..", "wrangler.toml");
+/** Local path to the FAFB 783 artifact (same file uploaded to KV for production). */
+const FLYWIRE_ARTIFACT_PATH = path.resolve(
+  here, "..", "..", "fly-brain", "src", "connectome-data", "fafb783-mb-cx.bin.gz.b64",
+);
 
 interface Args {
   file?: string;
@@ -46,6 +57,8 @@ interface Args {
   /** "" = default wrangler.toml; otherwise the given path; undefined = don't read wrangler. */
   fromWrangler?: string;
   noWrangler?: boolean;
+  /** Force FlyWire topology mode (real FAFB 783 subgraph) instead of PRNG. */
+  flywire?: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -66,6 +79,7 @@ function parseArgs(argv: string[]): Args {
       if (v && !v.startsWith("--")) { a.fromWrangler = v; i++; } else { a.fromWrangler = ""; }
     }
     else if (k === "--no-wrangler") { a.noWrangler = true; }
+    else if (k === "--flywire") { a.flywire = true; }
   }
   return a;
 }
@@ -90,10 +104,40 @@ function parseWranglerVars(file: string): Partial<Env> {
   return env as Partial<Env>;
 }
 
+/**
+ * Determine whether FlyWire mode is active. Priority:
+ *   1. --flywire CLI flag → always true
+ *   2. FLYWIRE_TOPOLOGY env var === "true"
+ *   3. wrangler.toml [vars] FLYWIRE_TOPOLOGY === "true"
+ */
+function detectFlyWireMode(a: Args, wranglerEnv: Partial<Env>): boolean {
+  if (a.flywire) return true;
+  if ((process.env.FLYWIRE_TOPOLOGY ?? "").toLowerCase() === "true") return true;
+  if ((wranglerEnv.FLYWIRE_TOPOLOGY ?? "").toLowerCase() === "true") return true;
+  return false;
+}
+
+/** Load the FlyWire subgraph from the local artifact file (same data production reads from KV). */
+async function loadSubgraphLocal(): Promise<FlyWireSubgraph> {
+  if (!existsSync(FLYWIRE_ARTIFACT_PATH)) {
+    throw new Error(
+      `FlyWire artifact not found at:\n  ${FLYWIRE_ARTIFACT_PATH}\n\n` +
+      "This file (fafb783-mb-cx.bin.gz.b64, ~1.32 MB) ships with the repository under\n" +
+      "  packages/fly-brain/src/connectome-data/\n" +
+      "Ensure you have the full checkout (not a shallow/sparse clone) or download from:\n" +
+      "  https://github.com/EvolutionDeep/murmur/tree/main/packages/fly-brain/src/connectome-data",
+    );
+  }
+  const b64 = readFileSync(FLYWIRE_ARTIFACT_PATH, "utf8").trim();
+  return decodeFlyWireArtifact(b64);
+}
+
 /** Load a manifest from --file / --url, else assemble one offline from the declared (or default) config. */
-async function obtainManifest(a: Args): Promise<{ manifest: BrainManifest; source: string }> {
+async function obtainManifest(a: Args): Promise<{ manifest: BrainManifest; source: string; mode: string }> {
   if (a.file) {
-    return { manifest: JSON.parse(readFileSync(a.file, "utf8")), source: `file:${a.file}` };
+    const manifest = JSON.parse(readFileSync(a.file, "utf8")) as BrainManifest;
+    const isFW = "mode" in (manifest.connectome as object) && (manifest.connectome as any).mode === "flywire";
+    return { manifest, source: `file:${a.file}`, mode: isFW ? "flywire (from file)" : "prng (from file)" };
   }
   if (a.url) {
     // NOTE: Node's global fetch (undici) does NOT honour HTTPS_PROXY. Behind a proxy, save the body to a
@@ -101,13 +145,18 @@ async function obtainManifest(a: Args): Promise<{ manifest: BrainManifest; sourc
     const res = await fetch(a.url);
     if (!res.ok) throw new Error(`fetch ${a.url} → HTTP ${res.status}`);
     const body = await res.json();
-    return { manifest: (body.manifest ?? body) as BrainManifest, source: `url:${a.url}` };
+    const manifest = (body.manifest ?? body) as BrainManifest;
+    const isFW = "mode" in (manifest.connectome as object) && (manifest.connectome as any).mode === "flywire";
+    return { manifest, source: `url:${a.url}`, mode: isFW ? "flywire (from url)" : "prng (from url)" };
   }
   // Offline assembly. Unless --no-wrangler, seed the env from wrangler.toml's [vars] so the rebuild uses
   // the DEPLOYED sizing (production 10x), then let explicit CLI flags win.
+  // When --flywire is specified, wrangler.toml is ALWAYS read (unless --no-wrangler) because the
+  // production manifestHash can only be reproduced with the deployed config (CHAIN_ID, population, etc.).
   const env: Partial<Env> = {};
   let source = "offline:assembled";
-  if (a.fromWrangler !== undefined && !a.noWrangler) {
+  const shouldReadWrangler = (a.fromWrangler !== undefined || a.flywire) && !a.noWrangler;
+  if (shouldReadWrangler) {
     const file = a.fromWrangler || DEFAULT_WRANGLER;
     Object.assign(env, parseWranglerVars(file));
     source = `offline:wrangler:${path.relative(here, file) || file}`;
@@ -116,13 +165,22 @@ async function obtainManifest(a: Args): Promise<{ manifest: BrainManifest; sourc
   if (a.seedBase) env.POPULATION_SEED_BASE = a.seedBase;
   if (a.chainId) env.CHAIN_ID = a.chainId;
   const cfg = loadConfig(env as Env);
-  return { manifest: assembleManifest(cfg), source };
+
+  // FlyWire vs PRNG mode detection
+  const useFlyWire = detectFlyWireMode(a, env);
+  if (useFlyWire) {
+    const subgraph = await loadSubgraphLocal();
+    const manifest = assembleManifestFlyWire(cfg, subgraph);
+    const rel = path.relative(path.resolve(here, "..", "..", ".."), FLYWIRE_ARTIFACT_PATH);
+    return { manifest, source, mode: `flywire (subgraph=${rel})` };
+  }
+  return { manifest: assembleManifest(cfg), source, mode: "prng" };
 }
 
 async function main(): Promise<void> {
   const a = parseArgs(process.argv.slice(2));
   const t0 = performance.now();
-  const { manifest, source } = await obtainManifest(a);
+  const { manifest, source, mode } = await obtainManifest(a);
   const tAssemble = performance.now();
 
   const hash = await manifestHash(manifest);
@@ -136,13 +194,18 @@ async function main(): Promise<void> {
   console.log("═".repeat(72));
   console.log("  murmur brain-manifest replay  ·  trustless, offline, no LLM");
   console.log("═".repeat(72));
+  console.log(`  mode          : ${mode}`);
   console.log(`  source        : ${source}`);
   console.log(`  schema        : ${manifest.schema} v${manifest.v}  (brain v${manifest.brainManifestVersion})`);
   console.log(`  chain         : ${manifest.chainTag} (${manifest.chainId})`);
   console.log(`  policy / proof: ${manifest.policy} / v${manifest.proofV}`);
   console.log(`  population    : ${manifest.population.size} flies  ·  seedBase ${manifest.population.seedBase}  ·  ${manifest.population.seedFormula}`);
   const c = manifest.connectome as Record<string, unknown>;
-  console.log(`  connectome    : sensory ${c.nSensory} · L1 ${c.nInterL1} · L2 ${c.nInterL2} · mod ${c.nModulatory} · motor/ch ${c.nMotorPerChannel} · density ${c.density}`);
+  if (c.mode === "flywire") {
+    console.log(`  connectome    : flywire · ${c.nNeurons} neurons · ${c.nSynapses} synapses · fanInMean ${c.fanInMean} · weightGain ${c.weightGain} · jitter ${c.weightJitter}`);
+  } else {
+    console.log(`  connectome    : sensory ${c.nSensory} · L1 ${c.nInterL1} · L2 ${c.nInterL2} · mod ${c.nModulatory} · motor/ch ${c.nMotorPerChannel} · density ${c.density}`);
+  }
   console.log(`  provenance    : flywireLiteral=${manifest.provenance.flywireLiteral} · generated=${manifest.provenance.generatedDeterministically} · llm=${manifest.llm.used}`);
   console.log("─".repeat(72));
   console.log(`  manifestHash  : ${hash}`);

@@ -67,7 +67,7 @@ import {
   GOLD_THREAD, CRACK_RED, readLineageOnchain, shortHash, isRealAddr, isRealTxHash,
   ARC_EXPLORER, fnv1a, fapColor,
 } from './shared.js';
-import { t as T, gl } from './i18n.js?v=109';
+import { t as T, gl } from './i18n.js?v=110';
 import { getJSON } from './polling.js';
 import { derivePseudoSpikes } from './inspector.js';
 import { closeActiveDrawer } from './drawers.js';

@@ -55,7 +55,7 @@ const env = { ...readEnv(envFile) };
 // Run-scoped knobs: an EXPLICIT process.env value WINS over .env.local. This matters because production
 // .env.local may pin CHAIN_ID=5042 (mainnet); an explicit `CHAIN_ID=5042002 npm run deploy:manifest` must
 // reliably target testnet regardless. Absent a process.env value we fall back to .env.local (or the default).
-for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "CHAIN_ID", "MANIFEST_CONFIRM", "MANIFEST_COMMITTER", "MANIFEST_HASH"]) {
+for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "CHAIN_ID", "MANIFEST_CONFIRM", "MANIFEST_COMMITTER", "MANIFEST_HASH", "MANIFEST_HASH_BYPASS_APPROVED"]) {
   if (process.env[k]) env[k] = process.env[k];
 }
 
@@ -135,8 +135,24 @@ if (bal === 0n) {
 let manifestHashHex = (env.MANIFEST_HASH || "").trim().replace(/^0x/i, "");
 let schemaVersion = 1;
 let population = 0;
+let bypassUsed = false;
 if (manifestHashHex) {
-  console.log("manifest : using MANIFEST_HASH from env (skipping local replay)");
+  // HARD GATE: MANIFEST_HASH alone is NOT sufficient — also requires explicit approval env var.
+  if ((env.MANIFEST_HASH_BYPASS_APPROVED || "").trim() !== "1") {
+    console.error("\n\u2718 MANIFEST_HASH is set but MANIFEST_HASH_BYPASS_APPROVED !== '1'.");
+    console.error("  The bypass gate requires BOTH:");
+    console.error("    MANIFEST_HASH=<hex hash>");
+    console.error("    MANIFEST_HASH_BYPASS_APPROVED=1");
+    console.error("  Preferred path: remove MANIFEST_HASH and let the local FlyWire replay compute the hash.");
+    console.error("  Run: npx tsx scripts/replay-brain.ts --flywire --from-wrangler");
+    process.exit(1);
+  }
+  bypassUsed = true;
+  console.log("\n" + "\u26a0".repeat(36));
+  console.log("\u26a0  BYPASS ACTIVE: MANIFEST_HASH from env \u2014 local replay SKIPPED.");
+  console.log("\u26a0  The hash will be committed on-chain WITHOUT offline verification.");
+  console.log("\u26a0  Ensure this hash was independently verified before proceeding.");
+  console.log("\u26a0".repeat(36) + "\n");
 } else {
   const manifestFile = path.join(root, "contracts", "build", "PRODUCTION_MANIFEST.json");
   const hashFile = path.join(root, "contracts", "build", "PRODUCTION_MANIFEST_HASH.txt");
@@ -179,14 +195,14 @@ console.log("verify   : committer =", onchainCommitter, onchainCommitter.toLower
 
 // ---- commit the production manifestHash (only if this key is the committer) ----
 if (canCommit) {
-  console.log("\ncommitting brain manifest …");
+  console.log("\ncommitting brain manifest \u2026" + (bypassUsed ? " [bypass=true \u2014 hash was NOT locally replayed]" : ""));
   const commitTx = await wallet.writeContract({
     address,
     abi: artifact.abi,
     functionName: "commit",
     args: [manifestHashBytes32, schemaVersion, population],
   });
-  console.log("commit tx:", commitTx);
+  console.log("commit tx:", commitTx, bypassUsed ? "(bypass=true)" : "");
   const commitReceipt = await publicClient.waitForTransactionReceipt({ hash: commitTx, confirmations: 1 });
   if (commitReceipt.status !== "success") { console.error("✗ commit 交易 revert 了"); process.exit(1); }
   const committed = await publicClient.readContract({ address, abi: artifact.abi, functionName: "isCommitted", args: [manifestHashBytes32] });

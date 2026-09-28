@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=125" />
+  <link rel="stylesheet" href="./styles.css?v=126" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -55,6 +55,16 @@
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></symbol>
     <!-- task 22: the lineage / technical atlas toggle (a dendrogram: one ancestor fanning into descendants) -->
     <symbol id="i-lineage" viewBox="0 0 24 24"><circle cx="12" cy="4.2" r="1.9"/><circle cx="5.2" cy="13.4" r="1.8"/><circle cx="18.8" cy="13.4" r="1.8"/><circle cx="8.4" cy="20.2" r="1.5"/><circle cx="15.6" cy="20.2" r="1.5"/><path d="M12 6.1v2.6M12 8.7L5.2 11.6M12 8.7l6.8 2.9M5.2 15.2l3.2 3.4M18.8 15.2l-3.2 3.4"/></symbol>
+    <!-- task 50 · PoCA: a shield (the anchor) carrying two chain links (the unbroken epoch chain) -->
+    <symbol id="i-poca" viewBox="0 0 24 24"><path d="M12 2.8l7.2 2.8v5.8c0 4.7-3.1 8.2-7.2 9.8-4.1-1.6-7.2-5.1-7.2-9.8V5.6l7.2-2.8z"/><rect x="10.7" y="6.7" width="2.6" height="4.9" rx="1.3"/><rect x="10.7" y="9.6" width="2.6" height="4.9" rx="1.3"/><path d="M12 16.6v1.9"/></symbol>
+    <!-- task 50 · PoCA admin-kind glyphs (1–7, byte-mapped to poca.ts PocoAdminKind) -->
+    <symbol id="i-pk1" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.6-5.7"/><path d="M17.4 2.9v3.8h-3.8"/></symbol>
+    <symbol id="i-pk2" viewBox="0 0 24 24"><path d="M8.5 3.5v10.8M8.5 5.8l4-2.3M8.5 14.3l-3.3 6.2M8.5 14.3l3.3 6.2"/><circle cx="16.8" cy="16.8" r="3.7"/><path d="M16.8 14.9v1.9l1.4 1"/></symbol>
+    <symbol id="i-pk3" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/></symbol>
+    <symbol id="i-pk4" viewBox="0 0 24 24"><path d="M4 8.5h13l-3.2-3.2M20 15.5H7l3.2 3.2"/></symbol>
+    <symbol id="i-pk5" viewBox="0 0 24 24"><path d="M12 2.6l2.7 6.7 6.7 2.7-6.7 2.7-2.7 6.7-2.7-6.7-6.7-2.7 6.7-2.7 2.7-6.7z"/></symbol>
+    <symbol id="i-pk6" viewBox="0 0 24 24"><path d="M4 9.5L12 4l8 5.5M6 11v9M18 11v9M4 20h16M9.5 20v-5.5h5V20"/></symbol>
+    <symbol id="i-pk7" viewBox="0 0 24 24"><path d="M8.5 4h7L19 7.5v12.5H5V4h3.5z"/><path d="M8.8 10.5l5 3-5 3v-6z"/></symbol>
   </svg>
 
   <!-- ============ task 65 · Direction A left command rail ============
@@ -72,6 +82,8 @@
     <button type="button" class="rail-btn" data-act="chronicle" data-i18n-title="chron.openTitle" data-i18n-aria="chron.title" title="chronicle" aria-label="chronicle"><svg class="ra-ic" aria-hidden="true"><use href="#i-book"/></svg></button>
     <button type="button" class="rail-btn" data-act="canary" data-i18n-title="canary.openTitle" data-i18n-aria="canary.aria" title="canary" aria-label="canary"><svg class="ra-ic" aria-hidden="true"><use href="#i-bird"/></svg></button>
     <button type="button" class="rail-btn" data-act="temple" data-i18n-title="temple.title" data-i18n-aria="temple.aria" title="the temple" aria-label="the temple"><svg class="ra-ic" aria-hidden="true"><use href="#i-temple"/></svg></button>
+    <!-- task 50 · PoCA: the proof-of-continuity anchor read-out (mutually exclusive with the other drawers) -->
+    <button type="button" class="rail-btn" data-act="poca" data-i18n-title="poca.title" data-i18n-aria="poca.aria" title="proof of continuity" aria-label="proof of continuity"><svg class="ra-ic" aria-hidden="true"><use href="#i-poca"/></svg></button>
     <button type="button" class="rail-btn" data-act="walk" data-i18n-title="walk.title" data-i18n-aria="walk.aria" title="explore on foot" aria-label="explore on foot"><svg class="ra-ic" aria-hidden="true"><use href="#i-walk"/></svg></button>
     <span class="rail-sep" aria-hidden="true"></span>
     <!-- task 22: switch to the second main canvas (the lineage / technical atlas). data-act="lineageview" is
@@ -670,6 +682,18 @@
     <div class="drawer-body" id="temple-body"></div>
   </aside>
 
+  <!-- ============ task 50 · PoCA (right drawer) — the proof-of-continuity anchor read-out ============
+       Sealed epochs, the on-chain Merkle roots and the admin-discontinuity log. Pure read-out:
+       the body is rebuilt from the state cache by paintPoca() in drawers.js. -->
+  <aside class="drawer poca-drawer" id="poca" hidden data-i18n-aria="poca.aria" aria-label="Proof of Continuity">
+    <div class="drawer-head">
+      <span class="drawer-title" data-i18n="poca.title">Proof of Continuity</span>
+      <span class="drawer-sub" id="poca-sub" data-i18n="poca.sub">sealed epochs · merkle anchors</span>
+      <button class="drawer-close" id="poca-close" data-i18n-aria="chron.close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body" id="poca-body"></div>
+  </aside>
+
   <!-- ============ ㉟ THE LAND (right drawer) — burn MURMUR to claim a pixel parcel ============ -->
   <aside class="drawer land-drawer" id="land-drawer" hidden data-i18n-aria="land.aria" aria-label="Land purchase">
     <div class="drawer-head">
@@ -854,6 +878,6 @@
   <button type="button" class="canvas-switch" id="switch-to-atlas" data-i18n-aria="lv.switchToAtlas" data-i18n-title="lv.switchToAtlas" aria-label="lineage atlas" title="lineage atlas"><svg class="cs-ico" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="2.7"/><path d="M8 1.7v3.6M8 10.7v3.6M1.7 8h3.6M10.7 8h3.6"/></svg><span data-i18n="lv.switchToAtlas">atlas</span></button>
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=155" type="module"></script>
+  <script src="./main.js?v=156" type="module"></script>
 </body>
 </html>

@@ -16,7 +16,7 @@
 //   in-flight mutex + 20 s floor interval. C13 caps active animations at 12.
 import { LV, LVQ, nodeR, nodeById } from './lvState.js';
 import { state, sim, clamp, mix, rgb, rgba, nmDaHz, nmOaHz, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js';
-import { t as T } from './i18n.js?v=109';
+import { t as T } from './i18n.js?v=110';
 import { getJSON } from './polling.js';
 import { lvGeneticsFrame, lvGeneticsScale, lvGenotypePanel, lvBloodlinePanel, lvTraceStart, lvTraceClear } from './lvGenetics.js';
 import { lvEnvNodeOverlay } from './lvEnv.js';

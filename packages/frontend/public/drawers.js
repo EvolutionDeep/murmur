@@ -1,7 +1,7 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=109';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=110';
 import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js';
 import { select } from './inspector.js';
 import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js';
@@ -1132,6 +1132,7 @@ export function openWallets() {
   if (state.predictOpen) closePredict();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const w = $("wallets");
   if (!w) return;
   w.hidden = false;
@@ -1290,6 +1291,7 @@ export function openHistory() {
   if (state.predictOpen) closePredict();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("history");
   if (!d) return;
   d.hidden = false;
@@ -1321,6 +1323,7 @@ export function openChron() {
   if (state.pulseOpen) closePulse();
   if (state.predictOpen) closePredict();
   if (state.arenaOpen) closeArena();
+  if (state.pocaOpen) closePoca();
   const d = $("panel-chron"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("chron-open");
@@ -1339,6 +1342,7 @@ export function openCanary() {
   state.canaryOpen = true;
   if (state.templeOpen) closeTemple();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   if (state.walletsOpen) closeWallets();
   if (state.historyOpen) closeHistory();
   if (state.proofsOpen) closeProofs();
@@ -1845,6 +1849,7 @@ export function openProofs() {
   if (state.predictOpen) closePredict();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("proofs"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("proofs-open");
@@ -2046,6 +2051,7 @@ export function openLaureate() {
   if (state.lineageOpen) closeLineage();
   if (state.arenaOpen) closeArena();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("laureate"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("laureate-open");
@@ -2281,6 +2287,7 @@ export function openBrain() {
   if (state.arenaOpen) closeArena();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("brain"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("brain-open");
@@ -2563,6 +2570,7 @@ export function openLineage() {
   if (state.predictOpen) closePredict();
   if (state.arenaOpen) closeArena();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("lineage"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("lineage-open");
@@ -2810,6 +2818,7 @@ export function openPulse() {
   if (state.predictOpen) closePredict();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("pulse"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("pulse-open");
@@ -3051,6 +3060,7 @@ export function openPredict() {
   if (state.arenaOpen) closeArena();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("predict"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("predict-open");
@@ -3317,6 +3327,7 @@ export function openArena() {
   if (state.predictOpen) closePredict();
   if (state.lineageOpen) closeLineage();
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   const d = $("arena"); if (!d) return;
   d.hidden = false;
   document.body.classList.add("arena-open");
@@ -3759,6 +3770,7 @@ export const TEMPLE_PARAMS = {
 export function openTemple() {
   state.templeOpen = true;
   if (state.chronOpen) closeChron();
+  if (state.pocaOpen) closePoca();
   if (state.canaryOpen) closeCanary();
   if (state.laureateOpen) closeLaureate();
   if (state.walletsOpen) closeWallets();
@@ -4147,5 +4159,207 @@ export function closeActiveDrawer() {
   if (state.predictOpen) { closePredict(); return true; }
   if (state.historyOpen) { closeHistory(); return true; }
   if (state.walletsOpen) { closeWallets(); return true; }
+  if (state.pocaOpen) { closePoca(); return true; }
   return false;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// task 50 · PoCA — PROOF OF CONTINUITY ANCHOR (read-out drawer)
+//
+// Every tick, the Worker hashes the swarm state into a digest and folds the
+// digests of an epoch into a Merkle tree; the root is sealed on-chain by the
+// PoCARegistry. This drawer reads the anchor out: the continuity badge, the
+// sealed-epoch chain (each one naming the block it was sealed at) and the
+// admin-discontinuity log (kinds 1–7, byte-identical to poca.ts). PURE read-out
+// — no wallet, no writes. The endpoints may not exist yet (worker undeployed):
+// every fetch failure degrades to the grey "disabled" hint, never to an error.
+//
+// Lifecycle mirrors the Temple: open/close/toggle + render (fetch → cache →
+// paint). paintPoca() rebuilds the body from the cache alone, which is what
+// rerenderAll() calls on a language change (repaint, no refetch).
+// ══════════════════════════════════════════════════════════════════════════════
+
+export function openPoca() {
+  state.pocaOpen = true;
+  if (state.chronOpen) closeChron();
+  if (state.canaryOpen) closeCanary();
+  if (state.templeOpen) closeTemple();
+  if (state.landOpen) closeLand();
+  if (state.laureateOpen) closeLaureate();
+  if (state.walletsOpen) closeWallets();
+  if (state.historyOpen) closeHistory();
+  if (state.proofsOpen) closeProofs();
+  if (state.brainOpen) closeBrain();
+  if (state.lineageOpen) closeLineage();
+  if (state.pulseOpen) closePulse();
+  if (state.predictOpen) closePredict();
+  if (state.arenaOpen) closeArena();
+  const d = $("poca"); if (!d) return;
+  d.hidden = false;
+  document.body.classList.add("poca-open");
+  requestAnimationFrame(() => d.classList.add("open"));
+  renderPoca();
+}
+export function closePoca() {
+  state.pocaOpen = false;
+  document.body.classList.remove("poca-open");
+  const d = $("poca"); if (!d) return;
+  d.classList.remove("open");
+  setTimeout(() => { if (!state.pocaOpen) d.hidden = true; }, 420);
+}
+export function togglePoca() { if (state.pocaOpen) closePoca(); else openPoca(); }
+
+/** Fetch the three PoCA endpoints in parallel into the state cache, then repaint.
+ *  Any failure (404 while the Worker is undeployed, timeout, abort) leaves the cache
+ *  null — paintPoca() degrades that to the disabled hint, so this never throws. */
+export async function renderPoca() {
+  const body = $("poca-body"); if (!body) return;
+  state.pocaLoading = true;
+  paintPoca();
+  const [s, e, a] = await Promise.all([
+    getJSON("/poca", 8000).catch(() => null),
+    getJSON("/poca/epochs?limit=50", 8000).catch(() => null),
+    getJSON("/poca/admin?limit=50", 8000).catch(() => null),
+  ]);
+  state.pocaLoading = false;
+  if (!state.pocaOpen) return;                 // closed while fetching
+  state.pocaData = s || null;
+  state.pocaEpochs = e || null;
+  state.pocaAdmin = a || null;
+  paintPoca();
+}
+
+/** Human-readable epoch span: "3h 12m" / "2d 4h" / "45s". */
+function pocaSpan(ms) {
+  const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h " + (Math.floor(s / 60) % 60) + "m";
+  return Math.floor(s / 86400) + "d " + (Math.floor(s / 3600) % 24) + "h";
+}
+
+/** A 0x…-style hash/address as a short-hash link to the explorer (the repo-wide tx-link pattern). */
+function pocaHashLink(h, label) {
+  if (!h || typeof h !== "string" || /^0x0*$/i.test(h)) return `<span class="fp poca-dim">\u2013</span>`;
+  const text = label || shortHash(h);
+  return `<a class="tx-link fp" href="${ARC_EXPLORER}/tx/${h}" target="_blank" rel="noopener noreferrer">\u2197 ${text}</a>`;
+}
+
+/** Paint the whole body from the cache (no fetch). Also what rerenderAll() calls on a language change. */
+export function paintPoca() {
+  const body = $("poca-body"); if (!body) return;
+  const sub = $("poca-sub"); if (sub) sub.textContent = T("poca.sub");
+  const d = state.pocaData;
+  if (state.pocaLoading && !d) {
+    body.innerHTML = `<p class="tp-empty">${T("poca.loading")}</p>`;
+    return;
+  }
+  if (!d) {
+    // endpoint missing / worker undeployed / feature off — the graceful disabled state
+    body.innerHTML =
+      `<div class="pc-head"><span class="pc-badge is-disabled">${T("poca.badge.disabled")}</span></div>` +
+      `<p class="tp-empty">${T("poca.disabledHint")}</p>`;
+    return;
+  }
+  let html = pocaHeadHtml(d);
+  html += pocaEpochsHtml(d);
+  html += pocaAdminHtml();
+  html += pocaVerifierHtml(d);
+  body.innerHTML = html;
+}
+
+function pocaHeadHtml(d) {
+  const cont = d.continuity === "unbroken" ? "unbroken" : d.continuity === "pending" ? "pending" : "disabled";
+  let html = `<div class="pc-head">` +
+    `<span class="pc-badge is-${cont}">${T("poca.badge." + cont)}</span>` +
+    `<button type="button" class="pc-refresh" id="poca-refresh" data-i18n-aria="poca.refresh" aria-label="${escapeHtml(T("poca.refresh"))}" title="${escapeHtml(T("poca.refresh"))}">\u21bb</button>` +
+    `</div>`;
+  const es = d.epochState || null;
+  const digests = es && es.digestCount != null ? es.digestCount : null;
+  html += `<div class="pc-status">` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.epoch")}</span><span class="pc-v">${d.currentEpoch != null ? "#" + Number(d.currentEpoch).toLocaleString() : "\u2013"}${es ? ` <em>${T("poca.state.open")}</em>` : ""}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.digests")}</span><span class="pc-v">${digests != null ? Number(digests).toLocaleString() : "\u2013"}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.epochCount")}</span><span class="pc-v">${Number(d.epochCount || 0).toLocaleString()}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.adminCount")}</span><span class="pc-v">${Number(d.adminCount || 0).toLocaleString()}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.commitment")}</span><span class="pc-v fp" title="${escapeHtml(String(d.codeCommitment || ""))}">${d.codeCommitment ? escapeHtml(shortHash(d.codeCommitment)) : "\u2013"}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.git")}</span><span class="pc-v fp" title="${escapeHtml(String(d.gitCommit || ""))}">${d.gitCommit ? escapeHtml(shortHash(d.gitCommit)) : "\u2013"}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.registry")}</span><span class="pc-v fp" title="${escapeHtml(String(d.registryAddress || ""))}">${isRealAddr(d.registryAddress) ? escapeHtml(shortHash(d.registryAddress)) : "\u2013"}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.chainHead")}</span><span class="pc-v">${pocaHashLink(d.chainHead, d.chainHead ? escapeHtml(shortHash(d.chainHead)) : null)}</span></div>` +
+    `</div>`;
+  const ci = d.commitmentInputs;
+  if (ci && typeof ci === "object") {
+    html += `<div class="pc-ci">` +
+      `<span>${T("poca.inputs")}:</span>` +
+      `<span class="pc-ci-item" title="${escapeHtml(String(ci.gitCommit || ""))}">${T("poca.git")} <b class="fp">${ci.gitCommit ? escapeHtml(shortHash(ci.gitCommit)) : "\u2013"}</b></span>` +
+      `<span class="pc-ci-item" title="${escapeHtml(String(ci.treeHash || ""))}">${T("poca.tree")} <b class="fp">${ci.treeHash ? escapeHtml(shortHash(ci.treeHash)) : "\u2013"}</b></span>` +
+      `<span class="pc-ci-item">${T("poca.files", { n: Number(ci.fileCount || 0).toLocaleString() })}</span>` +
+      `<span class="pc-ci-item">${T("poca.knobs", { n: Number(ci.knobCount || 0).toLocaleString() })}</span>` +
+      `</div>`;
+  }
+  return html;
+}
+
+function pocaEpochsHtml(d) {
+  const list = (state.pocaEpochs && Array.isArray(state.pocaEpochs.epochs)) ? state.pocaEpochs.epochs : [];
+  let html = `<div class="pc-section"><div class="tp-section-title">${T("poca.epochs")}${list.length ? ` (${list.length})` : ""}</div>`;
+  if (!list.length) {
+    // an open first epoch has no sealed predecessors yet — say so instead of a bare empty list
+    html += `<p class="tp-empty">${d.currentEpoch != null ? T("poca.noEpochsYet") : T("poca.disabledHint")}</p></div>`;
+    return html;
+  }
+  html += `<div class="pc-epochs" role="list" data-i18n-aria="poca.epochs" aria-label="${escapeHtml(T("poca.epochs"))}">`;
+  for (const ep of list) html += pocaEpochRow(ep);
+  return html + `</div></div>`;
+}
+
+function pocaEpochRow(ep) {
+  const reason = ["threshold", "reset", "code-change"].includes(ep.reason) ? ep.reason : "threshold";
+  const dur = ep.openTs != null && ep.endTs != null ? pocaSpan(ep.endTs - ep.openTs) : null;
+  const tx = ep.txHash || ep.openTxHash || null;
+  return `<div class="pc-epoch" role="listitem">` +
+    `<div class="pc-ep-top">` +
+      `<span class="pc-ep-idx">#${Number(ep.index || 0).toLocaleString()}</span>` +
+      `<span class="pc-reason is-${reason}">${T("poca.reason." + reason)}</span>` +
+      `<span class="pc-ep-ticks">${T("poca.ticks", { n: Number(ep.tickCount || 0).toLocaleString() })}</span>` +
+      (dur ? `<span class="pc-ep-dur">${dur}</span>` : "") +
+    `</div>` +
+    `<div class="pc-ep-times">${fmtSince(ep.openTs)} \u2192 ${ep.endTs != null ? fmtSince(ep.endTs) : T("poca.state.open")}</div>` +
+    `<div class="pc-ep-hashes">` +
+      `<span class="pc-h" title="${escapeHtml(String(ep.merkleRoot || ""))}">${T("poca.merkle")} <b class="fp">${ep.merkleRoot ? escapeHtml(shortHash(ep.merkleRoot)) : "\u2013"}</b></span>` +
+      `<span class="pc-h" title="${escapeHtml(String(ep.sealedHead || ""))}">${T("poca.sealedHead")} <b>${pocaHashLink(ep.sealedHead)}</b></span>` +
+      (tx ? `<span class="pc-h" title="${escapeHtml(String(tx))}">${T("poca.tx")} <b>${pocaHashLink(tx)}</b></span>` : "") +
+    `</div>` +
+  `</div>`;
+}
+
+function pocaAdminHtml() {
+  const list = (state.pocaAdmin && Array.isArray(state.pocaAdmin.admin)) ? state.pocaAdmin.admin : [];
+  let html = `<div class="pc-section"><div class="tp-section-title">${T("poca.admin")}${list.length ? ` (${list.length})` : ""}</div>`;
+  if (!list.length) return html + `<p class="tp-empty">${T("poca.noAdmin")}</p></div>`;
+  html += `<div class="pc-admin" role="list" data-i18n-aria="poca.admin" aria-label="${escapeHtml(T("poca.admin"))}">`;
+  for (const a of list) {
+    const k = Number(a.kind) || 0;
+    const ico = k >= 1 && k <= 7 ? `<svg class="ra-ic sm" aria-hidden="true"><use href="#i-pk${k}"/></svg>` : "";
+    // the localized label wins; kindName (RESET / MANUAL_TICK / …) is the tooltip + fallback
+    const label = T("poca.kind." + k) === "poca.kind." + k ? String(a.kindName || ("KIND_" + k)) : T("poca.kind." + k);
+    html += `<div class="pc-admin-row" role="listitem">` +
+      `<span class="pc-admin-ico" aria-hidden="true">${ico}</span>` +
+      `<span class="pc-admin-main">` +
+        `<span class="pc-admin-kind" title="${escapeHtml(String(a.kindName || ""))}">${escapeHtml(label)}</span>` +
+        `<span class="pc-admin-ts">${fmtSince(a.ts)}</span>` +
+        (a.note ? `<span class="pc-admin-note">${escapeHtml(String(a.note))}</span>` : "") +
+        `<span class="pc-admin-hash fp" title="${escapeHtml(String(a.payloadHash || ""))}">${a.payloadHash ? escapeHtml(shortHash(a.payloadHash)) : ""}</span>` +
+      `</span>` +
+      (a.txHash ? `<span class="pc-admin-tx">${pocaHashLink(a.txHash)}</span>` : "") +
+    `</div>`;
+  }
+  return html + `</div></div>`;
+}
+
+function pocaVerifierHtml(d) {
+  let html = `<div class="pc-section"><div class="tp-section-title">${T("poca.verifyTitle")}</div>` +
+    `<p class="pc-note">${T("poca.verifierNote", { root: (d && d.epochState && d.epochState.head) ? shortHash(d.epochState.head) : "\u2013" })}</p>` +
+    `<a class="tx-link" href="/developers" target="_blank" rel="noopener noreferrer">\u2197 ${T("poca.verifierLink")}</a>` +
+    `</div>`;
+  return html;
 }

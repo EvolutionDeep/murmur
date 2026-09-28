@@ -108,6 +108,119 @@ it: open a private report (above) or reach out for credit.
 
 ---
 
+## Disclosed Centralization & Trust Assumptions
+
+The following are **known, intentional** centralization points and trust assumptions. They are disclosed here
+rather than treated as vulnerabilities because each is a deliberate design trade-off with bounded blast radius.
+
+### 1. PredictionArena resolver as a trusted oracle for `exitTempR6`
+
+**The assumption.** `PredictionArena.resolve(roundId, exitTempR6)` accepts the exit temperature from the
+resolver (`0x2b9a…055c`, immutable). This value is computed off-chain by the Worker's cron and is **not bound
+to any on-chain oracle**. A malicious or compromised resolver could theoretically feed a false temperature to
+steer UP/DOWN/FLAT.
+
+**Mitigation.**
+- The **entry temperature** and **flatBand** are committed on-chain at `openRound` time — these cannot be
+  altered after the fact.
+- The temperature is independently recomputable from Arc's public whole-chain activity (the same blocks anyone
+  can read). The `/predictions` feed publishes each round's entry + exit temperatures, so any observer can
+  re-derive the expected outcome and detect manipulation.
+- The resolver wallet is the Worker's own facilitator — compromising it already compromises the entire economy
+  (a strictly larger attack surface than the arena alone).
+
+**Discoverability.** A manipulated resolution is detectable by comparing the committed `exitTempR6` against an
+independent recomputation from Arc block data for the round's time window.
+
+**Why accepted.** Migrating to an on-chain oracle (or a decentralized resolver) would require redeploying
+`PredictionArena` — the current contract is immutable with no rescue/withdraw, so migration would **strand all
+unclaimed MURMUR bets** in the old contract permanently. The arena is MURMUR-denominated (not USDC),
+non-custodial, and the total exposure is bounded by the pool size at any given round.
+
+### 2. WarCoffer is a one-way sunk pool (~50 USDC)
+
+**The assumption.** `WarCoffer` (`0x3d90…b454b`) has **no withdraw, no rescue, no emergency extraction**.
+Once USDC enters via `deposit`, it exists only as internal `mapping` balances (vault/commonsPurse). The
+contract's `maxEscrow` is 50 USDC (immutable), and `totalEscrow` has reached this cap — the pool is
+permanently full.
+
+**Mitigation.**
+- The funds are the project's own (self-funded from the facilitator wallet); no third-party deposits exist.
+- The exposure is bounded at 50 USDC and cannot grow (the `EscrowCap` revert is a hard on-chain ceiling).
+- War outcomes are deterministic: `resolveWar` derives the winner from
+  `keccak256(warId, attacker, defender, powerA, powerB)` — no external input at resolution time.
+
+**Discoverability.** The resolver's `declareWar` parameters (powerA/powerB) are chosen off-chain and could
+theoretically be manipulated to favour one side. However: (a) only the project's own bounded funds are at
+stake, (b) the `previewWinner` function and the public `/war` feed expose the power values before resolution,
+and (c) any manipulation is visible in the on-chain event log.
+
+**Why accepted.** Redeploying `WarCoffer` would strand the ~50 USDC already deposited (no extraction path
+exists). The amount is bounded, self-funded, and the sunk-pool design is intentional — it prevents any
+operator from draining the treasury.
+
+### 3. War-rail bypasses the economy daily cap
+
+**The assumption.** War deposits (`economy.cofferDeposit → x402.deposit`) do **not** pass through
+`spendCapReason` — the daily-cap / per-agent-cap / per-deal-cap system that bounds normal trade settlements.
+
+**Mitigation.**
+- The war track has its own stricter limits:
+  `target = min(max(WAR_MIN_VAULT_USDC, WAR_PER_WAR_CAP_USDC / WAR_STAKE_PCT), WAR_MAX_ESCROW_USDC / 2)`
+  — producing a single-war cap of 25 USDC and a two-house total of exactly 50 USDC.
+- The on-chain `EscrowCap` (immutable `maxEscrow = 50e6 = 50 USDC`) is a **hard ceiling** that cannot be
+  bypassed regardless of worker-side logic. It is already at capacity.
+- Gated behind `WAR_ENABLED` + `ECONOMY_REAL_SPEND` + `!ECONOMY_SHADOW`.
+
+**Discoverability.** The total escrowed is publicly readable:
+`cast call 0x3d90…b454b "totalEscrow()(uint256)"`.
+
+**Why accepted.** The exposure cannot grow beyond 50 USDC (the immutable cap is already saturated). The
+war-rail's own formula is more restrictive than the economy's daily cap for the amounts involved.
+
+### 4. Governance voting uses instant balance-weighting
+
+**The assumption.** The `/community` governance forum weights votes by the voter's **current** MURMUR balance
+at signature-verification time. This permits:
+- Buy → vote → sell (flash-loan-style governance attack).
+- Multi-wallet splitting to amplify apparent support.
+
+**Mitigation.**
+- The community layer is **read-only on-chain** — it cannot move treasury funds, alter contract parameters, or
+  change the Worker's behaviour. It only produces a governance *signal*.
+- MURMUR's utility is burning for intervention rights (not treasury governance), so the economic incentive to
+  attack a non-binding signal is minimal.
+- A snapshot-based scheme (balance at a past block) is under evaluation; the Arc public RPC has confirmed
+  full archive node availability, making historical balance queries feasible.
+
+**Discoverability.** Vote weights and voter addresses are public in the `/community` response.
+
+**Why accepted.** The governance forum has no on-chain execution power — it is advisory. Implementing
+snapshot voting requires archive-node balance queries at proposal-creation time, which adds latency and a new
+failure mode for a non-critical feature. The trade-off favours simplicity until the forum gains real authority.
+
+### 5. `ADMIN_TOKEN` fail-open semantics
+
+**The assumption.** The `adminGate` function in `state.ts` returns `null` (pass-through) when `ADMIN_TOKEN` is
+not set. This means `POST /tick` and `POST /reset` are **unauthenticated by default**.
+
+**Mitigation.**
+- This is intentional for local development (zero-secret checkout ⇒ full functionality).
+- In production, `ADMIN_TOKEN` is set as a Cloudflare secret; when present, the gate requires
+  `x-admin-token` header (header-only — the legacy `?token=` query param was removed).
+- The `scheduled()` cron handler presents the token internally, so setting it never interrupts the per-minute
+  tick.
+- `POST /reset` triggers a PoCA admin kind-1 (RESET) + epoch seal, making any unauthorised reset permanently
+  visible in the continuity chain.
+
+**Discoverability.** `GET /poca/admin` logs every reset/manual-tick invocation with a timestamp.
+
+**Why accepted.** The fail-open default is a deliberate developer-experience choice. A production deployment
+that does not set `ADMIN_TOKEN` is a deployment misconfiguration (documented in `docs/DEPLOYMENT.md`), not a
+code vulnerability. The PoCA admin log provides after-the-fact accountability even if the gate is open.
+
+---
+
 ## Supported versions
 
 Security fixes target the latest `main`. The project is pre-1.0; older revisions of the legacy (pre-`murmur`)

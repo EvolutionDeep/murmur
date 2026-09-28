@@ -879,6 +879,12 @@ export const state = {
   templeSelected: null,    // { kind, tier, params }
   templeBal: null,         // connected wallet's MURMUR balance (atomic BigInt)
   lastTemplePoll: 0,
+  // task 50 · PoCA — proof-of-continuity anchor drawer (mutually exclusive with the other right-edge sheets)
+  pocaOpen: false,
+  pocaLoading: false,
+  pocaData: null,           // GET /poca cache (null ⇒ undeployed/disabled → graceful hint)
+  pocaEpochs: null,         // GET /poca/epochs cache
+  pocaAdmin: null,          // GET /poca/admin cache
   // ㉟ Land — pixel parcel purchase system (task 55)
   landOpen: false,
   landLayer: null,          // LandLayer instance

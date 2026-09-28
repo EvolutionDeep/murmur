@@ -31,7 +31,7 @@ import type { StimulusEvent } from "@fly/fly-brain";
 import { genomeWithinBudget, hatchBudgetFromGenesis } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
-import { netReceiptHash } from "./provenance.js";
+import { netReceiptHash, sha256Hex } from "./provenance.js";
 import { assembleManifest, assembleManifestFlyWire, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
 import { loadSubgraph } from "./flywire-loader.js";
 import {
@@ -106,6 +106,11 @@ import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
 import type { Address, Hex, LocalAccount } from "viem";
 import { Chronicler, chroniclerRulesHash, CHRONICLE_VERSION, type ChronicleEntry, type ChronicleContext, type ShockKind } from "./chronicler.js";
+import { CODE_COMMITMENT, CODE_COMMITMENT_INPUTS, GIT_COMMIT } from "./codeCommitment.js";
+import {
+  PocoEngine, POCA_ZERO_ADDRESS,
+  type PocoStore, type PocoChainHooks, type PocoStateInput,
+} from "./poca.js";
 
 /**
  * Hatch-budget safety factors for the 30,800-neuron production genesis, sharded ONE fly per isolate
@@ -420,6 +425,12 @@ export class FlyStateDO {
    *  intensity ≥ 0.75). In-memory only, exactly like pendingStimuli: lost on eviction, best-effort, never
    *  feeds a decision — it only names an era on the next cron. Null when no shock is queued. */
   private pendingGovernanceShock: { kind: ShockKind; actor?: number } | null = null;
+  /**
+   * The Proof-of-Continuous-Agency engine — the off-chain cron-digest epoch chain that answers "was the
+   * last 180 days of behaviour produced continuously by the SAME declared program?". Lazily constructed;
+   * best-effort end to end, so a PoCA failure can never block a tick, a reset or a read-out.
+   */
+  private poca: PocoEngine | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -1434,6 +1445,16 @@ export class FlyStateDO {
       arenaAddress: this.cfg.arena.address ? (this.cfg.arena.address as Address) : undefined,
       warAddress: this.cfg.war.address ? (this.cfg.war.address as Address) : undefined,
       lineageAddress: this.cfg.lineageAddress ? (this.cfg.lineageAddress as Address) : undefined,
+      // PoCA registry (proof of continuous agency). The zero address ⇒ DISABLED: every openEpoch/sealEpoch/
+      // adminAction is skipped (logged once) while the off-chain epoch chain runs identically. Never needs a
+      // new wrangler [vars] key — config defaults it in code to the deployed ContinuityRegistry (see
+      // config.ts pocaRegistryAddress).
+      pocaRegistryAddress:
+        this.cfg.pocaRegistryAddress && this.cfg.pocaRegistryAddress.toLowerCase() !== POCA_ZERO_ADDRESS
+          ? (this.cfg.pocaRegistryAddress as Address)
+          : undefined,
+      // When the receipt registry's lazy genesis anchor mines, record PoCA admin kind5 GENESIS_SEED.
+      onGenesisSeeded: () => { this.handlePocaGenesisSeeded(); },
       circle: circleOpts,
     });
 
@@ -2753,8 +2774,14 @@ export class FlyStateDO {
       if (req.method === "POST" && path === "/land") return await this.postLand(req);
       if (req.method === "GET" && path.startsWith("/land-img/")) return await this.getLandImage(path.split("/")[2]);
       if (req.method === "POST" && path === "/breed") return this.adminGate(req) ?? (await this.postBreed(req));
-      if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick());
+      if (req.method === "POST" && path === "/tick") return this.adminGate(req) ?? (await this.postTick(req));
       if (req.method === "POST" && path === "/reset") return this.adminGate(req) ?? (await this.postReset());
+      // PoCA (proof of continuous agency) — public read-outs over the off-chain cron-digest epoch chain.
+      if (req.method === "GET" && path === "/poca") return await this.getPoca();
+      if (req.method === "GET" && path === "/poca/epochs") return await this.getPocaEpochs(url);
+      if (req.method === "GET" && path === "/poca/admin") return await this.getPocaAdmin(url);
+      if (req.method === "GET" && path === "/poca/proof") return await this.getPocaProof(url);
+      if (req.method === "GET" && path.startsWith("/poca/epoch/")) return await this.getPocaEpochOne(path.split("/")[3]);
       return jsonError("not_found", "no such endpoint", 404);
     } catch (e) {
       console.error("[DO] fetch error:", e);
@@ -2970,6 +2997,10 @@ export class FlyStateDO {
     const subSteps = Math.max(1, Math.floor(this.cfg.simStepsPerTick / subTicks));
     let snapshot: PopulationSnapshot | null = null;
     const economy = this.cfg.economy.enabled ? await this.ensureEconomy() : null;
+    // PoCA — cron ENTRY gate: guarantee an epoch is open under the CURRENT code commitment and log any
+    // startup discontinuity (genesis / DO rebuild / code change / committer change / param override) exactly
+    // once. Runs before the sub-ticks so a code-change seal precedes this cron's digest. Best-effort.
+    await this.pocaCronEntry(economy);
     // CULTURE — the Lamarckian overlay between the brain's decode and every consumer (snapshot,
     // economy, prediction). Null while CULTURE_ENABLED=false ⇒ byte-for-byte today's behaviour.
     const culture = await this.ensureCulture();
@@ -3270,6 +3301,10 @@ export class FlyStateDO {
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
         `size=${snapshot?.collective.size ?? 0} subTicks=${subTicks} deals=${deals}`,
     );
+
+    // PoCA — cron EXIT: fold this tick's final state into the continuous-agency digest chain (and seal the
+    // epoch when it reaches the threshold). Best-effort — a missed digest is logged, never fatal to the tick.
+    await this.pocaCronExit(swarm, snapshot, economy);
   }
 
   // ---------- Endpoint implementations ----------
@@ -5183,7 +5218,18 @@ export class FlyStateDO {
   }
 
   /** Debug: run one cron tick on demand. */
-  private async postTick() {
+  private async postTick(req?: Request) {
+    // A tick driven through the PUBLIC route (not the internal cron alarm) is a human intervention, so PoCA
+    // logs it as admin kind2 MANUAL_TICK. The cron reaches the DO via https://do.internal/tick (index.ts
+    // scheduled()), which makes the host the discriminator: "do.internal" ⇒ cron (silent), else ⇒ manual.
+    const host = req ? new URL(req.url).hostname : "";
+    if (host && host !== "do.internal") {
+      try {
+        await this.ensurePoca().onManualTick({ host, path: req ? new URL(req.url).pathname : "/tick" });
+      } catch (e) {
+        console.warn("[poca] manual-tick log failed (non-fatal):", (e as Error).message);
+      }
+    }
     await this.cron();
     const snap = await this.loadSnapshot();
     const economy = this.cfg.economy.enabled ? (await this.ensureEconomy()).summary() : null;
@@ -5256,8 +5302,206 @@ export class FlyStateDO {
     const landImgKeys = [...landImgs.keys()];
     if (landImgKeys.length) await this.state.storage.delete(landImgKeys);
     await this.state.storage.delete(KEY_POET);
+
+    // PoCA — a reset is a DELIBERATE discontinuity: seal the running epoch (its digests stay as an immutable,
+    // queryable record), log admin kind1 RESET, and open a fresh epoch anchored at the NEW chain's genesis
+    // (the receipt chain restarts empty after a reset). The poca:* keys are intentionally NOT swept above, so
+    // the agency chain SURVIVES the reset and the break stays permanently visible instead of being erased.
+    try {
+      await this.ensurePoca().onReset("");
+    } catch (e) {
+      console.warn("[poca] reset hook failed (non-fatal):", (e as Error).message);
+    }
     return json({ ok: true });
   }
+
+  // ============================== PoCA (proof of continuous agency) wiring + endpoints ==============================
+  //
+  // The engine (poca.ts) is pure + storage-agnostic; these methods adapt it to this DO: a PocoStore over the
+  // DO's own storage, PocoChainHooks over the economy's facilitator delegators (best-effort, null in simulated
+  // mode / zero-address), and the cron entry/exit + reset/manual-tick/genesis-seed hooks. EVERY hook is wrapped
+  // so a PoCA failure can never block a tick, a reset or a read-out — the simulation is the product; PoCA only
+  // attests to it.
+
+  /** Lazily construct the PoCA engine (at most once per DO lifetime). */
+  private ensurePoca(): PocoEngine {
+    if (this.poca) return this.poca;
+    const store: PocoStore = {
+      get: async <T>(k: string): Promise<T | undefined> => await this.state.storage.get<T>(k),
+      put: async <T>(k: string, v: T): Promise<void> => { await this.state.storage.put(k, v); },
+      delete: async (k: string): Promise<boolean> => await this.state.storage.delete(k),
+    };
+    // The on-chain mirror rides the economy's facilitator. In simulated mode (or a zero registry address) the
+    // delegators return null, so the hooks are inert and the off-chain chain runs alone.
+    const chain: PocoChainHooks = {
+      openEpoch: async (cc, gh) => { const e = await this.pocaEconomy(); return e ? e.pocaOpenEpoch(cc, gh) : null; },
+      sealEpoch: async (i, h, t, r) => { const e = await this.pocaEconomy(); return e ? e.pocaSealEpoch(i, h, t, r) : null; },
+      adminAction: async (kind, ph) => { const e = await this.pocaEconomy(); return e ? e.pocaAdminAction(kind, ph) : null; },
+      committer: async () => { const e = await this.pocaEconomy(); return e ? e.pocaCommitter() : null; },
+    };
+    this.poca = new PocoEngine({
+      store,
+      chain,
+      codeCommitment: CODE_COMMITMENT,
+      gitCommit: GIT_COMMIT,
+      registryAddress: this.cfg.pocaRegistryAddress || POCA_ZERO_ADDRESS,
+    });
+    return this.poca;
+  }
+
+  /** The economy that carries the facilitator (the PoCA committer), or null when the economy is off. */
+  private async pocaEconomy(): Promise<AgentEconomy | null> {
+    if (!this.cfg.economy.enabled) return null;
+    try { return await this.ensureEconomy(); } catch { return null; }
+  }
+
+  /**
+   * A canonical hash of the RUNTIME grey-release posture (the resolved values, which reflect any wrangler/env
+   * override). Compared against the last-seen snapshot at cron entry; a change ⇒ admin kind3 PARAM_OVERRIDE.
+   * Non-secret flags ONLY (never the mnemonic/keys/addresses) and the SAME knob set pinned into CODE_COMMITMENT.
+   */
+  private async pocaKnobsHash(): Promise<string> {
+    const c = this.cfg;
+    return sha256Hex({
+      flywireTopology: c.flywireTopology,
+      neuromodGating: c.neuromodGating,
+      economyEnabled: c.economy.enabled,
+      economyRealSpend: c.economy.realSpendEnabled,
+      institutionsEnabled: c.institutions.enabled,
+      dynastyEnabled: c.dynasty.enabled,
+      cultureEnabled: c.culture.enabled,
+      lawEnabled: c.law.enabled,
+      predictEnabled: c.predict.enabled,
+      signalEnabled: c.signal.enabled,
+      arenaEnabled: c.arena.enabled,
+      warEnabled: c.war.enabled,
+      reformEnabled: c.reform.enabled,
+      templeEnabled: c.temple.enabled,
+      landEnabled: c.land.enabled,
+      bourseEnabled: c.bourse.enabled,
+      tokenStimulusEnabled: c.tokenStimulus.enabled,
+      socialStimulusEnabled: c.socialStimulus.enabled,
+      conflictEnabled: c.conflict.enabled,
+      territoryEnabled: c.territory.enabled,
+      poetEnabled: c.poet.enabled,
+    });
+  }
+
+  /** Cron ENTRY: guarantee an epoch is open under the current code commitment + log startup discontinuities. */
+  private async pocaCronEntry(economy: AgentEconomy | null): Promise<void> {
+    try {
+      const engine = this.ensurePoca();
+      const genesisHead = economy ? (economy.proofsSnapshot().chainHead || "") : "";
+      const committer = economy ? economy.relayAddress() : null;   // the facilitator wallet (null in simulated)
+      const knobsHash = await this.pocaKnobsHash();
+      await engine.ensureEpoch({ genesisHead, committer, knobsHash });
+    } catch (e) {
+      console.warn("[poca] cron entry gate failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /** Cron EXIT: fold this tick's final state into the digest chain (and seal the epoch at the threshold). */
+  private async pocaCronExit(
+    swarm: SwarmBackend,
+    snapshot: PopulationSnapshot | null,
+    economy: AgentEconomy | null,
+  ): Promise<void> {
+    try {
+      const engine = this.ensurePoca();
+      const tickIndex = swarm.getTickIndex();
+      const genesisHead = economy ? (economy.proofsSnapshot().chainHead || "") : "";
+      const era = this.chronicler ? this.chronicler.eraInfo() : null;
+      const arena = this.arenaState;
+      const war = this.warRuntime;
+      const totals = this.lastEconomy?.totals ?? null;
+      const state: PocoStateInput = {
+        tickIndex,
+        proofChainHead: genesisHead,
+        chronicler: era ? { headHash: era.headHash, era: era.era, seq: era.seq } : { headHash: "", era: 0, seq: 0 },
+        arenaCursor: arena
+          ? { openedRound: arena.openedRound, resolvedRound: arena.resolvedRound }
+          : { openedRound: -1, resolvedRound: -1 },
+        warCount: war ? war.cursor.resolvedWar : -1,
+        pop: {
+          size: snapshot?.collective.size ?? 0,
+          generation: era ? era.generation : 0,
+          civLevel: era ? era.civLevel : 0,
+        },
+        econ: totals ? { volumeAtomic: totals.volumeAtomic, count: totals.count } : { volumeAtomic: "0", count: 0 },
+      };
+      await engine.appendDigest({ state, tickIndex, genesisHead });
+    } catch (e) {
+      console.warn("[poca] cron exit digest failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * Fired by the facilitator when the receipt registry's lazy genesis seed MINES (x402 onGenesisSeeded) ⇒
+   * PoCA admin kind5 GENESIS_SEED. Only logs when the engine already exists (it does by the time any receipt
+   * commits, since cron entry constructs it); never force-constructs from inside a chain callback.
+   */
+  private handlePocaGenesisSeeded(): void {
+    const engine = this.poca;
+    if (!engine) return;
+    void engine.onGenesisSeeded({ registryAddress: this.cfg.economy.registryAddress ?? null }).catch(() => {});
+  }
+
+  /** GET /poca — identity + the live epoch + the chain head + a coarse continuity verdict. */
+  private async getPoca(): Promise<Response> {
+    const snap = await this.ensurePoca().snapshot();
+    return json({
+      enabled: snap.enabled,
+      codeCommitment: snap.codeCommitment,
+      gitCommit: snap.gitCommit,
+      registryAddress: snap.registryAddress,
+      currentEpoch: snap.currentEpoch,
+      epochState: snap.epochState,
+      chainHead: snap.chainHead,
+      epochCount: snap.epochCount,
+      adminCount: snap.adminCount,
+      continuity: snap.continuity,
+      commitmentInputs: CODE_COMMITMENT_INPUTS,
+    });
+  }
+
+  /** GET /poca/epochs?limit=N — sealed-epoch records, most recent first. */
+  private async getPocaEpochs(url: URL): Promise<Response> {
+    const epochs = await this.ensurePoca().listEpochs(pocaLimit(url.searchParams.get("limit"), 100));
+    return json({ epochs, count: epochs.length });
+  }
+
+  /** GET /poca/epoch/:i — one epoch (open or sealed) + digest count + first/last digest sample. */
+  private async getPocaEpochOne(raw: string): Promise<Response> {
+    const i = Number(raw);
+    if (!Number.isInteger(i) || i < 0) return jsonError("bad_request", "epoch must be a non-negative integer", 400);
+    const epoch = await this.ensurePoca().getEpoch(i);
+    if (!epoch) return jsonError("not_found", "no such epoch", 404);
+    return json(epoch);
+  }
+
+  /** GET /poca/proof?epoch=&cron= — the Merkle inclusion proof for one cron digest. */
+  private async getPocaProof(url: URL): Promise<Response> {
+    const epoch = Number(url.searchParams.get("epoch"));
+    const cron = Number(url.searchParams.get("cron"));
+    if (!Number.isInteger(epoch) || epoch < 0 || !Number.isInteger(cron) || cron < 0) {
+      return jsonError("bad_request", "epoch and cron must be non-negative integers", 400);
+    }
+    const proof = await this.ensurePoca().proof(epoch, cron);
+    if (!proof) return jsonError("not_found", "no such digest", 404);
+    return json(proof);
+  }
+
+  /** GET /poca/admin?limit=N — the administrative-discontinuity log, most recent first. */
+  private async getPocaAdmin(url: URL): Promise<Response> {
+    const admin = await this.ensurePoca().listAdmin(pocaLimit(url.searchParams.get("limit"), 100));
+    return json({ admin, count: admin.length });
+  }
+}
+
+/** Parse + clamp a ?limit= query param for the /poca list endpoints (default `def`, range 1..500). */
+function pocaLimit(raw: string | null, def: number): number {
+  const n = Number(raw ?? def);
+  return Number.isFinite(n) ? Math.min(500, Math.max(1, Math.floor(n))) : def;
 }
 
 /** Shape a raw D1 `ticks` row into clean camelCase JSON, parsing the behavioural-state histogram. */

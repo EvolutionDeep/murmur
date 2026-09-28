@@ -21,6 +21,57 @@ All notable changes to **murmur** are documented in this file. The format is bas
 
 ## [Unreleased]
 
+### Added — Proof of Continuous Agency (PoCA)
+- **`ContinuityRegistry.sol`** (Solidity ^0.8.24, `packages/trader-worker/contracts/`): pure commitment log —
+  `openEpoch(codeCommitment, genesisHead)`, `sealEpoch(index, sealedHead, tickCount, merkleRoot)`,
+  `adminAction(kind, payloadHash)`, `isUnbroken(from, to)`. Immutable committer, no funds, no upgrade path.
+  Epochs chain via `prevEpochSeal`. Events: `EpochOpened`, `EpochSealed`, `AdminAction`.
+- **`poca.ts`** (off-chain engine): `PocoEngine` class over injected `PocoStore` + `PocoChainHooks`.
+  Digest chain: `cronDigest_i = sha256(prevDigest || u64be(i) || stateDigest || codeCommitment)`;
+  `stateDigest = sha256(canonical(PocoStateInput))` where `PocoStateInput` = `{tickIndex, proofChainHead,
+  chronicler{headHash,era,seq}, arenaCursor{openedRound,resolvedRound}, warCount, pop{size,generation,civLevel},
+  econ{volumeAtomic,count}}`. Epoch seal threshold `SEAL_THRESHOLD = 1440` crons (~24h). Merkle: pairwise
+  sha256 fold, odd-tail duplicated, empty = `ZERO64`, single-leaf = itself.
+- **`codeCommitment.ts`** + **`scripts/gen-codecommit.mjs`**: codegen step producing `CODE_COMMITMENT` =
+  `sha256(gitHEAD + srcTreeHash + canonicalKnobDefaults)`. Runs before every `wrangler deploy`; a source
+  change rotates the commitment and forces an epoch seal (admin kind 7 `CODE_CHANGE`).
+- **Admin-discontinuity log**: kinds 1–7 (`RESET`, `MANUAL_TICK`, `PARAM_OVERRIDE`, `COMMITTER_CHANGE`,
+  `GENESIS_SEED`, `DO_REBUILD`, `CODE_CHANGE`). Each entry: `{kind, ts, payloadHash, note, txHash?}`;
+  capped at `ADMIN_LOG_CAP = 500`; best-effort on-chain mirror via `adminAction(kind, payloadHash)`.
+- **`state.ts` wiring**: `ensurePoca()` lazy-constructs the engine; `ensureEpoch()` at cron entry;
+  `appendDigest()` at cron exit; `onReset()` / `onManualTick()` / `onGenesisSeeded()` from matching handlers.
+  DO storage adapter (`PocoStore` over `storage.get/put/delete`); chain hooks delegate to `economy.ts` →
+  `x402.ts` facilitator delegators.
+- **Five `/poca*` REST endpoints** (all free, keyless, CORS-open):
+  `GET /poca` (snapshot + verdict), `GET /poca/epochs?limit=N`, `GET /poca/epoch/{i}`,
+  `GET /poca/proof?epoch=&cron=`, `GET /poca/admin?limit=N`.
+- **OpenAPI 3.1 schemas** (`openapi.ts`): `PocaSealedEpoch`, `PocaEpoch`, `PocaProof`, `PocaMerkleStep`,
+  `PocaAdminEntry` — served verbatim at `/openapi.json`.
+- **`poca.test.ts`** (+26 tests): in-memory `PocoStore` + stub `PocoChainHooks`; covers digest determinism,
+  Merkle root/proof/verify round-trip, epoch open/seal lifecycle, admin-kind detection, DO-rebuild via tick
+  regression, chain-across-epoch continuity, code-change forced seal.
+- **`scripts/deploy-poca-auto.mjs`**: confirm-gated (`POCA_CONFIRM=1`) mainnet deploy of `ContinuityRegistry`;
+  resolves the committer from TWO independent on-chain sources that must agree (`PredictionArena.resolver()` +
+  the latest settlement proof's `tx.from`), dry-runs a gas estimate without it, and self-verifies the deployed
+  immutables. **`scripts/poca-verify.mjs`** (`npm run verify:poca`): the standalone five-criterion CLI verifier
+  (`--registry` / `--sample` / `--json` / `--selftest`).
+  **Live on Arc mainnet**: `ContinuityRegistry` at `0x3f67b38030f2d709bafd2f7a3ee2388c35195b33` (deploy tx
+  `0xd9ef64…dd16`, gas paid by `0x307D…3a0d`), committer = the Worker facilitator `0x2b9a…055c`; the address is
+  the code default in `config.ts` (`pocaRegistryAddress`), so the on-chain epoch mirror arms on the next Worker
+  deploy without any `wrangler.toml` var.
+- **`MANIFEST_HASH` bypass hard gate** (`deploy-manifest-auto.mjs`): setting `MANIFEST_HASH` alone is no longer
+  sufficient — also requires `MANIFEST_HASH_BYPASS_APPROVED=1`. Prevents accidental production deploys with a
+  stale/incorrect manifest hash that would desync the on-chain commitment.
+- **`npm run replay -- --flywire`** (`scripts/replay-brain.ts` FlyWire mode): offline full-behavioural replay
+  that deterministically rebuilds every connectome from the committed FlyWire subgraph + seeds and verifies
+  structural specs against the on-chain `manifestHash`. Covers PoCA criterion ④ at full-replay depth.
+- **`docs/POCA.md`**: complete specification — naming rationale, problem statement, byte-level data structures,
+  contract ABI, five-criterion verification algorithm, epoch semantics, trust-boundary disclosures, verifier
+  usage, ERC-8004 integration path, cost model.
+- **`SECURITY.md` §“Disclosed Centralization & Trust Assumptions”**: five items — PredictionArena resolver as
+  trusted exitTemp oracle, WarCoffer one-way sunk pool, war-rail cap bypass, governance instant-balance
+  weighting, ADMIN_TOKEN fail-open. Each with mitigation / discoverability / why-accepted.
+
 ### Added
 - **Real unit-test suite (36 tests)** replacing the smoke-only gap: `connectome.test.ts` (laminar FlyWire
   downsample, mutually-inhibitory L2 winner-take-all, per-seed determinism), `lif.test.ts` (leak / spike /

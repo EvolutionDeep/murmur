@@ -5,7 +5,7 @@
 // Performance target: <2ms per frame (instanced geometry, no per-frame allocation).
 
 import { state, API, shortHash } from './shared.js';
-import { t as T } from './i18n.js?v=109';
+import { t as T } from './i18n.js?v=110';
 import * as THREE from 'three';
 
 // ---- constants ----

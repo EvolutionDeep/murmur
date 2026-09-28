@@ -385,6 +385,151 @@ signature (EIP-712). Sub-endpoints for posts, proposals and votes live under `/c
 
 ---
 
+### poca — Proof of Continuous Agency
+
+The PoCA endpoints expose the live continuity chain: per-cron state digests folded into ~24h epochs, each
+sealed with a Merkle root and anchored on-chain via the `ContinuityRegistry`. See [**docs/POCA.md**](./docs/POCA.md)
+for the full specification.
+
+#### `GET /poca`
+The live PoCA state + continuity verdict. Free, keyless, CORS-open.
+
+Returns:
+```jsonc
+{
+  "enabled": true,                   // true when the on-chain registry mirror is armed (address non-zero)
+  "codeCommitment": "2bd01a…",       // sha256 over git HEAD + src tree + knob defaults (64-hex)
+  "gitCommit": "ff2450a…",           // the git commit this build was generated from
+  "registryAddress": "0x…",          // ContinuityRegistry address (zero ⇒ disabled)
+  "currentEpoch": 3,                 // open epoch index (null before the first open)
+  "epochState": {                    // live open-epoch state (null when none)
+    "openTs": 1727500000000,         // Unix ms the epoch started
+    "digestCount": 842,              // cron digests folded so far this epoch
+    "head": "a3f1…"                  // latest cron digest in this epoch
+  },
+  "chainHead": "a3f1…",             // the global latest cron digest (poca:head)
+  "epochCount": 4,                   // closed + open epochs
+  "adminCount": 2,                   // admin-discontinuity entries recorded
+  "continuity": "unbroken",          // "unbroken" | "pending" | "disabled"
+  "commitmentInputs": {              // non-secret summary for offline recompute
+    "gitCommit": "ff2450a…",
+    "treeHash": "ebb752…",
+    "fileCount": 89,
+    "knobCount": 21
+  }
+}
+```
+
+#### `GET /poca/epochs`
+Sealed-epoch records, most recent first. The currently-open epoch is NOT included (read it from `GET /poca`
+or `GET /poca/epoch/{i}`).
+
+| query   | type    | default | meaning                                       |
+| ------- | ------- | ------- | --------------------------------------------- |
+| `limit` | integer | `100`   | Max sealed epochs to return (1–500).           |
+
+Returns `{ epochs[], count }` where each epoch is a `PocaSealedEpoch`:
+```jsonc
+{
+  "index": 2,
+  "openTs": 1727400000000,           // Unix ms opened
+  "endTs": 1727486400000,            // Unix ms sealed
+  "tickCount": 1440,                 // cron digests in this epoch
+  "merkleRoot": "7f3a…",            // 64-hex Merkle root
+  "sealedHead": "b2c4…",            // last cron digest (ZERO64 if sealed empty)
+  "genesisHead": "a1f0…",           // proof-chain head at epoch open
+  "codeCommitment": "2bd01a…",      // CODE_COMMITMENT this epoch opened under
+  "reason": "threshold",             // "threshold" | "reset" | "code-change"
+  "openTxHash": "0x…",              // on-chain openEpoch tx (when armed)
+  "txHash": "0x…"                   // on-chain sealEpoch tx (when armed)
+}
+```
+
+#### `GET /poca/epoch/{i}`
+One epoch (open, sealed, or unknown) by index.
+
+| path | type    | meaning          |
+| ---- | ------- | ---------------- |
+| `i`  | integer | The epoch index. |
+
+Returns a `PocaEpoch`:
+```jsonc
+{
+  "index": 0,
+  "state": "sealed",                 // "open" | "sealed" | "unknown"
+  "openTs": 1727300000000,
+  "endTs": 1727386400000,            // null while open
+  "tickCount": 1440,
+  "digestCount": 1440,               // digests currently stored
+  "merkleRoot": "7f3a…",            // null until sealed
+  "sealedHead": "b2c4…",            // null until sealed
+  "genesisHead": "a1f0…",
+  "codeCommitment": "2bd01a…",
+  "reason": "threshold",             // null while open
+  "txHash": "0x…",                  // openEpoch tx while open; sealEpoch tx once sealed
+  "firstDigest": "c0d1…",           // sample: first cron digest in the epoch
+  "lastDigest": "b2c4…"             // sample: latest cron digest in the epoch
+}
+```
+
+#### `GET /poca/proof`
+Merkle inclusion proof for one cron digest. Fold `digest` up through `path` and verify you land on `root`.
+For a sealed epoch, `root` equals the committed `merkleRoot` (proves against the on-chain anchor).
+
+| query   | type    | required | meaning                                    |
+| ------- | ------- | -------- | ------------------------------------------ |
+| `epoch` | integer | yes      | The epoch index.                           |
+| `cron`  | integer | yes      | 0-based digest position within the epoch.  |
+
+Returns a `PocaProof`:
+```jsonc
+{
+  "epoch": 2,
+  "cron": 42,
+  "digest": "e5f6…",                 // the cron digest (Merkle leaf, 64-hex)
+  "root": "7f3a…",                   // Merkle root over the epoch's digests
+  "path": [                          // sibling hashes from leaf up to root
+    { "sibling": "ab12…", "direction": 0 },  // 0 = current is LEFT child
+    { "sibling": "cd34…", "direction": 1 }   // 1 = current is RIGHT child
+  ],
+  "sealed": true                     // true when the epoch is sealed
+}
+```
+
+#### `GET /poca/admin`
+The administrative-discontinuity log, most recent first. Every RESET / MANUAL_TICK / PARAM_OVERRIDE /
+COMMITTER_CHANGE / GENESIS_SEED / DO_REBUILD / CODE_CHANGE appears here.
+
+| query   | type    | default | meaning                                    |
+| ------- | ------- | ------- | ------------------------------------------ |
+| `limit` | integer | `100`   | Max entries to return (1–500).              |
+
+Returns `{ admin[], count }` where each entry is a `PocaAdminEntry`:
+```jsonc
+{
+  "kind": 7,                         // 1–7 (see AdminAction kinds below)
+  "kindName": "CODE_CHANGE",         // human-readable label
+  "ts": 1727450000000,               // Unix ms recorded
+  "payloadHash": "9a8b…",           // sha256(canonical({kind,ts,detail})) — commits the reason
+  "note": "CODE_COMMITMENT rotated", // short safe-to-expose label
+  "txHash": "0x…"                   // on-chain adminAction tx (when armed + mined)
+}
+```
+
+**AdminAction kinds:**
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 1 | `RESET` | `/reset` invoked — swarm state restarted. |
+| 2 | `MANUAL_TICK` | Tick driven by a human via `POST /tick` (not cron). |
+| 3 | `PARAM_OVERRIDE` | Runtime knob snapshot changed (wrangler params overridden). |
+| 4 | `COMMITTER_CHANGE` | Facilitator/committer wallet address changed. |
+| 5 | `GENESIS_SEED` | Receipt registry genesis anchor mined. |
+| 6 | `DO_REBUILD` | Durable Object state rebuilt / restored to defaults. |
+| 7 | `CODE_CHANGE` | `CODE_COMMITMENT` rotated — new source tree acting. |
+
+---
+
 ## Shared schemas
 
 - **Collective** — `{ temperature, regime, vitality, size, arousal, cohesion, rest, wingbeat, states }`.

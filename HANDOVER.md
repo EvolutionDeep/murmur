@@ -1,7 +1,7 @@
 # HANDOVER — murmur 项目交接文档
 
-> 最后更新：2026-09-28  
-> 最新 commit：`6492d85`（fresh + main 三方对齐）  
+> 最后更新：2026-09-29  
+> 最新 commit：`ff2450a`（UI 全档自适应 + PoCA 批次）  
 > 生产 Worker version：`4a8ad944`
 
 ---
@@ -232,3 +232,52 @@ cast send <MANIFEST_REGISTRY> "commit(bytes32)" <HASH> --private-key $PK --rpc-u
 3. **UI 持续迭代**：Direction A rail 已上线，可进一步细化交互动画
 4. **FlyWire 数据扩展**：当前仅 MB+CX 子图，全脑 139,255 神经元可选扩展
 5. **经济系统**：信贷复合体链上集成（当前为读出膜/因果膜分界）
+
+---
+
+## 10. Sprint — PoCA 批次 (2026-09-28 → 2026-09-29)
+
+### 10.1 UI 全档自适应部署 (commit `ff2450a`)
+
+- Direction A Command Rail 全面上线：桌面/平板/手机三断点响应式
+- 缓存键 `styles.css?v=112`, `main.js?v=142`
+- 3D 主画布、drawers.js、polling.js 零改动（零真钱风险）
+
+### 10.2 波 1 安全整改
+
+- **SECURITY.md** 新增 §“Disclosed Centralization & Trust Assumptions”，五条披露：
+  1. PredictionArena resolver 为 exitTempR6 可信预言机
+  2. WarCoffer 单向沉没池 ~50 USDC
+  3. war-rail 绕过 ECONOMY 日限但受链上 EscrowCap(50) 硬顶
+  4. 治理投票即时余额加权（可买-投-卖）
+  5. ADMIN_TOKEN fail-open 语义
+- 每条包含 Mitigation / Discoverability / Why accepted 三段
+- `deploy-manifest-auto.mjs` 新增 `MANIFEST_HASH_BYPASS_APPROVED=1` 硬门
+
+### 10.3 PoCA 实现状态
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| `poca.ts` (off-chain engine) | ✅ 完成 | 788 行，PocoEngine + digest chain + Merkle + epoch lifecycle |
+| `poca.test.ts` | ✅ 完成 | 26 tests，in-memory store + stub hooks |
+| `codeCommitment.ts` | ✅ 生成 | `CODE_COMMITMENT = 2bd01a41…`，git `ff2450a` |
+| `gen-codecommit.mjs` | ✅ 完成 | 162 行，deploy 前自动跑 |
+| `ContinuityRegistry.sol` | ✅ 完成 | 181 行，openEpoch/sealEpoch/adminAction/isUnbroken |
+| `state.ts` 接线 | ✅ 完成 | cron entry/exit hooks + 5 routes |
+| `openapi.ts` schemas | ✅ 完成 | PocaSealedEpoch/Epoch/Proof/MerkleStep/AdminEntry |
+| `/poca*` endpoints | ✅ 完成 | 5 endpoints，免费无钥 CORS |
+| `docs/POCA.md` | ✅ 完成 | 完整规范 (553 行) |
+| **ContinuityRegistry 部署** | ⏳ 待做 | 需 `npm run deploy:registry`（同 NeuralReceiptRegistry 流程） |
+| **合约地址回填** | ⏳ 待做 | 部署后回填 `docs/POCA.md` + `wrangler.toml` POCA_REGISTRY_ADDRESS |
+| **首纪元锚定** | ⏳ 待做 | 部署后第一次 cron 自动 openEpoch + 第一次 seal |
+| **前端 PoCA 抽屉** | ⏳ 待做 | 显示 continuity verdict + epoch list + admin log |
+| **`scripts/poca-verify.mjs`** | ⏳ 待做 | CLI 验证器（--selftest / --registry / --sample / --json） |
+
+### 10.4 待办优先级
+
+1. **部署 ContinuityRegistry** — 用现有 `deploy-registry-auto.mjs` 流程，committer = facilitator `0x2b9a…055c`
+2. **地址回填** — `docs/POCA.md` TODO 标记处 + `wrangler.toml` 新增 `POCA_REGISTRY_ADDRESS`
+3. **翻开关** — 设置 `POCA_REGISTRY_ADDRESS` 后 redeploy Worker，引擎自动从 disabled → enabled
+4. **前端抽屉** — 读 `GET /poca` + `GET /poca/epochs` 显示纪元链
+5. **CLI 验证器** — 实现 `poca-verify.mjs` 四模式
+6. **ERC-8004 注册** — Arc mainnet singleton `0x8004Cc8439f36fd5F9F049D9fF86523Df6dAAB58`

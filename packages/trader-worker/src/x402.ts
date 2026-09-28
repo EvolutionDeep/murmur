@@ -207,6 +207,34 @@ export const predictionArenaAbi = parseAbi([
   "function escrow() view returns (uint256)",
 ]);
 
+/**
+ * murmur's PROOF-OF-CONTINUOUS-AGENCY registry (contracts/PoCARegistry.sol, written in parallel to this
+ * client). It is the on-chain MIRROR of the Worker's off-chain cron-digest epoch chain: the Worker (as the
+ * authorized `committer`) opens an epoch pinning a code commitment + genesis head, seals each epoch with a
+ * Merkle root over that epoch's cron digests, and logs every administrative discontinuity (reset / manual
+ * tick / param override / committer change / genesis seed / DO rebuild / code change). A verifier can then
+ * answer "was the last 180 days of behaviour produced continuously by the SAME declared program?" purely
+ * from Arc, without trusting the operator.
+ *
+ * This client ABI is a strict subset of the contract: it carries every function the Worker CALLS
+ * (openEpoch/sealEpoch/adminAction) plus the simple views it may read (committer/epochCount/currentEpoch/
+ * isUnbroken) and the events (documented for external log verifiers — the Worker never decodes them). The
+ * `epochs(i)` struct view is intentionally omitted: its field layout is not pinned by the shared contract
+ * text and the Worker tracks epoch state off-chain, so it never reads it.
+ */
+export const pocaRegistryAbi = parseAbi([
+  "function openEpoch(bytes32 codeCommitment, bytes32 genesisHead) returns (uint256 epochIndex)",
+  "function sealEpoch(uint256 epochIndex, bytes32 sealedHead, uint64 tickCount, bytes32 merkleRoot)",
+  "function adminAction(uint8 kind, bytes32 payloadHash)",
+  "function epochCount() view returns (uint256)",
+  "function currentEpoch() view returns (uint256)",
+  "function committer() view returns (address)",
+  "function isUnbroken(uint256 from, uint256 to) view returns (bool)",
+  "event EpochOpened(uint256 indexed epochIndex, bytes32 codeCommitment, bytes32 genesisHead)",
+  "event EpochSealed(uint256 indexed epochIndex, bytes32 sealedHead, uint64 tickCount, bytes32 merkleRoot)",
+  "event AdminAction(uint8 indexed kind, bytes32 payloadHash)",
+]);
+
 /** A decoded arena round: temperatures unscaled from r6 (÷1e6), pools as atomic MURMUR (18-dec) strings. */
 export interface ArenaRoundInfo {
   opened: boolean;
@@ -935,6 +963,19 @@ export interface OnChainFacilitatorOpts {
    */
   lineageAddress?: Address;
   /**
+   * Deployed PoCARegistry to mirror the cron-digest epoch chain onto (makes continuous agency a public,
+   * tamper-evident on-chain fact). Absent OR the zero address ⇒ DISABLED mode: every PoCA on-chain call
+   * is skipped (logged once) while the off-chain epoch chain runs identically. This is the DEFAULT until
+   * the contract is deployed — zero behaviour change to the live tick.
+   */
+  pocaRegistryAddress?: Address;
+  /**
+   * Fired once when the NeuralReceiptRegistry's lazy genesis seed MINES (see ensureGenesisSeeded). The
+   * Worker hooks this to record a PoCA admin action kind=5 GENESIS_SEED — the single moment the on-chain
+   * receipt chain is anchored, which is a discontinuity a verifier must be able to see.
+   */
+  onGenesisSeeded?: () => void;
+  /**
    * Optional Circle Facilitator Service backend. When set (and not shadowOnly), the USDC broadcast in
    * settle()/settleExternal() is delegated to Circle per `circle.scope`; everything else is unchanged.
    */
@@ -954,6 +995,9 @@ export class OnChainFacilitator implements Facilitator {
   private readonly settledNonces = new NonceRing(512);
   private readonly circleBreaker = new CircleBreaker(3, 600_000);
   private readonly bootTs = Date.now();
+  // One-shot latch so the "PoCA registry disabled (zero address)" explanation is logged a single time per
+  // isolate rather than on every cron — the off-chain epoch chain keeps running regardless.
+  private pocaSkipLogged = false;
   private readonly st = {
     circleOk: 0, circleInfraFail: 0, circleReject: 0, circleSkipped: 0, circleFallbackOk: 0,
     relayOk: 0, relayFail: 0, replayHits: 0, gasWeiTotal: 0n,
@@ -1539,9 +1583,14 @@ export class OnChainFacilitator implements Facilitator {
         address: addr, abi: neuralReceiptRegistryAbi, functionName: "seedGenesis", args: [anchor],
         ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
       });
-      await this.o.publicClient.waitForTransactionReceipt({
+      const gr = await this.o.publicClient.waitForTransactionReceipt({
         hash: h, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
       });
+      // The genesis anchor just became a permanent on-chain fact — surface it to the PoCA admin log
+      // (kind=5 GENESIS_SEED). Best-effort: a hook throw must never unwind the seed that already mined.
+      if (gr.status === "success") {
+        try { this.o.onGenesisSeeded?.(); } catch { /* non-fatal */ }
+      }
     } catch {
       /* best-effort */
     }
@@ -1919,6 +1968,126 @@ export class OnChainFacilitator implements Facilitator {
         parentA: r[1], parentB: r[2], op: Number(r[3]),
         generation: Number(r[4]), breeder: r[5], ts,
       };
+    } catch {
+      return null;
+    }
+  }
+
+  // ============================== on-chain PoCA (proof of continuous agency) ==============================
+  //
+  // Thin, best-effort delegators to the facilitator's PoCARegistry wiring — the on-chain mirror of the
+  // Worker's off-chain cron-digest epoch chain. The Worker is the sole authorized `committer`, so it opens
+  // an epoch (pinning codeCommitment + genesisHead), seals each epoch (Merkle root over its digests), and
+  // logs every administrative discontinuity. Every call degrades to null (disabled / reverted / shadow) so
+  // a PoCA hiccup can NEVER fail or delay the live tick — the authoritative chain is the off-chain one;
+  // the contract only makes it public and tamper-evident (mirrors commitReceipt/arenaOpen discipline).
+
+  /** True when a PoCA registry is wired (present AND non-zero) for this facilitator. */
+  get hasPoca(): boolean {
+    const a = this.o.pocaRegistryAddress;
+    return a != null && a.toLowerCase() !== ARC_USDC_SIMULATED;
+  }
+
+  /**
+   * Resolve the PoCA registry address, or null when unwired / zero-address (DISABLED mode). Logs the skip
+   * exactly once so the on-chain silence is explained without spamming every cron. Zero address is the
+   * DEFAULT until the contract ships; the off-chain epoch chain is unaffected either way.
+   */
+  private pocaRegistry(): Address | null {
+    const a = this.o.pocaRegistryAddress;
+    if (a == null || a.toLowerCase() === ARC_USDC_SIMULATED) {
+      if (!this.pocaSkipLogged) {
+        this.pocaSkipLogged = true;
+        console.log("[poca] registry address zero/unset — on-chain epoch mirror DISABLED (off-chain chain continues)");
+      }
+      return null;
+    }
+    return a;
+  }
+
+  /**
+   * Open a new epoch on-chain, pinning the code commitment + the genesis chain head it starts from. The
+   * Worker keeps its OWN monotonic epoch index off-chain (it is the sole committer, so the on-chain index
+   * matches); this returns the tx hash on a MINED success, or null when disabled / reverted.
+   */
+  async pocaOpenEpoch(codeCommitment: string, genesisHead: string): Promise<string | null> {
+    const addr = this.pocaRegistry();
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: pocaRegistryAbi, functionName: "openEpoch",
+        args: [toBytes32(codeCommitment), toBytes32(genesisHead)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Seal an epoch on-chain with the Merkle root over its cron digests + the sealed head + tick count. This
+   * is the moment a ~24h window of continuous agency becomes immutable and publicly verifiable. Returns
+   * the tx hash on a MINED success, or null when disabled / reverted (the off-chain seal still stands).
+   */
+  async pocaSealEpoch(epochIndex: number, sealedHead: string, tickCount: number, merkleRoot: string): Promise<string | null> {
+    const addr = this.pocaRegistry();
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: pocaRegistryAbi, functionName: "sealEpoch",
+        args: [
+          BigInt(Math.max(0, Math.floor(epochIndex))),
+          toBytes32(sealedHead),
+          BigInt(Math.max(0, Math.floor(tickCount))),
+          toBytes32(merkleRoot),
+        ],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Log one administrative discontinuity on-chain (kind: 1 RESET, 2 MANUAL_TICK, 3 PARAM_OVERRIDE,
+   * 4 COMMITTER_CHANGE, 5 GENESIS_SEED, 6 DO_REBUILD, 7 CODE_CHANGE). payloadHash is sha256(canonical
+   * detail) so the reason is committed without leaking it. Returns the tx hash on a MINED success, or null.
+   */
+  async pocaAdminAction(kind: number, payloadHash: string): Promise<string | null> {
+    const addr = this.pocaRegistry();
+    if (!addr) return null;
+    try {
+      const hash = await this.o.wallet.writeContract({
+        address: addr, abi: pocaRegistryAbi, functionName: "adminAction",
+        args: [Math.max(0, Math.min(255, Math.floor(kind))), toBytes32(payloadHash)],
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: REGISTRY_RECEIPT_TIMEOUT_MS,
+      });
+      return receipt.status === "success" ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read the registry's authorized committer (the wallet it expects writes from); null when disabled / RPC error. */
+  async pocaCommitter(): Promise<string | null> {
+    const addr = this.pocaRegistry();
+    if (!addr) return null;
+    try {
+      const c = await this.o.publicClient.readContract({
+        address: addr, abi: pocaRegistryAbi, functionName: "committer",
+      });
+      return c as string;
     } catch {
       return null;
     }

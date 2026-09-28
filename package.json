@@ -36,8 +36,10 @@
     "test": "npm run test --workspaces --if-present",
     "smoke": "tsx packages/fly-brain/smoke.ts",
     "replay": "npm run replay -w @fly/trader-worker -- --from-wrangler",
+    "verify:poca": "node scripts/poca-verify.mjs",
+    "verify:poca:selftest": "node scripts/poca-verify.mjs --selftest",
     "dev:worker": "npm run dev -w @fly/trader-worker",
-    "deploy:worker": "npm run deploy -w @fly/trader-worker",
+    "deploy:worker": "node scripts/gen-codecommit.mjs && npm run deploy -w @fly/trader-worker",
     "deploy:frontend": "npm run deploy -w @fly/frontend",
     "deploy": "npm run deploy:worker && npm run deploy:frontend"
   },

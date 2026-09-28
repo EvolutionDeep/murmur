@@ -447,6 +447,96 @@ const COMMUNITY_TIMELINE = {
   },
 } as const;
 
+// ---- PoCA (Proof of Continuous Agency): the hash-chained, epoch-sealed, on-chain-anchored proof that
+// behaviour is produced continuously by the declared program (no silent rewrite / reset / takeover). ----
+
+const POCA_MERKLE_STEP = {
+  type: "object",
+  description:
+    "One sibling in a Merkle inclusion path. `direction` 0 ⇒ the current node is the LEFT child (parent = sha256(cur || sibling)); 1 ⇒ the current node is the RIGHT child (parent = sha256(sibling || cur)).",
+  additionalProperties: false,
+  properties: {
+    sibling: { type: "string", description: "64-hex sibling node hash.", example: "0ab1…" },
+    direction: { type: "integer", enum: [0, 1], description: "0 ⇒ current node is the left child; 1 ⇒ the right child." },
+  },
+  required: ["sibling", "direction"],
+} as const;
+
+const POCA_PROOF = {
+  type: "object",
+  description:
+    "A Merkle inclusion proof binding one cron digest to its epoch root. Recompute: fold `digest` up through `path` (each step's `direction` says which side) and check you land on `root`. For a sealed epoch the root equals the epoch's committed merkleRoot (so this proves against the on-chain anchor); for the still-open epoch it is the root over the current digest prefix.",
+  additionalProperties: false,
+  properties: {
+    epoch: { type: "integer", description: "Epoch index the digest belongs to." },
+    cron: { type: "integer", description: "0-based position of the digest within the epoch." },
+    digest: { type: "string", description: "The cron digest (Merkle leaf) being proved (64-hex)." },
+    root: { type: "string", description: "The Merkle root over the epoch's digests (64-hex)." },
+    path: { type: "array", items: POCA_MERKLE_STEP, description: "Sibling hashes from the leaf up to the root." },
+    sealed: { type: "boolean", description: "true when the epoch is sealed (root == its committed merkleRoot)." },
+  },
+  required: ["epoch", "cron", "digest", "root", "path", "sealed"],
+} as const;
+
+const POCA_ADMIN_ENTRY = {
+  type: "object",
+  description:
+    "One administrative-discontinuity log entry. Every RESET / MANUAL_TICK / PARAM_OVERRIDE / COMMITTER_CHANGE / GENESIS_SEED / DO_REBUILD / CODE_CHANGE is recorded here (and, when the registry is armed, anchored on-chain via adminAction). `payloadHash` = sha256(canonical({kind,ts,detail})) — it commits the reason without leaking it.",
+  additionalProperties: false,
+  properties: {
+    kind: { type: "integer", minimum: 1, maximum: 7, description: "1 RESET · 2 MANUAL_TICK · 3 PARAM_OVERRIDE · 4 COMMITTER_CHANGE · 5 GENESIS_SEED · 6 DO_REBUILD · 7 CODE_CHANGE." },
+    kindName: { type: "string", description: "Human label for kind (RESET / MANUAL_TICK / PARAM_OVERRIDE / COMMITTER_CHANGE / GENESIS_SEED / DO_REBUILD / CODE_CHANGE)." },
+    ts: { type: "integer", description: "Unix ms the action was recorded." },
+    payloadHash: { type: "string", description: "sha256 over the canonical action detail (64-hex)." },
+    note: { type: "string", description: "Short human label (safe to expose)." },
+    txHash: { type: ["string", "null"], description: "On-chain adminAction tx hash, when the registry is armed + mined; else absent/null." },
+  },
+  required: ["kind", "kindName", "ts", "payloadHash", "note"],
+} as const;
+
+const POCA_SEALED_EPOCH = {
+  type: "object",
+  description: "An immutable SEALED-epoch record (retained for /poca/epochs + /poca/proof).",
+  additionalProperties: false,
+  properties: {
+    index: { type: "integer" },
+    openTs: { type: "integer", description: "Unix ms the epoch opened." },
+    endTs: { type: "integer", description: "Unix ms the epoch sealed." },
+    tickCount: { type: "integer", description: "Number of cron digests folded into the epoch." },
+    merkleRoot: { type: "string", description: "64-hex Merkle root over the epoch's digests." },
+    sealedHead: { type: "string", description: "The epoch's last cron digest (ZERO64 if it sealed empty)." },
+    genesisHead: { type: "string", description: "The proof-chain head the epoch started from." },
+    codeCommitment: { type: "string", description: "CODE_COMMITMENT the epoch opened under (64-hex)." },
+    reason: { type: "string", description: "Why it sealed: 'threshold' | 'reset' | 'code-change'." },
+    openTxHash: { type: ["string", "null"], description: "On-chain openEpoch tx (when armed)." },
+    txHash: { type: ["string", "null"], description: "On-chain sealEpoch tx (when armed)." },
+  },
+  required: ["index", "openTs", "endTs", "tickCount", "merkleRoot", "sealedHead", "genesisHead", "codeCommitment", "reason"],
+} as const;
+
+const POCA_EPOCH_DETAIL = {
+  type: "object",
+  description: "One epoch (open, sealed, or unknown) with its digest count + a first/last digest sample.",
+  additionalProperties: false,
+  properties: {
+    index: { type: "integer" },
+    state: { type: "string", enum: ["open", "sealed", "unknown"], description: "open ⇒ still folding; sealed ⇒ final; unknown ⇒ digests linger but no meta (post-rebuild)." },
+    openTs: { type: ["integer", "null"], description: "Unix ms the epoch opened (null when unknown)." },
+    endTs: { type: ["integer", "null"], description: "Unix ms the epoch sealed (null while open)." },
+    tickCount: { type: "integer", description: "Number of cron digests folded into the epoch." },
+    digestCount: { type: "integer", description: "Number of digests currently stored for the epoch." },
+    merkleRoot: { type: ["string", "null"], description: "64-hex Merkle root (null until sealed)." },
+    sealedHead: { type: ["string", "null"], description: "The epoch's last cron digest (null until sealed)." },
+    genesisHead: { type: ["string", "null"], description: "The proof-chain head the epoch started from." },
+    codeCommitment: { type: ["string", "null"], description: "CODE_COMMITMENT the epoch opened under." },
+    reason: { type: ["string", "null"], description: "Why it sealed (null while open)." },
+    txHash: { type: ["string", "null"], description: "The epoch's on-chain tx (openEpoch while open; sealEpoch once sealed)." },
+    firstDigest: { type: ["string", "null"], description: "The epoch's first cron digest (sample)." },
+    lastDigest: { type: ["string", "null"], description: "The epoch's latest cron digest (sample)." },
+  },
+  required: ["index", "state", "digestCount", "tickCount"],
+} as const;
+
 function ok(schema: unknown, description: string) {
   return {
     response: {
@@ -518,6 +608,7 @@ export const OPENAPI_SPEC = {
     { name: "signal", description: "The x402 paid Arc-activity signal (the one non-free endpoint)." },
     { name: "community", description: "Token-gated governance forum for MURMUR holders: browse free; sign to speak / propose / vote." },
     { name: "laureate", description: "⑮ The Laureate: the swarm's own poet — one living fly's neural activity + the on-chain reality, decoded through a public grammar into a verifiable four-line poem (no LLM)." },
+    { name: "poca", description: "Proof of Continuous Agency: the hash-chained, epoch-sealed, on-chain-anchored proof that behaviour is produced continuously by the declared program (no silent rewrite / reset / takeover)." },
   ],
   paths: {
     "/": {
@@ -1538,6 +1629,109 @@ export const OPENAPI_SPEC = {
         ...ok(obj({ ok: { type: "boolean" }, proposalId: { type: "integer" }, choice: { type: "integer" }, weight: { type: "string" }, weightFmt: { type: "string" }, tally: { $ref: "#/components/schemas/CommunityTally" } }, ["ok"]), "Vote recorded + the updated tally.").response,
       },
     },
+    "/poca": {
+      get: {
+        tags: ["poca"],
+        operationId: "getPoca",
+        summary: "Proof of Continuous Agency: the live epoch-chain state + continuity verdict",
+        description:
+          "PoCA answers one question: has the recent behaviour been produced *continuously* by the declared program, with no silent rewrite / reset / takeover? Every cron folds a state digest into a hash chain (`chainHead`); every ~1440 crons (≈24h) the chain seals into an epoch with a Merkle root anchored to the PoCARegistry on Arc. `continuity` is the verdict: **unbroken** (chain advancing normally), **pending** (no epoch/head yet — cold start), or **disabled** (registry at the zero address ⇒ the off-chain chain still runs, no on-chain anchor). Free, no key.",
+        ...ok(
+          obj({
+            enabled: { type: "boolean", description: "true when the on-chain registry mirror is armed (address non-zero)." },
+            codeCommitment: { type: "string", description: "The CODE_COMMITMENT this build runs (sha256 over git HEAD + src tree + knob defaults; 64-hex)." },
+            gitCommit: { type: "string", description: "The git commit this build was generated from ('unknown' if git was unavailable)." },
+            registryAddress: { type: "string", description: "The PoCARegistry address (zero address ⇒ disabled)." },
+            currentEpoch: { type: ["integer", "null"], description: "The open epoch index, or null before the first open." },
+            epochState: {
+              type: ["object", "null"],
+              description: "The open epoch's live state, or null when none is open.",
+              additionalProperties: false,
+              properties: {
+                openTs: { type: "integer", description: "Unix ms the open epoch started." },
+                digestCount: { type: "integer", description: "Cron digests folded so far this epoch." },
+                head: { type: ["string", "null"], description: "The open epoch's latest cron digest." },
+              },
+            },
+            chainHead: { type: ["string", "null"], description: "The latest cron digest across the whole chain (poca:head)." },
+            epochCount: { type: "integer", description: "Closed + open epochs." },
+            adminCount: { type: "integer", description: "Administrative-discontinuity log entries recorded." },
+            continuity: { type: "string", enum: ["unbroken", "pending", "disabled"], description: "The continuity verdict." },
+            commitmentInputs: {
+              type: "object",
+              description: "Non-secret summary of what fed codeCommitment (for offline recompute).",
+              additionalProperties: true,
+              properties: {
+                gitCommit: { type: "string" },
+                treeHash: { type: "string", description: "sha256 over the src tree (64-hex)." },
+                fileCount: { type: "integer", description: "Source files hashed." },
+                knobCount: { type: "integer", description: "Grey-release knob defaults hashed." },
+              },
+            },
+          }, ["enabled", "codeCommitment", "gitCommit", "registryAddress", "epochCount", "adminCount", "continuity"]),
+          "The live PoCA state + continuity verdict.",
+        ).response,
+      },
+    },
+    "/poca/epochs": {
+      get: {
+        tags: ["poca"],
+        operationId: "getPocaEpochs",
+        summary: "Sealed epochs, most recent first",
+        description:
+          "The list of SEALED epochs (each with its Merkle root, tick count, start/end timestamps, and — when armed — the on-chain seal tx). The currently-open epoch is not included; read it from `GET /poca` or `GET /poca/epoch/{i}`.",
+        parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 500, default: 100 }, description: "Max sealed epochs to return (most recent first)." }],
+        ...ok(
+          obj({
+            epochs: { type: "array", items: { $ref: "#/components/schemas/PocaSealedEpoch" }, description: "Sealed-epoch records, most recent first." },
+            count: { type: "integer", description: "Number of records returned." },
+          }, ["epochs", "count"]),
+          "The sealed-epoch list.",
+        ).response,
+      },
+    },
+    "/poca/epoch/{i}": {
+      get: {
+        tags: ["poca"],
+        operationId: "getPocaEpochOne",
+        summary: "One epoch (open or sealed) + its digest count and first/last digest sample",
+        description:
+          "Full detail for a single epoch by index. Works for the still-open epoch, any sealed epoch, and (post-rebuild) an 'unknown' epoch whose digests still linger.",
+        parameters: [{ name: "i", in: "path", required: true, schema: { type: "integer", minimum: 0 }, description: "The epoch index.", example: 0 }],
+        ...ok({ $ref: "#/components/schemas/PocaEpoch" }, "The epoch detail (404 when no such epoch exists).").response,
+      },
+    },
+    "/poca/proof": {
+      get: {
+        tags: ["poca"],
+        operationId: "getPocaProof",
+        summary: "Merkle inclusion proof for one cron digest",
+        description:
+          "Prove a single cron digest is in its epoch's Merkle tree: fold `digest` up through `path` (each step's `direction` says which side) and check you land on `root`. For a sealed epoch `root` equals the epoch's committed merkleRoot, so this is a proof against the on-chain anchor; for the open epoch it is the root over the current digest prefix.",
+        parameters: [
+          { name: "epoch", in: "query", required: true, schema: { type: "integer", minimum: 0 }, description: "The epoch index.", example: 0 },
+          { name: "cron", in: "query", required: true, schema: { type: "integer", minimum: 0 }, description: "The 0-based digest position within the epoch.", example: 42 },
+        ],
+        ...ok({ $ref: "#/components/schemas/PocaProof" }, "The inclusion proof (404 when no such digest exists).").response,
+      },
+    },
+    "/poca/admin": {
+      get: {
+        tags: ["poca"],
+        operationId: "getPocaAdmin",
+        summary: "The administrative-discontinuity log, most recent first",
+        description:
+          "Every RESET / MANUAL_TICK / PARAM_OVERRIDE / COMMITTER_CHANGE / GENESIS_SEED / DO_REBUILD / CODE_CHANGE is logged here — the audit trail of anything that could break continuous agency. Each entry commits its reason via `payloadHash` (sha256 over the canonical detail) without leaking it, and carries its on-chain tx when the registry is armed.",
+        parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 500, default: 100 }, description: "Max entries to return (most recent first)." }],
+        ...ok(
+          obj({
+            admin: { type: "array", items: { $ref: "#/components/schemas/PocaAdminEntry" }, description: "Admin-log entries, most recent first." },
+            count: { type: "integer", description: "Number of entries returned." },
+          }, ["admin", "count"]),
+          "The administrative-discontinuity log.",
+        ).response,
+      },
+    },
   },
   components: {
     schemas: {
@@ -1557,6 +1751,11 @@ export const OPENAPI_SPEC = {
       CommunityTally: COMMUNITY_TALLY,
       CommunityGate: COMMUNITY_GATE,
       CommunityTimeline: COMMUNITY_TIMELINE,
+      PocoSealedEpoch: POCA_SEALED_EPOCH,
+      PocoEpoch: POCA_EPOCH_DETAIL,
+      PocoProof: POCA_PROOF,
+      PocoMerkleStep: POCA_MERKLE_STEP,
+      PocoAdminEntry: POCA_ADMIN_ENTRY,
     },
   },
 } as const;

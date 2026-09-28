@@ -1,9 +1,9 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=109';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=110';
 import { bindPointer, bindZoomControls, resize } from './camera.js';
-import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
+import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePoca, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPoca, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderPoca, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePoca, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js';
 import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js';
 import { bindBloomScale, bindNeuralViews, deselect, fillInspectorFromSim, pushScopeCollective, renderBloom, renderNmap, renderRaster, renderScope } from './inspector.js';
 import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js';
@@ -142,6 +142,7 @@ export function rerenderAll() {
     if (state.predictOpen && state.predictData) paintPredict();
     if (state.arenaOpen && state.arenaData) paintArena();
     if (state.templeOpen && state.templeData) paintTemple();
+    if (state.pocaOpen) paintPoca();   // task 50: PoCA repaints from its cache — no refetch on a language change
     if (state.landOpen) paintLand();
     if (state.landLayer) state.landLayer.refreshLeaderboard();   // task 56: re-localise the land leaderboard labels
     if (state.walkMode) state.walkMode.paintChrome();   // task 48: re-localise walk button tooltip
@@ -155,6 +156,7 @@ window.__closeChron = closeChron;
 window.__closeCanary = closeCanary;
 window.__closeTemple = closeTemple;
 window.__closeWallets = closeWallets;
+window.__closePoca = closePoca;   // task 50: landDrawer.js closes the PoCA sheet through the same window bridge
 // task 65 · Direction A: collapse a compact card to just its title row (and back). Pure DOM class
 // flip — the panel keeps its id and every live binding, so the data layer is untouched.
 export function toggleCardFold(which) {
@@ -183,6 +185,7 @@ export function bindUI() {
       case "chronicle": toggleChron(); break;
       case "canary": toggleCanary(); break;
       case "temple": toggleTemple(); break;
+      case "poca": togglePoca(); break;   // task 50: the proof-of-continuity anchor drawer
       case "walk": if (state.walkMode) state.walkMode.toggle(); break;
       case "lineageview": toggleLineageView(); break;   // task 22: switch to the second main canvas
       case "wallets": toggleWallets(); break;
@@ -310,6 +313,12 @@ export function bindUI() {
   });
   // task 55: land drawer close button
   const ldc = $("land-close"); if (ldc) ldc.addEventListener("click", closeLand);
+  // task 50: PoCA drawer — close chip + delegated refresh (the body is rebuilt every paint, so delegate once)
+  const poc = $("poca-close"); if (poc) poc.addEventListener("click", closePoca);
+  const pocb = $("poca-body");
+  if (pocb) pocb.addEventListener("click", (e) => {
+    const rb = e.target.closest("#poca-refresh"); if (rb && !state.pocaLoading) renderPoca();
+  });
   // task 48: walk mode button
   const wkb = $("walk-btn"); if (wkb) wkb.addEventListener("click", () => { if (state.walkMode) state.walkMode.toggle(); });
   // task 39 · A2: canvas-switch capsules (independent of the command-rail — works on phones where the rail is hidden)
@@ -332,7 +341,7 @@ export function bindUI() {
   // Escape closes the topmost overlay first: chronicle drawer, then proofs, history, wallets, the inspector.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else if (state.lineageViewActive) closeLineageView(); else deselect();
+    if (state.chronOpen) { if (state.chronMode === "volume") closeChronVol(); else closeChron(); } else if (state.canaryOpen) closeCanary(); else if (state.landOpen) closeLand(); else if (state.pocaOpen) closePoca(); else if (state.laureateOpen) closeLaureate(); else if (state.proofsOpen) closeProofs(); else if (state.brainOpen) closeBrain(); else if (state.lineageOpen) closeLineage(); else if (state.pulseOpen) closePulse(); else if (state.arenaOpen) closeArena(); else if (state.templeOpen) closeTemple(); else if (state.predictOpen) closePredict(); else if (state.historyOpen) closeHistory(); else if (state.walletsOpen) closeWallets(); else if (state.lineageViewActive) closeLineageView(); else deselect();
   });
 }
 // ================= task 38 · B2+B3: auto-fold panel-pop on short/narrow screens =================

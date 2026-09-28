@@ -4,7 +4,7 @@
 // transaction, and POST /land with X-Payment-Proof header.
 
 import { state, $, API, shortHash } from './shared.js';
-import { t as T } from './i18n.js?v=109';
+import { t as T } from './i18n.js?v=110';
 import { getJSON } from './polling.js';
 
 // ---- constants (mirror the backend land.ts) ----
@@ -56,6 +56,7 @@ export function openLand(parcelId) {
   if (state.canaryOpen) { try { closeCanaryDrawer(); } catch {} }
   if (state.templeOpen) { try { closeTempleDrawer(); } catch {} }
   if (state.walletsOpen) { try { closeWalletsDrawer(); } catch {} }
+  if (state.pocaOpen) { try { closePocaDrawer(); } catch {} }
 
   const d = $("land-drawer");
   if (!d) return;
@@ -91,6 +92,9 @@ function closeTempleDrawer() {
 }
 function closeWalletsDrawer() {
   const fn = window.__closeWallets; if (fn) fn();
+}
+function closePocaDrawer() {
+  const fn = window.__closePoca; if (fn) fn();
 }
 
 // ---- render ----

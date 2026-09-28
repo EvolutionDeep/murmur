@@ -74,6 +74,7 @@ export interface Env {
   ECONOMY_REGISTRY_ADDRESS?: string;    // deployed NeuralReceiptRegistry (0x…40); when set, each mined net is committed on-chain so the receipt hash-chain head lives on Arc, not just in DO storage. Absent ⇒ commit step skipped (zero behaviour change).
   MANIFEST_REGISTRY_ADDRESS?: string;   // deployed NeuralManifestRegistry (0x…40); when set, GET /manifest reports it so anyone can read the committed brain-manifest hash off Arc and replay the connectomes offline (trustless "prove the brain"). Absent ⇒ the manifest is still served + replayable, just not anchored on-chain yet (zero behaviour change).
   LINEAGE_ADDRESS?: string;             // deployed ConnectomeLineage (0x…40); when set, each bred connectome genome is committed on-chain (best-effort) so its ancestry is a public, tamper-evident fact. Absent ⇒ the lineage store + /lineage endpoints still work, just not anchored on-chain yet (zero behaviour change).
+  POCA_REGISTRY_ADDRESS?: string;       // deployed ContinuityRegistry (0x…40) — the Proof-of-Continuous-Agency epoch anchor (openEpoch/sealEpoch/adminAction). Defaults in code to the deployed Arc-mainnet registry so a deploy never needs a wrangler [vars] key; set to the zero address to explicitly DISABLE the on-chain mirror (the OFF-CHAIN epoch chain always runs).
 
   // --- Circle Facilitator Service (the OFFICIAL hosted x402 facilitator; see src/circle.ts) ---
   //     Circle's relayer screens both parties, submits the buyer's EIP-3009 USDC transfer and pays the
@@ -436,6 +437,13 @@ export interface RuntimeConfig {
   manifestRegistryAddress: string | null;
   /** Deployed ConnectomeLineage address (the breeding-market on-chain ancestry anchor), or null when not configured. */
   lineageAddress: string | null;
+  /**
+   * Deployed ContinuityRegistry address (the Proof-of-Continuous-Agency epoch anchor). Defaults in code to
+   * the Arc-mainnet deployment (`env.POCA_REGISTRY_ADDRESS ?? 0x3f67…5b33`) so a deploy never needs a new
+   * wrangler [vars] key. The zero address DISABLES on-chain anchoring — every openEpoch/sealEpoch/adminAction
+   * is skipped (logged once) while the off-chain epoch chain keeps running.
+   */
+  pocaRegistryAddress: string;
 
   // Agent economy (x402)
   economy: {
@@ -871,6 +879,12 @@ export function loadConfig(env: Env): RuntimeConfig {
     frontendOrigin: env.FRONTEND_ORIGIN || "*",
     manifestRegistryAddress: (env.MANIFEST_REGISTRY_ADDRESS ?? "").trim() || null,
     lineageAddress: (env.LINEAGE_ADDRESS ?? "").trim() || null,
+    // PoCA epoch anchor. The code default is the deployed Arc-mainnet ContinuityRegistry (deploy tx
+    // 0xd9ef64…dd16, committer = the Worker facilitator); no wrangler [vars] key needed. Setting the env
+    // var to the zero address disables the on-chain mirror (off-chain chain unaffected). Trimmed so the
+    // zero check in x402.ts is reliable; an empty/whitespace value falls back to the code default, never to "".
+    pocaRegistryAddress:
+      (env.POCA_REGISTRY_ADDRESS ?? "").trim() || "0x3f67b38030f2d709bafd2f7a3ee2388c35195b33",
 
     economy: {
       // On by default: the agent economy is the piece's headline capability. Set ECONOMY_ENABLED="false"
