@@ -41,7 +41,7 @@ import { LV, LVQ, nodeR, ringRadius, lvForceRebuild } from './lvState.js';
 import {
   state, $, clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI, STATE_RGB,
 } from './shared.js';
-import { t as T, gl } from './i18n.js?v=110';
+import { t as T, gl } from './i18n.js?v=111';
 import { getJSON } from './polling.js';
 
 // ================= tuning constants =================

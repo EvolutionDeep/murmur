@@ -202,7 +202,12 @@ failure mode for a non-critical feature. The trade-off favours simplicity until 
 ### 5. `ADMIN_TOKEN` fail-open semantics
 
 **The assumption.** The `adminGate` function in `state.ts` returns `null` (pass-through) when `ADMIN_TOKEN` is
-not set. This means `POST /tick` and `POST /reset` are **unauthenticated by default**.
+not set. This means `POST /tick` and `POST /reset` are **unauthenticated by default** in a fresh local checkout.
+
+**Production status.** `ADMIN_TOKEN` **is set** on the production deployment (the value lives exclusively in
+the operator's local `.env.local` and as a Cloudflare Workers secret — it is never committed to the repository
+or disclosed in this document). The fail-open path therefore only applies to local development environments
+where no secret has been configured.
 
 **Mitigation.**
 - This is intentional for local development (zero-secret checkout ⇒ full functionality).
@@ -212,12 +217,18 @@ not set. This means `POST /tick` and `POST /reset` are **unauthenticated by defa
   tick.
 - `POST /reset` triggers a PoCA admin kind-1 (RESET) + epoch seal, making any unauthorised reset permanently
   visible in the continuity chain.
+- **`POST /tick` amplification risk mitigated:** previously an unauthenticated `/tick` could trigger a real-wallet
+  broadcast + flush admin logs on-chain. With the token set, the endpoint is gated. Additionally, admin kind-2
+  (`MANUAL_TICK`) is now **local-log only** (never mirrored on-chain) and rate-limited to one entry per 5-minute
+  window — so even if the gate were bypassed, the attacker cannot spam on-chain transactions or flood the
+  admin log.
 
 **Discoverability.** `GET /poca/admin` logs every reset/manual-tick invocation with a timestamp.
 
-**Why accepted.** The fail-open default is a deliberate developer-experience choice. A production deployment
-that does not set `ADMIN_TOKEN` is a deployment misconfiguration (documented in `docs/DEPLOYMENT.md`), not a
-code vulnerability. The PoCA admin log provides after-the-fact accountability even if the gate is open.
+**Why accepted.** The fail-open default is a deliberate developer-experience choice for local environments.
+The production deployment has `ADMIN_TOKEN` set; a deployment that omits it is a misconfiguration (documented
+in `docs/DEPLOYMENT.md`), not a code vulnerability. The PoCA admin log provides after-the-fact accountability
+even if the gate is open.
 
 ---
 

@@ -4078,7 +4078,6 @@ body.poca-open .poca-drawer { pointer-events: auto; }
 }
 .pc-refresh:hover { color: var(--gold-deep); border-color: rgba(var(--gold-rgb), 0.5); transform: rotate(180deg); }
 .pc-refresh:focus-visible { box-shadow: var(--ring); }
-html[dir="rtl"] .pc-refresh { margin-left: 0; margin-right: auto; }
 
 .pc-status { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-bottom: 12px; }
 .pc-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

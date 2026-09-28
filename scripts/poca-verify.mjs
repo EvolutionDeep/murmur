@@ -43,6 +43,7 @@ const {
   isZeroBytes32, normHex, normAddr,
   checkCodeIdentity, checkChainIntegrity, checkOffchainOnchainAgreement,
   checkTimeDensity, checkProofSelfConsistent, checkAssetContinuity,
+  checkMirrorFreshness, checkSealStaleness,
 } = lib;
 
 // ------------------------------ constants: chain + precomputed ABI selectors/topics ------------------------------
@@ -229,6 +230,13 @@ async function runSelfTest(machine = false) {
       case "cronDigest": got = await cronDigest(v.input.prevDigest, v.input.i, v.input.stateDigest, v.input.codeCommitment); break;
       case "merkleRoot": got = await merkleRoot(v.input.digests); break;
       case "merkleVerify": got = await merkleVerify(v.input.leaf, v.input.path, v.input.root); break;
+      case "hexToBytesThrows": {
+        // review #19: the mirror must reject exactly the malformed hex the worker rejects (odd length / non-hex).
+        let threw = false;
+        try { lib.hexToBytes(v.input.hex); } catch { threw = true; }
+        got = threw ? "throw" : "no-throw";
+        break;
+      }
       case "u64be": {
         const n = v.input.bigint ? BigInt(v.input.n) : v.input.n;
         got = Buffer.from(lib.u64be(n)).toString("hex");
@@ -249,7 +257,7 @@ async function runSelfTest(machine = false) {
 }
 
 // ------------------------------ criteria self-checks (synthetic in-memory fixtures) ------------------------------
-// The golden vectors above freeze the CRYPTO contract; these assertions freeze the five criteria DECISION cores
+// The golden vectors above freeze the CRYPTO contract; these assertions freeze the seven criteria DECISION cores
 // (packages/frontend/public/pocaVerify.js) against tiny hand-built fixtures, so a regression in any PASS/FAIL/
 // SKIP rule is caught by the same --selftest gate. No network, no chain — pure logic.
 async function runCriteriaSelfTest(machine = false) {
@@ -307,11 +315,44 @@ async function runCriteriaSelfTest(machine = false) {
   const acUnbacked = checkAssetContinuity(["0x" + hx(5)], ["0x" + hx(5), "0x" + hx(7)]);
   check("⑤ receipt with no transfer ⇒ FAIL", acUnbacked.pass === false && acUnbacked.unbacked.length === 1);
 
+  // ① code identity — review #25 (worker-attested rotation ts + admin-log horizon downgrade)
+  const ccField = checkCodeIdentity([{ index: 0, codeCommitment: "aa", openTs: 0, endTs: 1000 }, { index: 1, codeCommitment: "bb", openTs: 1000, endTs: 2000, codeChangeAdminTs: 1000 }], [], "bb");
+  check("① codeChangeAdminTs-attested rotation ⇒ PASS", ccField.pass === true && ccField.changePoints.length === 1 && ccField.unexplained.length === 0);
+  // An old rotation whose kind=7 event scrolled past the limit-500 admin cap: boundary ts (2) predates the
+  // oldest visible admin entry (1e9) AND index 1 is far outside the recent-100 window (max index 200) ⇒ SKIP.
+  const manyOld = Array.from({ length: 201 }, (_, i) => ({ index: i, codeCommitment: i === 0 ? "aa" : "bb", openTs: i + 1, endTs: i + 2 }));
+  const ccHorizon = checkCodeIdentity(manyOld, [{ kind: 7, ts: 1_000_000_000 }], "bb");
+  check("① rotation beyond admin log horizon ⇒ SKIP (not FAIL)", ccHorizon.skip === true && ccHorizon.pass === false && ccHorizon.beyondHorizon.length === 1 && ccHorizon.unexplained.length === 0);
+  // The SAME horizon, but the unexplained rotation sits inside the recent-100 window (index 200 of 0..200) ⇒
+  // the log is expected to be complete there, so it is a strict FAIL — the horizon never excuses a recent swap.
+  const recentRot = Array.from({ length: 201 }, (_, i) => ({ index: i, codeCommitment: i < 200 ? "bb" : "cc", openTs: i + 1, endTs: i + 2 }));
+  const ccRecent = checkCodeIdentity(recentRot, [{ kind: 7, ts: 1_000_000_000 }], "cc");
+  check("① unexplained rotation inside recent-100 ⇒ FAIL (horizon does not excuse it)", ccRecent.pass === false && ccRecent.skip === false && ccRecent.unexplained.length === 1);
+
+  // ⑥ mirror freshness (review #6) — off-chain epochCount must not drift ahead of the on-chain mirror
+  const mfOk = checkMirrorFreshness(10, 10, true);
+  check("⑥ off==on epochCount ⇒ PASS", mfOk.pass === true && mfOk.delta === 0);
+  const mfWithin = checkMirrorFreshness(11, 10, true);
+  check("⑥ off-chain 1 ahead (in-flight seal) ⇒ PASS", mfWithin.pass === true && mfWithin.delta === 1);
+  const mfStale = checkMirrorFreshness(15, 10, true);
+  check("⑥ off-chain 5 ahead (> tolerance 1) ⇒ FAIL", mfStale.pass === false && mfStale.delta === 5);
+  const mfSkip = checkMirrorFreshness(15, 0, false);
+  check("⑥ mirror disabled ⇒ SKIP", mfSkip.skip === true && mfSkip.pass === null);
+
+  // ⑦ seal staleness (review #6) — age of the NEWEST seal vs the cadence window
+  const NOW = 1_000_000; // seconds
+  const ssOk = checkSealStaleness([NOW - 3600, NOW - 1800], NOW, 36);
+  check("⑦ newest seal 0.5h ago (within 36h) ⇒ PASS", ssOk.pass === true && ssOk.skip === false);
+  const ssStale = checkSealStaleness([NOW - 3600 * 50], NOW, 36);
+  check("⑦ newest seal 50h ago (> 36h) ⇒ FAIL", ssStale.pass === false && ssStale.skip === false);
+  const ssSkip = checkSealStaleness([], NOW, 36);
+  check("⑦ zero sealed epochs ⇒ SKIP", ssSkip.skip === true && ssSkip.pass === null);
+
   const passed = cases.filter((c) => c.ok).length;
   const allOk = passed === cases.length;
   out(`poca-verify criteria self-checks: ${passed}/${cases.length} passed`);
   for (const c of cases) if (!c.ok) console.error(`  FAIL ${c.name}`);
-  if (allOk) out("CRITERIA SELFTEST PASS — all five decision cores behave as specified.");
+  if (allOk) out("CRITERIA SELFTEST PASS — all seven decision cores behave as specified.");
   else console.error("CRITERIA SELFTEST FAIL — a decision core regressed; refusing to verify.");
   return allOk;
 }
@@ -376,7 +417,7 @@ async function getLogsSharded(url, { address, topics, fromBlock, toBlock, chunk 
   return logs;
 }
 
-// ------------------------------ the five criteria ------------------------------
+// ------------------------------ the seven criteria ------------------------------
 
 /** ① CODE IDENTITY — every codeCommitment rotation is admin-attested and the live commitment matches. */
 async function criterion1(args) {
@@ -386,7 +427,8 @@ async function criterion1(args) {
   let current = null;
   try {
     const ep = await getJson(`${args.api}/poca/epochs?limit=500`);
-    epochsOff = (ep.epochs || []).map((e) => ({ index: e.index, codeCommitment: e.codeCommitment, openTs: e.openTs, endTs: e.endTs }));
+    // review #25: carry the worker-attested rotation timestamp (may be absent on an older worker ⇒ null).
+    epochsOff = (ep.epochs || []).map((e) => ({ index: e.index, codeCommitment: e.codeCommitment, openTs: e.openTs, endTs: e.endTs, codeChangeAdminTs: e.codeChangeAdminTs ?? null }));
   } catch (e) { ev.push(`could not read /poca/epochs: ${e.message}`); }
   try {
     const ad = await getJson(`${args.api}/poca/admin?limit=500`);
@@ -401,8 +443,10 @@ async function criterion1(args) {
     return { id: 1, name: "code-identity", status: "SKIP", evidence: [...ev, "no off-chain epochs or /poca snapshot reachable — nothing to audit"] };
   }
   const r = checkCodeIdentity(epochsOff, admin, current);
-  const status = epochsOff.length === 0 ? "SKIP" : (r.pass ? "PASS" : "FAIL");
-  return { id: 1, name: "code-identity", status, evidence: [...ev, ...r.evidence], detail: { changePoints: r.changePoints, unexplained: r.unexplained, latestMatchesCurrent: r.latestMatchesCurrent } };
+  // review #25: r.skip ⇒ every rotation is either attested or beyond the admin log horizon (neither provable
+  // nor disprovable) — report SKIP, not FAIL. A hard unexplained rotation or a live/newest mismatch still FAILs.
+  const status = (epochsOff.length === 0 || r.skip) ? "SKIP" : (r.pass ? "PASS" : "FAIL");
+  return { id: 1, name: "code-identity", status, evidence: [...ev, ...r.evidence], detail: { changePoints: r.changePoints, unexplained: r.unexplained, beyondHorizon: r.beyondHorizon, latestMatchesCurrent: r.latestMatchesCurrent } };
 }
 
 /** ② CHAIN INTEGRITY — on-chain epoch seal chain + isUnbroken + off-chain↔on-chain agreement. */
@@ -531,6 +575,44 @@ async function criterion5(args, ctx) {
   return { id: 5, name: "asset-continuity", status: r.pass ? "PASS" : "FAIL", evidence: ev, detail: { undeclared: r.undeclared, unbacked: r.unbacked, facilitator, onchainTransfers: onchainTx.length, receipts: receipts.length } };
 }
 
+/** ⑥ MIRROR FRESHNESS — the off-chain epoch count must not drift ahead of the on-chain mirror (review #6).
+ *  A silently-dead mirror used to be invisible: the API looked healthy while the chain fell behind. This
+ *  makes that observable. Also surfaces the worker's /poca.mirror health field as a WARN (never a FAIL — the
+ *  on-chain criteria above are the real backstop); an older worker without the field is tolerated. */
+async function criterion6(args, ctx) {
+  const ev = [];
+  let poca = null;
+  try { poca = await getJson(`${args.api}/poca`); } catch (e) { ev.push(`could not read /poca: ${e.message}`); }
+  // Mirror-health field (worker contract: {aligned,failures,paused,lastMirrorTs}); tolerate its absence.
+  const mirror = poca && poca.mirror && typeof poca.mirror === "object" ? poca.mirror : null;
+  if (mirror) {
+    if (mirror.paused === true) ev.push(`WARN: on-chain mirror is PAUSED (lastMirrorTs ${mirror.lastMirrorTs ?? "?"}) — the chain criteria backstop any real divergence`);
+    if (mirror.aligned === false) ev.push(`WARN: on-chain mirror reports aligned=false (${Number(mirror.failures) || 0} failure(s)) — the chain criteria backstop any real divergence`);
+  } else if (poca) {
+    ev.push("no /poca.mirror health field (older worker) — tolerated");
+  }
+  const off = poca ? poca.epochCount : null;
+  const r = checkMirrorFreshness(off, ctx.epochCount, ctx.onchain);
+  ev.push(...r.evidence);
+  const status = r.skip ? "SKIP" : (r.pass ? "PASS" : "FAIL");
+  return { id: 6, name: "mirror-freshness", status, evidence: ev, detail: { delta: r.delta, offchain: off, onchain: ctx.epochCount, mirror } };
+}
+
+/** ⑦ SEAL STALENESS — the newest on-chain seal must not be older than the cadence window (review #6).
+ *  Criterion ③ measures gaps BETWEEN seals; this measures the gap from the LAST seal to NOW, so an agent that
+ *  stopped anchoring hours ago is caught even though its API still serves a healthy snapshot. Zero sealed
+ *  epochs ⇒ SKIP (the current production posture: one open epoch, nothing sealed yet). */
+async function criterion7(args, ctx) {
+  const ev = [];
+  if (!ctx.onchain) return { id: 7, name: "seal-staleness", status: "SKIP", evidence: ["no on-chain EpochSealed events (registry disabled) — cannot age the newest seal"] };
+  const sealTs = ctx.sealEvents.map((e) => e.ts).filter((t) => t > 0).sort((a, b) => a - b);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const r = checkSealStaleness(sealTs, nowSec, args.gapHours);
+  ev.push(...r.evidence);
+  const status = r.skip ? "SKIP" : (r.pass ? "PASS" : "FAIL");
+  return { id: 7, name: "seal-staleness", status, evidence: ev, detail: { ageHours: r.ageHours, latestSealTs: r.latestSealTs, seals: sealTs.length } };
+}
+
 /** Pick up to n indices across [0,count-1], always including both boundaries, de-duplicated + sorted. */
 function sampleIndices(count, n) {
   if (count <= 0) return [];
@@ -633,6 +715,8 @@ async function main() {
   criteria.push(await criterion3(args, ctx));
   criteria.push(await criterion4(args, ctx));
   criteria.push(await criterion5(args, ctx));
+  criteria.push(await criterion6(args, ctx));
+  criteria.push(await criterion7(args, ctx));
 
   const summary = {
     pass: criteria.filter((c) => c.status === "PASS").length,

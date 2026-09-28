@@ -31,6 +31,7 @@ import {
   type LandImageStore,
   type BurnDedupStore,
 } from "./land.js";
+import { landImageHeaders } from "./state.js";
 
 /** A valid 0x + 40-hex submitter wallet. */
 const ADDR = "0x" + "ab".repeat(20);
@@ -387,4 +388,19 @@ test("land: the dedup falls back to the in-memory ring when no store is wired", 
   const replay = await l.submit(1, TX, ADDR, IMG, store);
   assert.equal(replay.ok, false, "a replayed hash is refused by the in-memory ring");
   assert.match(replay.reason ?? "", /duplicate/i);
+});
+
+// ─── ㉚ /land-img CORS edge-cache poisoning guard ──────────────────────────────────────────────────────
+
+test("land: /land-img headers carry Vary: Origin alongside the day-long public cache (CORS poisoning guard)", () => {
+  const h = landImageHeaders();
+  // The image is edge-cached for a day …
+  assert.match(h["Cache-Control"] ?? "", /public/, "the parcel image is publicly cacheable");
+  assert.match(h["Cache-Control"] ?? "", /max-age=86400/, "cached at the edge for a day");
+  // … and index.ts echoes the request Origin into Access-Control-Allow-Origin, so Vary: Origin is MANDATORY:
+  // without it the first requester's Origin is frozen into the shared edge copy and served to every other
+  // origin (the production defect that blanked the grid). This assertion pins the fix.
+  assert.equal(h["Vary"], "Origin", "Vary: Origin forces a per-Origin edge-cache key");
+  assert.equal(h["Content-Type"], "image/jpeg");
+  assert.ok(h["Access-Control-Allow-Origin"], "the image stays CORS-readable");
 });

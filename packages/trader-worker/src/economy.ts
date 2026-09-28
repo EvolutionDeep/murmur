@@ -3426,7 +3426,7 @@ export class AgentEconomy {
 
   // ---------- proof of continuous agency (on-chain mirror of the cron-digest epoch chain) ----------
   //
-  // Thin, best-effort delegators to the facilitator's PoCARegistry wiring (see x402.ts). The PoCA engine
+  // Thin, best-effort delegators to the facilitator's ContinuityRegistry wiring (see x402.ts). The PoCA engine
   // (poca.ts) calls these to mirror its off-chain epoch lifecycle on-chain: open an epoch (pinning the code
   // commitment + genesis head), seal an epoch (Merkle root over its digests), and log each administrative
   // discontinuity. Every delegator degrades to null when the registry is unwired / zero-address (DISABLED
@@ -3467,6 +3467,14 @@ export class AgentEconomy {
     const f = this.facilitator as { pocaCommitter?: () => Promise<string | null> };
     if (typeof f.pocaCommitter !== "function") return null;
     try { return await f.pocaCommitter(); } catch { return null; }
+  }
+
+  /** Read the registry's on-chain epoch counter (the next index openEpoch assigns); null when disabled/failed.
+   *  The PoCA engine uses it to verify local/chain index alignment before mirroring an open/seal. */
+  async pocaEpochCount(): Promise<number | null> {
+    const f = this.facilitator as { pocaEpochCount?: () => Promise<number | null> };
+    if (typeof f.pocaEpochCount !== "function") return null;
+    try { return await f.pocaEpochCount(); } catch { return null; }
   }
 
   // ---------- on-chain house WAR + TAXATION (real-USDC coffer; the contract derives the winner) ----------

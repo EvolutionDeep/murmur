@@ -13,7 +13,7 @@
 // verifier that disagreed with the worker by even one byte would be worthless, so these are kept literal.
 //
 // SCOPE: pure computation ONLY — digest chaining, Merkle fold/proof/verify, and the I/O-free decision core
-// of the five continuity criteria. All fetching (public RPC + api.muros.live) lives in the CLI, never here.
+// of the seven continuity criteria. All fetching (public RPC + api.muros.live) lives in the CLI, never here.
 
 // ============================== constants (mirror poca.ts) ==============================
 
@@ -53,12 +53,14 @@ export const PocoAdminKindName = {
 
 // ============================== byte helpers (mirror poca.ts) ==============================
 
-/** Decode an even-length hex string (with or without a 0x prefix) into bytes. */
+/** Decode an even-length hex string (optional lowercase 0x prefix) into bytes. Byte-for-byte poca.ts
+ *  `hexToBytes`: it THROWS on an odd length or any non-hex character rather than silently padding/NaN-ing,
+ *  so the mirror rejects exactly the malformed inputs the worker rejects (review #19). */
 export function hexToBytes(hex) {
-  const h = String(hex).replace(/^0x/i, "");
-  const even = h.length % 2 === 0 ? h : `0${h}`;
-  const out = new Uint8Array(even.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(even.substr(i * 2, 2), 16);
+  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (h.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(h)) throw new Error("invalid hex string");
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
 
@@ -228,31 +230,59 @@ export function normAddr(a) {
  * Criterion ① CODE IDENTITY, pure decision core.
  *
  * Every epoch carries the codeCommitment it opened under. A change between consecutive epochs MUST be
- * explained by a kind=7 CODE_CHANGE admin entry whose timestamp falls within ±1 epoch of the boundary, and
- * the live /poca.codeCommitment MUST equal the most recent epoch's commitment. An unexplained rotation is a
+ * explained — either by a kind=7 CODE_CHANGE admin entry whose timestamp falls within ±windowMs of the
+ * boundary, OR (review #25) by the epoch record's own worker-attested `codeChangeAdminTs`. The live
+ * /poca.codeCommitment MUST also equal the most recent epoch's commitment. An unexplained rotation is a
  * silent code swap — the exact thing PoCA exists to expose.
  *
- * @param epochs  SEALED epochs, ASCENDING by index: [{ index, codeCommitment, openTs, endTs }]
+ * ADMIN LOG HORIZON (review #25): the admin log is capped (limit 500), so the kind=7 event for a genuinely
+ * old rotation may have scrolled out of the visible window. When a rotation is unexplained AND its boundary
+ * predates the oldest visible admin entry AND it sits OUTSIDE the most recent `recentWindow` epochs, it is
+ * downgraded to `beyondHorizon` (⇒ the criterion SKIPs with a note) instead of FAILing — we can neither prove
+ * nor disprove it from the data we can see. Inside the recent window the log is expected to be complete, so a
+ * missing attestation there is still a hard FAIL.
+ *
+ * @param epochs  SEALED epochs, ASCENDING by index: [{ index, codeCommitment, openTs, endTs, codeChangeAdminTs? }]
  * @param admin   admin log entries: [{ kind, ts }] (ts in ms)
  * @param currentCodeCommitment  the live /poca.codeCommitment (64-hex)
  * @param windowMs  tolerance for matching a change to an admin event (default: one epoch ≈ 24h)
+ * @param recentWindow  epochs within this many of the newest index are held to strict attestation (default 100)
+ * @returns { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, evidence }
+ *          pass⇒fully proven; skip⇒nothing hard-failed but ≥1 rotation is beyond the admin horizon; else FAIL.
  */
-export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs = 86_400_000) {
+export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs = 86_400_000, recentWindow = 100) {
   const evidence = [];
   const asc = (epochs || []).slice().sort((a, b) => a.index - b.index);
   const codeChanges = (admin || []).filter((e) => Number(e.kind) === PocoAdminKind.CODE_CHANGE);
 
-  // Every change point between consecutive epochs must be explained by a nearby kind=7 event.
+  // The admin-log horizon: the oldest admin timestamp we can still see. A rotation boundary older than this
+  // cannot be matched to a kind=7 event either way (the event, if any, has scrolled past the limit-500 cap).
+  const adminTs = (admin || []).map((e) => Number(e.ts)).filter((t) => Number.isFinite(t));
+  const oldestAdminTs = adminTs.length > 0 ? Math.min(...adminTs) : null;
+  const maxIndex = asc.length > 0 ? asc[asc.length - 1].index : null;
+
+  // Every change point between consecutive epochs must be explained by a nearby kind=7 event or an attested ts.
   const changePoints = [];
   const unexplained = [];
+  const beyondHorizon = [];
   for (let k = 1; k < asc.length; k++) {
     const prev = asc[k - 1];
     const cur = asc[k];
     if (normHex(prev.codeCommitment) !== normHex(cur.codeCommitment)) {
       const boundaryTs = cur.openTs ?? prev.endTs ?? null;
-      const explained = boundaryTs != null && codeChanges.some((e) => Math.abs(Number(e.ts) - boundaryTs) <= windowMs);
-      changePoints.push({ fromEpoch: prev.index, toEpoch: cur.index, from: prev.codeCommitment, to: cur.codeCommitment, boundaryTs, explained });
-      if (!explained) unexplained.push({ fromEpoch: prev.index, toEpoch: cur.index, from: prev.codeCommitment, to: cur.codeCommitment });
+      // review #25: prefer the epoch record's own worker-attested rotation timestamp when it carries one.
+      const attestedTs = cur.codeChangeAdminTs != null ? Number(cur.codeChangeAdminTs) : null;
+      const explainedByList = boundaryTs != null && codeChanges.some((e) => Math.abs(Number(e.ts) - boundaryTs) <= windowMs);
+      const explainedByField = attestedTs != null && Number.isFinite(attestedTs);
+      const explained = explainedByList || explainedByField;
+      changePoints.push({ fromEpoch: prev.index, toEpoch: cur.index, from: prev.codeCommitment, to: cur.codeCommitment, boundaryTs, explained, explainedByField });
+      if (explained) continue;
+      // Unexplained. Downgrade to SKIP only when it is BOTH older than the visible admin log AND outside the
+      // recent strict window; otherwise it is a genuine unexplained rotation (FAIL).
+      const inRecent = maxIndex != null && cur.index > maxIndex - recentWindow;
+      const isBeyond = oldestAdminTs != null && boundaryTs != null && boundaryTs < oldestAdminTs && !inRecent;
+      const rec = { fromEpoch: prev.index, toEpoch: cur.index, from: prev.codeCommitment, to: cur.codeCommitment, boundaryTs };
+      if (isBeyond) beyondHorizon.push(rec); else unexplained.push(rec);
     }
   }
 
@@ -262,14 +292,17 @@ export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs
     ? normHex(latest.codeCommitment) === normHex(currentCodeCommitment)
     : null; // null ⇒ nothing to compare (no epochs yet)
 
-  const pass = unexplained.length === 0 && latestMatchesCurrent !== false;
+  const hardFail = unexplained.length > 0 || latestMatchesCurrent === false;
+  const skip = !hardFail && beyondHorizon.length > 0;
+  const pass = !hardFail && !skip;
   evidence.push(`${asc.length} epoch(s) inspected, ${changePoints.length} codeCommitment change point(s)`);
   if (unexplained.length > 0) evidence.push(`UNEXPLAINED code rotation(s) with no kind=7 admin event: ${unexplained.map((u) => `${u.fromEpoch}→${u.toEpoch}`).join(", ")}`);
+  if (beyondHorizon.length > 0) evidence.push(`${beyondHorizon.length} rotation(s) beyond admin log horizon (older than the oldest visible admin entry, outside the recent ${recentWindow}): ${beyondHorizon.map((u) => `${u.fromEpoch}→${u.toEpoch}`).join(", ")} — SKIP, not FAIL`);
   if (latestMatchesCurrent === false) evidence.push(`live codeCommitment ${currentCodeCommitment} ≠ newest epoch ${latest.codeCommitment}`);
   if (latestMatchesCurrent === null) evidence.push("no sealed epochs to compare the live codeCommitment against");
   if (pass && latestMatchesCurrent === true) evidence.push("live codeCommitment matches the newest epoch; every rotation is admin-attested");
 
-  return { pass, changePoints, unexplained, latestMatchesCurrent, evidence };
+  return { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, evidence };
 }
 
 // ============================== criterion ② — chain integrity (pure) ==============================
@@ -436,6 +469,77 @@ export function checkAssetContinuity(onchainTxHashes, receiptTxHashes) {
   return { pass, undeclared, unbacked, evidence };
 }
 
+// ============================== criterion ⑥ — mirror freshness (pure) ==============================
+
+/**
+ * Criterion ⑥ MIRROR FRESHNESS, pure decision core (review #6 — make a silently-dead mirror observable).
+ *
+ * The worker best-effort mirrors every sealed epoch to the on-chain ContinuityRegistry. If that mirror falls
+ * behind or dies, the off-chain epoch count drifts ahead of the on-chain one while the API still looks healthy.
+ * A divergence wider than `tolerance` (default 1 — the in-flight seal that has not landed yet) means the chain
+ * no longer reflects the operator's claimed history, so the anchor is stale. When the registry is disabled or
+ * has opened nothing there is no mirror to judge ⇒ SKIP (a disabled anchor is a state, not a failure).
+ *
+ * @param offchainEpochCount  /poca.epochCount (the operator's served count)
+ * @param onchainEpochCount   ContinuityRegistry.epochCount() (the mirrored count)
+ * @param onchainEnabled      false when the registry is disabled / has no epochs ⇒ SKIP
+ * @param tolerance           allowed |off − on| before a FAIL (default 1)
+ */
+export function checkMirrorFreshness(offchainEpochCount, onchainEpochCount, onchainEnabled = true, tolerance = 1) {
+  const evidence = [];
+  if (!onchainEnabled) {
+    evidence.push("on-chain mirror disabled / no epochs — nothing to compare (SKIP)");
+    return { pass: null, skip: true, delta: null, evidence };
+  }
+  if (offchainEpochCount == null || onchainEpochCount == null) {
+    evidence.push("missing off-chain or on-chain epochCount — cannot compare (SKIP)");
+    return { pass: null, skip: true, delta: null, evidence };
+  }
+  const off = Number(offchainEpochCount);
+  const on = Number(onchainEpochCount);
+  if (!Number.isFinite(off) || !Number.isFinite(on)) {
+    evidence.push("non-numeric epochCount — cannot compare (SKIP)");
+    return { pass: null, skip: true, delta: null, evidence };
+  }
+  const delta = Math.abs(off - on);
+  const pass = delta <= tolerance;
+  evidence.push(`off-chain epochCount ${off} vs on-chain epochCount ${on}; drift ${delta} (tolerance ${tolerance})`);
+  if (!pass) evidence.push(`MIRROR STALE: off-chain is ${delta} epoch(s) off the chain (> ${tolerance}) — the on-chain mirror is not keeping up`);
+  else evidence.push("on-chain mirror is fresh (within tolerance)");
+  return { pass, skip: false, delta, evidence };
+}
+
+// ============================== criterion ⑦ — seal staleness (pure) ==============================
+
+/**
+ * Criterion ⑦ SEAL STALENESS, pure decision core (review #6).
+ *
+ * Time density (③) measures the gaps BETWEEN seals; this measures the gap from the NEWEST seal to NOW. An agent
+ * that stopped sealing hours ago — while its API still serves a healthy-looking snapshot — is not continuously
+ * anchoring. If at least one epoch is sealed and the newest seal is older than `gapHours`, the anchor is stale.
+ * Zero sealed epochs ⇒ SKIP (a brand-new registry that has not sealed yet is a state, not a failure — the
+ * current production posture).
+ *
+ * @param sealTs   list of seal timestamps (SECONDS, from EpochSealed block.timestamp); order-insensitive
+ * @param nowSec   current time in SECONDS (caller supplies it so this core stays deterministic and testable)
+ * @param gapHours  a newest-seal age strictly greater than this is stale (default 36)
+ */
+export function checkSealStaleness(sealTs, nowSec, gapHours = 36) {
+  const ts = (sealTs || []).map(Number).filter((t) => Number.isFinite(t) && t > 0).sort((a, b) => a - b);
+  const evidence = [];
+  if (ts.length === 0) {
+    evidence.push("no sealed epochs — nothing to age out (SKIP)");
+    return { pass: null, skip: true, ageHours: null, latestSealTs: null, evidence };
+  }
+  const latest = ts[ts.length - 1];
+  const ageHours = (Number(nowSec) - latest) / 3600;
+  const pass = ageHours <= gapHours;
+  evidence.push(`${ts.length} seal(s); newest seal ${ageHours.toFixed(2)}h ago (staleness threshold ${gapHours}h)`);
+  if (!pass) evidence.push(`STALE: the newest seal is ${ageHours.toFixed(2)}h old (> ${gapHours}h) — the agent has stopped anchoring`);
+  else evidence.push("the newest seal is fresh (within the staleness window)");
+  return { pass, skip: false, ageHours, latestSealTs: latest, evidence };
+}
+
 // ============================== browser mount ==============================
 
 // Expose the whole pure surface on window.__pocaVerify so the audit console (and task-50 UI) can call it
@@ -448,6 +552,7 @@ const api = {
   isZeroBytes32, normHex, normAddr,
   checkCodeIdentity, checkChainIntegrity, checkOffchainOnchainAgreement,
   checkTimeDensity, checkProofSelfConsistent, checkAssetContinuity,
+  checkMirrorFreshness, checkSealStaleness,
 };
 
 if (typeof globalThis !== "undefined") {

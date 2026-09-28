@@ -298,6 +298,25 @@ export function nextVacantId(occupied: ReadonlySet<number>, cap: number): number
   return -1;
 }
 
+/**
+ * ㉚ The response headers for a served parcel image (GET /land-img/<id>). Extracted as a pure, exported
+ * helper so the CORS cache-poisoning guard is unit-testable without instantiating the Durable Object.
+ *
+ * `Cache-Control: public, max-age=86400` lets the Cloudflare edge cache the JPEG for a day, and index.ts
+ * re-applies an ORIGIN-ECHOED `Access-Control-Allow-Origin` to every DO response on the way out. `Vary:
+ * Origin` is therefore MANDATORY: without it the FIRST requester's Origin is frozen into the shared edge
+ * copy and served to every other origin — the production defect (a local preview poisoned the cache) that
+ * blanked the land grid with 1226 CORS errors. Vary forces a per-Origin cache key so each origin is safe.
+ */
+export function landImageHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "image/jpeg",
+    "Cache-Control": "public, max-age=86400",
+    "Access-Control-Allow-Origin": "*",
+    "Vary": "Origin",
+  };
+}
+
 export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
@@ -5195,11 +5214,7 @@ export class FlyStateDO {
     if (!bytes) return jsonError("not_found", "no image for that parcel", 404);
     return new Response(bytes, {
       status: 200,
-      headers: {
-        "Content-Type": "image/jpeg",
-        "Cache-Control": "public, max-age=86400",
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: landImageHeaders(),
     });
   }
 
@@ -5304,11 +5319,16 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_POET);
 
     // PoCA — a reset is a DELIBERATE discontinuity: seal the running epoch (its digests stay as an immutable,
-    // queryable record), log admin kind1 RESET, and open a fresh epoch anchored at the NEW chain's genesis
-    // (the receipt chain restarts empty after a reset). The poca:* keys are intentionally NOT swept above, so
-    // the agency chain SURVIVES the reset and the break stays permanently visible instead of being erased.
+    // queryable record), log admin kind1 RESET, and open a fresh epoch anchored at the NEW chain's genesis.
+    // The poca:* keys are intentionally NOT swept above, so the agency chain SURVIVES the reset and the break
+    // stays permanently visible instead of being erased. The on-chain openEpoch REJECTS a zero genesisHead, so
+    // we anchor the new epoch at a deterministic NON-ZERO reset marker derived from the pre-reset chain head
+    // (the receipt chain restarts empty, so there is no reliable live head at this exact instant).
     try {
-      await this.ensurePoca().onReset("");
+      const poca = this.ensurePoca();
+      const prevHead = (await poca.snapshot()).chainHead ?? "";
+      const resetHead = await sha256Hex(`poca:reset:${Date.now()}:${prevHead}`);
+      await poca.onReset(resetHead);
     } catch (e) {
       console.warn("[poca] reset hook failed (non-fatal):", (e as Error).message);
     }
@@ -5329,6 +5349,11 @@ export class FlyStateDO {
     const store: PocoStore = {
       get: async <T>(k: string): Promise<T | undefined> => await this.state.storage.get<T>(k),
       put: async <T>(k: string, v: T): Promise<void> => { await this.state.storage.put(k, v); },
+      putBatch: async (entries: Record<string, unknown>): Promise<void> => { await this.state.storage.put(entries); },
+      getMany: async (keys: string[]): Promise<Record<string, unknown>> => {
+        const m = await this.state.storage.get(keys);
+        return Object.fromEntries(m as Map<string, unknown>);
+      },
       delete: async (k: string): Promise<boolean> => await this.state.storage.delete(k),
     };
     // The on-chain mirror rides the economy's facilitator. In simulated mode (or a zero registry address) the
@@ -5338,6 +5363,7 @@ export class FlyStateDO {
       sealEpoch: async (i, h, t, r) => { const e = await this.pocaEconomy(); return e ? e.pocaSealEpoch(i, h, t, r) : null; },
       adminAction: async (kind, ph) => { const e = await this.pocaEconomy(); return e ? e.pocaAdminAction(kind, ph) : null; },
       committer: async () => { const e = await this.pocaEconomy(); return e ? e.pocaCommitter() : null; },
+      epochCount: async () => { const e = await this.pocaEconomy(); return e ? e.pocaEpochCount() : null; },
     };
     this.poca = new PocoEngine({
       store,
@@ -5345,6 +5371,12 @@ export class FlyStateDO {
       codeCommitment: CODE_COMMITMENT,
       gitCommit: GIT_COMMIT,
       registryAddress: this.cfg.pocaRegistryAddress || POCA_ZERO_ADDRESS,
+      // Detach every on-chain mirror onto the DO's own waitUntil so it finishes AFTER the cron/response
+      // returns and never blocks the live tick. Falls back to a swallowed-throw void when waitUntil is
+      // unavailable (e.g. a unit-test harness), keeping the mirror strictly fire-and-forget either way.
+      detach: (p: Promise<unknown>) => {
+        try { this.state.waitUntil(p); } catch { void p.catch(() => {}); }
+      },
     });
     return this.poca;
   }
@@ -5394,7 +5426,9 @@ export class FlyStateDO {
       const genesisHead = economy ? (economy.proofsSnapshot().chainHead || "") : "";
       const committer = economy ? economy.relayAddress() : null;   // the facilitator wallet (null in simulated)
       const knobsHash = await this.pocaKnobsHash();
-      await engine.ensureEpoch({ genesisHead, committer, knobsHash });
+      // relayAddress is the EXPECTED on-chain committer the engine verifies against chain.committer() once per
+      // epoch (issue 18); committer is the last-seen wallet used for the cross-boot kind4 change detection.
+      await engine.ensureEpoch({ genesisHead, committer, relayAddress: committer, knobsHash });
     } catch (e) {
       console.warn("[poca] cron entry gate failed (non-fatal):", (e as Error).message);
     }
@@ -5460,6 +5494,7 @@ export class FlyStateDO {
       epochCount: snap.epochCount,
       adminCount: snap.adminCount,
       continuity: snap.continuity,
+      mirror: snap.mirror,
       commitmentInputs: CODE_COMMITMENT_INPUTS,
     });
   }
@@ -5472,8 +5507,8 @@ export class FlyStateDO {
 
   /** GET /poca/epoch/:i — one epoch (open or sealed) + digest count + first/last digest sample. */
   private async getPocaEpochOne(raw: string): Promise<Response> {
-    const i = Number(raw);
-    if (!Number.isInteger(i) || i < 0) return jsonError("bad_request", "epoch must be a non-negative integer", 400);
+    const i = parsePocaUint(raw);
+    if (i == null) return jsonError("bad_request", "epoch must be a non-negative integer", 400);
     const epoch = await this.ensurePoca().getEpoch(i);
     if (!epoch) return jsonError("not_found", "no such epoch", 404);
     return json(epoch);
@@ -5481,9 +5516,9 @@ export class FlyStateDO {
 
   /** GET /poca/proof?epoch=&cron= — the Merkle inclusion proof for one cron digest. */
   private async getPocaProof(url: URL): Promise<Response> {
-    const epoch = Number(url.searchParams.get("epoch"));
-    const cron = Number(url.searchParams.get("cron"));
-    if (!Number.isInteger(epoch) || epoch < 0 || !Number.isInteger(cron) || cron < 0) {
+    const epoch = parsePocaUint(url.searchParams.get("epoch"));
+    const cron = parsePocaUint(url.searchParams.get("cron"));
+    if (epoch == null || cron == null) {
       return jsonError("bad_request", "epoch and cron must be non-negative integers", 400);
     }
     const proof = await this.ensurePoca().proof(epoch, cron);
@@ -5502,6 +5537,18 @@ export class FlyStateDO {
 function pocaLimit(raw: string | null, def: number): number {
   const n = Number(raw ?? def);
   return Number.isFinite(n) ? Math.min(500, Math.max(1, Math.floor(n))) : def;
+}
+
+/**
+ * Strict non-negative-integer parse for the /poca path + query params (issue 17): a null / empty string /
+ * anything not matching /^\d+$/ (so "1.5", "-1", "0x2", "1e3", " 1", "abc" all reject) ⇒ null, which the
+ * caller turns into a 400 bad_request. Number("" ) === 0 and Number("1e3") === 1000 are exactly the silent
+ * coercions this guards against.
+ */
+function parsePocaUint(raw: string | null | undefined): number | null {
+  if (raw == null || raw === "" || !/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 /** Shape a raw D1 `ticks` row into clean camelCase JSON, parsing the behavioural-state histogram. */

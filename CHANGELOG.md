@@ -33,7 +33,8 @@ All notable changes to **murmur** are documented in this file. The format is bas
   econ{volumeAtomic,count}}`. Epoch seal threshold `SEAL_THRESHOLD = 1440` crons (~24h). Merkle: pairwise
   sha256 fold, odd-tail duplicated, empty = `ZERO64`, single-leaf = itself.
 - **`codeCommitment.ts`** + **`scripts/gen-codecommit.mjs`**: codegen step producing `CODE_COMMITMENT` =
-  `sha256(gitHEAD + srcTreeHash + canonicalKnobDefaults)`. Runs before every `wrangler deploy`; a source
+  `sha256(srcTreeHash_traderWorker + srcTreeHash_flyBrain + flywireArtifactSha256 + canonicalKnobDefaults)`.
+  Git HEAD is NOT hashed (published separately via `GET /poca`). Runs before every `wrangler deploy`; a source
   change rotates the commitment and forces an epoch seal (admin kind 7 `CODE_CHANGE`).
 - **Admin-discontinuity log**: kinds 1–7 (`RESET`, `MANUAL_TICK`, `PARAM_OVERRIDE`, `COMMITTER_CHANGE`,
   `GENESIS_SEED`, `DO_REBUILD`, `CODE_CHANGE`). Each entry: `{kind, ts, payloadHash, note, txHash?}`;
@@ -112,6 +113,14 @@ All notable changes to **murmur** are documented in this file. The format is bas
   hourly bucket; the production Worker runs `ARENA_ENABLED="true"`, first live round `497162` opened on-chain.
 
 ### Changed
+- **Settlement batching parameters tuned** (first shipped in commit `c7b53f8`): `ECONOMY_NET_MIN_BROADCAST`
+  raised `0.004 → 0.01` USDC and `ECONOMY_NET_FLUSH_TICKS` raised `30 → 360` sub-ticks (60 crons ≈ 1 h).
+  **Motivation:** at the previous 0.004 threshold a broadcast's gas could exceed 50 % of face value; the new
+  0.01 floor keeps gas a minority of every settlement. The flush window was extended so small reciprocal nets
+  have time to cancel before a forced broadcast — reducing on-chain receipt density and total gas burn.
+  **Impact:** (1) small-amount net broadcasts occur less frequently (dust accumulates longer before clearing the
+  threshold); (2) on-chain receipt density decreases — expected and intentional; (3) any nonzero pending net is
+  force-flushed after at most ≈1 h, bounding settlement latency.
 - **Connectome scaled 10,800 → 30,800 neurons/fly** (`BRAIN_N_*` = `5200/11400/11400/1100/340×5`, `BRAIN_DENSITY`
   `0.002 → 0.0007` to hold fan-in linear at ~404k synapses/fly). Sharding moved to **one fly per isolate**
   (`SHARD_COUNT` `50 → 100`): a 30,800-neuron brain's deserialize peak is ~72 MB of the 128 MB isolate, so two
@@ -160,6 +169,29 @@ All notable changes to **murmur** are documented in this file. The format is bas
 - Dev-toolchain bump: `wrangler` 3.x → **4.133.0**, clearing all 6 `npm audit` advisories (they lived in the
   `miniflare` → `undici` / `ws` chain — dev/deploy-only, never shipped in the Worker bundle). Re-verified green
   afterwards: typecheck, build, unit tests, neural smoke, and a `wrangler deploy --dry-run` bundle.
+
+### Hotfix batch — PoCA hardening & documentation alignment
+
+Engineering-disclosure corrections applied after internal code review (issues 7, 9, 15, 20, 22, 24):
+
+- **Mirror alignment check**: worker now reads on-chain `epochCount()` before every mirror call; misalignment
+  pauses the mirror (`mirror.paused = true`) rather than risking a broken `prevEpochSeal` chain.
+- **Atomic write discipline**: PoCA state mutations batched into single `storage.transaction` calls to prevent
+  partial-write corruption on DO eviction.
+- **Non-blocking mirror**: on-chain mirror calls moved off the critical cron path — failures are counted
+  (`mirror.failures`) but never block the tick.
+- **Admin kind bucketing**: kind-2 (`MANUAL_TICK`) demoted to local-log-only with 5-minute rate-limit merge;
+  eliminates the unauthenticated `POST /tick` → on-chain spam amplification vector.
+- **Verifier hardening**: CLI + browser verifiers now assert `tickCount == len(digests)` alongside the Merkle
+  path check, closing the odd-tail duplication malleability (disclosed in `docs/POCA.md`).
+- **`CODE_COMMITMENT` scope expanded**: now hashes `packages/trader-worker/src` + `packages/fly-brain/src` +
+  FlyWire artifact sha256 + knob-default snapshot. Git HEAD removed from the hash (published separately via
+  `GET /poca` for human correlation only).
+- **Deploy-script safety**: `deploy-poca-auto.mjs` and `deploy-manifest-auto.mjs` enforce codegen-before-deploy
+  and confirm-gate mainnet writes; `MANIFEST_HASH` bypass now requires a second explicit approval env var.
+- **Documentation disclosures**: Merkle malleability + compensating controls, `openEpoch` prior-seal limitation
+  + recovery path, settlement batching parameter rationale (`c7b53f8`), `SECURITY.md` ADMIN_TOKEN production
+  status, naming alignment (`ContinuityRegistry` everywhere).
 
 ## [0.2.0] - 2026-09-17
 

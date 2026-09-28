@@ -398,7 +398,7 @@ Returns:
 ```jsonc
 {
   "enabled": true,                   // true when the on-chain registry mirror is armed (address non-zero)
-  "codeCommitment": "2bd01a…",       // sha256 over git HEAD + src tree + knob defaults (64-hex)
+  "codeCommitment": "2bd01a…",       // sha256 over src trees + FlyWire artifact + knob defaults (64-hex; git HEAD NOT included)
   "gitCommit": "ff2450a…",           // the git commit this build was generated from
   "registryAddress": "0x…",          // ContinuityRegistry address (zero ⇒ disabled)
   "currentEpoch": 3,                 // open epoch index (null before the first open)
@@ -411,11 +411,17 @@ Returns:
   "epochCount": 4,                   // closed + open epochs
   "adminCount": 2,                   // admin-discontinuity entries recorded
   "continuity": "unbroken",          // "unbroken" | "pending" | "disabled"
+  "mirror": {                        // on-chain ContinuityRegistry mirror health
+    "aligned": true,                 // local epochCount == on-chain epochCount
+    "failures": 0,                   // cumulative mirror-call failures since worker start (monotonic, never reset)
+    "paused": false,                 // true ⇒ mirror suspended; auto-cleared on next successful alignment check
+    "lastMirrorTs": 1727500060000    // Unix ms of last successful on-chain call (null if never)
+  },
   "commitmentInputs": {              // non-secret summary for offline recompute
-    "gitCommit": "ff2450a…",
-    "treeHash": "ebb752…",
-    "fileCount": 89,
-    "knobCount": 21
+    "treeHash": "f825ce3f344c51c37838e96c7eeb26e3052fe7d6c4481bf7cc642b318129036f",
+    "fileCount": 115,
+    "knobCount": 21,
+    "artifactHash": "dc84edfc2cd6cc6a0fcba671e2bd265423cfd7905e5d0e19bd183925c4377544"
   }
 }
 ```
@@ -440,6 +446,7 @@ Returns `{ epochs[], count }` where each epoch is a `PocaSealedEpoch`:
   "genesisHead": "a1f0…",           // proof-chain head at epoch open
   "codeCommitment": "2bd01a…",      // CODE_COMMITMENT this epoch opened under
   "reason": "threshold",             // "threshold" | "reset" | "code-change"
+  "codeChangeAdminTs": null,          // Unix ms of the kind-7 CODE_CHANGE admin entry that triggered rotation (null when reason != "code-change")
   "openTxHash": "0x…",              // on-chain openEpoch tx (when armed)
   "txHash": "0x…"                   // on-chain sealEpoch tx (when armed)
 }
@@ -518,15 +525,18 @@ Returns `{ admin[], count }` where each entry is a `PocaAdminEntry`:
 
 **AdminAction kinds:**
 
-| Kind | Name | Meaning |
-|---|---|---|
-| 1 | `RESET` | `/reset` invoked — swarm state restarted. |
-| 2 | `MANUAL_TICK` | Tick driven by a human via `POST /tick` (not cron). |
-| 3 | `PARAM_OVERRIDE` | Runtime knob snapshot changed (wrangler params overridden). |
-| 4 | `COMMITTER_CHANGE` | Facilitator/committer wallet address changed. |
-| 5 | `GENESIS_SEED` | Receipt registry genesis anchor mined. |
-| 6 | `DO_REBUILD` | Durable Object state rebuilt / restored to defaults. |
-| 7 | `CODE_CHANGE` | `CODE_COMMITMENT` rotated — new source tree acting. |
+| Kind | Name | Meaning | On-chain mirror |
+|---|---|---|---|
+| 1 | `RESET` | `/reset` invoked — swarm state restarted. | ✔ |
+| 2 | `MANUAL_TICK` | Tick driven by a human via `POST /tick` (not cron). **Local-log only**; rate-limited to one entry per 5-minute window (merged). | ✖ local only |
+| 3 | `PARAM_OVERRIDE` | Runtime knob snapshot changed (wrangler params overridden). | ✔ |
+| 4 | `COMMITTER_CHANGE` | Facilitator/committer wallet address changed. | ✔ |
+| 5 | `GENESIS_SEED` | Receipt registry genesis anchor mined. | ✔ |
+| 6 | `DO_REBUILD` | Durable Object state rebuilt / restored to defaults. | ✔ |
+| 7 | `CODE_CHANGE` | `CODE_COMMITMENT` rotated — new source tree acting. | ✔ |
+
+Kinds **1, 3, 4, 5, 6, 7** are mirrored on-chain via `ContinuityRegistry.adminAction(kind, payloadHash)`;
+kind **2** (`MANUAL_TICK`) is local-log only — no on-chain transaction.
 
 ---
 

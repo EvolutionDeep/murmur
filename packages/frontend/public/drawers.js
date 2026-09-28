@@ -1,7 +1,7 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=110';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=111';
 import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js';
 import { select } from './inspector.js';
 import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js';
@@ -4238,11 +4238,17 @@ function pocaSpan(ms) {
   return Math.floor(s / 86400) + "d " + (Math.floor(s / 3600) % 24) + "h";
 }
 
-/** A 0x…-style hash/address as a short-hash link to the explorer (the repo-wide tx-link pattern). */
+/** A 0x…-style hash/address as a short-hash link to the explorer (the repo-wide tx-link pattern).
+ *  SECURITY (review #16): `h` is server-controlled, so it is whitelisted as a 64-hex word (optional 0x —
+ *  the isRealTxHash shape) BEFORE it can ever reach an href. A conforming value renders as a link whose
+ *  href AND visible text are both escapeHtml'd; a non-conforming value renders as escaped plain text and
+ *  is NEVER turned into a link, so a javascript:/data: scheme or an attribute break-out is impossible. */
 function pocaHashLink(h, label) {
   if (!h || typeof h !== "string" || /^0x0*$/i.test(h)) return `<span class="fp poca-dim">\u2013</span>`;
-  const text = label || shortHash(h);
-  return `<a class="tx-link fp" href="${ARC_EXPLORER}/tx/${h}" target="_blank" rel="noopener noreferrer">\u2197 ${text}</a>`;
+  const text = escapeHtml(label || shortHash(h));
+  // 64-hex whitelist (0x optional). Anything else is untrusted free text — show it escaped, no anchor.
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(h)) return `<span class="fp" title="${text}">${text}</span>`;
+  return `<a class="tx-link fp" href="${escapeHtml(`${ARC_EXPLORER}/tx/${h}`)}" target="_blank" rel="noopener noreferrer">\u2197 ${text}</a>`;
 }
 
 /** Paint the whole body from the cache (no fetch). Also what rerenderAll() calls on a language change. */
@@ -4284,7 +4290,7 @@ function pocaHeadHtml(d) {
     `<div class="pc-stat"><span class="pc-k">${T("poca.commitment")}</span><span class="pc-v fp" title="${escapeHtml(String(d.codeCommitment || ""))}">${d.codeCommitment ? escapeHtml(shortHash(d.codeCommitment)) : "\u2013"}</span></div>` +
     `<div class="pc-stat"><span class="pc-k">${T("poca.git")}</span><span class="pc-v fp" title="${escapeHtml(String(d.gitCommit || ""))}">${d.gitCommit ? escapeHtml(shortHash(d.gitCommit)) : "\u2013"}</span></div>` +
     `<div class="pc-stat"><span class="pc-k">${T("poca.registry")}</span><span class="pc-v fp" title="${escapeHtml(String(d.registryAddress || ""))}">${isRealAddr(d.registryAddress) ? escapeHtml(shortHash(d.registryAddress)) : "\u2013"}</span></div>` +
-    `<div class="pc-stat"><span class="pc-k">${T("poca.chainHead")}</span><span class="pc-v">${pocaHashLink(d.chainHead, d.chainHead ? escapeHtml(shortHash(d.chainHead)) : null)}</span></div>` +
+    `<div class="pc-stat"><span class="pc-k">${T("poca.chainHead")}</span><span class="pc-v">${pocaHashLink(d.chainHead)}</span></div>` +
     `</div>`;
   const ci = d.commitmentInputs;
   if (ci && typeof ci === "object") {
@@ -4357,8 +4363,11 @@ function pocaAdminHtml() {
 }
 
 function pocaVerifierHtml(d) {
+  // review #16: `head` is server-controlled and t() interpolates {root} RAW into innerHTML, so the
+  // short-hash is escapeHtml'd BEFORE it is handed to the template (neutralises any markup in head).
+  const root = (d && d.epochState && d.epochState.head) ? escapeHtml(shortHash(d.epochState.head)) : "\u2013";
   let html = `<div class="pc-section"><div class="tp-section-title">${T("poca.verifyTitle")}</div>` +
-    `<p class="pc-note">${T("poca.verifierNote", { root: (d && d.epochState && d.epochState.head) ? shortHash(d.epochState.head) : "\u2013" })}</p>` +
+    `<p class="pc-note">${T("poca.verifierNote", { root })}</p>` +
     `<a class="tx-link" href="/developers" target="_blank" rel="noopener noreferrer">\u2197 ${T("poca.verifierLink")}</a>` +
     `</div>`;
   return html;

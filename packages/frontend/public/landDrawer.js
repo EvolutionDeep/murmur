@@ -4,7 +4,7 @@
 // transaction, and POST /land with X-Payment-Proof header.
 
 import { state, $, API, shortHash } from './shared.js';
-import { t as T } from './i18n.js?v=110';
+import { t as T } from './i18n.js?v=111';
 import { getJSON } from './polling.js';
 
 // ---- constants (mirror the backend land.ts) ----

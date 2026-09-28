@@ -18,15 +18,22 @@
 //
 // Digests accumulate into ~24h EPOCHS (SEAL_THRESHOLD crons). When an epoch fills it is sealed: its
 // digests are folded into a Merkle root and the (root, sealedHead, tickCount) is mirrored on-chain via the
-// PoCARegistry (best-effort — see x402.ts). Every administrative discontinuity (reset / manual tick /
+// ContinuityRegistry (best-effort — see x402.ts). Every administrative discontinuity (reset / manual tick /
 // param override / committer change / genesis seed / DO rebuild / code change) is logged locally AND
 // mirrored on-chain as an adminAction(kind, payloadHash), so a verifier sees not just the happy chain but
 // every moment the operator intervened.
 //
-// DISABLED MODE. Until the PoCARegistry contract is deployed, config resolves pocaRegistryAddress to the
-// zero address; the chain hooks (PocoChainHooks) then degrade to null and NO on-chain call is made. The
+// DISABLED MODE. Until the ContinuityRegistry contract is deployed, config resolves pocaRegistryAddress to
+// the zero address; the chain hooks (PocoChainHooks) then degrade to null and NO on-chain call is made. The
 // off-chain epoch chain, the admin log and every /poca read-out run IDENTICALLY either way — flipping the
 // address on later merely starts mirroring an already-running chain.
+//
+// NON-BLOCKING MIRROR. Every on-chain step (openEpoch / sealEpoch / adminAction) is fired through a serial
+// "mirror queue" that the host detaches from the cron's await path (state.ts wires it to
+// DurableObjectState.waitUntil). The LOCAL epoch lifecycle (digests, meta, sealed records, admin buckets)
+// is always persisted synchronously; only the chain mirror runs afterwards, off the hot path, so a slow or
+// reverting RPC can never delay or fail a live tick. Before each open/seal mirror the queue re-checks the
+// on-chain index alignment (see mirrorOpen/mirrorSeal) and pauses the mirror on any mismatch.
 //
 // This module is deliberately dependency-light (only provenance.sha256Hex) and fully unit-testable with an
 // in-memory PocoStore + stub PocoChainHooks; it never touches DO/Wrangler/viem directly. state.ts owns the
@@ -49,24 +56,39 @@ export const POCA_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
  */
 export const SEAL_THRESHOLD = 1440;
 
-/** Hard cap on the retained admin log (oldest dropped first) so `poca:admin` can never grow unbounded. */
-export const ADMIN_LOG_CAP = 500;
+/** Per-kind cap on the bucketed admin log (oldest dropped first) — `poca:admin:k<kind>`. */
+export const ADMIN_KIND_CAP = 100;
+
+/** Aggregate cap across every kind bucket (7 × 100 = 700 by default) so the log can never grow unbounded. */
+export const ADMIN_TOTAL_CAP = 700;
+
+/**
+ * MANUAL_TICK flood-merge window (ms). Multiple public /tick hits inside one window collapse into a SINGLE
+ * local kind2 record whose note carries the flood count, so a bot hammering /tick cannot inflate the log.
+ */
+export const MANUAL_TICK_WINDOW_MS = 5 * 60 * 1000;
 
 // DO storage keys. Each is small except the per-epoch digest blob (`poca:e<i>:digests`).
 const KEY_HEAD = "poca:head";             // string  — latest cron digest (cheap read for /poca)
 const KEY_EPOCH = "poca:epoch";           // object  — the OPEN epoch's metadata (PocoEpochMeta)
 const KEY_EPOCHS = "poca:epochs";         // number[]— indices of SEALED (closed) epochs, ascending
-const KEY_ADMIN = "poca:admin";           // object[]— the capped admin log (PocoAdminEntry[])
+const KEY_ADMIN_LEGACY = "poca:admin";    // object[]— pre-bucketing single admin log (migrated then deleted)
+const KEY_MIRROR = "poca:mirror";         // object  — the on-chain mirror alignment state (PocoMirrorState)
+const KEY_MANUAL_WIN = "poca:manualwin";  // object  — the live MANUAL_TICK flood-merge window {startTs,count}
 const KEY_COMMITTER = "poca:committer";   // string  — last-seen committer address (kind4 detection)
 const KEY_KNOBS = "poca:knobs";           // string  — last-seen runtime knob snapshot hash (kind3 detection)
-const digestsKey = (i: number): string => `poca:e${i}:digests`;   // string[] — one epoch's cron digests
-const sealedKey = (i: number): string => `poca:sealed:${i}`;      // object   — a sealed epoch's full record
+const adminKey = (kind: number): string => `poca:admin:k${kind}`;   // object[] — one kind's capped bucket
+const digestsKey = (i: number): string => `poca:e${i}:digests`;     // string[] — one epoch's cron digests
+const sealedKey = (i: number): string => `poca:sealed:${i}`;        // object   — a sealed epoch's full record
+
+/** Every admin kind, in enum order — the fixed set of buckets the log is sharded across. */
+const ADMIN_KINDS: number[] = [1, 2, 3, 4, 5, 6, 7];
 
 // ============================== admin kinds (match the on-chain contract 1:1) ==============================
 
 /**
- * The administrative-discontinuity kinds, byte-identical to the PoCARegistry `adminAction(uint8 kind, …)`
- * contract enum. A verifier reads the same numbers off-chain and on-chain.
+ * The administrative-discontinuity kinds, byte-identical to the ContinuityRegistry `adminAction(uint8 kind,
+ * …)` contract enum. A verifier reads the same numbers off-chain and on-chain.
  */
 export const PocoAdminKind = {
   RESET: 1,            // /reset invoked — the swarm state (and epoch) was deliberately restarted
@@ -96,12 +118,16 @@ export const PocoAdminKindName: Record<number, string> = {
 // which must hash a fixed BYTE layout (prevDigest || u64be(i) || stateDigest || codeCommitment). These
 // helpers do the raw-byte side deterministically in both the Worker runtime and Node (WebCrypto).
 
-/** Decode an even-length hex string (with or without a 0x prefix) into bytes. */
+/**
+ * Decode an even-length hex string (with or without a 0x prefix) into bytes. STRICT: an odd length or any
+ * non-hex character throws, so a malformed digest can never be silently truncated into a wrong hash. This is
+ * the SHARED CONTRACT with the browser-side verifier — the semantics must stay byte-for-byte identical.
+ */
 export function hexToBytes(hex: string): Uint8Array {
-  const h = hex.replace(/^0x/i, "");
-  const even = h.length % 2 === 0 ? h : `0${h}`;
-  const out = new Uint8Array(even.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(even.substr(i * 2, 2), 16);
+  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (h.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(h)) throw new Error("invalid hex string");
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
   return out;
 }
 
@@ -186,7 +212,8 @@ export interface MerkleStep {
 /**
  * The Merkle root of a list of 64-hex digests: sha256 pairwise fold, ODD TAIL DUPLICATED (the last lone
  * node is paired with itself), until one node remains. Empty list ⇒ ZERO64; single leaf ⇒ the leaf itself
- * (the loop never runs). Matches the on-chain PoCARegistry's root so an off-chain proof verifies on-chain.
+ * (the loop never runs). Matches the on-chain ContinuityRegistry's root so an off-chain proof verifies
+ * on-chain.
  */
 export async function merkleRoot(digests: string[]): Promise<string> {
   if (digests.length === 0) return ZERO64;
@@ -253,6 +280,9 @@ export interface PocoEpochMeta {
   codeCommitment: string;    // the CODE_COMMITMENT this epoch opened under (a mismatch forces a seal)
   genesisHead: string;       // the proof-chain head this epoch started from
   lastTick: number;          // highest tickIndex folded so far (-1 before the first append)
+  digestCount: number;       // cron digests folded so far (self-check + snapshot read WITHOUT the blob)
+  codeChangeAdminTs?: number | null;  // ts of the kind7 CODE_CHANGE that opened THIS epoch (null if none)
+  committerChecked?: boolean;         // the once-per-epoch on-chain committer boot-check has run
   openTxHash?: string;       // on-chain openEpoch tx hash (only when the registry is enabled + mined)
   rebuildLogged?: boolean;   // kind6 DO_REBUILD already recorded for this epoch (dedupe latch)
 }
@@ -268,6 +298,7 @@ export interface PocoSealedEpoch {
   genesisHead: string;
   codeCommitment: string;
   reason: string;            // "threshold" | "reset" | "code-change"
+  codeChangeAdminTs: number | null;  // ts of the kind7 CODE_CHANGE that opened this epoch (null if none)
   openTxHash?: string;       // on-chain openEpoch tx (when enabled)
   txHash?: string;           // on-chain sealEpoch tx (when enabled)
 }
@@ -279,6 +310,30 @@ export interface PocoAdminEntry {
   payloadHash: string;       // sha256(canonical({kind,ts,detail})) — commits the reason without leaking it
   note: string;              // short human label (safe to expose)
   txHash?: string;           // on-chain adminAction tx (when enabled)
+}
+
+/**
+ * The persisted on-chain mirror alignment state. `aligned` is the last check's verdict, `failures` is a
+ * running count of skipped/failed mirrors, `paused` latches when a mirror was skipped for misalignment (or a
+ * committer mismatch) and clears on the next successful re-alignment, `lastMirrorTs` is the last MINED
+ * mirror, and `lastMirrorSealOk` gates the NEXT epoch's open (an epoch may only be opened on-chain once its
+ * predecessor's on-chain seal succeeded). `onChainCount` caches the last observed registry epochCount().
+ */
+export interface PocoMirrorState {
+  aligned: boolean;
+  failures: number;
+  paused: boolean;
+  lastMirrorTs: number | null;
+  lastMirrorSealOk: boolean;
+  onChainCount: number | null;
+}
+
+/** The mirror sub-object exposed by GET /poca — the SHARED CONTRACT with the front-end / verifier. */
+export interface PocoMirrorView {
+  aligned: boolean;
+  failures: number;
+  paused: boolean;
+  lastMirrorTs: number | null;
 }
 
 /** The /poca read-out. */
@@ -293,6 +348,7 @@ export interface PocoSnapshot {
   epochCount: number;        // closed + open epochs
   adminCount: number;
   continuity: "unbroken" | "pending" | "disabled";
+  mirror: PocoMirrorView;    // the on-chain mirror alignment/pause state (see PocoMirrorState)
 }
 
 // ============================== injected dependencies ==============================
@@ -300,24 +356,29 @@ export interface PocoSnapshot {
 /**
  * The minimal durable KV the engine needs — a thin façade over DurableObjectStorage (state.ts adapts it) so
  * the engine stays testable with an in-memory map. Values are JSON-safe (strings, numbers, arrays, plain
- * objects); `get` returns undefined when absent, mirroring DO semantics.
+ * objects); `get` returns undefined when absent, mirroring DO semantics. `putBatch` writes several keys in
+ * ONE atomic operation (DO storage.put(object)); `getMany` reads several keys in one round-trip.
  */
 export interface PocoStore {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+  putBatch(entries: Record<string, unknown>): Promise<void>;
+  getMany(keys: string[]): Promise<Record<string, unknown>>;
   delete(key: string): Promise<void | boolean>;
 }
 
 /**
  * The on-chain mirror hooks (state.ts wires these to the economy → facilitator delegators). EVERY method is
  * best-effort and returns the tx hash on a mined success or null when disabled/failed, so the engine treats
- * null as "not mirrored" and never as an error — the off-chain chain is authoritative.
+ * null as "not mirrored" and never as an error — the off-chain chain is authoritative. `epochCount()` reads
+ * the registry's on-chain epoch counter so the engine can verify its local index matches before mirroring.
  */
 export interface PocoChainHooks {
   openEpoch(codeCommitment: string, genesisHead: string): Promise<string | null>;
   sealEpoch(epochIndex: number, sealedHead: string, tickCount: number, merkleRoot: string): Promise<string | null>;
   adminAction(kind: number, payloadHash: string): Promise<string | null>;
   committer(): Promise<string | null>;
+  epochCount(): Promise<number | null>;
 }
 
 /** Construction options for the engine. */
@@ -328,15 +389,18 @@ export interface PocoEngineOpts {
   gitCommit: string;                   // from codeCommitment.ts GIT_COMMIT (read-out only)
   registryAddress: string;             // the configured registry address (zero ⇒ disabled)
   sealThreshold?: number;              // default SEAL_THRESHOLD
-  adminLogCap?: number;                // default ADMIN_LOG_CAP
+  adminKindCap?: number;               // default ADMIN_KIND_CAP (per-kind bucket cap)
+  adminTotalCap?: number;              // default ADMIN_TOTAL_CAP (aggregate cap)
   now?: () => number;                  // injectable clock (ms) for deterministic tests
   warn?: (msg: string) => void;        // non-fatal logging sink (default: console.warn)
+  detach?: (p: Promise<unknown>) => void;  // host hook to keep a detached mirror alive (DO waitUntil)
 }
 
 /** What state.ts hands the engine at cron entry so it can detect the admin discontinuities idempotently. */
 export interface PocoEnsureInfo {
   genesisHead: string;                 // current proof-chain head (the epoch's start anchor)
-  committer?: string | null;           // the facilitator/committer wallet address (kind4)
+  committer?: string | null;           // the facilitator/committer wallet address (kind4 across boots)
+  relayAddress?: string | null;        // the economy's live relay wallet — the EXPECTED on-chain committer
   knobsHash?: string | null;           // sha256 of the runtime knob snapshot (kind3)
   rebuild?: boolean;                   // state.ts detected a fresh-default restore (kind6)
 }
@@ -355,8 +419,9 @@ export interface PocoAppendInfo {
  * PocoEngine drives the off-chain epoch lifecycle over an injected PocoStore + PocoChainHooks. It is the
  * SINGLE place PoCA state mutates; state.ts calls ensureEpoch() at cron entry, appendDigest() at cron exit,
  * and onReset()/onManualTick()/onGenesisSeeded() from the matching handlers, then reads via snapshot()/
- * listEpochs()/getEpoch()/proof()/listAdmin() for the /poca endpoints. Every on-chain step is best-effort;
- * every local step is idempotent so a re-run cron (or a DO eviction mid-cron) can never corrupt the chain.
+ * listEpochs()/getEpoch()/proof()/listAdmin() for the /poca endpoints. Every LOCAL step is synchronous,
+ * atomic (batch put) and idempotent so a re-run cron (or a DO eviction mid-cron) can never corrupt the
+ * chain; every ON-CHAIN step is best-effort and detached onto the serial mirror queue.
  */
 export class PocoEngine {
   private readonly store: PocoStore;
@@ -365,9 +430,17 @@ export class PocoEngine {
   private readonly gitCommit: string;
   private readonly registryAddress: string;
   private readonly sealThreshold: number;
-  private readonly adminLogCap: number;
+  private readonly adminKindCap: number;
+  private readonly adminTotalCap: number;
   private readonly now: () => number;
   private readonly warn: (msg: string) => void;
+  private readonly detach: (p: Promise<unknown>) => void;
+  /** Serial tail of the fire-and-forget on-chain mirror queue (one op at a time ⇒ no self nonce races). */
+  private mirrorQueue: Promise<void> = Promise.resolve();
+  /** The expected on-chain committer (the economy relay wallet), captured each cron entry (issue 18). */
+  private expectedCommitter: string | null = null;
+  /** One-shot latch so the legacy single-key admin log is migrated into buckets at most once. */
+  private adminMigrated = false;
 
   constructor(o: PocoEngineOpts) {
     this.store = o.store;
@@ -376,9 +449,11 @@ export class PocoEngine {
     this.gitCommit = o.gitCommit;
     this.registryAddress = o.registryAddress;
     this.sealThreshold = o.sealThreshold ?? SEAL_THRESHOLD;
-    this.adminLogCap = o.adminLogCap ?? ADMIN_LOG_CAP;
+    this.adminKindCap = o.adminKindCap ?? ADMIN_KIND_CAP;
+    this.adminTotalCap = o.adminTotalCap ?? ADMIN_TOTAL_CAP;
     this.now = o.now ?? (() => Date.now());
     this.warn = o.warn ?? ((m: string) => console.warn(m));
+    this.detach = o.detach ?? ((p: Promise<unknown>) => { void p.catch(() => {}); });
   }
 
   /** True when the on-chain mirror is wired (a non-zero registry address). */
@@ -408,48 +483,209 @@ export class PocoEngine {
     return Array.isArray(v) ? v : [];
   }
 
-  private async loadAdmin(): Promise<PocoAdminEntry[]> {
-    const v = await this.store.get<PocoAdminEntry[]>(KEY_ADMIN);
+  private async loadMirror(): Promise<PocoMirrorState> {
+    const v = await this.store.get<PocoMirrorState>(KEY_MIRROR);
+    return {
+      aligned: v?.aligned ?? true,
+      failures: typeof v?.failures === "number" ? v.failures : 0,
+      paused: v?.paused ?? false,
+      lastMirrorTs: typeof v?.lastMirrorTs === "number" ? v.lastMirrorTs : null,
+      lastMirrorSealOk: v?.lastMirrorSealOk ?? true,
+      onChainCount: typeof v?.onChainCount === "number" ? v.onChainCount : null,
+    };
+  }
+
+  private async saveMirror(m: PocoMirrorState): Promise<void> {
+    await this.store.put(KEY_MIRROR, m);
+  }
+
+  // ---------- mirror queue (issue 5: non-blocking, serial) ----------
+
+  /**
+   * Append one on-chain mirror task to the serial queue and hand the queue tail to the host's detach hook
+   * (DO waitUntil) so the isolate stays alive to finish it AFTER the cron returns. Serialization means PoCA
+   * mirrors never race each other for a nonce; a race with the settlement broadcast is tolerated (the losing
+   * write reverts ⇒ null ⇒ recovered by the next alignment re-check).
+   */
+  private enqueueMirror(op: () => Promise<void>): void {
+    this.mirrorQueue = this.mirrorQueue
+      .then(() => op())
+      .catch((e) => this.warn(`[poca] mirror task failed (non-fatal): ${errMsg(e)}`));
+    this.detach(this.mirrorQueue);
+  }
+
+  /** Await the serial mirror queue to drain (used by tests; a no-op once every detached task has settled). */
+  async flushMirrors(): Promise<void> {
+    await this.mirrorQueue;
+  }
+
+  // ---------- admin log (issue 1③/25: per-kind buckets + defensive legacy migration) ----------
+
+  /** Drop the oldest entries past the per-kind cap. */
+  private capBucket(bucket: PocoAdminEntry[]): PocoAdminEntry[] {
+    const out = bucket.slice();
+    while (out.length > this.adminKindCap) out.shift();
+    return out;
+  }
+
+  private async loadAdminBucket(kind: number): Promise<PocoAdminEntry[]> {
+    const v = await this.store.get<PocoAdminEntry[]>(adminKey(kind));
     return Array.isArray(v) ? v : [];
+  }
+
+  /**
+   * One-shot defensive migration of the pre-bucketing single `poca:admin` key into the per-kind buckets, then
+   * delete it. Production currently has count=0 there, so this is a no-op in practice; it exists so an old DO
+   * that DID accumulate a single-key log keeps every entry after the bucketing upgrade.
+   */
+  private async migrateAdmin(): Promise<void> {
+    if (this.adminMigrated) return;
+    this.adminMigrated = true;
+    const legacy = await this.store.get<PocoAdminEntry[]>(KEY_ADMIN_LEGACY);
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      const entries: Record<string, unknown> = {};
+      for (const kind of ADMIN_KINDS) {
+        const bucket = await this.loadAdminBucket(kind);
+        for (const e of legacy) if (e && e.kind === kind) bucket.push(e);
+        bucket.sort((a, b) => a.ts - b.ts);
+        entries[adminKey(kind)] = this.capBucket(bucket);
+      }
+      await this.store.putBatch(entries);
+    }
+    await this.store.delete(KEY_ADMIN_LEGACY);
+  }
+
+  /** Merge every kind bucket into one ts-ASCENDING list (callers reverse for most-recent-first). */
+  private async loadAllAdmin(): Promise<PocoAdminEntry[]> {
+    await this.migrateAdmin();
+    const rec = await this.store.getMany(ADMIN_KINDS.map(adminKey));
+    const out: PocoAdminEntry[] = [];
+    for (const kind of ADMIN_KINDS) {
+      const arr = rec[adminKey(kind)];
+      if (Array.isArray(arr)) out.push(...(arr as PocoAdminEntry[]));
+    }
+    out.sort((a, b) => a.ts - b.ts);
+    return out;
+  }
+
+  /** Append one entry to its kind bucket (per-kind cap), then enforce the aggregate cap across all buckets. */
+  private async appendAdmin(entry: PocoAdminEntry): Promise<void> {
+    await this.migrateAdmin();
+    const bucket = await this.loadAdminBucket(entry.kind);
+    bucket.push(entry);
+    await this.store.put(adminKey(entry.kind), this.capBucket(bucket));
+    await this.enforceTotalCap();
+  }
+
+  /** Trim the oldest entries across ALL buckets until the aggregate count is within adminTotalCap. */
+  private async enforceTotalCap(): Promise<void> {
+    const perKind: Record<number, PocoAdminEntry[]> = {};
+    let total = 0;
+    for (const kind of ADMIN_KINDS) {
+      const b = await this.loadAdminBucket(kind);
+      perKind[kind] = b;
+      total += b.length;
+    }
+    if (total <= this.adminTotalCap) return;
+    // Collect (kind, position) of every entry, oldest-first, and drop the surplus from the front.
+    const flat: { kind: number; ts: number }[] = [];
+    for (const kind of ADMIN_KINDS) for (const e of perKind[kind]) flat.push({ kind, ts: e.ts });
+    flat.sort((a, b) => a.ts - b.ts);
+    let toDrop = total - this.adminTotalCap;
+    const dropCount: Record<number, number> = {};
+    for (const f of flat) {
+      if (toDrop <= 0) break;
+      dropCount[f.kind] = (dropCount[f.kind] ?? 0) + 1;
+      toDrop--;
+    }
+    const entries: Record<string, unknown> = {};
+    for (const kind of ADMIN_KINDS) {
+      const n = dropCount[kind] ?? 0;
+      if (n > 0) entries[adminKey(kind)] = perKind[kind].slice(n);
+    }
+    if (Object.keys(entries).length > 0) await this.store.putBatch(entries);
   }
 
   // ---------- lifecycle: open / seal ----------
 
-  /**
-   * Open epoch `index`: persist fresh metadata + an empty digest list, then best-effort mirror it on-chain.
-   * Does NOT touch poca:head — the hash chain continues unbroken across the epoch boundary (that continuity
-   * is the whole point of PoCA); only the digest ARRAY and the Merkle scope restart per epoch.
-   */
-  private async openEpoch(index: number, genesisHead: string): Promise<PocoEpochMeta> {
-    const meta: PocoEpochMeta = {
+  /** Build fresh OPEN-epoch metadata (no writes). digestCount starts at 0; the head is NOT touched here. */
+  private buildOpenMeta(index: number, genesisHead: string, codeChangeAdminTs: number | null = null): PocoEpochMeta {
+    return {
       index,
       openTs: this.now(),
       codeCommitment: this.codeCommitment,
       genesisHead,
       lastTick: -1,
+      digestCount: 0,
+      codeChangeAdminTs,
+      committerChecked: false,
     };
-    await this.store.put(digestsKey(index), [] as string[]);
-    const txHash = await this.safeChain(() => this.chain.openEpoch(this.codeCommitment, genesisHead));
-    if (txHash) meta.openTxHash = txHash;
-    await this.store.put(KEY_EPOCH, meta);
+  }
+
+  /**
+   * Open epoch `index`: persist fresh metadata + an empty digest list atomically, then DETACH its on-chain
+   * mirror. Does NOT touch poca:head — the hash chain continues unbroken across the epoch boundary (that
+   * continuity is the whole point of PoCA); only the digest ARRAY and the Merkle scope restart per epoch.
+   */
+  private async openEpoch(index: number, genesisHead: string, codeChangeAdminTs: number | null = null): Promise<PocoEpochMeta> {
+    const meta = this.buildOpenMeta(index, genesisHead, codeChangeAdminTs);
+    await this.store.putBatch({ [digestsKey(index)]: [] as string[], [KEY_EPOCH]: meta });
+    if (this.enabled) this.enqueueMirror(() => this.mirrorOpen(meta));
     return meta;
   }
 
   /**
-   * Seal the OPEN epoch: fold its digests into a Merkle root, mirror (sealedHead, tickCount, root) on-chain,
-   * persist an immutable SealedEpoch record + append its index to the closed list, then open the next epoch.
-   * Best-effort throughout — a failed on-chain seal still closes the epoch off-chain (the chain is
-   * authoritative). `reason` records WHY it sealed (threshold / reset / code-change) for the read-out.
+   * Fold ONE synthetic marker digest into an EMPTY epoch so its seal has a non-zero sealedHead/merkleRoot and
+   * tickCount ≥ 1 — the on-chain sealEpoch reverts on a zero root/head (ContinuityRegistry.ZeroHash). The
+   * marker is a cronDigest over a canonical empty-state snapshot anchored at the epoch's own genesisHead, so
+   * it is deterministic and links into the running chain exactly like a real digest. Returns the new head.
    */
-  private async sealAndReopen(reason: string, genesisHead: string): Promise<void> {
+  private async foldMarkerDigest(epoch: PocoEpochMeta): Promise<string | null> {
+    try {
+      const prev = (await this.loadHead()) ?? ZERO64;
+      const tickIndex = epoch.lastTick < 0 ? 0 : epoch.lastTick;
+      const markerState: PocoStateInput = {
+        tickIndex,
+        proofChainHead: epoch.genesisHead,
+        chronicler: { headHash: "", era: 0, seq: 0 },
+        arenaCursor: { openedRound: -1, resolvedRound: -1 },
+        warCount: -1,
+        pop: { size: 0, generation: 0, civLevel: 0 },
+        econ: { volumeAtomic: "0", count: 0 },
+      };
+      const sd = await stateDigest(markerState);
+      const digest = await cronDigest(prev, 0, sd, this.codeCommitment);
+      epoch.lastTick = Math.max(epoch.lastTick, tickIndex);
+      epoch.digestCount = 1;
+      await this.store.putBatch({
+        [digestsKey(epoch.index)]: [digest],
+        [KEY_HEAD]: digest,
+        [KEY_EPOCH]: epoch,
+      });
+      return digest;
+    } catch (err) {
+      this.warn(`[poca] empty-epoch marker digest failed (non-fatal): ${errMsg(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Seal the OPEN epoch: fold its digests into a Merkle root, persist an immutable SealedEpoch record +
+   * append its index to the closed list + open the next epoch in ONE atomic batch, then DETACH the on-chain
+   * seal + open mirrors (in order). Best-effort throughout — a failed/skipped on-chain seal still closes the
+   * epoch off-chain (the chain is authoritative). `reason` records WHY it sealed; `nextCodeChangeTs` carries
+   * the kind7 ts onto the freshly-opened epoch when the seal was forced by a code change.
+   */
+  private async sealAndReopen(reason: string, genesisHead: string, nextCodeChangeTs: number | null = null): Promise<void> {
     const epoch = await this.loadEpoch();
     if (!epoch) return;
-    const digests = await this.loadDigests(epoch.index);
+    let digests = await this.loadDigests(epoch.index);
+    if (digests.length === 0) {
+      const marker = await this.foldMarkerDigest(epoch);
+      if (marker) digests = [marker];
+    }
     const root = await merkleRoot(digests);
     const sealedHead = digests.length > 0 ? digests[digests.length - 1] : ZERO64;
-    const txHash = await this.safeChain(() =>
-      this.chain.sealEpoch(epoch.index, sealedHead, digests.length, root),
-    );
     const sealed: PocoSealedEpoch = {
       index: epoch.index,
       openTs: epoch.openTs,
@@ -460,35 +696,219 @@ export class PocoEngine {
       genesisHead: epoch.genesisHead,
       codeCommitment: epoch.codeCommitment,
       reason,
+      codeChangeAdminTs: epoch.codeChangeAdminTs ?? null,
       ...(epoch.openTxHash ? { openTxHash: epoch.openTxHash } : {}),
-      ...(txHash ? { txHash } : {}),
     };
-    await this.store.put(sealedKey(epoch.index), sealed);
     const closed = await this.loadClosed();
     if (!closed.includes(epoch.index)) {
       closed.push(epoch.index);
       closed.sort((a, b) => a - b);
-      await this.store.put(KEY_EPOCHS, closed);
     }
-    await this.openEpoch(epoch.index + 1, genesisHead);
+    const nextMeta = this.buildOpenMeta(epoch.index + 1, genesisHead, nextCodeChangeTs);
+    // ATOMIC: sealed record + closed index + the next epoch's meta + its empty digest list in one batch put.
+    // The next epoch's digest array is fresh; the sealed epoch's own digests stay for /poca/proof.
+    await this.store.putBatch({
+      [sealedKey(epoch.index)]: sealed,
+      [KEY_EPOCHS]: closed,
+      [KEY_EPOCH]: nextMeta,
+      [digestsKey(epoch.index + 1)]: [] as string[],
+    });
+    if (this.enabled) {
+      this.enqueueMirror(() => this.mirrorSeal(sealed));
+      this.enqueueMirror(() => this.mirrorOpen(nextMeta));
+    }
   }
 
-  // ---------- admin log ----------
+  // ---------- on-chain mirror ops (run inside the serial queue; never on the cron await path) ----------
+
+  /** Read the registry's on-chain epochCount() (null when disabled / RPC error). */
+  private async readChainCount(): Promise<number | null> {
+    if (!this.enabled) return null;
+    try {
+      return await this.chain.epochCount();
+    } catch (err) {
+      this.warn(`[poca] epochCount read failed (non-fatal): ${errMsg(err)}`);
+      return null;
+    }
+  }
+
+  /** Latch the mirror paused + count a failure + record a LOCAL kind6 misalignment note. */
+  private async markMisaligned(localIndex: number, chainCount: number | null): Promise<void> {
+    const m = await this.loadMirror();
+    m.paused = true;
+    m.aligned = false;
+    m.failures += 1;
+    if (chainCount != null) m.onChainCount = chainCount;
+    await this.saveMirror(m);
+    await this.recordAdminLocal(
+      PocoAdminKind.DO_REBUILD,
+      { localIndex, chainCount },
+      `mirror misalignment: local=${localIndex} chain=${chainCount}`,
+    );
+  }
 
   /**
-   * Record one administrative discontinuity: append {kind, ts, payloadHash, note} to the capped local log and
-   * best-effort mirror adminAction(kind, payloadHash) on-chain. payloadHash commits the canonical detail so
-   * the REASON is provable without publishing it. Oldest entries are dropped past adminLogCap.
+   * Once-per-epoch committer boot-check (issue 18): read the registry's authorized committer and compare it
+   * to the economy's live relay wallet. A mismatch means the mirror would be written by (or attributed to)
+   * the wrong wallet ⇒ pause the mirror + record a LOCAL kind4. Returns false when the mirror must stop.
+   */
+  private async verifyCommitter(index: number): Promise<boolean> {
+    const epoch = await this.loadEpoch();
+    if (!epoch || epoch.index !== index || epoch.committerChecked) return true;  // stale or already checked
+    const expected = this.expectedCommitter;
+    const onchain = await this.safeChain(() => this.chain.committer());
+    if (expected && onchain && onchain.toLowerCase() !== expected.toLowerCase()) {
+      const m = await this.loadMirror();
+      m.paused = true;
+      m.aligned = false;
+      m.failures += 1;
+      await this.saveMirror(m);
+      await this.recordAdminLocal(
+        PocoAdminKind.COMMITTER_CHANGE,
+        { expected, onchain },
+        "on-chain committer != economy relay wallet — mirror paused",
+      );
+      return false;
+    }
+    epoch.committerChecked = true;
+    await this.store.put(KEY_EPOCH, epoch);
+    return true;
+  }
+
+  /** Detached on-chain openEpoch, gated by the committer check + the index alignment (local == chainCount). */
+  private async mirrorOpen(meta: PocoEpochMeta): Promise<void> {
+    if (!this.enabled) return;
+    if (!(await this.verifyCommitter(meta.index))) return;
+    const m = await this.loadMirror();
+    const chainCount = await this.readChainCount();
+    if (chainCount == null) { await this.markMisaligned(meta.index, null); return; }
+    m.onChainCount = chainCount;
+    // open requires localIndex == chainCount AND (epoch 0 OR the previous epoch's on-chain seal succeeded).
+    const sealOk = meta.index === 0 ? true : m.lastMirrorSealOk;
+    if (meta.index !== chainCount || !sealOk) { await this.markMisaligned(meta.index, chainCount); return; }
+    const txHash = await this.safeChain(() => this.chain.openEpoch(this.codeCommitment, meta.genesisHead));
+    if (txHash) {
+      m.aligned = true;
+      m.paused = false;
+      m.lastMirrorTs = this.now();
+      await this.saveMirror(m);
+      const cur = await this.loadEpoch();
+      if (cur && cur.index === meta.index && !cur.openTxHash) {
+        cur.openTxHash = txHash;
+        await this.store.put(KEY_EPOCH, cur);
+      }
+    } else {
+      m.failures += 1;
+      await this.saveMirror(m);
+    }
+  }
+
+  /** Detached on-chain sealEpoch, gated by the index alignment (local == chainCount-1, seal in order). */
+  private async mirrorSeal(rec: PocoSealedEpoch): Promise<void> {
+    if (!this.enabled) return;
+    const m = await this.loadMirror();
+    const chainCount = await this.readChainCount();
+    if (chainCount == null) { await this.markMisaligned(rec.index, null); return; }
+    m.onChainCount = chainCount;
+    if (rec.index !== chainCount - 1) { await this.markMisaligned(rec.index, chainCount); return; }
+    const txHash = await this.safeChain(() => this.chain.sealEpoch(rec.index, rec.sealedHead, rec.tickCount, rec.merkleRoot));
+    if (txHash) {
+      m.aligned = true;
+      m.paused = false;
+      m.lastMirrorTs = this.now();
+      m.lastMirrorSealOk = true;
+      await this.saveMirror(m);
+      const stored = await this.store.get<PocoSealedEpoch>(sealedKey(rec.index));
+      if (stored && !stored.txHash) {
+        stored.txHash = txHash;
+        await this.store.put(sealedKey(rec.index), stored);
+      }
+    } else {
+      m.failures += 1;
+      m.lastMirrorSealOk = false;
+      await this.saveMirror(m);
+    }
+  }
+
+  /** Detached on-chain adminAction; skipped while the mirror is paused, writes the tx hash back on success. */
+  private async mirrorAdmin(entry: PocoAdminEntry): Promise<void> {
+    if (!this.enabled) return;
+    const m = await this.loadMirror();
+    if (m.paused) return;                       // don't pile writes while misaligned / committer-wrong
+    const txHash = await this.safeChain(() => this.chain.adminAction(entry.kind, entry.payloadHash));
+    if (!txHash) { m.failures += 1; await this.saveMirror(m); return; }
+    m.aligned = true;
+    m.lastMirrorTs = this.now();
+    await this.saveMirror(m);
+    const bucket = await this.loadAdminBucket(entry.kind);
+    const i = bucket.findIndex((e) => e.payloadHash === entry.payloadHash && e.ts === entry.ts);
+    if (i >= 0 && !bucket[i].txHash) {
+      bucket[i] = { ...bucket[i], txHash };
+      await this.store.put(adminKey(entry.kind), this.capBucket(bucket));
+    }
+  }
+
+  /**
+   * True when the on-chain committer is acceptable: no expected relay was captured (simulated / no wallet),
+   * the read failed (null — treated as "cannot disprove", so mirroring proceeds and the write itself is the
+   * real gate), or it matches the economy's relay wallet case-insensitively. A definitive MISMATCH is the
+   * only false (issue 18).
+   */
+  private async committerMatches(): Promise<boolean> {
+    const expected = this.expectedCommitter;
+    if (!expected) return true;
+    const onchain = await this.safeChain(() => this.chain.committer());
+    return !onchain || onchain.toLowerCase() === expected.toLowerCase();
+  }
+
+  /**
+   * Detached per-cron re-check while the mirror is PAUSED: one eth_call to see whether the local open-epoch
+   * index has come back into alignment with the chain (e.g. a transient RPC failure cleared). Recovers
+   * paused ⇒ false ONLY when BOTH the index re-aligns AND the on-chain committer matches again — a pause
+   * raised by a committer mismatch (issue 18) must never be cleared by index alignment alone, or the mirror
+   * would resume writing under the wrong wallet. A no-op (no eth_call) while the mirror is healthy.
+   */
+  private async recheckAlignment(): Promise<void> {
+    if (!this.enabled) return;
+    const m = await this.loadMirror();
+    if (!m.paused) return;
+    const chainCount = await this.readChainCount();
+    if (chainCount == null) return;
+    m.onChainCount = chainCount;
+    const epoch = await this.loadEpoch();
+    const localIndex = epoch ? epoch.index : 0;
+    const indexOk = localIndex === chainCount;
+    const committerOk = await this.committerMatches();
+    if (indexOk && committerOk) {
+      m.paused = false;
+      m.aligned = true;
+    }
+    await this.saveMirror(m);
+  }
+
+  // ---------- admin recording ----------
+
+  /**
+   * Record one administrative discontinuity LOCALLY (bucketed) and DETACH its on-chain adminAction mirror.
+   * payloadHash commits the canonical detail so the REASON is provable without publishing it. Returns the
+   * entry synchronously (its txHash is written back later, off the cron path, once the mirror mines).
    */
   async recordAdmin(kind: PocoAdminKind, detail: unknown, note: string): Promise<PocoAdminEntry> {
     const ts = this.now();
     const payloadHash = await sha256Hex({ kind, ts, detail });
-    const txHash = await this.safeChain(() => this.chain.adminAction(kind, payloadHash));
-    const entry: PocoAdminEntry = { kind, ts, payloadHash, note, ...(txHash ? { txHash } : {}) };
-    const log = await this.loadAdmin();
-    log.push(entry);
-    while (log.length > this.adminLogCap) log.shift();   // cap: drop the oldest
-    await this.store.put(KEY_ADMIN, log);
+    const entry: PocoAdminEntry = { kind, ts, payloadHash, note };
+    await this.appendAdmin(entry);
+    if (this.enabled) this.enqueueMirror(() => this.mirrorAdmin(entry));
+    return entry;
+  }
+
+  /** Record one administrative discontinuity LOCALLY ONLY — never mirrored on-chain (kind2 MANUAL_TICK, and
+   *  the committer-mismatch / misalignment kind4/kind6 notes raised from inside the mirror queue itself). */
+  private async recordAdminLocal(kind: PocoAdminKind, detail: unknown, note: string): Promise<PocoAdminEntry> {
+    const ts = this.now();
+    const payloadHash = await sha256Hex({ kind, ts, detail });
+    const entry: PocoAdminEntry = { kind, ts, payloadHash, note };
+    await this.appendAdmin(entry);
     return entry;
   }
 
@@ -500,14 +920,23 @@ export class PocoEngine {
    *   • no open epoch + no closed epochs            → genesis: open epoch 0.
    *   • no open epoch + closed epochs / rebuild hint → the DO was rebuilt/wiped mid-life: open the next
    *     index and record kind6 DO_REBUILD (prior epochs survived but the open one did not).
-   *   • open epoch under a STALE codeCommitment     → kind7 CODE_CHANGE: seal it, then open a fresh epoch.
+   *   • open epoch under a STALE codeCommitment     → kind7 CODE_CHANGE: seal it, then open a fresh epoch
+   *     (carrying this kind7's ts onto the new epoch as codeChangeAdminTs).
    *   • committer address changed since last seen    → kind4 COMMITTER_CHANGE.
    *   • runtime knob snapshot changed since last seen → kind3 PARAM_OVERRIDE.
-   * Safe to call every cron: the committer/knobs checks only fire on an actual change (first run just seeds
-   * the stored baseline), and the epoch checks are no-ops once an epoch is open under the current code.
+   * Also captures the expected on-chain committer (relay wallet) and, while the mirror is paused, detaches a
+   * once-per-cron alignment re-check. Safe to call every cron: the committer/knobs checks only fire on an
+   * actual change (first run just seeds the stored baseline), and the epoch checks are no-ops once an epoch
+   * is open under the current code.
    */
   async ensureEpoch(info: PocoEnsureInfo): Promise<void> {
     try {
+      this.expectedCommitter = info.relayAddress
+        ? info.relayAddress.toLowerCase()
+        : info.committer
+          ? info.committer.toLowerCase()
+          : null;
+
       let epoch = await this.loadEpoch();
       if (!epoch) {
         const closed = await this.loadClosed();
@@ -522,12 +951,12 @@ export class PocoEngine {
           );
         }
       } else if (epoch.codeCommitment !== this.codeCommitment) {
-        await this.recordAdmin(
+        const cc = await this.recordAdmin(
           PocoAdminKind.CODE_CHANGE,
           { epoch: epoch.index, from: epoch.codeCommitment, to: this.codeCommitment },
           "CODE_COMMITMENT rotated — epoch sealed and a new one opened",
         );
-        await this.sealAndReopen("code-change", info.genesisHead);
+        await this.sealAndReopen("code-change", info.genesisHead, cc.ts);
       }
 
       // Committer-change detection (kind4): compare the live facilitator wallet to the last-seen one.
@@ -553,6 +982,9 @@ export class PocoEngine {
         );
       }
       if (curKnobs) await this.store.put(KEY_KNOBS, curKnobs);
+
+      // While the mirror is paused, retry alignment once per cron (a no-op eth_call-wise when healthy).
+      if (this.enabled) this.enqueueMirror(() => this.recheckAlignment());
     } catch (err) {
       this.warn(`[poca] ensureEpoch failed (non-fatal): ${errMsg(err)}`);
     }
@@ -561,11 +993,12 @@ export class PocoEngine {
   // ---------- cron exit ----------
 
   /**
-   * Fold ONE cron into the chain (cron exit, best-effort). Computes the stateDigest, links it to the running
-   * head via cronDigest, appends to the open epoch's digest array, advances poca:head + the tick high-water
-   * mark, and seals+reopens when the epoch reaches sealThreshold. Also the secondary DO-rebuild net: if the
-   * tick index REGRESSED below the epoch's high-water mark, the swarm restarted ⇒ kind6. Returns the new
-   * digest (or null on any failure — a missed digest is logged, never fatal to the tick).
+   * Fold ONE cron into the chain (cron exit, best-effort). Self-heals a half-landed seal, self-checks the
+   * loaded digest array against meta.digestCount + the running head, computes the stateDigest, links it to
+   * the head via cronDigest, and appends digests + head + meta in ONE atomic batch. Seals+reopens when the
+   * epoch reaches sealThreshold. Also the secondary DO-rebuild net: if the tick index REGRESSED below the
+   * epoch's high-water mark, the swarm restarted ⇒ kind6. Returns the new digest (or null on any failure — a
+   * missed digest is logged, never fatal to the tick).
    */
   async appendDigest(info: PocoAppendInfo): Promise<string | null> {
     try {
@@ -574,6 +1007,11 @@ export class PocoEngine {
         // Defensive: ensureEpoch should have opened one. Open genesis lazily so the chain never stalls.
         epoch = await this.openEpoch(0, info.genesisHead);
       }
+
+      // Seal self-heal (issue 4): a prior seal persisted the sealed record but the epoch switch never landed
+      // (crash mid-batch on an older build). Detect the stale sealed key and roll forward to the next epoch.
+      const alreadySealed = await this.store.get<PocoSealedEpoch>(sealedKey(epoch.index));
+      if (alreadySealed) epoch = await this.openEpoch(epoch.index + 1, info.genesisHead);
 
       // DO-rebuild detection: an explicit hint, or the tick counter going backwards within a live epoch.
       const regressed = epoch.lastTick >= 0 && info.tickIndex >= 0 && info.tickIndex < epoch.lastTick;
@@ -586,6 +1024,10 @@ export class PocoEngine {
         epoch.rebuildLogged = true;
       }
 
+      // Load-time self-check (issue 3): the array length must equal meta.digestCount and its tail must equal
+      // the running head; a mismatch truncates to the head-compatible prefix and records a LOCAL kind6.
+      await this.selfCheckEpoch(epoch);
+
       const digests = await this.loadDigests(epoch.index);
       const i = digests.length;                                   // 0-based position within the epoch
       const sd = await stateDigest(info.state);
@@ -593,10 +1035,14 @@ export class PocoEngine {
       const digest = await cronDigest(prev, i, sd, this.codeCommitment);
 
       digests.push(digest);
-      await this.store.put(digestsKey(epoch.index), digests);
-      await this.store.put(KEY_HEAD, digest);
       epoch.lastTick = Math.max(epoch.lastTick, info.tickIndex);
-      await this.store.put(KEY_EPOCH, epoch);
+      epoch.digestCount = digests.length;
+      // ATOMIC: digests + head + meta in one batch put (issue 3) so a crash can never desync them.
+      await this.store.putBatch({
+        [digestsKey(epoch.index)]: digests,
+        [KEY_HEAD]: digest,
+        [KEY_EPOCH]: epoch,
+      });
 
       if (digests.length >= this.sealThreshold) {
         await this.sealAndReopen("threshold", info.genesisHead);
@@ -608,12 +1054,47 @@ export class PocoEngine {
     }
   }
 
+  /**
+   * The precise self-check semantics (issue 3). `head` (poca:head) and the epoch's digest array are written
+   * together in ONE atomic batch, so the AUTHORITATIVE invariant is: the array's tail equals `head`. Two
+   * cases:
+   *   • tail !== head (a legacy pre-atomic partial write, or a restored snapshot with an orphan tail) ⇒
+   *     TRUNCATE to the last head-compatible prefix — lastIndexOf(head)+1, else min(length, digestCount) —
+   *     persist atomically, and record a LOCAL kind6. This is the only path that ever drops a digest.
+   *   • tail === head but meta.digestCount drifted ⇒ digestCount is a DERIVED CACHE, so silently resync it to
+   *     the array length WITHOUT dropping anything (a detached mirror writeback can lag it; see below).
+   * stateDigest is never stored, so this is a structural check, not a recomputation of every digest.
+   */
+  private async selfCheckEpoch(epoch: PocoEpochMeta): Promise<void> {
+    const head = await this.loadHead();
+    const digests = await this.loadDigests(epoch.index);
+    const declared = typeof epoch.digestCount === "number" ? epoch.digestCount : digests.length;
+    const headMismatch = digests.length > 0 && head != null && digests[digests.length - 1] !== head;
+    if (headMismatch) {
+      const p = head != null ? digests.lastIndexOf(head) : -1;
+      const target = Math.max(0, Math.min(p >= 0 ? p + 1 : Math.min(digests.length, declared), digests.length));
+      const kept = digests.slice(0, target);
+      epoch.digestCount = kept.length;
+      await this.store.putBatch({ [digestsKey(epoch.index)]: kept, [KEY_EPOCH]: epoch });
+      await this.recordAdminLocal(
+        PocoAdminKind.DO_REBUILD,
+        { epoch: epoch.index, declaredCount: declared, actualCount: digests.length, head, truncatedTo: kept.length },
+        "digest-array self-check failed — truncated to the head-compatible prefix",
+      );
+    } else if (digests.length !== declared) {
+      epoch.digestCount = digests.length;   // benign cache resync — never drops a digest
+      await this.store.put(KEY_EPOCH, epoch);
+    }
+  }
+
   // ---------- explicit admin handlers (called by state.ts) ----------
 
   /**
    * /reset handler: seal the running epoch, record kind1 RESET, and open a fresh epoch anchored at the NEW
-   * chain genesis. The sealed epoch stays queryable, so a reset is a visible break in the chain, not an
-   * erasure — exactly what a continuous-agency proof must expose.
+   * chain genesis. `genesisHead` MUST be non-zero (the on-chain openEpoch reverts on a zero genesisHead), so
+   * state.ts passes the new chain's real head or a non-zero reset marker. The sealed epoch stays queryable,
+   * so a reset is a visible break in the chain, not an erasure — exactly what a continuous-agency proof must
+   * expose.
    */
   async onReset(genesisHead: string): Promise<void> {
     try {
@@ -632,20 +1113,47 @@ export class PocoEngine {
 
   /**
    * Record kind2 MANUAL_TICK when a human drives /tick through the PUBLIC route (not the internal cron
-   * alarm). state.ts distinguishes the two by request host; this only logs + mirrors. The tick itself still
-   * folds a digest via appendDigest, so a manual tick is both labelled AND chained.
+   * alarm). LOCAL ONLY (issue 1②): a manual tick is an operator's own action, so it is never mirrored
+   * on-chain — only the local admin bucket records it. FLOOD-MERGED (issue 1②): repeated hits inside one
+   * MANUAL_TICK_WINDOW_MS collapse into a single record whose note carries the running count. The tick itself
+   * still folds a digest via appendDigest, so a manual tick is both labelled AND chained.
    */
   async onManualTick(detail: unknown): Promise<void> {
     try {
-      await this.recordAdmin(PocoAdminKind.MANUAL_TICK, detail, "manual /tick via the public route (not the cron alarm)");
+      const now = this.now();
+      const win = await this.store.get<{ startTs: number; count: number }>(KEY_MANUAL_WIN);
+      if (win && typeof win.startTs === "number" && now - win.startTs < MANUAL_TICK_WINDOW_MS) {
+        const count = (win.count ?? 1) + 1;
+        await this.store.put(KEY_MANUAL_WIN, { startTs: win.startTs, count });
+        await this.bumpManualNote(count);
+        return;
+      }
+      await this.store.put(KEY_MANUAL_WIN, { startTs: now, count: 1 });
+      await this.recordAdminLocal(
+        PocoAdminKind.MANUAL_TICK,
+        detail,
+        "manual /tick via the public route (not the cron alarm)",
+      );
     } catch (err) {
       this.warn(`[poca] onManualTick failed (non-fatal): ${errMsg(err)}`);
     }
   }
 
+  /** Rewrite the newest kind2 bucket entry's note to carry the running flood count (no new record). */
+  private async bumpManualNote(count: number): Promise<void> {
+    const bucket = await this.loadAdminBucket(PocoAdminKind.MANUAL_TICK);
+    if (bucket.length === 0) return;
+    bucket[bucket.length - 1] = {
+      ...bucket[bucket.length - 1],
+      note: `manual /tick via the public route ×${count} (5-minute flood merge)`,
+    };
+    await this.store.put(adminKey(PocoAdminKind.MANUAL_TICK), this.capBucket(bucket));
+  }
+
   /**
    * Record kind5 GENESIS_SEED — fired from the facilitator's onGenesisSeeded hook the moment the receipt
-   * registry's lazy genesis anchor MINES (a once-per-registry-lifetime event). Best-effort.
+   * registry's lazy genesis anchor MINES (a once-per-registry-lifetime event). Mirrored best-effort; because
+   * the mirror is detached onto the serial queue it never blocks the settlement broadcast that triggered it.
    */
   async onGenesisSeeded(detail: unknown): Promise<void> {
     try {
@@ -657,13 +1165,14 @@ export class PocoEngine {
 
   // ---------- read-out (the /poca endpoints) ----------
 
-  /** The GET /poca summary: identity + the live epoch + the chain head + a coarse continuity verdict. */
+  /** The GET /poca summary: identity + the live epoch + the chain head + continuity + mirror state. */
   async snapshot(): Promise<PocoSnapshot> {
     const epoch = await this.loadEpoch();
     const head = await this.loadHead();
     const closed = await this.loadClosed();
-    const admin = await this.loadAdmin();
-    const digestCount = epoch ? (await this.loadDigests(epoch.index)).length : 0;
+    const admin = await this.loadAllAdmin();
+    const m = await this.loadMirror();
+    const digestCount = epoch ? (epoch.digestCount ?? 0) : 0;   // from meta — no digest-array read (issue 10)
     let continuity: PocoSnapshot["continuity"];
     if (!this.enabled) continuity = "disabled";
     else if (!epoch || !head) continuity = "pending";
@@ -679,17 +1188,20 @@ export class PocoEngine {
       epochCount: closed.length + (epoch ? 1 : 0),
       adminCount: admin.length,
       continuity,
+      mirror: { aligned: m.aligned, failures: m.failures, paused: m.paused, lastMirrorTs: m.lastMirrorTs },
     };
   }
 
-  /** GET /poca/epochs: sealed-epoch records, most recent first, capped at `limit`. */
+  /** GET /poca/epochs: sealed-epoch records, most recent first, capped at `limit` (one batched read). */
   async listEpochs(limit = 100): Promise<PocoSealedEpoch[]> {
     const closed = await this.loadClosed();
     const take = closed.slice().sort((a, b) => b - a).slice(0, Math.max(1, limit));
+    if (take.length === 0) return [];
+    const rec = await this.store.getMany(take.map(sealedKey));   // one round-trip (issue 10)
     const out: PocoSealedEpoch[] = [];
     for (const i of take) {
-      const rec = await this.store.get<PocoSealedEpoch>(sealedKey(i));
-      if (rec) out.push(rec);
+      const r = rec[sealedKey(i)];
+      if (r) out.push(r as PocoSealedEpoch);
     }
     return out;
   }
@@ -707,6 +1219,7 @@ export class PocoEngine {
     genesisHead: string | null;
     codeCommitment: string | null;
     reason: string | null;
+    codeChangeAdminTs: number | null;
     txHash: string | null;
     firstDigest: string | null;
     lastDigest: string | null;
@@ -721,6 +1234,7 @@ export class PocoEngine {
         index, state: "sealed", openTs: sealed.openTs, endTs: sealed.endTs, tickCount: sealed.tickCount,
         digestCount: digests.length, merkleRoot: sealed.merkleRoot, sealedHead: sealed.sealedHead,
         genesisHead: sealed.genesisHead, codeCommitment: sealed.codeCommitment, reason: sealed.reason,
+        codeChangeAdminTs: sealed.codeChangeAdminTs ?? null,
         txHash: sealed.txHash ?? null, firstDigest: first, lastDigest: last,
       };
     }
@@ -728,16 +1242,16 @@ export class PocoEngine {
       return {
         index, state: "open", openTs: open.openTs, endTs: null, tickCount: digests.length,
         digestCount: digests.length, merkleRoot: null, sealedHead: null, genesisHead: open.genesisHead,
-        codeCommitment: open.codeCommitment, reason: null, txHash: open.openTxHash ?? null,
-        firstDigest: first, lastDigest: last,
+        codeCommitment: open.codeCommitment, reason: null, codeChangeAdminTs: open.codeChangeAdminTs ?? null,
+        txHash: open.openTxHash ?? null, firstDigest: first, lastDigest: last,
       };
     }
     // Neither sealed nor open, but digests may still linger — surface what we can, else null.
     if (digests.length === 0) return null;
     return {
       index, state: "unknown", openTs: null, endTs: null, tickCount: digests.length, digestCount: digests.length,
-      merkleRoot: null, sealedHead: null, genesisHead: null, codeCommitment: null, reason: null, txHash: null,
-      firstDigest: first, lastDigest: last,
+      merkleRoot: null, sealedHead: null, genesisHead: null, codeCommitment: null, reason: null,
+      codeChangeAdminTs: null, txHash: null, firstDigest: first, lastDigest: last,
     };
   }
 
@@ -757,9 +1271,9 @@ export class PocoEngine {
     return { epoch, cron, digest: p.leaf, root: p.root, path: p.path, sealed: sealedRec != null };
   }
 
-  /** GET /poca/admin: the admin log, most recent first, capped at `limit`. */
+  /** GET /poca/admin: the merged bucketed admin log, most recent first, capped at `limit`. */
   async listAdmin(limit = 100): Promise<(PocoAdminEntry & { kindName: string })[]> {
-    const log = await this.loadAdmin();
+    const log = await this.loadAllAdmin();
     return log
       .slice()
       .reverse()

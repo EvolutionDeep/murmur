@@ -15,9 +15,9 @@
 // Override with POCA_COMMITTER (must still match the live sources when they resolve). The secret key is
 // never printed.
 //
-// SAFETY: this spends REAL gas. It defaults to the chain in CHAIN_ID (5042 mainnet) and a MAINNET deploy
-// is gated behind POCA_CONFIRM=1 — without it the script only prints the deployer / committer / gas
-// estimate and exits 0 (dry-run).
+// SAFETY: this spends REAL gas. It defaults to the chain in CHAIN_ID (5042 mainnet) and a real deploy
+// on ANY chain is gated behind POCA_CONFIRM=1 — without it the script only prints the deployer / committer /
+// gas estimate and exits 0 (dry-run).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,9 +42,16 @@ function readEnv(file) {
 }
 const envFile = path.join(root, ".env.local");
 const env = { ...readEnv(envFile) };
-for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "CHAIN_ID", "RPC_URL", "POCA_COMMITTER", "POCA_CONFIRM"]) {
-  if (!env[k] && process.env[k]) env[k] = process.env[k];
+// Run-scoped knobs: an EXPLICIT process.env value WINS over .env.local (mirrors deploy-manifest-auto.mjs:55-58).
+// This matters because a production .env.local may pin CHAIN_ID=5042 (mainnet); an explicit
+// `CHAIN_ID=5042002 node deploy-poca-auto.mjs` must reliably target testnet regardless of the file. Review #12.
+for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "CHAIN_ID", "RPC_URL", "POCA_COMMITTER", "POCA_COMMITTER_CONFIRM"]) {
+  if (process.env[k]) env[k] = process.env[k];
 }
+// POCA_CONFIRM is a COMMAND-LINE-ONLY gate: it must NEVER be sourced from .env.local (Review #12). Otherwise a
+// stale `POCA_CONFIRM=1` left in the file would silently authorize a real-gas mainnet broadcast on every run.
+delete env.POCA_CONFIRM;
+if (process.env.POCA_CONFIRM) env.POCA_CONFIRM = process.env.POCA_CONFIRM;
 
 // ---- proxy (Node's global fetch/undici honours the global dispatcher) ----
 const proxy = env.HTTPS_PROXY || env.HTTP_PROXY;
@@ -133,15 +140,37 @@ if (fromArena && fromProofs && fromArena.toLowerCase() !== fromProofs.toLowerCas
   console.error("\n✗ The two live committer sources DISAGREE — refusing to guess. Investigate before deploying.");
   process.exit(1);
 }
-let committer = (env.POCA_COMMITTER || "").trim() || fromArena || fromProofs || "";
+
+// Review #14: an explicit POCA_COMMITTER is validated UNCONDITIONALLY as a 0x-prefixed 20-byte address,
+// regardless of whether the live cross-sources resolve. A malformed override must fail fast, not deploy.
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+const pocaCommitterArg = (env.POCA_COMMITTER || "").trim();
+if (pocaCommitterArg && !ADDR_RE.test(pocaCommitterArg)) {
+  console.error("\n✗ POCA_COMMITTER", JSON.stringify(pocaCommitterArg), "is not a valid 0x…(40 hex) address — refusing to deploy.");
+  process.exit(1);
+}
+
+let committer = pocaCommitterArg || fromArena || fromProofs || "";
 if (!committer) {
-  console.error("\n✗ Could not resolve the committer from any source. Set POCA_COMMITTER=0x… in .env.local.");
+  console.error("\n✗ Could not resolve the committer from any source. Set POCA_COMMITTER=0x… in the environment.");
   process.exit(1);
 }
 const live = fromArena || fromProofs;
 if (live && committer.toLowerCase() !== live.toLowerCase()) {
   console.error("\n✗ POCA_COMMITTER", committer, "does not match the live facilitator", live, "— refusing to deploy.");
   process.exit(1);
+}
+
+// Review #14: when BOTH independent on-chain cross-sources fail to resolve, the committer is UNVERIFIED.
+// Require an explicit POCA_COMMITTER_CONFIRM=1 (command-line only) before trusting it, and warn loudly.
+if (!fromArena && !fromProofs) {
+  console.warn("\n⚠ Both live committer cross-sources FAILED to resolve (arena.resolver() and proofs tx.from).");
+  console.warn("⚠ committer", committer, "could NOT be verified against the chain.");
+  if ((env.POCA_COMMITTER_CONFIRM || "").trim() !== "1") {
+    console.error("✗ Refusing to deploy with an unverified committer. Re-run with POCA_COMMITTER_CONFIRM=1 to override.");
+    process.exit(1);
+  }
+  console.warn("⚠ POCA_COMMITTER_CONFIRM=1 set — proceeding with the UNVERIFIED committer.");
 }
 
 console.log("deployer :", account.address, "(pays gas)");
@@ -170,10 +199,12 @@ const callRes = await publicClient
   .catch((e) => { console.error("deploy eth_call (gas estimate) failed:", e?.shortMessage || e?.message || e); process.exit(1); });
 console.log("gas est  :", callRes.gas ? BigInt(callRes.gas).toString() : "(node did not report gas; call itself succeeded)");
 
-// ---- MAINNET gate: a real-gas deploy must be explicitly confirmed ----
-if (chainId === 5042 && env.POCA_CONFIRM !== "1") {
+// ---- deploy gate: a real-gas deploy must be explicitly confirmed, on ANY chain ----
+// Review WARN-4: the gate used to be mainnet-only (`chainId === 5042 && …`), which let a non-mainnet
+// run broadcast without confirmation. Now POCA_CONFIRM !== "1" ALWAYS stops at dry-run.
+if (env.POCA_CONFIRM !== "1") {
   console.log("\n· DRY-RUN ONLY (no POCA_CONFIRM=1): nothing was broadcast.");
-  console.log("· To deploy for real on MAINNET 5042: re-run with POCA_CONFIRM=1.");
+  console.log(`· To deploy for real on chain ${chainId}: re-run with POCA_CONFIRM=1.`);
   process.exit(0);
 }
 
@@ -195,15 +226,12 @@ console.log("verify   : epochCount=", onCount.toString(), onCount === 0n ? "(fre
 if (onCommitter.toLowerCase() !== committer.toLowerCase() || onCount !== 0n) process.exit(1);
 
 // ---- persist the address for the Worker wiring step ----
+// Review #13: NEVER rewrite .env.local. That file holds ECONOMY_MNEMONIC / private keys, and a
+// read-modify-write of it risks corrupting or leaking secrets. We write ONLY the dedicated
+// POCA_ADDRESS.txt artifact and print a manual instruction for the operator.
 fs.writeFileSync(path.join(root, "contracts", "POCA_ADDRESS.txt"), address + "\n");
-let envTxt = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf8") : "";
-if (/^\s*POCA_REGISTRY_ADDRESS\s*=/m.test(envTxt)) {
-  envTxt = envTxt.replace(/^\s*POCA_REGISTRY_ADDRESS\s*=.*$/m, `POCA_REGISTRY_ADDRESS=${address}`);
-} else {
-  envTxt += `\nPOCA_REGISTRY_ADDRESS=${address}\n`;
-}
-fs.writeFileSync(envFile, envTxt);
 
 console.log("\n✅ ContinuityRegistry deployed. Address:", address);
-console.log("Wrote contracts/POCA_ADDRESS.txt and .env.local(POCA_REGISTRY_ADDRESS).");
-console.log("Next: backfill the address into src/config.ts (code default) and redeploy the Worker.");
+console.log("Wrote contracts/POCA_ADDRESS.txt.");
+console.log(`Next: add POCA_REGISTRY_ADDRESS=${address} to .env.local manually if needed,`);
+console.log("      then backfill the address into src/config.ts (code default) and redeploy the Worker.");

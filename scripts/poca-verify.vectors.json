@@ -4,7 +4,7 @@
     "generatedBy": "an independent node:crypto (createHash) oracle, cross-validating the shipped WebCrypto module.",
     "contract": "byte-for-byte packages/trader-worker/src/poca.ts + provenance.ts (canonical/sha256Hex).",
     "codeCommitment": "2bd01a41b93d6b91d629a514f1d79d3bedb3341f7d3889f72bf3590afe181799",
-    "count": 14
+    "count": 16
   },
   "vectors": [
     {
@@ -193,6 +193,18 @@
         "bigint": true
       },
       "expected": "ffffffffffffffff"
+    },
+    {
+      "id": "hexToBytes-reject-odd-length",
+      "kind": "hexToBytesThrows",
+      "input": { "hex": "0xabc" },
+      "expected": "throw"
+    },
+    {
+      "id": "hexToBytes-reject-non-hex",
+      "kind": "hexToBytesThrows",
+      "input": { "hex": "0xzz23" },
+      "expected": "throw"
     }
   ]
 }

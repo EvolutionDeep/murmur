@@ -277,8 +277,8 @@ secret transparently falls back to the keyless `simulated` facilitator (see the 
 | `ECONOMY_MAX_DEALS` | `10` | Per-cron settlement budget, spread across the 6 sub-ticks |
 | `ECONOMY_FACILITATOR` | `onchain` | **`onchain`** (real EIP-3009, production) \| `simulated` (keyless ledger, local dev) |
 | `ECONOMY_SHADOW` | `false` | **`false` = LIVE broadcast**; `true` = sign + simulate each transfer, never broadcast |
-| `ECONOMY_NET_MIN_BROADCAST` | `0.004` | Netting: minimum net USDC per agent-pair before it is broadcast; dust carries forward |
-| `ECONOMY_NET_FLUSH_TICKS` | `30` | Netting: force-flush any nonzero pending net at least every N sub-ticks |
+| `ECONOMY_NET_MIN_BROADCAST` | `0.01` | Netting: minimum net USDC per agent-pair before it is broadcast (~5× base price; gas/face-value favourable); dust carries forward |
+| `ECONOMY_NET_FLUSH_TICKS` | `360` | Netting: force-flush any nonzero pending net at least every N sub-ticks (360 = 60 crons ≈ 1 h) |
 | `ARENA_ENABLED` | `false` | Human **MURMUR** arena on/off; inert until `PredictionArena` is deployed **and** `ARENA_ADDRESS` is set |
 | `ARENA_ADDRESS` | *(unset)* | Deployed `PredictionArena` (Arc mainnet); absent ⇒ the arena step is skipped entirely (zero behaviour change) |
 | `ARENA_TOKEN` | `0x8faa…4a5d` | The **MURMUR** ERC-20 the arena is denominated in (informational / frontend) |

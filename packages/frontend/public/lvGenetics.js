@@ -16,7 +16,7 @@
 //   The per-frame draw (lvGeneticsFrame) consults LVQ.tier before drawing expensive layers.
 import { LV, LVQ, LV_HUD, nodeR, ringRadius } from './lvState.js';
 import { state, clamp, mix, rgb, rgba, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js';
-import { t as T } from './i18n.js?v=110';
+import { t as T } from './i18n.js?v=111';
 import { getJSON } from './polling.js';
 
 // ================= C9: cross recombination edges + operator shapes =================

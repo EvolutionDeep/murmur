@@ -508,10 +508,11 @@ const POCA_SEALED_EPOCH = {
     genesisHead: { type: "string", description: "The proof-chain head the epoch started from." },
     codeCommitment: { type: "string", description: "CODE_COMMITMENT the epoch opened under (64-hex)." },
     reason: { type: "string", description: "Why it sealed: 'threshold' | 'reset' | 'code-change'." },
+    codeChangeAdminTs: { type: ["integer", "null"], description: "Unix ms of the kind7 CODE_CHANGE admin record that OPENED this epoch (null when it opened for any other reason). Lets a verifier tie a sealed epoch to the exact code-rotation event that started it." },
     openTxHash: { type: ["string", "null"], description: "On-chain openEpoch tx (when armed)." },
     txHash: { type: ["string", "null"], description: "On-chain sealEpoch tx (when armed)." },
   },
-  required: ["index", "openTs", "endTs", "tickCount", "merkleRoot", "sealedHead", "genesisHead", "codeCommitment", "reason"],
+  required: ["index", "openTs", "endTs", "tickCount", "merkleRoot", "sealedHead", "genesisHead", "codeCommitment", "reason", "codeChangeAdminTs"],
 } as const;
 
 const POCA_EPOCH_DETAIL = {
@@ -530,6 +531,7 @@ const POCA_EPOCH_DETAIL = {
     genesisHead: { type: ["string", "null"], description: "The proof-chain head the epoch started from." },
     codeCommitment: { type: ["string", "null"], description: "CODE_COMMITMENT the epoch opened under." },
     reason: { type: ["string", "null"], description: "Why it sealed (null while open)." },
+    codeChangeAdminTs: { type: ["integer", "null"], description: "Unix ms of the kind7 CODE_CHANGE admin record that opened this epoch (null when it opened for any other reason)." },
     txHash: { type: ["string", "null"], description: "The epoch's on-chain tx (openEpoch while open; sealEpoch once sealed)." },
     firstDigest: { type: ["string", "null"], description: "The epoch's first cron digest (sample)." },
     lastDigest: { type: ["string", "null"], description: "The epoch's latest cron digest (sample)." },
@@ -1635,13 +1637,13 @@ export const OPENAPI_SPEC = {
         operationId: "getPoca",
         summary: "Proof of Continuous Agency: the live epoch-chain state + continuity verdict",
         description:
-          "PoCA answers one question: has the recent behaviour been produced *continuously* by the declared program, with no silent rewrite / reset / takeover? Every cron folds a state digest into a hash chain (`chainHead`); every ~1440 crons (≈24h) the chain seals into an epoch with a Merkle root anchored to the PoCARegistry on Arc. `continuity` is the verdict: **unbroken** (chain advancing normally), **pending** (no epoch/head yet — cold start), or **disabled** (registry at the zero address ⇒ the off-chain chain still runs, no on-chain anchor). Free, no key.",
+          "PoCA answers one question: has the recent behaviour been produced *continuously* by the declared program, with no silent rewrite / reset / takeover? Every cron folds a state digest into a hash chain (`chainHead`); every ~1440 crons (≈24h) the chain seals into an epoch with a Merkle root anchored to the ContinuityRegistry on Arc. `continuity` is the verdict: **unbroken** (chain advancing normally), **pending** (no epoch/head yet — cold start), or **disabled** (registry at the zero address ⇒ the off-chain chain still runs, no on-chain anchor). The `mirror` object reports the health of the on-chain anchor separately (`paused`/`failures` rise when the local epoch index drifts from the chain or the committer wallet is wrong — the off-chain chain stays authoritative either way). Free, no key.",
         ...ok(
           obj({
             enabled: { type: "boolean", description: "true when the on-chain registry mirror is armed (address non-zero)." },
-            codeCommitment: { type: "string", description: "The CODE_COMMITMENT this build runs (sha256 over git HEAD + src tree + knob defaults; 64-hex)." },
+            codeCommitment: { type: "string", description: "The CODE_COMMITMENT this build runs (sha256 over src tree (trader-worker + fly-brain) + knob defaults + FlyWire artifact; 64-hex)." },
             gitCommit: { type: "string", description: "The git commit this build was generated from ('unknown' if git was unavailable)." },
-            registryAddress: { type: "string", description: "The PoCARegistry address (zero address ⇒ disabled)." },
+            registryAddress: { type: "string", description: "The ContinuityRegistry address (zero address ⇒ disabled)." },
             currentEpoch: { type: ["integer", "null"], description: "The open epoch index, or null before the first open." },
             epochState: {
               type: ["object", "null"],
@@ -1657,18 +1659,30 @@ export const OPENAPI_SPEC = {
             epochCount: { type: "integer", description: "Closed + open epochs." },
             adminCount: { type: "integer", description: "Administrative-discontinuity log entries recorded." },
             continuity: { type: "string", enum: ["unbroken", "pending", "disabled"], description: "The continuity verdict." },
+            mirror: {
+              type: "object",
+              description: "The on-chain mirror's alignment/pause state. The off-chain chain is authoritative regardless; a paused mirror means on-chain anchoring is temporarily skipped (index drift, committer mismatch, or RPC failure) and self-recovers on the next aligned cron.",
+              additionalProperties: false,
+              properties: {
+                aligned: { type: "boolean", description: "The last alignment check found the local epoch index consistent with the on-chain epochCount." },
+                failures: { type: "integer", description: "Running count of skipped/failed on-chain mirrors since boot." },
+                paused: { type: "boolean", description: "true when mirroring is paused after a misalignment / committer mismatch; clears on the next successful re-alignment." },
+                lastMirrorTs: { type: ["integer", "null"], description: "Unix ms of the last MINED on-chain mirror (open/seal/admin), or null if none yet." },
+              },
+              required: ["aligned", "failures", "paused", "lastMirrorTs"],
+            },
             commitmentInputs: {
               type: "object",
               description: "Non-secret summary of what fed codeCommitment (for offline recompute).",
               additionalProperties: true,
               properties: {
-                gitCommit: { type: "string" },
+                artifactHash: { type: "string", description: "sha256 over the pinned FlyWire connectome artifact (64-hex)." },
                 treeHash: { type: "string", description: "sha256 over the src tree (64-hex)." },
                 fileCount: { type: "integer", description: "Source files hashed." },
                 knobCount: { type: "integer", description: "Grey-release knob defaults hashed." },
               },
             },
-          }, ["enabled", "codeCommitment", "gitCommit", "registryAddress", "epochCount", "adminCount", "continuity"]),
+          }, ["enabled", "codeCommitment", "gitCommit", "registryAddress", "epochCount", "adminCount", "continuity", "mirror"]),
           "The live PoCA state + continuity verdict.",
         ).response,
       },

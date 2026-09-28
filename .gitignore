@@ -48,6 +48,9 @@ _connectome_data/
 # (`git ls-files | grep '^_'` is empty), so ignoring them cannot change any tracked file.
 /_*
 
+# Root scripts/ local one-offs (benchmarks, probes) — never committed
+scripts/_*
+
 # Legacy design exploration mockups — kept on disk for reference, never committed
 design-mockups/
 

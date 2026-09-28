@@ -1,13 +1,22 @@
-// PoCA (Proof of Continuous Agency) tests — the off-chain hash chain + Merkle epochs + admin log.
+// PoCA (Proof of Continuous Agency) tests — the off-chain hash chain + Merkle epochs + admin log + mirror.
 //
-// Three layers are pinned here:
+// Four layers are pinned here:
 //   1. The PURE crypto primitives: the fixed byte layout of a cron digest (prev || u64be(i) || state ||
-//      code), the sha256 Merkle fold (odd tail duplicated), and root/proof/verify self-consistency.
+//      code), the sha256 Merkle fold (odd tail duplicated), root/proof/verify self-consistency, and the
+//      STRICT hexToBytes shared with the browser verifier (issue 19).
 //   2. The ENGINE lifecycle over an in-memory PocoStore + stub PocoChainHooks: genesis open → append →
 //      seal-at-threshold → reopen, with the hash chain staying unbroken across the epoch boundary, plus
 //      every admin discontinuity (reset / code-change / do-rebuild / committer / knobs) firing exactly once.
-//   3. The DISABLED mode: a zero registry address must make NOT ONE on-chain call while the off-chain
+//   3. The NON-BLOCKING, ALIGNMENT-GATED on-chain MIRROR (issues 2/4/5/18): mirrors are detached onto the
+//      host hook (never awaited on the local path), an empty epoch folds a non-zero marker so the on-chain
+//      seal can't revert, a half-landed seal self-heals, an index drift or a wrong committer PAUSES the
+//      mirror (and recovers on re-alignment) rather than broadcasting a doomed tx.
+//   4. The DISABLED mode: a zero registry address must make NOT ONE on-chain call while the off-chain
 //      chain runs identically — so arming the anchor later never changes behaviour, only starts mirroring.
+//
+// Because every on-chain step is now DETACHED, a test that asserts on `chain.calls` (or on a mirrored tx
+// hash) must first `await eng.flushMirrors()` to drain the serial mirror queue. LOCAL state (digests, meta,
+// sealed records, admin buckets) is always persisted synchronously, so those assertions need no flush.
 //
 // Nothing here touches DO/Wrangler/viem; the engine is dependency-light by design (see poca.ts).
 
@@ -63,31 +72,64 @@ class MemStore implements PocoStore {
   async put<T>(key: string, value: T): Promise<void> {
     this.m.set(key, JSON.stringify(value));
   }
+  /** Atomic multi-key write (DO storage.put(object)) — applied key-by-key here (a Map has no tx boundary). */
+  async putBatch(entries: Record<string, unknown>): Promise<void> {
+    for (const [k, v] of Object.entries(entries)) this.m.set(k, JSON.stringify(v));
+  }
+  /** Batched read (DO storage.get(keys[]) → Map); only present keys appear, exactly like the DO. */
+  async getMany(keys: string[]): Promise<Record<string, unknown>> {
+    const out: Record<string, unknown> = {};
+    for (const k of keys) {
+      const raw = this.m.get(k);
+      if (raw !== undefined) out[k] = JSON.parse(raw);
+    }
+    return out;
+  }
   async delete(key: string): Promise<void> {
     this.m.delete(key);
   }
 }
 
-/** Stub on-chain hooks that RECORD every call, so a test can assert what was (or was never) mirrored. */
+/**
+ * Stub on-chain hooks that RECORD every call AND simulate the registry's epoch counter, so the engine's
+ * index-alignment gate (issue 2) exercises its real logic. `chainCount` mirrors the contract's epochCount():
+ * a successful openEpoch assigns index=epochCount then increments it; sealEpoch leaves it unchanged. Tests
+ * can poke `chainCount` / `committerAddr` / `failWrites` to drive misalignment, committer-mismatch and
+ * RPC-failure paths.
+ */
 class StubChain implements PocoChainHooks {
   readonly calls: { fn: string; args: unknown[] }[] = [];
   private n = 0;
-  constructor(private readonly mined = true) {}
+  /** The simulated on-chain epochCount() — advanced by each mined openEpoch, exactly like the contract. */
+  chainCount = 0;
+  /** The address committer() reports; a mismatch vs the engine's expected relay pauses the mirror (issue 18). */
+  committerAddr = "0xcommitter";
+  /** When true every WRITE returns null (an RPC/revert), while reads (committer/epochCount) still succeed. */
+  failWrites = false;
+
   async openEpoch(cc: string, gh: string): Promise<string | null> {
     this.calls.push({ fn: "openEpoch", args: [cc, gh] });
-    return this.mined ? `0xopen${this.n++}` : null;
+    if (this.failWrites) return null;
+    this.chainCount++;                       // the contract assigns index = epochCount, then epochCount++
+    return `0xopen${this.n++}`;
   }
   async sealEpoch(i: number, sh: string, tc: number, mr: string): Promise<string | null> {
     this.calls.push({ fn: "sealEpoch", args: [i, sh, tc, mr] });
-    return this.mined ? `0xseal${this.n++}` : null;
+    if (this.failWrites) return null;
+    return `0xseal${this.n++}`;
   }
   async adminAction(kind: number, ph: string): Promise<string | null> {
     this.calls.push({ fn: "adminAction", args: [kind, ph] });
-    return this.mined ? `0xadmin${this.n++}` : null;
+    if (this.failWrites) return null;
+    return `0xadmin${this.n++}`;
   }
   async committer(): Promise<string | null> {
     this.calls.push({ fn: "committer", args: [] });
-    return this.mined ? "0xcommitter" : null;
+    return this.committerAddr;
+  }
+  async epochCount(): Promise<number | null> {
+    this.calls.push({ fn: "epochCount", args: [] });
+    return this.chainCount;
   }
 }
 
@@ -104,6 +146,8 @@ function makeEngine(over: Partial<PocoEngineOpts> = {}): PocoEngine {
     gitCommit: "deadbeef",
     registryAddress: REG,
     sealThreshold: 3,
+    adminKindCap: 100,
+    adminTotalCap: 700,
     now: () => clock++,
     warn: () => {},                          // silence the non-fatal warn sink in tests
     ...over,
@@ -117,6 +161,18 @@ test("u64be() is an 8-byte big-endian domain separator", () => {
   assert.equal(bytesToHex(u64be(1)), "0000000000000001");
   assert.equal(bytesToHex(u64be(256)), "0000000000000100");
   assert.equal(u64be(1).length, 8);
+});
+
+test("hexToBytes() is STRICT: rejects odd length / non-hex, accepts 0x-prefixed + empty (issue 19)", () => {
+  assert.equal(bytesToHex(hexToBytes("0xdeadbeef")), "deadbeef");
+  assert.equal(bytesToHex(hexToBytes("deadbeef")), "deadbeef");
+  assert.equal(bytesToHex(hexToBytes("0xDEADBEEF")), "deadbeef");   // case-insensitive
+  assert.equal(hexToBytes("").length, 0);                           // empty ⇒ zero bytes (valid)
+  assert.equal(hexToBytes("0x").length, 0);
+  assert.throws(() => hexToBytes("abc"), /invalid hex/i);           // odd length
+  assert.throws(() => hexToBytes("0xzz"), /invalid hex/i);          // non-hex character
+  assert.throws(() => hexToBytes("0xdeadbee"), /invalid hex/i);     // odd length after the prefix strip
+  assert.throws(() => hexToBytes("0xdead beef"), /invalid hex/i);   // embedded space
 });
 
 test("cronDigest() equals sha256 of the documented byte layout (prev || u64be(i) || state || code)", async () => {
@@ -193,7 +249,14 @@ test("engine: ensureEpoch opens genesis epoch 0 with no admin discontinuity", as
   assert.equal(snap.epochCount, 1);
   assert.equal(snap.adminCount, 0);           // a clean genesis is NOT a discontinuity
   assert.equal(snap.continuity, "pending");    // no head until the first append
+  // The mirror starts healthy; assert only the STABLE fields — the detached open mirror may already have
+  // mined (setting lastMirrorTs) by the time snapshot()'s awaits yield, so lastMirrorTs is timing-dependent.
+  assert.equal(snap.mirror.paused, false);
+  assert.equal(snap.mirror.aligned, true);
+  assert.equal(snap.mirror.failures, 0);
+  await eng.flushMirrors();                    // the open mirror is detached — drain before asserting
   assert.ok(chain.calls.some((c) => c.fn === "openEpoch"), "openEpoch mirrored on-chain");
+  assert.equal(chain.chainCount, 1, "the on-chain counter advanced to 1");
 });
 
 test("engine: appendDigest folds a chain that links via prevDigest and advances the head", async () => {
@@ -223,6 +286,7 @@ test("engine: reaching sealThreshold seals the epoch (Merkle root on-chain) and 
   assert.equal(snap.epochCount, 2);           // 1 closed + 1 open
   assert.equal(snap.chainHead, heads[2]);     // the head did NOT reset at the boundary
 
+  await eng.flushMirrors();                    // the seal/open mirrors write their tx hashes back asynchronously
   const sealed = (await eng.listEpochs(10))[0];
   assert.equal(sealed.index, 0);
   assert.equal(sealed.tickCount, 3);
@@ -265,10 +329,11 @@ test("engine: /reset seals the running epoch, records kind1 RESET, opens a fresh
   assert.ok(reset, "RESET recorded");
   assert.equal(reset!.kindName, "RESET");
   assert.equal((await eng.listEpochs(10))[0].reason, "reset");
+  await eng.flushMirrors();
   assert.ok(chain.calls.some((c) => c.fn === "adminAction" && c.args[0] === PocoAdminKind.RESET));
 });
 
-test("engine: a rotated codeCommitment forces kind7 CODE_CHANGE (seal old + reopen new)", async () => {
+test("engine: a rotated codeCommitment forces kind7 CODE_CHANGE (seal old + reopen new) and stamps codeChangeAdminTs", async () => {
   const store = new MemStore();
   const chain = new StubChain();
   const ccA = "aa".repeat(32);
@@ -292,16 +357,51 @@ test("engine: a rotated codeCommitment forces kind7 CODE_CHANGE (seal old + reop
   const sealed = (await engB.listEpochs(10))[0];
   assert.equal(sealed.reason, "code-change");
   assert.equal(sealed.codeCommitment, ccA);     // the sealed epoch keeps the OLD commitment
+  // issue 1③/25: the freshly-opened epoch carries the kind7 ts; the genesis-sealed epoch does not.
+  assert.equal(sealed.codeChangeAdminTs, null, "epoch 0 opened at genesis, not via a code change");
+  const opened = await engB.getEpoch(1);
+  assert.equal(opened?.codeChangeAdminTs, cc!.ts, "the new epoch stamps the CODE_CHANGE ts that opened it");
 });
 
-test("engine: admin log is capped — the oldest entries are dropped first", async () => {
-  const eng = makeEngine({ adminLogCap: 5 });
+test("engine: admin log is bucketed per kind with a per-kind cap (oldest dropped first)", async () => {
+  const eng = makeEngine({ adminKindCap: 5, adminTotalCap: 700 });
   for (let k = 0; k < 12; k++) await eng.recordAdmin(PocoAdminKind.MANUAL_TICK, { k }, `tick ${k}`);
   const admin = await eng.listAdmin(100);
   assert.equal(admin.length, 5);
   assert.equal(admin[0].note, "tick 11");        // most recent first
   assert.equal(admin[4].note, "tick 7");         // oldest retained (0..6 dropped)
   assert.equal((await eng.snapshot()).adminCount, 5);
+});
+
+test("engine: the aggregate cap bounds the total across every kind bucket", async () => {
+  const eng = makeEngine({ adminKindCap: 100, adminTotalCap: 4 });
+  for (let k = 0; k < 6; k++) await eng.recordAdmin(PocoAdminKind.RESET, { k }, `r${k}`);
+  const admin = await eng.listAdmin(100);
+  assert.equal(admin.length, 4, "the total never exceeds adminTotalCap");
+  assert.equal(admin[0].note, "r5");             // newest retained
+  assert.equal(admin[3].note, "r2");             // oldest two dropped
+});
+
+test("engine: listAdmin merges every kind bucket, most-recent-first, with kind names", async () => {
+  const eng = makeEngine();
+  await eng.recordAdmin(PocoAdminKind.RESET, {}, "reset-1");
+  await eng.recordAdmin(PocoAdminKind.PARAM_OVERRIDE, {}, "param-1");
+  await eng.recordAdmin(PocoAdminKind.GENESIS_SEED, {}, "genesis-1");
+  const admin = await eng.listAdmin(100);
+  assert.equal(admin.length, 3);
+  assert.deepEqual(admin.map((a) => a.note), ["genesis-1", "param-1", "reset-1"]);   // ts descending
+  assert.deepEqual(admin.map((a) => a.kindName), ["GENESIS_SEED", "PARAM_OVERRIDE", "RESET"]);
+});
+
+test("engine: MANUAL_TICK is flood-merged inside one window into a single local record (issue 1②)", async () => {
+  let clock = 10_000;
+  const eng = makeEngine({ now: () => clock });   // a FROZEN clock ⇒ every hit lands in the same window
+  await eng.onManualTick({ t: 0 });
+  await eng.onManualTick({ t: 1 });
+  await eng.onManualTick({ t: 2 });
+  const ticks = (await eng.listAdmin(100)).filter((a) => a.kind === PocoAdminKind.MANUAL_TICK);
+  assert.equal(ticks.length, 1, "three hits in one window collapse into ONE record");
+  assert.match(ticks[0].note, /×3/, "the note carries the running flood count");
 });
 
 test("engine: a tick regression (DO rebuild) records kind6 exactly once per epoch", async () => {
@@ -340,6 +440,117 @@ test("engine: two independent runs over identical inputs produce an identical ch
   assert.deepEqual(await run(), await run());
 });
 
+// ============================== non-blocking / atomic mirror (issues 2/4/5/18) ==============================
+
+test("engine: on-chain mirrors are DETACHED onto the host hook, never awaited on the local path (issue 5)", async () => {
+  let detached = 0;
+  const eng = makeEngine({ detach: () => { detached++; } });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.appendDigest({ state: S(0), tickIndex: 0, genesisHead: "0xg" });
+  assert.ok(detached >= 1, "the host detach hook received the serial mirror-queue tail");
+  await eng.flushMirrors();
+});
+
+test("engine: sealing an EMPTY epoch folds a non-zero marker digest so the on-chain seal can't revert (issue 2)", async () => {
+  const chain = new StubChain();
+  const eng = makeEngine({ chain });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.onReset("0xnewgenesis");            // seal epoch 0 with NO digests appended
+  await eng.flushMirrors();
+
+  const sealed = (await eng.listEpochs(10))[0];
+  assert.equal(sealed.index, 0);
+  assert.equal(sealed.reason, "reset");
+  assert.equal(sealed.tickCount, 1, "one synthetic marker digest");
+  assert.notEqual(sealed.merkleRoot, ZERO64, "a non-zero root (the contract reverts on ZeroHash)");
+  assert.notEqual(sealed.sealedHead, ZERO64);
+  const seal = chain.calls.find((c) => c.fn === "sealEpoch");
+  assert.ok(seal, "the seal was mirrored");
+  assert.notEqual(seal!.args[3], ZERO64, "the mirrored Merkle root is non-zero");
+});
+
+test("engine: a half-landed seal self-heals — the next append rolls forward past the stale sealed index (issue 4)", async () => {
+  const store = new MemStore();
+  const eng = makeEngine({ store });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  // Simulate a crash that persisted the SEALED record but never switched the OPEN epoch forward.
+  await store.put("poca:sealed:0", {
+    index: 0, openTs: 1, endTs: 2, tickCount: 1, merkleRoot: leaf(1), sealedHead: leaf(1),
+    genesisHead: "0xg", codeCommitment: CC, reason: "threshold", codeChangeAdminTs: null,
+  });
+  const d = await eng.appendDigest({ state: S(0), tickIndex: 0, genesisHead: "0xg" });
+  assert.ok(d, "the digest still folds");
+  const snap = await eng.snapshot();
+  assert.equal(snap.currentEpoch, 1, "detected the stale sealed key and opened epoch 1");
+  assert.equal(snap.epochState?.digestCount, 1, "the new digest landed in the rolled-forward epoch");
+});
+
+test("engine: appendDigest writes digests + head + meta atomically (issue 3)", async () => {
+  const store = new MemStore();
+  const eng = makeEngine({ store, sealThreshold: 100 });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  const d = await eng.appendDigest({ state: S(0), tickIndex: 0, genesisHead: "0xg" });
+  // All three keys reflect the SAME append — no partial-write skew.
+  assert.equal(await store.get<string>("poca:head"), d);
+  const digests = await store.get<string[]>("poca:e0:digests");
+  const meta = await store.get<{ digestCount: number }>("poca:epoch");
+  assert.deepEqual(digests, [d]);
+  assert.equal(meta?.digestCount, 1, "meta.digestCount tracks the array without a separate read");
+});
+
+test("engine: a mirror index drift PAUSES the mirror + records a local kind6, and never broadcasts a doomed open (issue 2)", async () => {
+  const chain = new StubChain();
+  const eng = makeEngine({ chain });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  chain.chainCount = 99;                        // the local index (0) drifts from the chain (99)
+  await eng.flushMirrors();
+
+  const snap = await eng.snapshot();
+  assert.equal(snap.mirror.paused, true, "the mirror latched paused");
+  assert.equal(snap.mirror.aligned, false);
+  assert.ok(snap.mirror.failures >= 1, "a failure was counted");
+  assert.ok(
+    (await eng.listAdmin(50)).some((a) => a.kind === PocoAdminKind.DO_REBUILD && /misalignment/.test(a.note)),
+    "a local kind6 misalignment note was recorded",
+  );
+  assert.ok(!chain.calls.some((c) => c.fn === "openEpoch"), "the misaligned open was SKIPPED, never sent");
+
+  // Re-alignment: the once-per-cron recheck clears `paused` when the local index matches the chain again.
+  chain.chainCount = 0;
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.flushMirrors();
+  const recovered = await eng.snapshot();
+  assert.equal(recovered.mirror.paused, false, "the mirror recovered on re-alignment");
+  assert.equal(recovered.mirror.aligned, true);
+});
+
+test("engine: an on-chain committer != the relay wallet PAUSES the mirror + records a local kind4 (issue 18)", async () => {
+  const chain = new StubChain();
+  chain.committerAddr = "0xOnChainCommitter";
+  const eng = makeEngine({ chain });
+  await eng.ensureEpoch({ genesisHead: "0xg", relayAddress: "0xRelayWallet" });
+  await eng.flushMirrors();
+
+  const snap = await eng.snapshot();
+  assert.equal(snap.mirror.paused, true, "the mirror paused on the committer mismatch");
+  assert.ok(
+    (await eng.listAdmin(50)).some((a) => a.kind === PocoAdminKind.COMMITTER_CHANGE),
+    "a local kind4 COMMITTER_CHANGE was recorded",
+  );
+  assert.ok(!chain.calls.some((c) => c.fn === "openEpoch"), "no epoch is opened by the wrong committer");
+});
+
+test("engine: a matching committer passes the boot-check and mirrors normally (issue 18)", async () => {
+  const chain = new StubChain();
+  chain.committerAddr = "0xRelayWallet";
+  const eng = makeEngine({ chain });
+  await eng.ensureEpoch({ genesisHead: "0xg", relayAddress: "0xrelaywallet" });   // case-insensitive match
+  await eng.flushMirrors();
+  const snap = await eng.snapshot();
+  assert.equal(snap.mirror.paused, false);
+  assert.ok(chain.calls.some((c) => c.fn === "openEpoch"), "the open mirrored once the committer matched");
+});
+
 // ============================== disabled (zero-address) mode ==============================
 
 test("engine: zero-address mode makes NO on-chain call but runs the off-chain chain identically", async () => {
@@ -352,8 +563,9 @@ test("engine: zero-address mode makes NO on-chain call but runs the off-chain ch
   const d1 = await eng.appendDigest({ state: S(1), tickIndex: 1, genesisHead: "0xg" });
   await eng.onReset("0xg2");
   await eng.recordAdmin(PocoAdminKind.PARAM_OVERRIDE, { x: 1 }, "param");
+  await eng.flushMirrors();                      // a no-op when nothing was ever enqueued
 
-  assert.equal(chain.calls.length, 0, "disabled mode NEVER touches the chain");
+  assert.equal(chain.calls.length, 0, "disabled mode NEVER touches the chain (not even a read)");
 
   // …yet the off-chain chain ran exactly as it would enabled: digests folded, epochs sealed + reopened,
   // admin logged — only the on-chain mirror is skipped.
@@ -361,6 +573,7 @@ test("engine: zero-address mode makes NO on-chain call but runs the off-chain ch
   const snap = await eng.snapshot();
   assert.equal(snap.enabled, false);
   assert.equal(snap.continuity, "disabled");
+  assert.equal(snap.mirror.paused, false);
   assert.ok(snap.epochCount >= 2);
   assert.ok(snap.adminCount >= 1);
   for (const e of await eng.listEpochs(10)) {

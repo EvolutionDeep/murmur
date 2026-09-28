@@ -31,6 +31,11 @@ function corsHeaders(origin: string) {
     // ㉚ land grid's burn challenge (X-Payment-Required).
     "Access-Control-Expose-Headers": "X-PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-PAYMENT-VERSION, X-PAYMENT-REPLAYED, X-Payment-Required",
     "Access-Control-Max-Age": "86400",
+    // The ACAO above ECHOES the request Origin, so any edge-cached response (e.g. /openapi.json max-age=300,
+    // /land-img max-age=86400) would otherwise freeze the FIRST requester's Origin and serve it to every other
+    // origin — a CORS cache-poisoning hole that blanked the production land grid. Vary: Origin forces a
+    // per-Origin cache key. Harmless on no-store responses, correct on every cacheable one.
+    "Vary": "Origin",
   };
 }
 

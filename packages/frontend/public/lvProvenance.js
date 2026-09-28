@@ -8,7 +8,7 @@
 //   No shadowBlur, no backdrop-filter, no synchronous chain reads in the paint path.
 import { LV } from './lvState.js';
 import { state, shortHash, isRealTxHash, ARC_EXPLORER, clamp } from './shared.js';
-import { t as T } from './i18n.js?v=110';
+import { t as T } from './i18n.js?v=111';
 
 /**
  * Extra provenance rows for the focus sidebar, appended after the genome-hash / parents / commitTx block.

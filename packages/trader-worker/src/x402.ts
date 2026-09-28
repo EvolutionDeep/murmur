@@ -43,6 +43,7 @@ import {
   type WalletClient,
 } from "viem";
 import { nonceFromCalldata } from "./provenance.js";
+import { POCA_ZERO_ADDRESS } from "./poca.js";
 import {
   CIRCLE_SETTLE_PATH,
   buildCircleSettleBody,
@@ -208,8 +209,8 @@ export const predictionArenaAbi = parseAbi([
 ]);
 
 /**
- * murmur's PROOF-OF-CONTINUOUS-AGENCY registry (contracts/PoCARegistry.sol, written in parallel to this
- * client). It is the on-chain MIRROR of the Worker's off-chain cron-digest epoch chain: the Worker (as the
+ * murmur's PROOF-OF-CONTINUOUS-AGENCY registry (contracts/ContinuityRegistry.sol, written in parallel to
+ * this client). It is the on-chain MIRROR of the Worker's off-chain cron-digest epoch chain: the Worker (as the
  * authorized `committer`) opens an epoch pinning a code commitment + genesis head, seals each epoch with a
  * Merkle root over that epoch's cron digests, and logs every administrative discontinuity (reset / manual
  * tick / param override / committer change / genesis seed / DO rebuild / code change). A verifier can then
@@ -230,9 +231,9 @@ export const pocaRegistryAbi = parseAbi([
   "function currentEpoch() view returns (uint256)",
   "function committer() view returns (address)",
   "function isUnbroken(uint256 from, uint256 to) view returns (bool)",
-  "event EpochOpened(uint256 indexed epochIndex, bytes32 codeCommitment, bytes32 genesisHead)",
-  "event EpochSealed(uint256 indexed epochIndex, bytes32 sealedHead, uint64 tickCount, bytes32 merkleRoot)",
-  "event AdminAction(uint8 indexed kind, bytes32 payloadHash)",
+  "event EpochOpened(uint256 indexed epochIndex, bytes32 codeCommitment, bytes32 genesisHead, uint64 ts)",
+  "event EpochSealed(uint256 indexed epochIndex, bytes32 sealedHead, uint64 tickCount, bytes32 merkleRoot, uint64 ts)",
+  "event AdminAction(uint8 indexed kind, address actor, bytes32 payloadHash, uint64 ts)",
 ]);
 
 /** A decoded arena round: temperatures unscaled from r6 (÷1e6), pools as atomic MURMUR (18-dec) strings. */
@@ -963,7 +964,7 @@ export interface OnChainFacilitatorOpts {
    */
   lineageAddress?: Address;
   /**
-   * Deployed PoCARegistry to mirror the cron-digest epoch chain onto (makes continuous agency a public,
+   * Deployed ContinuityRegistry to mirror the cron-digest epoch chain onto (makes continuous agency a public,
    * tamper-evident on-chain fact). Absent OR the zero address ⇒ DISABLED mode: every PoCA on-chain call
    * is skipped (logged once) while the off-chain epoch chain runs identically. This is the DEFAULT until
    * the contract is deployed — zero behaviour change to the live tick.
@@ -1975,7 +1976,7 @@ export class OnChainFacilitator implements Facilitator {
 
   // ============================== on-chain PoCA (proof of continuous agency) ==============================
   //
-  // Thin, best-effort delegators to the facilitator's PoCARegistry wiring — the on-chain mirror of the
+  // Thin, best-effort delegators to the facilitator's ContinuityRegistry wiring — the on-chain mirror of the
   // Worker's off-chain cron-digest epoch chain. The Worker is the sole authorized `committer`, so it opens
   // an epoch (pinning codeCommitment + genesisHead), seals each epoch (Merkle root over its digests), and
   // logs every administrative discontinuity. Every call degrades to null (disabled / reverted / shadow) so
@@ -1985,7 +1986,7 @@ export class OnChainFacilitator implements Facilitator {
   /** True when a PoCA registry is wired (present AND non-zero) for this facilitator. */
   get hasPoca(): boolean {
     const a = this.o.pocaRegistryAddress;
-    return a != null && a.toLowerCase() !== ARC_USDC_SIMULATED;
+    return a != null && a.toLowerCase() !== POCA_ZERO_ADDRESS;
   }
 
   /**
@@ -1995,7 +1996,7 @@ export class OnChainFacilitator implements Facilitator {
    */
   private pocaRegistry(): Address | null {
     const a = this.o.pocaRegistryAddress;
-    if (a == null || a.toLowerCase() === ARC_USDC_SIMULATED) {
+    if (a == null || a.toLowerCase() === POCA_ZERO_ADDRESS) {
       if (!this.pocaSkipLogged) {
         this.pocaSkipLogged = true;
         console.log("[poca] registry address zero/unset — on-chain epoch mirror DISABLED (off-chain chain continues)");
@@ -2088,6 +2089,24 @@ export class OnChainFacilitator implements Facilitator {
         address: addr, abi: pocaRegistryAbi, functionName: "committer",
       });
       return c as string;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read the registry's on-chain epoch counter (the next index openEpoch would assign). The PoCA engine uses
+   * it to verify its LOCAL epoch index is aligned before mirroring an open/seal (a mismatch ⇒ skip + pause).
+   * Returns null when disabled / on any RPC error, which the engine treats as "cannot verify" (never as 0).
+   */
+  async pocaEpochCount(): Promise<number | null> {
+    const addr = this.pocaRegistry();
+    if (!addr) return null;
+    try {
+      const n = await this.o.publicClient.readContract({
+        address: addr, abi: pocaRegistryAbi, functionName: "epochCount",
+      });
+      return Number(n);
     } catch {
       return null;
     }
