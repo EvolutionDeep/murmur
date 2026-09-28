@@ -36,6 +36,7 @@
     "test": "npm run test --workspaces --if-present",
     "smoke": "tsx packages/fly-brain/smoke.ts",
     "replay": "npm run replay -w @fly/trader-worker -- --from-wrangler",
+    "check:knobs": "node scripts/check-knob-defaults.mjs",
     "verify:poca": "node scripts/poca-verify.mjs",
     "verify:poca:selftest": "node scripts/poca-verify.mjs --selftest",
     "dev:worker": "npm run dev -w @fly/trader-worker",

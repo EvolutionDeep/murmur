@@ -44,6 +44,9 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
 
+      - name: Knob-defaults consistency (gen-codecommit ↔ config.ts)
+        run: npm run check:knobs
+
       - name: Unit tests (connectome · LIF · motor decoder · economy · provenance · ipfs)
         run: npm test
 

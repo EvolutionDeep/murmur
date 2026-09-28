@@ -83,21 +83,65 @@ const wAddr = (w) => "0x" + (w || "").slice(24);
 const wBool = (w) => wUint(w) !== 0n;
 const wBytes32 = (w) => (w || ZERO64);
 
-// ------------------------------ minimal JSON-RPC client (fetch POST) ------------------------------
+// ------------------------------ minimal JSON-RPC client (fetch POST) with exponential backoff ------------------------------
 let RPC_ID = 0;
+let RPC_RETRY_COUNT = 3; // default retries; overridable via --retry N
+
+/** Sleep helper with ±20% jitter around the base delay. */
+function backoffDelay(attempt) {
+  // Base delays: 1s, 4s, 16s (4^attempt * 250ms pattern: 1000, 4000, 16000)
+  const base = Math.pow(4, attempt) * 1000;
+  const jitter = base * 0.2 * (Math.random() * 2 - 1); // ±20%
+  return Math.max(0, base + jitter);
+}
+
+/** Determine if an HTTP status or error is retryable (429 rate-limit, 5xx server, network). */
+function isRetryable(status, err) {
+  if (err) return true; // network error (fetch threw)
+  if (status === 429) return true;
+  if (status >= 500 && status < 600) return true;
+  return false;
+}
+
 async function rpc(url, method, params, { quiet = false } = {}) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: ++RPC_ID, method, params }),
-  });
-  if (!res.ok) throw new Error(`RPC ${method} HTTP ${res.status}`);
-  const j = await res.json();
-  if (j.error) {
-    if (!quiet) throw new Error(`RPC ${method}: ${j.error.message || JSON.stringify(j.error)}`);
-    return null;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= RPC_RETRY_COUNT; attempt++) {
+    if (attempt > 0) {
+      const delay = backoffDelay(attempt - 1);
+      if (!quiet) process.stderr.write(`  [rpc] ${method} retry ${attempt}/${RPC_RETRY_COUNT} after ${Math.round(delay)}ms…\n`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++RPC_ID, method, params }),
+      });
+      if (!res.ok) {
+        if (isRetryable(res.status, null) && attempt < RPC_RETRY_COUNT) {
+          lastErr = new Error(`RPC ${method} HTTP ${res.status}`);
+          continue;
+        }
+        throw new Error(`RPC ${method} HTTP ${res.status}`);
+      }
+      const j = await res.json();
+      if (j.error) {
+        if (!quiet) throw new Error(`RPC ${method}: ${j.error.message || JSON.stringify(j.error)}`);
+        return null;
+      }
+      return j.result;
+    } catch (e) {
+      // Network-level error (DNS, timeout, connection refused) — retryable
+      if (isRetryable(null, e) && attempt < RPC_RETRY_COUNT) {
+        lastErr = e;
+        continue;
+      }
+      // Non-retryable or retries exhausted
+      if (lastErr && attempt >= RPC_RETRY_COUNT) throw lastErr;
+      throw e;
+    }
   }
-  return j.result;
+  throw lastErr || new Error(`RPC ${method} failed after ${RPC_RETRY_COUNT} retries`);
 }
 const ethCall = async (url, to, data) => rpc(url, "eth_call", [{ to, data }, "latest"]);
 
@@ -138,6 +182,7 @@ function parseArgs(argv) {
       case "--max-txs": a.maxTxs = Math.max(1, Math.floor(Number(next()) || 300)); break;
       case "--json": a.json = true; break;
       case "--selftest": a.selftest = true; break;
+      case "--retry": RPC_RETRY_COUNT = Math.max(0, Math.floor(Number(next()) || 3)); break;
       case "--quiet": a.quiet = true; break;
       case "-h": case "--help": a.help = true; break;
       default: throw new Error(`unknown argument: ${k}`);
@@ -163,6 +208,7 @@ function helpText() {
     "  --log-chunk N              eth_getLogs block-range shard size (default 5000)",
     "  --max-txs N                cap on tx lookups when scanning USDC transfers (default 300)",
     "  --json                     machine-readable report on stdout",
+    "  --retry N                  RPC retries on 429/5xx/network (default 3; delays 1s/4s/16s ±20% jitter)",
     "  --quiet                    suppress the human report (still sets the exit code)",
     "",
     "Exit 0 when nothing FAILs (PASS/SKIP/degraded); 1 on any FAIL or a failed --selftest.",
@@ -571,7 +617,7 @@ async function main() {
       // A registry that cannot be read (not deployed at that address, RPC down) degrades rather than errors.
       degraded = true;
       ctx.onchain = false;
-      if (!args.quiet) console.error(`NOTE: on-chain registry read failed (${e.message}) — falling back to off-chain continuity only.`);
+      if (!args.quiet) console.error(`NOTE: on-chain registry read failed after ${RPC_RETRY_COUNT} retries (${e.message}) — falling back to off-chain continuity only.`);
     }
   }
 
