@@ -2822,9 +2822,10 @@ export class AgentEconomy {
    * culturalOn(), so the OFF path is byte-for-byte the Phase 2b build. The child is seeded ONLY from `parentId`
    * (the true parent that bred it), NEVER from whatever dead fly once held `childId`:
    *   ① WIPE the child slot's residual social memory, playbook ring and strategy tree first — the DOUBLE-
-   *      INHERITANCE guard. On a brand-new id these are empty (a harmless no-op); on a RECYCLED id (reusedSlot)
-   *      they still hold the previous individual's bonds/grudges/ring/tree, which must NOT leak into the newborn
-   *      (reopenSlot deliberately leaves them — its documented scope cut — so we clear them here).
+   *      INHERITANCE guard, kept here as defence in depth. Since the M4 fix, reopenSlot already performs this
+   *      erasure UNCONDITIONALLY on an id-reuse hatch (independent of culturalOn()), so on a RECYCLED id this
+   *      block is a harmless no-op and on a brand-new id the maps are empty anyway. It stays so the guard holds
+   *      even if a caller ever reaches transmitCulture without going through reopenSlot.
    *   ② Copy a DISCOUNTED subset of the parent's social memory as the child's prior: a POSITIVE bond ×50%, a
    *      NEGATIVE bond ×25% (a fainter inherited grudge), and the parent's reputation ×50%. Every inherited score
    *      is decayed to now, re-clamped to [−1,1] and pruned to BOND_TOP_K, so the prior can never exceed the
@@ -2836,10 +2837,11 @@ export class AgentEconomy {
    *      tree (vertical strategy inheritance); with no parent tree the child falls back to the id-derived default
    *      on first access. Deterministic throughout: every seed is hash-derived (FNV-1a); zero Math.random/Date.now.
    */
-  private transmitCulture(parentId: number, childId: number, reusedSlot: boolean): void {
+  private transmitCulture(parentId: number, childId: number, _reusedSlot: boolean): void {
     if (!this.culturalOn()) return;
     if (parentId === childId) return;   // a fly is never its own parent — nothing to transmit
-    // ① WIPE the child slot's residue (the double-inheritance guard). A safe no-op on a fresh id.
+    // ① WIPE the child slot's residue (the double-inheritance guard). Redundant since the M4 fix — reopenSlot
+    // already erased it unconditionally — but kept as defence in depth. A safe no-op on a fresh id.
     this.social.delete(childId);
     this.playbook.delete(childId);
     this.strategyTrees.delete(childId);

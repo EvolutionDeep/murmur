@@ -9,10 +9,13 @@
 //
 // The two invariants that MUST hold (and are the reason these tests exist):
 //   1. DOUBLE-INHERITANCE GUARD: an id-reuse hatch (reopenSlot recolonises a dead fly's id) must NEVER inherit
-//      the dead fly's residual social/playbook/tree — only the TRUE parent's discounted prior. reopenSlot
-//      deliberately leaves that residue (its documented scope cut), so transmitCulture wipes it first.
-//   2. DEFAULT-OFF INERTNESS: with CULTURAL/LAMARCK unset the child hatches blank, byte-for-byte the Phase 2b
-//      build — no memory copied, lamarckVector() null, the genome exactly the mutate/cross output.
+//      the dead fly's residual social/playbook/tree — only the TRUE parent's discounted prior. Since the M4 fix
+//      reopenSlot performs that erasure UNCONDITIONALLY (independent of CULTURAL_ENABLED), so the guard holds
+//      even on a cultural-OFF deployment; transmitCulture's own wipe is now defence in depth.
+//   2. DEFAULT-OFF INERTNESS: with CULTURAL/LAMARCK unset the child hatches blank — no memory copied,
+//      lamarckVector() null, the genome exactly the mutate/cross output. On a BRAND-NEW id this is byte-for-byte
+//      the Phase 2b build; on an id-reuse hatch the residue is now erased (the deliberate M4 behaviour change —
+//      it only fires when the dynasty layer recycles a retired id, never on the dark-deployment normal path).
 //
 // Everything is deterministic (FNV-1a hash-derived seeds; zero Math.random / Date.now in any inherited state)
 // and additive (KEY_VERSION stays "economy:v1"; an old blob with no parent memory simply yields no prior).
@@ -207,7 +210,7 @@ test("cultural: an id-reuse hatch inherits ONLY the true parent — NEVER the de
     ];
   });
 
-  // Sanity: before the recycled hatch, the dead fly's residue is still keyed to id 0 (reopenSlot leaves it).
+  // Sanity: before the recycled hatch, the dead fly's residue is still keyed to id 0 (the erasure happens IN the hatch).
   assert.ok(econ.getSocial(0)?.bonds.some((b) => b.other === 9 && b.score > 0), "the dead fly's residue is present pre-hatch");
 
   econ.noteHatch(1, 0, HASH_B);                                 // #1 hatches a newborn INTO retired id 0
