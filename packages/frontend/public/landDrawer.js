@@ -162,7 +162,9 @@ export function paintLandDrawer() {
 
   // image preview (if owned)
   if (parcel && parcel.owner && parcel.imageUrl) {
-    const imgUrl = parcel.imageUrl.startsWith("http") ? parcel.imageUrl : API + parcel.imageUrl;
+    const base = parcel.imageUrl.startsWith("http") ? parcel.imageUrl : API + parcel.imageUrl;
+    // Cache-bust: invalidate CORS-poisoned edge cache entries (task 68)
+    const imgUrl = base + (base.includes("?") ? "&" : "?") + "cb=2";
     html += `<div class="ld-preview"><img src="${imgUrl}" alt="${T("land.parcelAlt", { id: pid })}" class="ld-img" /></div>`;
   }
 

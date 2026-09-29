@@ -312,9 +312,11 @@ export class LandLayer {
 
     // load texture from imageUrl
     if (parcel.imageUrl) {
-      const url = parcel.imageUrl.startsWith('http')
+      const base = parcel.imageUrl.startsWith('http')
         ? parcel.imageUrl
         : API + parcel.imageUrl;
+      // Cache-bust: invalidate CORS-poisoned edge cache entries (task 68)
+      const url = base + (base.includes('?') ? '&' : '?') + 'cb=2';
       this._loadTexture(url, parcel.id, mat);
     }
   }
