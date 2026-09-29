@@ -178,6 +178,22 @@ export interface SocialReadout {
 }
 
 /**
+ * PLAYBOOK (consequence-driven long-term memory, Phase 1 capability ①). One entry of a fly's bounded
+ * episodic ring: records WHAT happened in WHICH context so future decisions can be reweighted by
+ * past consequences. Economic layer ONLY — never touches the connectome (one-way law). Serialized
+ * as a compact integer array [ctx, action, good, regime, outcome, valid, tick] for DO storage.
+ */
+export interface PlaybookEntry {
+  ctx: number;      // contextHash: hash32(tick, regimeBucket, tempBucket) — the decision context
+  action: number;   // 0=buy, 1=sell
+  good: number;     // good index (0=signal, 1=momentum, 2=attestation, 3=prediction)
+  regime: number;   // regime bucket (0=COLD, 1=CALM, 2=HOT)
+  outcome: number;  // signed atomic outcome (+earned, -paid, 0=failed)
+  valid: number;    // 1=settlement valid, 0=failed
+  tick: number;     // tick of recording (drives exponential decay)
+}
+
+/**
  * DYNASTY CONFIG (economic layer ONLY — same one-way law as social memory: a house, a death and an
  * inheritance never feed the connectome; they only re-shape the LEDGER the neurons' trades settle into).
  * EVERY field optional so an EconomyConfig literal without `dynasty` compiles and behaves exactly as
@@ -497,6 +513,13 @@ export interface EconomyConfig {
     exileSeverity: number;    // extra toll multiplier on a landless (conquered/exiled) buyer, bounded
     powerPerZone: number;     // war power added per controlled zone (0 ⇒ off, winnerOf lock-step unchanged)
   };
+  // --- PLAYBOOK (consequence-driven long-term memory, Phase 1 capability ①): OPTIONAL — absent/false ⇒
+  //     every playbook hook no-ops, the economy is byte-for-byte unchanged. A bounded per-fly episodic
+  //     ring (16 entries) that remembers the outcome of past trades and reweights good selection +
+  //     counterparty choice within existing hard caps. NEVER touches connectome/genome/manifestHash. ---
+  playbook?: {
+    enabled: boolean;
+  };
 }
 
 /**
@@ -535,6 +558,16 @@ const BOND_BLACKLIST = -0.6;             // bond at or below this ⇒ flat-out r
 const ALLIANCE_MIN_TRADES = 8;           // a partnership is only chronicle-worthy once seasoned
 const PICK_CANDIDATES = 5;               // pool size re-weighted inside the neural span
 const FEUD_WORST_K = 5;                  // houseFeuds blend: how many of a pair's deepest bonds the "worst mean" averages (3→5: a broader grudge cluster can tip a house feud)
+// --- playbook tuning (Phase 1, capability ①: consequence-driven long-term memory; all deterministic) ---
+const PLAYBOOK_CAP = 16;                 // max entries per fly (bounded ring buffer; ~640B/fly)
+const PLAYBOOK_HALF_LIFE = 12000;        // sub-ticks for exponential decay of old entries (~3.3h at 1/s)
+const PLAYBOOK_EPSILON = 0.08;           // ε-greedy exploration floor: min 8% uniform-random pick (deterministic hash01)
+const PLAYBOOK_MAX_BIAS = 0.35;          // max reweighting magnitude on counterparty weights (never expands risk caps)
+const PLAYBOOK_GOOD_SWITCH_MAX = 0.25;   // max probability of playbook overriding the neural good choice
+const PLAYBOOK_SALT_EPS = 0x706c6179;    // deterministic salt for ε-greedy draw ("play")
+const PLAYBOOK_SALT_GOOD = 0x626f6f6b;  // deterministic salt for good-switch draw ("book")
+const PLAYBOOK_SALT_CONF = 0x6d656d6f;  // deterministic salt for confidence modulation ("memo")
+const GOOD_KINDS: GoodKind[] = ["signal", "momentum", "attestation", "prediction"];
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
 // --- dynasty tuning (all deterministic; every collection is a hard cap so DO storage stays bounded) ---
@@ -653,6 +686,18 @@ export class AgentEconomy {
    */
   private lastShunned: number[] = [];
 
+  /**
+   * PLAYBOOK (consequence-driven long-term memory, Phase 1 capability ①). Per-fly bounded episodic ring:
+   * each entry records what happened in a given decision context, so future choices are reweighted by
+   * past consequences. Persisted additively (an old payload has no `playbook` key ⇒ empty rings).
+   * Economic layer ONLY — never touches the connectome (one-way law). Empty while the switch is off.
+   */
+  private playbook = new Map<number, PlaybookEntry[]>();
+  /** Current tick's regime bucket (set at the top of step(); used by playbookRecord for context hashing). */
+  private pbRegime = 1;
+  /** Current tick's temperature bucket 0..3 (set at the top of step(); quantised for context hashing). */
+  private pbTempBucket = 2;
+
   /** ⑧ THE COMMONS: this era's legislated overrides of two institution knobs, applied fresh each cron by
    *  state.ts. null ⇒ base config (byte-for-byte the pre-law economy). Runtime-only, NEVER serialized —
    *  they are recomputed from the commons' own persisted decrees, so the economy payload stays untouched. */
@@ -755,6 +800,12 @@ export class AgentEconomy {
     for (const r of readings) readingById.set(r.id, r);
     const n = readings.length;
     const T = clamp01(collective.temperature);
+    // PLAYBOOK context: quantise regime + temperature for deterministic context hashing (set once per
+    // tick; playbookRecord reads them when writing entries). Inert while the switch is off.
+    if (this.playbookOn()) {
+      this.pbRegime = collective.regime === "HOT" ? 2 : collective.regime === "COLD" ? 0 : 1;
+      this.pbTempBucket = Math.min(3, Math.floor(T * 4));
+    }
     const made: Settlement[] = [];
     // ORGANIC CONFLICT: buyers that held because their whole span was shunned, with the specific sellers
     // they refused (fed to the embargo mechanism). Collected only while the switch is on; empty otherwise.
@@ -794,7 +845,9 @@ export class AgentEconomy {
       const draw = hash01(tickIndex, r.id, 0x9e3779b9);
       if (draw > want * demand) continue;   // this agent holds this tick
 
-      const good = goodForState(r.state);
+      const good = this.playbookOn()
+        ? this.playbookGoodOverride(r.id, goodForState(r.state), tickIndex)
+        : goodForState(r.state);
       const sellerIdx = this.pickCounterparty(r, i, n, tickIndex);
       if (sellerIdx < 0) {
         if (this.lastShunned.length) held.push({ buyer: r.id, shunned: this.lastShunned.slice() });
@@ -997,6 +1050,8 @@ export class AgentEconomy {
           // for non-moral reasons, so this is a smudge, not a grudge — the book stays for true stiffs).
           this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          // PLAYBOOK: a failed on-chain payment is a negative consequence for the debtor.
+          this.playbookRecord(debtor.id, 0, good, 0, 0, tickIndex);
           const prev = this.pairBackoff.get(key);
           this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
           out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
@@ -1007,6 +1062,8 @@ export class AgentEconomy {
         if (!receipt.success) {
           this.settleFail++;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
+          // PLAYBOOK: a failed settle is a negative consequence for the debtor.
+          this.playbookRecord(debtor.id, 0, good, 0, 0, tickIndex);
           const prev = this.pairBackoff.get(key);
           this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
           out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break;
@@ -1035,6 +1092,9 @@ export class AgentEconomy {
         this.pairBackoff.delete(key);  // success clears the backoff streak
         // The mined net IS the settled history reputation is made of: both sides keep the promise.
         this.rememberTrade(debtor.id, creditor.id, tickIndex);
+        // PLAYBOOK: record the consequence for both sides (buyer paid, seller earned; valid settlement).
+        this.playbookRecord(debtor.id, 0, good, -Number(amountStr), 1, tickIndex);
+        this.playbookRecord(creditor.id, 1, good, Number(amountStr), 1, tickIndex);
         // Dynasty tithe: 2% of what the creditor just earned flows to its house treasury (no-op for a
         // commoner or with the layer off; never pushes a member below zero — it skips if it would).
         this.titheHouse(creditor.id, amountStr);
@@ -1218,6 +1278,9 @@ export class AgentEconomy {
     // Weight each candidate by the buyer's directed bond + the candidate's market reputation.
     // With NO social memory at all every weight is 1 ⇒ the roulette degenerates to a uniform
     // pick inside the span, so a fresh swarm behaves neutrally until a past accumulates.
+    // PLAYBOOK: when armed, modulates the social-weight amplitude by consequence confidence and
+    // fires an ε-greedy exploration override with bounded probability (deterministic hash01).
+    const pbMod = this.playbookOn() ? this.playbookCounterpartyMod(r.id, tick) : null;
     const picks: number[] = [];
     const weights: number[] = [];
     const shunned: number[] = [];
@@ -1228,7 +1291,9 @@ export class AgentEconomy {
       const bond = this.effectiveBond(r.id, cand.id, tick);
       if (bond <= BOND_BLACKLIST) { shunned.push(cand.id); continue; }   // the grudge vetoes; the neurons never notice
       const rep = this.effectiveRep(cand.id, tick);
-      const w = Math.max(0.05, 1 + 0.6 * bond + 0.4 * rep);
+      // PLAYBOOK amplifier scales the social contribution [0.5..1.0]; ε-greedy zeroes it (uniform).
+      const amp = pbMod ? (pbMod.explore ? 0 : pbMod.amplifier) : 1;
+      const w = Math.max(0.05, 1 + amp * (0.6 * bond + 0.4 * rep));
       picks.push(idx);
       weights.push(w);
       total += w;
@@ -1419,6 +1484,140 @@ export class AgentEconomy {
    */
   private territoryOn(): boolean {
     return !!this.cfg.territory && this.cfg.territory.enabled === true;
+  }
+
+  /**
+   * PLAYBOOK resolved: false/absent ⇒ every playbook hook no-ops, the economy is byte-for-byte unchanged.
+   * Default OFF (ships dark); arms only on an explicit enabled:true.
+   */
+  private playbookOn(): boolean {
+    return !!this.cfg.playbook && this.cfg.playbook.enabled === true;
+  }
+
+  // ---------- PLAYBOOK: consequence-driven long-term memory (Phase 1, capability ①) ----------
+  // A bounded per-fly episodic ring that records trade outcomes keyed by decision context, so future
+  // choices (which good to buy, which counterparty to prefer) are reweighted by past consequences.
+  // ECONOMIC LAYER ONLY — the one-way law holds: neurons → intent stays one-directional; the playbook
+  // never writes back into the connectome, never touches synWeight, never adds a sensory channel.
+  // Deterministic: all draws use hash01/hash32 (FNV-1a); zero Math.random, zero Date.now in decisions.
+
+  /**
+   * Record one playbook entry for a fly. Ring buffer: when full, evict the OLDEST entry (lowest tick).
+   * Called from rememberTrade / rememberBetrayal / rememberFailedPayment — the same signal sources that
+   * drive social memory bonds. Inert while playbookOn() is false.
+   */
+  private playbookRecord(id: number, action: number, good: GoodKind, outcome: number, valid: number, tick: number): void {
+    if (!this.playbookOn()) return;
+    const goodIdx = GOOD_KINDS.indexOf(good);
+    if (goodIdx < 0) return;
+    const ctx = hash32(tick, this.pbRegime * 4 + this.pbTempBucket, id);
+    let ring = this.playbook.get(id);
+    if (!ring) { ring = []; this.playbook.set(id, ring); }
+    const entry: PlaybookEntry = { ctx, action, good: goodIdx, regime: this.pbRegime, outcome, valid, tick };
+    if (ring.length >= PLAYBOOK_CAP) {
+      // Evict the oldest (lowest tick) to make room — deterministic, no Date.now.
+      let oldest = 0;
+      for (let i = 1; i < ring.length; i++) { if (ring[i].tick < ring[oldest].tick) oldest = i; }
+      ring[oldest] = entry;
+    } else {
+      ring.push(entry);
+    }
+  }
+
+  /**
+   * Compute a decaying confidence score [0..1] from a fly's playbook: the exponential-weighted average
+   * of `valid` flags. High confidence = recent trades mostly succeeded; low = many failures.
+   * Deterministic: decay is a pure function of (entry.tick, currentTick).
+   */
+  private playbookConfidence(id: number, tick: number): number {
+    const ring = this.playbook.get(id);
+    if (!ring || ring.length === 0) return 0.5;   // no history = neutral
+    let wSum = 0;
+    let vSum = 0;
+    for (const e of ring) {
+      const age = Math.max(0, tick - e.tick);
+      const w = Math.pow(0.5, age / PLAYBOOK_HALF_LIFE);
+      wSum += w;
+      vSum += w * e.valid;
+    }
+    return wSum > 0 ? vSum / wSum : 0.5;
+  }
+
+  /**
+   * Compute a per-good decaying outcome score from a fly's playbook. Returns an array of 4 floats
+   * (one per GoodKind), each the exponential-weighted mean outcome normalised to [-1, 1].
+   * A good that consistently yielded positive outcomes scores high; one that failed scores low.
+   */
+  private playbookGoodScores(id: number, tick: number): number[] {
+    const scores = [0, 0, 0, 0];
+    const weights = [0, 0, 0, 0];
+    const ring = this.playbook.get(id);
+    if (!ring) return scores;
+    for (const e of ring) {
+      const age = Math.max(0, tick - e.tick);
+      const w = Math.pow(0.5, age / PLAYBOOK_HALF_LIFE);
+      // Normalise outcome: valid trades contribute their signed atomic amount scaled to [-1,1];
+      // invalid trades contribute -1 (a failure is maximally bad regardless of amount).
+      const norm = e.valid ? Math.max(-1, Math.min(1, e.outcome / 10000)) : -1;
+      scores[e.good] += w * norm;
+      weights[e.good] += w;
+    }
+    for (let i = 0; i < 4; i++) {
+      scores[i] = weights[i] > 0 ? scores[i] / weights[i] : 0;
+    }
+    return scores;
+  }
+
+  /**
+   * PLAYBOOK good override: with bounded probability, switch the neurally-chosen good to one with a
+   * better playbook score. The switch probability is capped at PLAYBOOK_GOOD_SWITCH_MAX (25%) so the
+   * neurons' choice is never fully overridden — only nudged by consequence memory.
+   * ε-greedy floor: even if ALL goods score negatively, a minimum exploration probability remains.
+   * Deterministic: the draw is hash01(tick, id, PLAYBOOK_SALT_GOOD).
+   */
+  private playbookGoodOverride(id: number, baseGood: GoodKind, tick: number): GoodKind {
+    const scores = this.playbookGoodScores(id, tick);
+    const baseIdx = GOOD_KINDS.indexOf(baseGood);
+    if (baseIdx < 0) return baseGood;
+    const baseScore = scores[baseIdx];
+    // Find the best-scoring good
+    let bestIdx = baseIdx;
+    let bestScore = baseScore;
+    for (let i = 0; i < 4; i++) {
+      if (scores[i] > bestScore) { bestScore = scores[i]; bestIdx = i; }
+    }
+    if (bestIdx === baseIdx) return baseGood;   // base is already the best
+    // Switch probability: proportional to the score gap, capped at PLAYBOOK_GOOD_SWITCH_MAX.
+    const gap = Math.max(0, bestScore - baseScore);
+    const switchProb = Math.min(PLAYBOOK_GOOD_SWITCH_MAX, gap * PLAYBOOK_GOOD_SWITCH_MAX * 2);
+    // ε-greedy exploration floor: always at least PLAYBOOK_EPSILON chance of trying the alternative,
+    // even when the playbook has no signal (gap ≈ 0). This prevents lock-in to a stale preference.
+    const finalProb = Math.max(PLAYBOOK_EPSILON * 0.5, switchProb);
+    const draw = hash01(tick, id, PLAYBOOK_SALT_GOOD);
+    return draw < finalProb ? GOOD_KINDS[bestIdx] : baseGood;
+  }
+
+  /**
+   * PLAYBOOK counterparty modulation: adjusts the social-memory weight of candidates based on the
+   * buyer's playbook confidence. High confidence (trades mostly valid) amplifies social signals;
+   * low confidence dampens toward uniform (explores more). Bounded: the amplifier is clamped to
+   * [0.5, 1.0] so it NEVER expands beyond the existing social-memory range.
+   *
+   * ε-greedy exploration: with probability PLAYBOOK_EPSILON (deterministic hash01), ignore ALL social
+   * weights and pick uniformly from the pool — even a fly with perfect bonds sometimes explores.
+   *
+   * Returns { amplifier, explore } where:
+   *   amplifier: multiplicative factor on bond/rep weights [0.5..1.0]
+   *   explore: true if the ε-greedy draw fired (pick uniformly)
+   */
+  private playbookCounterpartyMod(id: number, tick: number): { amplifier: number; explore: boolean } {
+    const confidence = this.playbookConfidence(id, tick);
+    // amplifier: 0.5 (no confidence = dampen social to half) .. 1.0 (full confidence = full social weight)
+    const amplifier = 0.5 + 0.5 * clamp01(confidence);
+    // ε-greedy: deterministic draw decides exploration
+    const exploreDraw = hash01(tick, id, PLAYBOOK_SALT_EPS);
+    const explore = exploreDraw < PLAYBOOK_EPSILON;
+    return { amplifier, explore };
   }
 
   // ---------- ORGANIC CONFLICT (economic layer only; deterministic negative cross-house bonds) ----------
@@ -2526,6 +2725,8 @@ export class AgentEconomy {
       // The buyer promised a payment it could not make — the seller remembers the stiff, the market
       // marks the buyer down, and the grudge book records the betrayal for the historian to tell.
       this.rememberBetrayal(buyer.id, seller.id, amount, tick, "insufficient-funds");
+      // PLAYBOOK: a stiffed payment is a negative consequence for the buyer (invalid, zero outcome).
+      this.playbookRecord(buyer.id, 0, good, 0, 0, tick);
       return { ...base, txHash: "0x", valid: false, reason: "insufficient-funds" };
     }
 
@@ -2564,6 +2765,9 @@ export class AgentEconomy {
     // A settled deal is a promise kept on BOTH sides — mutual trust accrues (social memory, read-only
     // for everything above: this never touches the ledger maths, only tomorrow's counterparty choice).
     this.rememberTrade(buyer.id, seller.id, tick);
+    // PLAYBOOK: record the consequence for both sides (buyer paid, seller earned; valid settlement).
+    this.playbookRecord(buyer.id, 0, good, -Number(amount), 1, tick);
+    this.playbookRecord(seller.id, 1, good, Number(amount), 1, tick);
     // Dynasty tithe: the seller's house (if any) takes its cut of the earned income, straight from the
     // balance the seller just grew. Pure ledger movement inside the already-committed transfer above.
     this.titheHouse(seller.id, amount);
@@ -3001,6 +3205,16 @@ export class AgentEconomy {
           runUntilTick: this.runUntilTick,
         },
       } : {}),
+      // PLAYBOOK (Phase 1, capability ①). Additive exactly like `dynasty`/`market` above — and WRITTEN ONLY
+      // WHEN THE SWITCH IS ON: an OFF serialize is byte-identical to the pre-playbook blob. An older payload
+      // has no `playbook` key ⇒ empty rings (applySerialized defaults to an empty Map). KEY_VERSION stays
+      // "economy:v1". Serialized as compact integer arrays [ctx, action, good, regime, outcome, valid, tick]
+      // to stay within the ~640B/fly storage budget.
+      ...(this.playbookOn() ? {
+        playbook: Array.from(this.playbook.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, ring]) => ({ id, e: ring.map((x) => [x.ctx, x.action, x.good, x.regime, x.outcome, x.valid, x.tick]) })),
+      } : {}),
     });
   }
 
@@ -3225,6 +3439,34 @@ export class AgentEconomy {
       if (mkt.marks && typeof mkt.marks === "object") this.books.restoreMarks(mkt.marks);
       this.lastRecallTick = Number(mkt.lastRecallTick ?? -1000);
       this.runUntilTick = Number(mkt.runUntilTick ?? -1);
+    }
+    // Restore the playbook (absent in pre-playbook payloads ⇒ empty rings; the layer starts fresh).
+    // Fields sanitised + re-capped exactly like the social/dynasty blocks above: a corrupted blob can
+    // never blow up DO storage. Each entry is a compact array [ctx, action, good, regime, outcome, valid, tick].
+    this.playbook = new Map();
+    const pb = p.playbook;
+    if (Array.isArray(pb)) {
+      for (const rec of pb) {
+        if (!rec || typeof rec !== "object") continue;
+        const id = Number(rec.id);
+        if (!Number.isFinite(id)) continue;
+        const entries = Array.isArray(rec.e) ? rec.e : [];
+        const ring: PlaybookEntry[] = [];
+        for (const raw of entries.slice(0, PLAYBOOK_CAP)) {
+          if (!Array.isArray(raw) || raw.length < 7) continue;
+          const e: PlaybookEntry = {
+            ctx: Number(raw[0]) || 0,
+            action: Number(raw[1]) || 0,
+            good: Math.max(0, Math.min(3, Number(raw[2]) || 0)),
+            regime: Math.max(0, Math.min(2, Number(raw[3]) || 0)),
+            outcome: Number(raw[4]) || 0,
+            valid: Number(raw[5]) ? 1 : 0,
+            tick: Number(raw[6]) || 0,
+          };
+          if (Number.isFinite(e.ctx) && Number.isFinite(e.outcome) && Number.isFinite(e.tick)) ring.push(e);
+        }
+        if (ring.length > 0) this.playbook.set(id, ring);
+      }
     }
   }
 

@@ -257,7 +257,11 @@ export interface Env {
   GUILD_QUORUM?: string;                // living hands a trade needs before its guild is chartered (default 8; clamped 3..100)
   GUILD_SHARE_P?: string;               // 0..1 — workforce share a rising guild must pass to claim a monopoly (default 0.5)
 
-  // --- ㉓ THE LEXICON: the words the telling makes — coinage, spread, silence (see src/lexicon.ts) ---
+  // --- ㉕ PLAYBOOK: consequence-driven long-term memory (Phase 1, capability ①) ---
+  //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
+  PLAYBOOK_ENABLED?: string;            // "true"/"false" (default FALSE — ships dark; flip to "true" to arm consequence memory)
+
+  // --- ㉖ THE LEXICON: the words the telling makes — coinage, spread, silence (see src/lexicon.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The desk has
   //     no knobs (its thresholds are exported constants); only the master switch reads an env key.
   LEX_ENABLED?: string;                 // "true"/"false" (default TRUE)
@@ -709,6 +713,9 @@ export interface RuntimeConfig {
   };
   land: {
     enabled: boolean;         // ㉚ the grid + floor price + ratchet are constants (LAND_BASE_PRICE etc.) — no knobs by design
+  };
+  playbook: {
+    enabled: boolean;         // ㉕ Phase 1 capability ①: consequence-driven long-term memory (default OFF — dark deploy)
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1178,6 +1185,14 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     burn-to-claim grid. Set LAND_ENABLED=false to leave the layer inert and the chronicle byte-for-byte
       //     the pre-Land build.
       enabled: (env.LAND_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+
+    playbook: {
+      // ㉕ PLAYBOOK (Phase 1, capability ①): consequence-driven long-term memory. Shipped DISABLED
+      //     (dark deploy): default OFF so the economy is byte-for-byte the pre-playbook build until
+      //     explicitly armed. Moves no money, touches no neuron; only reweights counterparty choice
+      //     and good selection within existing caps. Set PLAYBOOK_ENABLED=true to arm.
+      enabled: (env.PLAYBOOK_ENABLED ?? "false").toLowerCase() === "true",
     },
 
     socialStimulus: {
