@@ -1,13 +1,13 @@
 // lvProvenance.js — task 29 · Phase B created this as a SEAM; task 31 · Phase D fills C20 status bar data
 // helpers and C22 trade-level neural evidence panel.
-// Bare-imported by lineageView.js (NO ?v cache-buster; _headers forces etag revalidation on /lvProvenance.js).
+// Imported by lineageView.js with ?v= cache-buster (task 75).
 //
 // PERF CONTRACT
 //   lvProvenanceRows builds an innerHTML string for ONE focused node on selection / on a language switch —
 //   never per frame. lvEvidencePanelHTML builds the C22 trade-evidence panel on click — never per frame.
 //   No shadowBlur, no backdrop-filter, no synchronous chain reads in the paint path.
-import { LV } from './lvState.js';
-import { state, shortHash, isRealTxHash, ARC_EXPLORER, clamp } from './shared.js';
+import { LV } from './lvState.js?v=158';
+import { state, shortHash, isRealTxHash, ARC_EXPLORER, clamp } from './shared.js?v=158';
 import { t as T } from './i18n.js?v=111';
 
 /**

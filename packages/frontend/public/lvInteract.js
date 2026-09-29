@@ -1,7 +1,7 @@
 // lvInteract.js — task 29 · Phase B created this as a SEAM; task 31 · Phase D filled C22 trade-arc hit
 // detection; task 32 · Phase E fills C23 (wheel-zoom + pinch + drag-pan + the LOD ladder) and C24 (the
 // search box + filter groups).
-// Bare-imported by lineageView.js (NO ?v cache-buster; _headers forces etag revalidation on /lvInteract.js).
+// Imported by lineageView.js with ?v= cache-buster (task 75).
 //
 // SEAM DISCIPLINE (task 29 · Phase B/C invariant, honoured here)
 //   • This module NEVER imports lineageView.js (that would close a cycle). It reaches core two ways only:
@@ -22,12 +22,12 @@ import {
   cam, camClamp, camToWorld, camLod, LV,
   lvFilter, lvParseQuery, lvFilterRecompute, lvNodeVisible,
   lvTouchNote, lvNarrow,
-} from './lvState.js';
-import { clamp, $, houseOf } from './shared.js';
+} from './lvState.js?v=158';
+import { clamp, $, houseOf } from './shared.js?v=158';
 import { t as T } from './i18n.js?v=111';
 // task 33 · C25 — the replay clock. lvTimeReplay never imports this module, so core → lvInteract →
 // lvTimeReplay → lvState stays a one-way chain (no cycle).
-import { lvReplayAdvance } from './lvTimeReplay.js';
+import { lvReplayAdvance } from './lvTimeReplay.js?v=158';
 
 // ================= tuning constants =================
 const DRAG_THRESHOLD = 4;      // css px of travel before a press becomes a pan (below it, it's a tap)

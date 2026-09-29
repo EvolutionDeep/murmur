@@ -1,7 +1,7 @@
 // lvEnv.js — task 31 · Phase D: market temperature environment field (C14), wealth Gini micro-chart (C16),
 // order-book price tape (C17), trust-minimised PnL colouring (C18), fulfilment reputation arcs (C19),
 // and per-node on-chain anchor marks (C21).
-// Bare-imported by lineageView.js (NO ?v cache-buster; _headers forces etag revalidation on /lvEnv.js).
+// Imported by lineageView.js with ?v= cache-buster (task 75).
 //
 // PERF CONTRACT
 //   lvEnvFrame is called EVERY FRAME, underneath the social edges. It blits ONE offscreen ambient bake +
@@ -10,12 +10,12 @@
 //   lvEnvNodeOverlay is called AFTER the live-node loop (forwarded from lvNeuralFrame). It draws per-node
 //   arcs (C19) + anchor ticks (C21) + optional PnL body recolour (C18). Gated by tier.
 //   No shadowBlur, no backdrop-filter, no .filter =.
-import { LV, LVQ, LV_HUD, nodeR, nodeById } from './lvState.js';
+import { LV, LVQ, LV_HUD, nodeR, nodeById } from './lvState.js?v=158';
 import {
   state, clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI, GOOD_COL,
-} from './shared.js';
-import { ribbonSeries } from './render2d.js';
-import { getJSON } from './polling.js';
+} from './shared.js?v=158';
+import { ribbonSeries } from './render2d.js?v=158';
+import { getJSON } from './polling.js?v=158';
 
 // ================= C14: market temperature environment field =================
 // The regime (HOT/CALM/COLD) drives a full-canvas ambient wash baked into an offscreen. Re-bakes ONLY when

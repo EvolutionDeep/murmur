@@ -31,9 +31,19 @@
 /styles.css
   Cache-Control: no-cache, must-revalidate
 
-# The split ESM tree is imported bare (no ?v= on the sub-module specifiers, and render2d.js has six
-# importers so adding ?v would fork duplicate module instances). Force etag revalidation on the entry
-# and the modules touched by the five-nations rebuild so returning readers never run stale bytes.
+# ─── ESM module cache policy ───────────────────────────────────────────────────
+# All local ESM modules now carry ?v=N on every import specifier (task 75).
+# The muros.live custom domain applies a zone-level Cache Rule (max-age=14400) that
+# OVERRIDES these _headers for paths without no-store. The ?v= query string ensures
+# each deploy produces unique URLs → CDN cache miss → fresh bytes from origin.
+# These no-cache entries remain as belt-and-braces for the Pages origin itself.
+#
+# Bump procedure: run `node scripts/bump-frontend-version.mjs` (auto-increments
+# from the current main.js?v= in index.html). ALL local imports are stamped in
+# lockstep to the same version, guaranteeing no module-instance forking.
+#
+# New modules: add a /newMod.js entry here AND the bump script will automatically
+# stamp ?v= on any import referencing it (it matches all ./x.js patterns).
 /main.js
   Cache-Control: no-cache, must-revalidate
 
@@ -49,16 +59,14 @@
 /camera.js
   Cache-Control: no-cache, must-revalidate
 
-# task 26 touched these two bare-imported modules (renderChronTicker deleted, pollChron rewired)
-# — same etag-revalidation treatment so returning readers never run stale bytes.
+# task 26: chronicle drawer modules.
 /drawers.js
   Cache-Control: no-cache, must-revalidate
 
 /polling.js
   Cache-Control: no-cache, must-revalidate
 
-# task 32 added civstage.js — a new bare-imported module (polling.js → civstage.js, no ?v on the
-# specifier), so it needs the same etag-revalidation treatment or returning readers run stale bytes.
+# task 32: civstage.js — evaluateCivStage module.
 /civstage.js
   Cache-Control: no-cache, must-revalidate
 
@@ -78,11 +86,11 @@
 /i18n-ui.js
   Cache-Control: no-cache, no-store, must-revalidate
 
-# task 48: walk mode module — bare-imported by main.js, needs etag revalidation
+# task 48: walk mode module.
 /walkMode.js
   Cache-Control: no-cache, must-revalidate
 
-# task 49: the tick-driven day/night cycle — bare-imported by scene3d.js, needs etag revalidation
+# task 49: the tick-driven day/night cycle.
 /dayNight.js
   Cache-Control: no-cache, must-revalidate
 
@@ -92,36 +100,31 @@
 /inspector.js
   Cache-Control: no-cache, must-revalidate
 
-# task 51: procedural terrain splat textures — bare-imported by scene3d.js
+# task 51: procedural terrain splat textures.
 /terrainTex.js
   Cache-Control: no-cache, must-revalidate
 
-# task 50: GPU particle weather system — bare-imported by scene3d.js
+# task 50: GPU particle weather system.
 /particles.js
   Cache-Control: no-cache, must-revalidate
 
-# task 52: the eight chronicle institution landmarks — bare-imported by scene3d.js
+# task 52: the eight chronicle institution landmarks.
 /institutions.js
   Cache-Control: no-cache, must-revalidate
 
-# task 55: land pixel system — bare-imported by main.js
+# task 55: land pixel system.
 /landLayer.js
   Cache-Control: no-cache, must-revalidate
 
 /landDrawer.js
   Cache-Control: no-cache, must-revalidate
 
-# task 22: the lineage / technical view — a new bare-imported module (main.js → lineageView.js, no ?v on the
-# specifier), so it needs the same etag-revalidation treatment or returning readers run stale bytes.
+# task 22: the lineage / technical view — now carries ?v= like all other modules.
 /lineageView.js
   Cache-Control: no-cache, must-revalidate
 
-# task 29 · Phase B: lineageView.js was split into a bare-ESM module tree. Every one of these is imported with
-# a BARE specifier (no ?v — adding one would fork duplicate module instances of the shared LV singleton and
-# split its state in two), so each needs the same etag-revalidation treatment as /lineageView.js above.
-#   lvState.js      the shared singleton + camera + qualityCoeff gate (imports only shared.js ⇒ cycle-free)
-#   lvData.js       every fetch + accumulation table, and the arrival-driven dirty-flag pump
-#   lvNeural.js     Phase C seam · lvGenetics.js Phase D · lvEnv.js + lvInteract.js Phase E · lvProvenance.js F
+# task 29 · Phase B: lineageView.js module tree. All now carry ?v= (task 75) so CDN freshness is
+# guaranteed by unique URLs; these entries remain as origin-level belt-and-braces.
 /lvState.js
   Cache-Control: no-cache, must-revalidate
 
@@ -143,17 +146,11 @@
 /lvInteract.js
   Cache-Control: no-cache, must-revalidate
 
-# task 33 · Phase F: lvTimeReplay.js — the C25 time-replay seam, a new BARE-imported module (imported by
-# lineageView.js, lvInteract.js and lvNeural.js, no ?v on any of the three specifiers). Same treatment: without
-# etag revalidation a returning reader would run the cached pre-C25 core against a stale/missing replay module.
+# task 33 · Phase F: lvTimeReplay.js — the C25 time-replay seam.
 /lvTimeReplay.js
   Cache-Control: no-cache, must-revalidate
 
-# task 33 · gate 5 found this PRE-EXISTING gap while auditing bare-module coverage: sim.js is imported with a
-# BARE specifier by camera.js, economy.js, main.js and render2d.js (the task-8 ESM split) but was never given
-# the etag-revalidation entry its four siblings all have, so a returning reader can run a stale swarm core
-# against fresh neighbours. Purely additive cache metadata — sim.js itself is NOT touched. Drop this block if
-# the 3D owner prefers to land it separately.
+# task 33 · gate 5: sim.js — imported by camera.js, economy.js, main.js and render2d.js.
 /sim.js
   Cache-Control: no-cache, must-revalidate
 
@@ -170,8 +167,8 @@
 /flywire-meta.json
   Cache-Control: no-cache, must-revalidate
 
-# task 51: the PoCA verifier pure core (pocaVerify.js) — a bare-ESM module imported with NO ?v cache-buster
-# by both the browser audit console (window.__pocaVerify) and, byte-for-byte, the Node CLI. Force etag
-# revalidation so a returning auditor never runs a stale crypto core against fresh chain data.
+# task 51: the PoCA verifier pure core (pocaVerify.js) — loaded dynamically by the browser audit
+# console (window.__pocaVerify) and the Node CLI. Not part of the static import graph; no-store
+# ensures Cloudflare BYPASSes it entirely.
 /pocaVerify.js
   Cache-Control: no-cache, no-store, must-revalidate

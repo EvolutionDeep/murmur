@@ -1,6 +1,5 @@
 // lvState.js — task 29 · Phase B: the shared substrate of the lineage-atlas module tree.
-// Bare-imported by lineageView.js / lvData.js / lv* feature modules (NO ?v cache-buster; _headers forces
-// etag revalidation on /lvState.js).
+// Imported by lineageView.js / lvData.js / lv* feature modules with ?v= cache-buster (task 75).
 //
 // WHY THIS MODULE EXISTS
 //   lineageView.js was split into a tree (core / lvData / lvNeural / lvGenetics / lvEnv / lvProvenance /
@@ -15,7 +14,7 @@
 //   • LVQ         — the qualityCoeff-driven degradation gate (halo → particles → social → DPR)
 //   • lvMarkDirty — the arrival-event dirty flags that replaced the old 45 s catch-all timer (task 29 · C5)
 //   • geometry + localStorage helpers shared by the layout, the bake and the data layer
-import { state, clamp, fnv1a } from './shared.js';
+import { state, clamp, fnv1a } from './shared.js?v=158';
 
 // ================= tuning constants =================
 export const LINEAGE_POLL_MS = 300000;    // 300 s — /lineage advances only on a breed/commit, this is ample

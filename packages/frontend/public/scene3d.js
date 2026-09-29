@@ -2,21 +2,21 @@
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
 // 任务18：删程序化泥砖定居点/河流/森林/草丛（方块感 + 性能），海面改轻量材质，
 // 大陆 480×300 → 720×450，城堡重装为完整主堡+角塔+城墙+城门+吊桥+旗帜。
-import { state, CONTINENT, PROVINCES, houseColor, wealthColorAt, clamp, lerp, mix, fnv1a, GOLD_THREAD, CRACK_RED, LAW_GOLD, FAITH_GOLD, COIN_GOLD, TECH_BRONZE, ASH_GREY, GOOD_COL, ECON_EDGE_MS, GRAVE_CAP, graveUid } from './shared.js';
+import { state, CONTINENT, PROVINCES, houseColor, wealthColorAt, clamp, lerp, mix, fnv1a, GOLD_THREAD, CRACK_RED, LAW_GOLD, FAITH_GOLD, COIN_GOLD, TECH_BRONZE, ASH_GREY, GOOD_COL, ECON_EDGE_MS, GRAVE_CAP, graveUid } from './shared.js?v=158';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js';
-import { select as selectFly, deselect as deselectFly } from './inspector.js';
-import { updateNations, assignNationIds, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js';
-import { cameraMode } from './camera.js';
-import { DayNight } from './dayNight.js';
-import { createTerrainTextures } from './terrainTex.js';
-import { ParticleSystem, EVENT_MAP as PARTICLE_EVENT_MAP, WEATHER as PARTICLE_WEATHER } from './particles.js';
-import { Institutions, computeInstitutionSpots } from './institutions.js';
-import { closeActiveDrawer } from './drawers.js';
+import { zoneAnchor, chronFx, showEpitaph, hideEpitaph, glyphFor } from './render2d.js?v=158';
+import { select as selectFly, deselect as deselectFly } from './inspector.js?v=158';
+import { updateNations, assignNationIds, getNationId, getNationTint, voronoiEdges, meanderEdges, getNationColor } from './nations.js?v=158';
+import { cameraMode } from './camera.js?v=158';
+import { DayNight } from './dayNight.js?v=158';
+import { createTerrainTextures } from './terrainTex.js?v=158';
+import { ParticleSystem, EVENT_MAP as PARTICLE_EVENT_MAP, WEATHER as PARTICLE_WEATHER } from './particles.js?v=158';
+import { Institutions, computeInstitutionSpots } from './institutions.js?v=158';
+import { closeActiveDrawer } from './drawers.js?v=158';
 
 // ================= THREE.JS 3D SCENE =================
 // Replaces the Canvas 2D render pipeline with a Three.js 3D scene:

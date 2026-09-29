@@ -1,5 +1,5 @@
 // lvData.js — task 29 · Phase B: the DATA layer of the lineage atlas, split out of lineageView.js.
-// Bare-imported by lineageView.js (NO ?v cache-buster; _headers forces etag revalidation on /lvData.js).
+// Imported by lineageView.js with ?v= cache-buster (task 75).
 //
 // RESPONSIBILITY
 //   Everything that talks to the network or accumulates a client-side table the atlas draws from:
@@ -13,13 +13,13 @@
 //
 // NO CYCLES: this module imports lvState.js (the singleton) but never lineageView.js. When new data means
 // "the layout must be rebuilt", it calls LV.hooks.rebuild(), which the core registers at module load.
-import { state, sim, SOCIETY_BOND_MIN, atomicToUsdc, clamp, sha256HexClient } from './shared.js';
-import { getJSON } from './polling.js';
+import { state, sim, SOCIETY_BOND_MIN, atomicToUsdc, clamp, sha256HexClient } from './shared.js?v=158';
+import { getJSON } from './polling.js?v=158';
 import {
   LV, LINEAGE_POLL_MS, GH_CONCURRENCY, GH_RETIRED_MAX, GH_RETIRED_PER_ID, EDGE_TTL_MS,
   SOCIAL_HALFLIFE_MS, LV_REBUILD_MIN_MS, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT,
   isZeroHash, lvForceRebuild, saveGH, saveSocial,
-} from './lvState.js';
+} from './lvState.js?v=158';
 
 // ================= chronicle kind taxonomy (task 29 · C2) =================
 // The old reader was 100 % dead code on two independent counts, both verified against a live /annals pull

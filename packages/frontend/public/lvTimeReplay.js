@@ -1,6 +1,5 @@
 // lvTimeReplay.js — task 33 · Phase F · C25: the lineage atlas TIME REPLAY (世系树生长).
-// Bare-imported by lvNeural.js + lvInteract.js + lineageView.js (NO ?v cache-buster; _headers forces etag
-// revalidation on /lvTimeReplay.js).
+// Imported by lvNeural.js + lvInteract.js + lineageView.js with ?v= cache-buster (task 75).
 //
 // WHAT IT DOES
 //   A draggable cursor over the whole archived cron series (/history, ~9 400 rows ≈ 10.8 days in production)
@@ -37,12 +36,12 @@
 //   • ZERO TIMERS. Playback is integrated from the rAF clock inside lvReplayAdvance; the only async work is
 //     the bounded, mutexed, abortable /history page fetch. There is nothing to leak when the atlas closes.
 //   • No canvas glow, no CSS veil, no per-frame text drawn onto the atlas (the read-outs live in DOM).
-import { LV, LVQ, nodeR, ringRadius, lvForceRebuild } from './lvState.js';
+import { LV, LVQ, nodeR, ringRadius, lvForceRebuild } from './lvState.js?v=158';
 import {
   state, $, clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI, STATE_RGB,
-} from './shared.js';
+} from './shared.js?v=158';
 import { t as T, gl } from './i18n.js?v=111';
-import { getJSON } from './polling.js';
+import { getJSON } from './polling.js?v=158';
 
 // ================= tuning constants =================
 const RT_STEP = 100;            // archived cron rows per keyframe (~2.8 h of colony time in production)

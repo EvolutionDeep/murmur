@@ -1,6 +1,6 @@
 // lvGenetics.js — task 30 · Phase C: genetics graph completion (C9), bloodline trace (C10),
 // and genotype space visualization (C11).
-// Bare-imported by lineageView.js (NO ?v cache-buster; _headers forces etag revalidation on /lvGenetics.js).
+// Imported by lineageView.js with ?v= cache-buster (task 75).
 //
 // FILLED CONTENT (Phase C — C9, C10, C11)
 //   C9  genetics graph: cross recombination edges (~29), operator-differentiated node shapes
@@ -14,10 +14,10 @@
 //   lvGeneticsPass runs INSIDE rebuild(), floored at LV_REBUILD_MIN_MS (12 s). It annotates nodes but
 //   MUST NOT move them. Anything O(n²) over genomes must be memoised. No shadowBlur, no backdrop-filter.
 //   The per-frame draw (lvGeneticsFrame) consults LVQ.tier before drawing expensive layers.
-import { LV, LVQ, LV_HUD, nodeR, ringRadius } from './lvState.js';
-import { state, clamp, mix, rgb, rgba, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js';
+import { LV, LVQ, LV_HUD, nodeR, ringRadius } from './lvState.js?v=158';
+import { state, clamp, mix, rgb, rgba, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js?v=158';
 import { t as T } from './i18n.js?v=111';
-import { getJSON } from './polling.js';
+import { getJSON } from './polling.js?v=158';
 
 // ================= C9: cross recombination edges + operator shapes =================
 // After rebuild, traverse all nodes' parents to find secondary (non-paternal) edges.
