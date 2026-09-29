@@ -1,21 +1,21 @@
 // main.js — 入口：boot() + loop() + 语言切换 + UI 接线 + TCA 复制
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js?v=158';
-import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=111';
-import { bindPointer, bindZoomControls, resize } from './camera.js?v=158';
-import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePoca, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPoca, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderPoca, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePoca, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js?v=158';
-import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js?v=158';
-import { bindBloomScale, bindNeuralViews, deselect, fillInspectorFromSim, pushScopeCollective, renderBloom, renderNmap, renderRaster, renderScope } from './inspector.js?v=158';
-import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js?v=158';
-import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js?v=158';
-import { ThreeScene } from './scene3d.js?v=158';
-import { WalkMode } from './walkMode.js?v=158';
-import { LandLayer } from './landLayer.js?v=158';
-import { openLand, closeLand, paintLand } from './landDrawer.js?v=158';
-import { loadDelaunay } from './nations.js?v=158';
-import { updateMotes, updateSim } from './sim.js?v=158';
+import { state, $, CHRON_POLL_MS, HIST_POLL_MS, POLL_MS, applyPaletteToDOM, clamp, graveField, lerp, paletteAt, shortHash, sim } from './shared.js?v=159';
+import { currentLang, ENDONYMS, getLang, setLang, SUPPORTED, t as T } from './i18n.js?v=112';
+import { bindPointer, bindZoomControls, resize } from './camera.js?v=159';
+import { arenaApplyChip, arenaBet, arenaClaim, arenaConnect, arenaUpdatePreview, buySignal, closeArena, closeBrain, closeCanary, closeChron, closeChronVol, closeHistory, closeLaureate, closeLineage, closePoca, closePredict, closeProofs, closePulse, closeWallets, doBreed, lazyProvCheck, openChron, openChronVol, paintArena, paintLaureate, paintPoca, paintPredict, paintPulse, proveChron, refreshProvBadge, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderPoca, renderProofs, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, selectLineage, toggleArena, toggleBrain, toggleCanary, toggleChron, toggleHistory, toggleLaureate, toggleLineage, togglePoca, togglePredict, toggleProofs, togglePulse, toggleWallets, closeTemple, openTemple, paintTemple, renderTemple, templeBurn, templeConnect, templeSelectKind, toggleTemple, updateNetNote, updateSinceLaunch, verifyPoem, verifyPredictRound, verifyProof } from './drawers.js?v=159';
+import { applyTopology, renderDist, setStatusKind, updateEconFoot, updateEconMode } from './economy.js?v=159';
+import { bindBloomScale, bindNeuralViews, deselect, fillInspectorFromSim, pushScopeCollective, renderBloom, renderNmap, renderRaster, renderScope } from './inspector.js?v=159';
+import { loadLaureateMore, offlineTick, poll, pollBourse, pollChron, pollHistory, pollRoster, pollWar } from './polling.js?v=159';
+import { drawTempHistory, hideEpitaph, makeCrownGlow, makeHaloSprite, render, sampleHistory, showEpitaph } from './render2d.js?v=159';
+import { ThreeScene } from './scene3d.js?v=159';
+import { WalkMode } from './walkMode.js?v=159';
+import { LandLayer } from './landLayer.js?v=159';
+import { openLand, closeLand, paintLand } from './landDrawer.js?v=159';
+import { loadDelaunay } from './nations.js?v=159';
+import { updateMotes, updateSim } from './sim.js?v=159';
 // task 22: the second main canvas (lineage / technical atlas).
-import { closeLineageView, initLineageView, lvFrame, lvPerf, lvRelocalise, openLineageView, toggleLineageView } from './lineageView.js?v=158';
+import { closeLineageView, initLineageView, lvFrame, lvPerf, lvRelocalise, openLineageView, toggleLineageView } from './lineageView.js?v=159';
 
 // read-only perf probe for diagnostics (never writes anything): frame cost, adaptive quality, swarm & ledger size
 window.__murmurPerf = () => Object.assign({ frameMsAvg: Math.round(state.frameMsAvg * 10) / 10, qualityCoeff: Math.round(state.qualityCoeff * 100) / 100, flies: sim.size, graves: graveField.length }, lvPerf());
@@ -187,6 +187,9 @@ export function bindUI() {
       case "poca": togglePoca(); break;   // task 50: the proof-of-continuity anchor drawer
       case "walk": if (state.walkMode) state.walkMode.toggle(); break;
       case "lineageview": toggleLineageView(); break;   // task 22: switch to the second main canvas
+      // task 93: the rail's two canvas-mode buttons call the SAME one-way switches the capsules use
+      case "home": openLineageView(); break;   // rail home = the default atlas canvas
+      case "mode3d": closeLineageView(); break;   // rail 3D mode = back to the WebGL swarm
       case "wallets": toggleWallets(); break;
       case "proofs": toggleProofs(); break;
       case "history": toggleHistory(); break;

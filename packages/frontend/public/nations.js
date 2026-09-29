@@ -12,8 +12,8 @@
 //   getNationTint(baseColor, id, strength=0.28) → [r,g,b]（地貌基色混合国家色）
 //   getNationId(vertexIndex) / resetNations() —— 热路径查询与复位
 import * as THREE from 'three';
-import { state, houseColor } from './shared.js?v=158';
-import { zoneAnchor } from './render2d.js?v=158';
+import { state, houseColor } from './shared.js?v=159';
+import { zoneAnchor } from './render2d.js?v=159';
 
 // C1: d3-delaunay is resolved lazily (dynamic import) so an unreachable CDN degrades to
 // "no Voronoi borders" instead of failing the whole module graph — a static import here would

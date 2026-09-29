@@ -14,7 +14,7 @@
 //   • LVQ         — the qualityCoeff-driven degradation gate (halo → particles → social → DPR)
 //   • lvMarkDirty — the arrival-event dirty flags that replaced the old 45 s catch-all timer (task 29 · C5)
 //   • geometry + localStorage helpers shared by the layout, the bake and the data layer
-import { state, clamp, fnv1a } from './shared.js?v=158';
+import { state, clamp, fnv1a } from './shared.js?v=159';
 
 // ================= tuning constants =================
 export const LINEAGE_POLL_MS = 300000;    // 300 s — /lineage advances only on a breed/commit, this is ample

@@ -66,40 +66,40 @@ import {
   clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI,
   GOLD_THREAD, CRACK_RED, readLineageOnchain, shortHash, isRealAddr, isRealTxHash,
   ARC_EXPLORER, fnv1a, fapColor,
-} from './shared.js?v=158';
-import { t as T, gl } from './i18n.js?v=111';
-import { getJSON } from './polling.js?v=158';
-import { derivePseudoSpikes } from './inspector.js?v=158';
-import { closeActiveDrawer } from './drawers.js?v=158';
+} from './shared.js?v=159';
+import { t as T, gl } from './i18n.js?v=112';
+import { getJSON } from './polling.js?v=159';
+import { derivePseudoSpikes } from './inspector.js?v=159';
+import { closeActiveDrawer } from './drawers.js?v=159';
 import {
   LV, LVQ, cam, camApply, camIdentity, camToWorld, camLod, camKScale, lvUpdateQuality, lvForceRebuild, lvMarkDirty,
   isZeroHash, nodeR, ringRadius, fanOffset, nodeById, loadGH, loadSocial, lvNodeAlpha, lvFilter,
   LINEAGE_POLL_MS, FOCUS_INTERVAL_MS, FOCUS_DEBOUNCE_MS, lvHitPad, LAYERS,
   EMIT_TAU_MS, EDGE_TTL_MS, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT,
   LV_LAYOUT, LV_HUD, lvHudMeasure, lvRelayoutAll, lvHudObserve,
-} from './lvState.js?v=158';
+} from './lvState.js?v=159';
 import {
   pollLineageView, lvPumpData, lvPrime, checkStamp, adoptRosterLineage,
-} from './lvData.js?v=158';
+} from './lvData.js?v=159';
 import {
   lvNeuralFrame, lvNeuralPanelRows, lvGeneticsPanelHTML, lvHasRealSpikes,
   lvTraceStart, lvTraceClear, c8Stop, c13Diff, c13SnapshotPositions,
-} from './lvNeural.js?v=158';
-import { lvGeneticsPass, lvNodeShape, lvCrossEdges } from './lvGenetics.js?v=158';
-import { lvEnvFrame, lvEnvRegimeBucket, lvEnvCyclePnl, lvEnvPnlMode } from './lvEnv.js?v=158';
-import { lvProvenanceRows, lvEvidencePanelHTML, lvProvFetchStatus } from './lvProvenance.js?v=158';
+} from './lvNeural.js?v=159';
+import { lvGeneticsPass, lvNodeShape, lvCrossEdges } from './lvGenetics.js?v=159';
+import { lvEnvFrame, lvEnvRegimeBucket, lvEnvCyclePnl, lvEnvPnlMode } from './lvEnv.js?v=159';
+import { lvProvenanceRows, lvEvidencePanelHTML, lvProvFetchStatus } from './lvProvenance.js?v=159';
 import {
   lvInteractFrame, lvInteractBind, lvTradeHitScreen,
   lvBindSearchFilter, lvSearchRelocalise, lvToggleFilters, lvPopulateHouses,
   lvBindMobile, lvMobileSync, lvMobileRelocalise, lvPanelSegment, lvLegendSync,
-} from './lvInteract.js?v=158';
+} from './lvInteract.js?v=159';
 // task 33 · C25 — the time-replay seam. All lv* modules carry ?v= (task 75).
 // lvTimeReplay only ever imports lvState.js / shared.js / i18n.js / polling.js, never this file, so the edge
 // core → lvTimeReplay stays one-way and the module tree stays acyclic.
 import {
   lvReplayOn, lvReplayScrubbing, lvReplayEntryBorn, lvReplayTimeBucket,
   lvReplayToggle, lvReplayStop, lvReplayBind, lvReplayRelocalise, lvReplayPerf,
-} from './lvTimeReplay.js?v=158';
+} from './lvTimeReplay.js?v=159';
 
 // ================= canvas sizing =================
 function sizeCanvas() {
@@ -1194,7 +1194,7 @@ async function refreshProvBar() {
   const addr = (lin && lin.lineageAddress) || (state.lvLineage && state.lvLineage.lineageAddress) || '';
   if (addr) {
     try {
-      const { readLineageHead } = await import('./shared.js?v=158');
+      const { readLineageHead } = await import('./shared.js?v=159');
       const head = await readLineageHead(addr);
       if (head) set('lv-pb-commits', `${T('lv.provCommits')}: ${head.commitCount}`);
     } catch { /* best-effort */ }
@@ -1295,6 +1295,12 @@ export function toggleLineageView() { if (LV.active) closeLineageView(); else op
 function syncRailBtn() {
   const b = document.querySelector('#command-rail .rail-btn[data-act="lineageview"]');
   if (b) { b.classList.toggle('is-off', !LV.active); b.setAttribute('aria-pressed', LV.active ? 'true' : 'false'); }
+  // task 93: the rail's two canvas-mode buttons mirror whichever canvas owns the stage —
+  // home is lit while the atlas runs, mode3d is lit while the WebGL swarm runs.
+  const h = document.querySelector('#command-rail .rail-btn[data-act="home"]');
+  if (h) { h.classList.toggle('is-off', !LV.active); h.setAttribute('aria-pressed', LV.active ? 'true' : 'false'); }
+  const m = document.querySelector('#command-rail .rail-btn[data-act="mode3d"]');
+  if (m) { m.classList.toggle('is-off', LV.active); m.setAttribute('aria-pressed', LV.active ? 'false' : 'true'); }
 }
 
 // ================= init (wiring, called once from main.js boot) =================

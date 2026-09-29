@@ -4417,7 +4417,7 @@ html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
    and the tuned mobile layout takes over unchanged.
    ============================================================================ */
 :root {
-  --rail-w: 56px;              /* the left command spine */
+  --rail-w: 86px;              /* the left command spine (task 93: wide enough for a name under each glyph) */
   --rail-ic: 21px;
   --card-w: clamp(228px, 23vw, 292px);
   --drawer-w: min(380px, 92vw);
@@ -4441,7 +4441,8 @@ html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
 .command-rail::-webkit-scrollbar { width: 0; height: 0; }
 .rail-btn {
   position: relative; flex: none;
-  width: 42px; height: 40px; display: grid; place-items: center;
+  width: 74px; height: 50px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px;
   border: 0; border-radius: 10px; background: transparent; cursor: pointer;
   color: var(--gall-2);
   transition: background-color var(--t-fast) ease, color var(--t-fast) ease,
@@ -4451,10 +4452,16 @@ html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
 .rail-btn:active { transform: translateY(0); }
 .rail-btn:focus-visible { box-shadow: var(--ring); }
 .rail-btn.is-off { opacity: 0.42; }
-.rail-sep { flex: none; width: 24px; height: 1px; margin: 6px 0; background: rgba(122, 96, 58, 0.30); }
+/* task 93: the localised name under each glyph — centred, two lines max, never overflows the spine */
+.rail-lb {
+  font-family: var(--sans); font-size: 9px; font-weight: 500; line-height: 1.15;
+  letter-spacing: 0.01em; text-align: center; max-width: 70px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.rail-sep { flex: none; width: 48px; height: 1px; margin: 6px 0; background: rgba(122, 96, 58, 0.30); }
 /* the hover tooltip reads the localized title attr (data-i18n-title keeps it in-language) */
 .rail-btn::after {
-  content: attr(title); position: absolute; left: 50px; top: 50%; transform: translateY(-50%);
+  content: attr(title); position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%);
   z-index: 20; pointer-events: none; white-space: nowrap;
   padding: 5px 9px; border-radius: 6px;
   background: var(--gall); color: var(--vellum);
@@ -4463,6 +4470,8 @@ html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
 }
 .rail-btn:hover::after, .rail-btn:focus-visible::after { opacity: 1; }
 /* active = this rail button's drawer / mode is on stage (pure CSS, mirrors body.*-open) */
+body.lv-active       .rail-btn[data-act="home"],
+body:not(.lv-active) .rail-btn[data-act="mode3d"],
 body.chron-open    .rail-btn[data-act="chronicle"],
 body.canary-open   .rail-btn[data-act="canary"],
 body.temple-open   .rail-btn[data-act="temple"],
@@ -4480,6 +4489,8 @@ body.layers-pop    .rail-btn[data-act="layers"],
 body.walk-active   .rail-btn[data-act="walk"] {
   background-color: rgba(var(--gold-rgb), 0.18); color: var(--gold-deep);
 }
+body.lv-active       .rail-btn[data-act="home"]::before,
+body:not(.lv-active) .rail-btn[data-act="mode3d"]::before,
 body.chron-open    .rail-btn[data-act="chronicle"]::before,
 body.canary-open   .rail-btn[data-act="canary"]::before,
 body.temple-open   .rail-btn[data-act="temple"]::before,
@@ -4494,7 +4505,7 @@ body.predict-open  .rail-btn[data-act="predict"]::before,
 body.arena-open    .rail-btn[data-act="arena"]::before,
 body.layers-pop    .rail-btn[data-act="layers"]::before,
 body.walk-active   .rail-btn[data-act="walk"]::before {
-  content: ""; position: absolute; left: -7px; top: 9px; bottom: 9px; width: 3px;
+  content: ""; position: absolute; left: -6px; top: 9px; bottom: 9px; width: 3px;
   border-radius: 2px; background: var(--gold);
 }
 
@@ -4556,8 +4567,9 @@ body.layers-pop .layer-toggles {
 
 /* ============================ TABLET (681–1024px) ============================ */
 @media (min-width: 681px) and (max-width: 1024px) {
-  :root { --rail-w: 50px; --card-w: clamp(210px, 30vw, 260px); --drawer-w: min(360px, 90vw); }
-  .rail-btn { width: 38px; height: 37px; }
+  :root { --rail-w: 76px; --card-w: clamp(210px, 30vw, 260px); --drawer-w: min(360px, 90vw); }
+  .rail-btn { width: 66px; height: 46px; }
+  .rail-lb { font-size: 8px; max-width: 60px; }
   .topmeta .x-handle { display: none; }
 }
 
@@ -4818,8 +4830,10 @@ body.lv-active .canary-btn, body.lv-active .chron-btn, body.lv-active #inspector
 body.lv-active #epitaph {
   display: none !important;
 }
-/* the lineage rail button reads as "on stage" exactly like the drawer toggles do */
-body.lv-active .rail-btn[data-act="lineageview"] {
+/* the canvas-mode rail buttons read as "on stage" exactly like the drawer toggles do
+   (task 93: home = the atlas owns the stage, mode3d = the WebGL swarm owns it) */
+body.lv-active .rail-btn[data-act="home"],
+body:not(.lv-active) .rail-btn[data-act="mode3d"] {
   background-color: rgba(var(--gold-rgb), 0.18); color: var(--gold-deep);
 }
 

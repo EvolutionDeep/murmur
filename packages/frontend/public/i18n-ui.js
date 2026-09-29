@@ -10213,4 +10213,57 @@ Object.assign(ja, jaH);
 Object.assign(ko, koH);
 Object.assign(ar, arH);
 
+// ---- task 93 · command-rail name labels: short forms for the labelled spine (4 keys × 7 languages,
+//      symmetric, no placeholders). Appended at the end of the file on purpose — the seven language
+//      blocks above stay untouched. ----
+const enRailLb = {
+  "rail.home": "Home",
+  "rail.canary": "Canary",
+  "rail.poca": "Continuity",
+  "rail.mode3d": "3D mode",
+};
+const zhRailLb = {
+  "rail.home": "首页",
+  "rail.canary": "金丝雀",
+  "rail.poca": "连续性",
+  "rail.mode3d": "3D 模式",
+};
+const frRailLb = {
+  "rail.home": "Accueil",
+  "rail.canary": "Canari",
+  "rail.poca": "Continuité",
+  "rail.mode3d": "Mode 3D",
+};
+const esRailLb = {
+  "rail.home": "Inicio",
+  "rail.canary": "Canario",
+  "rail.poca": "Continuidad",
+  "rail.mode3d": "Modo 3D",
+};
+const jaRailLb = {
+  "rail.home": "ホーム",
+  "rail.canary": "カナリア",
+  "rail.poca": "連続性",
+  "rail.mode3d": "3Dモード",
+};
+const koRailLb = {
+  "rail.home": "홈",
+  "rail.canary": "카나리아",
+  "rail.poca": "연속성",
+  "rail.mode3d": "3D 모드",
+};
+const arRailLb = {
+  "rail.home": "الرئيسية",
+  "rail.canary": "الكناري",
+  "rail.poca": "الاستمرارية",
+  "rail.mode3d": "وضع 3D",
+};
+Object.assign(en, enRailLb);
+Object.assign(zh, zhRailLb);
+Object.assign(fr, frRailLb);
+Object.assign(es, esRailLb);
+Object.assign(ja, jaRailLb);
+Object.assign(ko, koRailLb);
+Object.assign(ar, arRailLb);
+
 export { en, zh, fr, es, ja, ko, ar };

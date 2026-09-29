@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=158" />
+  <link rel="stylesheet" href="./styles.css?v=159" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -55,6 +55,8 @@
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></symbol>
     <!-- task 22: the lineage / technical atlas toggle (a dendrogram: one ancestor fanning into descendants) -->
     <symbol id="i-lineage" viewBox="0 0 24 24"><circle cx="12" cy="4.2" r="1.9"/><circle cx="5.2" cy="13.4" r="1.8"/><circle cx="18.8" cy="13.4" r="1.8"/><circle cx="8.4" cy="20.2" r="1.5"/><circle cx="15.6" cy="20.2" r="1.5"/><path d="M12 6.1v2.6M12 8.7L5.2 11.6M12 8.7l6.8 2.9M5.2 15.2l3.2 3.4M18.8 15.2l-3.2 3.4"/></symbol>
+    <!-- task 93 · the 3D-mode rail glyph: the same cube the canvas-switch capsule draws -->
+    <symbol id="i-cube" viewBox="0 0 16 16"><path d="M8 1.7 14 5.1v5.8L8 14.3 2 10.9V5.1z"/><path d="M2 5.1 8 8.5l6-3.4"/><path d="M8 8.5v5.8"/></symbol>
     <!-- task 50 · PoCA: a shield (the anchor) carrying two chain links (the unbroken epoch chain) -->
     <symbol id="i-poca" viewBox="0 0 24 24"><path d="M12 2.8l7.2 2.8v5.8c0 4.7-3.1 8.2-7.2 9.8-4.1-1.6-7.2-5.1-7.2-9.8V5.6l7.2-2.8z"/><rect x="10.7" y="6.7" width="2.6" height="4.9" rx="1.3"/><rect x="10.7" y="9.6" width="2.6" height="4.9" rx="1.3"/><path d="M12 16.6v1.9"/></symbol>
     <!-- task 50 · PoCA admin-kind glyphs (1–7, byte-mapped to poca.ts PocoAdminKind) -->
@@ -72,23 +74,29 @@
        canary / temple / walk) and surfaces the layer tray + the two corner cards. Every button calls
        an EXISTING toggle (see main.js bindUI rail delegation) — no drawer/economy logic is duplicated.
        Drawer-entry buttons that live inside the cards (wallets / proofs / brain / …) stay reachable
-       there, so all 32 UI groups remain available. Hidden on phones (the tuned mobile layout takes over). -->
+       there, so all 32 UI groups remain available. Hidden on phones (the tuned mobile layout takes over).
+       task 93 · re-ordered for the atlas-first default: home (the lineage canvas, the default home)
+       leads, then the mode-agnostic drawers, ONE divider, then the 3D-mode switch followed by the
+       3D-only group (layer tray, the two corner cards, the land layer, walk mode — every one of them
+       is display:none under body.lv-active). Each button carries a localised name under its glyph
+       (.rail-lb), so the rail reads as a labelled spine instead of a bare icon strip. -->
   <nav class="command-rail" id="command-rail" role="toolbar" aria-label="command rail" aria-orientation="vertical" data-i18n-aria="rail.aria">
-    <button type="button" class="rail-btn" data-act="layers" data-i18n-title="rail.layers" data-i18n-aria="rail.layers" title="layers" aria-label="layers"><svg class="ra-ic" aria-hidden="true"><use href="#i-layers"/></svg></button>
-    <button type="button" class="rail-btn" data-act="econ" data-i18n-title="rail.econ" data-i18n-aria="rail.econ" title="agent economy" aria-label="agent economy"><svg class="ra-ic" aria-hidden="true"><use href="#i-coin"/></svg></button>
-    <button type="button" class="rail-btn" data-act="pop" data-i18n-title="rail.pop" data-i18n-aria="rail.pop" title="population" aria-label="population"><svg class="ra-ic" aria-hidden="true"><use href="#i-users"/></svg></button>
-    <button type="button" class="rail-btn" data-act="land" data-i18n-title="rail.land" data-i18n-aria="rail.land" title="land" aria-label="land"><svg class="ra-ic" aria-hidden="true"><use href="#i-map"/></svg></button>
-    <span class="rail-sep" aria-hidden="true"></span>
-    <button type="button" class="rail-btn" data-act="chronicle" data-i18n-title="chron.openTitle" data-i18n-aria="chron.title" title="chronicle" aria-label="chronicle"><svg class="ra-ic" aria-hidden="true"><use href="#i-book"/></svg></button>
-    <button type="button" class="rail-btn" data-act="canary" data-i18n-title="canary.openTitle" data-i18n-aria="canary.aria" title="canary" aria-label="canary"><svg class="ra-ic" aria-hidden="true"><use href="#i-bird"/></svg></button>
-    <button type="button" class="rail-btn" data-act="temple" data-i18n-title="temple.title" data-i18n-aria="temple.aria" title="the temple" aria-label="the temple"><svg class="ra-ic" aria-hidden="true"><use href="#i-temple"/></svg></button>
+    <!-- 1 · the default home: the lineage / technical atlas canvas (body.lv-active) -->
+    <button type="button" class="rail-btn" data-act="home" data-i18n-title="lv.railTitle" data-i18n-aria="lv.railAria" title="lineage atlas" aria-label="lineage atlas" aria-pressed="true"><svg class="ra-ic" aria-hidden="true"><use href="#i-lineage"/></svg><span class="rail-lb" data-i18n="rail.home">Home</span></button>
+    <!-- 2 · the mode-agnostic drawers (read-outs, useful on either canvas) -->
+    <button type="button" class="rail-btn" data-act="chronicle" data-i18n-title="chron.openTitle" data-i18n-aria="chron.title" title="chronicle" aria-label="chronicle"><svg class="ra-ic" aria-hidden="true"><use href="#i-book"/></svg><span class="rail-lb" data-i18n="chron.title">chronicle</span></button>
+    <button type="button" class="rail-btn" data-act="canary" data-i18n-title="canary.openTitle" data-i18n-aria="canary.aria" title="canary" aria-label="canary"><svg class="ra-ic" aria-hidden="true"><use href="#i-bird"/></svg><span class="rail-lb" data-i18n="rail.canary">Canary</span></button>
+    <button type="button" class="rail-btn" data-act="temple" data-i18n-title="temple.title" data-i18n-aria="temple.aria" title="the temple" aria-label="the temple"><svg class="ra-ic" aria-hidden="true"><use href="#i-temple"/></svg><span class="rail-lb" data-i18n="temple.btn">The Temple</span></button>
     <!-- task 50 · PoCA: the proof-of-continuity anchor read-out (mutually exclusive with the other drawers) -->
-    <button type="button" class="rail-btn" data-act="poca" data-i18n-title="poca.title" data-i18n-aria="poca.aria" title="proof of continuity" aria-label="proof of continuity"><svg class="ra-ic" aria-hidden="true"><use href="#i-poca"/></svg></button>
-    <button type="button" class="rail-btn" data-act="walk" data-i18n-title="walk.title" data-i18n-aria="walk.aria" title="explore on foot" aria-label="explore on foot"><svg class="ra-ic" aria-hidden="true"><use href="#i-walk"/></svg></button>
+    <button type="button" class="rail-btn" data-act="poca" data-i18n-title="poca.title" data-i18n-aria="poca.aria" title="proof of continuity" aria-label="proof of continuity"><svg class="ra-ic" aria-hidden="true"><use href="#i-poca"/></svg><span class="rail-lb" data-i18n="rail.poca">Continuity</span></button>
     <span class="rail-sep" aria-hidden="true"></span>
-    <!-- task 22: switch to the second main canvas (the lineage / technical atlas). data-act="lineageview" is
-         deliberately NOT "lineage" — that act is already taken by the lineage DRAWER (see the card trigger). -->
-    <button type="button" class="rail-btn is-off" data-act="lineageview" data-i18n-title="lv.railTitle" data-i18n-aria="lv.railAria" title="lineage atlas" aria-label="lineage atlas" aria-pressed="false"><svg class="ra-ic" aria-hidden="true"><use href="#i-lineage"/></svg></button>
+    <!-- 3 · the 3D-mode switch first, then everything that only means something on the 3D canvas -->
+    <button type="button" class="rail-btn is-off" data-act="mode3d" data-i18n-title="lv.switchTo3d" data-i18n-aria="lv.switchTo3d" title="3D swarm" aria-label="3D swarm" aria-pressed="false"><svg class="ra-ic" aria-hidden="true"><use href="#i-cube"/></svg><span class="rail-lb" data-i18n="rail.mode3d">3D mode</span></button>
+    <button type="button" class="rail-btn" data-act="layers" data-i18n-title="rail.layers" data-i18n-aria="rail.layers" title="layers" aria-label="layers"><svg class="ra-ic" aria-hidden="true"><use href="#i-layers"/></svg><span class="rail-lb" data-i18n="rail.layers">Layers</span></button>
+    <button type="button" class="rail-btn" data-act="econ" data-i18n-title="rail.econ" data-i18n-aria="rail.econ" title="agent economy" aria-label="agent economy"><svg class="ra-ic" aria-hidden="true"><use href="#i-coin"/></svg><span class="rail-lb" data-i18n="rail.econ">Agent economy</span></button>
+    <button type="button" class="rail-btn" data-act="pop" data-i18n-title="rail.pop" data-i18n-aria="rail.pop" title="population" aria-label="population"><svg class="ra-ic" aria-hidden="true"><use href="#i-users"/></svg><span class="rail-lb" data-i18n="rail.pop">Population</span></button>
+    <button type="button" class="rail-btn" data-act="land" data-i18n-title="rail.land" data-i18n-aria="rail.land" title="land" aria-label="land"><svg class="ra-ic" aria-hidden="true"><use href="#i-map"/></svg><span class="rail-lb" data-i18n="rail.land">Land leaders</span></button>
+    <button type="button" class="rail-btn" data-act="walk" data-i18n-title="walk.title" data-i18n-aria="walk.aria" title="explore on foot" aria-label="explore on foot"><svg class="ra-ic" aria-hidden="true"><use href="#i-walk"/></svg><span class="rail-lb" data-i18n="walk.title">Explore on foot</span></button>
   </nav>
 
   <!-- ============ top bar: wordmark + link status ============ -->
@@ -878,6 +886,6 @@
   <button type="button" class="canvas-switch" id="switch-to-atlas" data-i18n-aria="lv.switchToAtlas" data-i18n-title="lv.switchToAtlas" aria-label="lineage atlas" title="lineage atlas"><svg class="cs-ico" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="2.7"/><path d="M8 1.7v3.6M8 10.7v3.6M1.7 8h3.6M10.7 8h3.6"/></svg><span data-i18n="lv.switchToAtlas">atlas</span></button>
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=158" type="module"></script>
+  <script src="./main.js?v=159" type="module"></script>
 </body>
 </html>

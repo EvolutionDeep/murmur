@@ -13,13 +13,13 @@
 //
 // NO CYCLES: this module imports lvState.js (the singleton) but never lineageView.js. When new data means
 // "the layout must be rebuilt", it calls LV.hooks.rebuild(), which the core registers at module load.
-import { state, sim, SOCIETY_BOND_MIN, atomicToUsdc, clamp, sha256HexClient } from './shared.js?v=158';
-import { getJSON } from './polling.js?v=158';
+import { state, sim, SOCIETY_BOND_MIN, atomicToUsdc, clamp, sha256HexClient } from './shared.js?v=159';
+import { getJSON } from './polling.js?v=159';
 import {
   LV, LINEAGE_POLL_MS, GH_CONCURRENCY, GH_RETIRED_MAX, GH_RETIRED_PER_ID, EDGE_TTL_MS,
   SOCIAL_HALFLIFE_MS, LV_REBUILD_MIN_MS, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT,
   isZeroHash, lvForceRebuild, saveGH, saveSocial,
-} from './lvState.js?v=158';
+} from './lvState.js?v=159';
 
 // ================= chronicle kind taxonomy (task 29 · C2) =================
 // The old reader was 100 % dead code on two independent counts, both verified against a live /annals pull

@@ -14,16 +14,16 @@
 //   Every per-frame entry point consults LVQ.tier before expensive work. No shadowBlur, no
 //   backdrop-filter, no per-frame traversal of ~10,361-element vectors. C8 poll is bounded by
 //   in-flight mutex + 20 s floor interval. C13 caps active animations at 12.
-import { LV, LVQ, nodeR, nodeById } from './lvState.js?v=158';
-import { state, sim, clamp, mix, rgb, rgba, nmDaHz, nmOaHz, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js?v=158';
-import { t as T } from './i18n.js?v=111';
-import { getJSON } from './polling.js?v=158';
-import { lvGeneticsFrame, lvGeneticsScale, lvGenotypePanel, lvBloodlinePanel, lvTraceStart, lvTraceClear } from './lvGenetics.js?v=158';
-import { lvEnvNodeOverlay } from './lvEnv.js?v=158';
+import { LV, LVQ, nodeR, nodeById } from './lvState.js?v=159';
+import { state, sim, clamp, mix, rgb, rgba, nmDaHz, nmOaHz, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js?v=159';
+import { t as T } from './i18n.js?v=112';
+import { getJSON } from './polling.js?v=159';
+import { lvGeneticsFrame, lvGeneticsScale, lvGenotypePanel, lvBloodlinePanel, lvTraceStart, lvTraceClear } from './lvGenetics.js?v=159';
+import { lvEnvNodeOverlay } from './lvEnv.js?v=159';
 // task 33 · C25 — the replay growth overlay (horizon ring + birth flash + fresh lineage edges). Forwarded
 // from HERE, not from lvFrame: seam layers hop through an existing frame function so core gains no new draw
 // call point. Carries its own lvReplayOn() + LVQ.tier gate internally.
-import { lvReplayDraw } from './lvTimeReplay.js?v=158';
+import { lvReplayDraw } from './lvTimeReplay.js?v=159';
 
 // ================= C8: whole-swarm brain atmosphere =================
 // Poll /flies/{id} for every live node, 6-way concurrent, 20 s interval floor.

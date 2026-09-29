@@ -3,9 +3,9 @@
 // with other drawers. Handles image upload + Canvas compression, MetaMask burn
 // transaction, and POST /land with X-Payment-Proof header.
 
-import { state, $, API, shortHash } from './shared.js?v=158';
-import { t as T } from './i18n.js?v=111';
-import { getJSON } from './polling.js?v=158';
+import { state, $, API, shortHash } from './shared.js?v=159';
+import { t as T } from './i18n.js?v=112';
+import { getJSON } from './polling.js?v=159';
 
 // ---- constants (mirror the backend land.ts) ----
 const LAND_CHAIN_ID = 5042;

@@ -14,10 +14,10 @@
 //   lvGeneticsPass runs INSIDE rebuild(), floored at LV_REBUILD_MIN_MS (12 s). It annotates nodes but
 //   MUST NOT move them. Anything O(n²) over genomes must be memoised. No shadowBlur, no backdrop-filter.
 //   The per-frame draw (lvGeneticsFrame) consults LVQ.tier before drawing expensive layers.
-import { LV, LVQ, LV_HUD, nodeR, ringRadius } from './lvState.js?v=158';
-import { state, clamp, mix, rgb, rgba, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js?v=158';
-import { t as T } from './i18n.js?v=111';
-import { getJSON } from './polling.js?v=158';
+import { LV, LVQ, LV_HUD, nodeR, ringRadius } from './lvState.js?v=159';
+import { state, clamp, mix, rgb, rgba, TAU, INK, GILT, GILT_HI, fnv1a } from './shared.js?v=159';
+import { t as T } from './i18n.js?v=112';
+import { getJSON } from './polling.js?v=159';
 
 // ================= C9: cross recombination edges + operator shapes =================
 // After rebuild, traverse all nodes' parents to find secondary (non-paternal) edges.
