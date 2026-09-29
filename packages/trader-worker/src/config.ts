@@ -288,6 +288,17 @@ export interface Env {
   //     SAME read-out line, never on the stimulus bus — whose two precedents stay dark-deployed OFF.
   RM_ENABLED?: string;                  // "true"/"false" (default TRUE)
 
+  // --- ㉛ EMERGENT NORMS: institutions no hand wrote — minted, spread, mutated, dead (see src/norms.ts) ---
+  //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The membrane's
+  //     bounds are exported constants (NORM_CAP etc.); only the master switch + the causal-leg ceiling read an
+  //     env key. This is a PURE READ-OUT of the bond graph plus ONE bounded Channel-A stimulus leg (compliance
+  //     the swarm lives up to tastes of plenty; violation is a bounded threat), hard-capped at 0.3 — it never
+  //     signs/broadcasts a trade, never touches a multiplier or a purse, and adds no sensory channel.
+  //     Shipped DISABLED (dark deploy): NORMS_ENABLED=false ⇒ state.ts never constructs the membrane ⇒ the four
+  //     NORM_MINTED/NORM_SPREAD/NORM_MUTATED/NORM_DIED kinds can never speak (byte-for-byte rollback).
+  NORMS_ENABLED?: string;               // "true"/"false" (default FALSE — dark deploy; flip on by hand)
+  NORMS_STIMULUS_MAX?: string;          // causal-leg ceiling on any one felt channel, 0..0.3 (default 0.3; 0 ⇒ the leg emits nothing)
+
   // --- ㉕ THE TREATY: formal diplomacy between houses — sealed, ratified, breached (see src/treaty.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The chancery
   //     has no knobs (its lines are exported constants: TR_SIGN_AT / TR_BREACH_AT / TR_TERM…); only the
@@ -718,6 +729,12 @@ export interface RuntimeConfig {
   };
   rumor: {
     enabled: boolean;         // the mill's bounds are constants (RM_HEARD_CAP etc.) — no knobs by design
+  };
+  // ㉛ EMERGENT NORMS: the membrane's bounds are constants (NORM_CAP etc.); the only knob is the causal leg's
+  //     Channel-A ceiling. OFF ⇒ state.ts never constructs it, byte-for-byte the pre-Norms build.
+  norms: {
+    enabled: boolean;         // master switch (default OFF — dark deploy)
+    maxIntensity: number;     // ceiling (and master scale) on the causal leg's stimulus, 0..0.3 (default 0.3)
   };
   treaty: {
     enabled: boolean;         // the chancery's lines are constants (TR_SIGN_AT etc.) — no knobs by design
@@ -1208,6 +1225,18 @@ export function loadConfig(env: Env): RuntimeConfig {
     },
     rumor: {
       enabled: (env.RM_ENABLED ?? "true").toLowerCase() !== "false",
+    },
+    norms: {
+      // ㉛ Shipped DISABLED (dark deploy): the default is "false", so an unset NORMS_ENABLED leaves the membrane
+      //     inert and the chronicle byte-for-byte the pre-Norms build. Flip on by hand.
+      enabled: (env.NORMS_ENABLED ?? "false").toLowerCase() === "true",
+      // NaN-safe + HARD-CAPPED at 0.3 (the Channel-A ceiling the plan mandates): this scales a CURRENT injected
+      //     into the connectome, so a malformed env var must fall back to 0.3 rather than leak NaN, and can never
+      //     be dialed above the bounded-stimulus red line. clamp() alone does NOT guard NaN, hence the finite check.
+      maxIntensity: (() => {
+        const mi = Number(env.NORMS_STIMULUS_MAX ?? "0.3");
+        return clamp(Number.isFinite(mi) ? mi : 0.3, 0, 0.3);
+      })(),
     },
     treaty: {
       enabled: (env.TR_ENABLED ?? "true").toLowerCase() !== "false",

@@ -195,7 +195,14 @@ export type ChronicleKind =
   //     the burn on-chain (keyless, zero gas) and, only when it clears the parcel's price, plants the image: a
   //     fresh claim is a LAND_SOLD, a seizure of already-held ground is a LAND_OVERRIDDEN (the price ratchets up).
   | "LAND_SOLD"
-  | "LAND_OVERRIDDEN";
+  | "LAND_OVERRIDDEN"
+  // ㉛ EMERGENT NORMS: institutions no hand wrote (norms.ts) — a stable cluster of the bond graph mints a norm
+  //     whose condition is drawn from an OPEN compositional space, it spreads along the bonds by a hash-gated
+  //     adoption, mutates by a bounded ±0.1 drift as it is inherited, and at last decays past its TTL and dies.
+  | "NORM_MINTED"
+  | "NORM_SPREAD"
+  | "NORM_MUTATED"
+  | "NORM_DIED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -329,6 +336,9 @@ export interface ChronicleContext {
   /** ㉚ LAND read-out (land.ts claim/seizure edges): this cron's narratable parcel sales and overrides. Absent ⇒
    *  neither land kind speaks (LAND_ENABLED=false never folds these in). */
   land?: ChronicleLand | null;
+  /** ㉛ EMERGENT NORMS read-out (norms.ts signals): this cron's mint, spread, mutation and death edges. Absent ⇒
+   *  no NORM_MINTED/NORM_SPREAD/NORM_MUTATED/NORM_DIED (NORMS_ENABLED=false never folds these in). */
+  norms?: ChronicleNorms | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -573,6 +583,21 @@ export interface ChronicleLand {
   events: Array<{ kind: "LAND_SOLD" | "LAND_OVERRIDDEN"; parcel: number; owner: string; price: string; n: number }>;
 }
 
+/** ㉛ EMERGENT NORMS: one cron's norm edges (norms.ts; the membrane fires at most one representative edge per
+ *  class per cron, so a non-null facet IS news THIS cron and cannot replay). {norm} is the norm's own byte-stable
+ *  ASCII label — "condition->action", the condition an OPEN compositional tree over the live read-outs — so the
+ *  server text and the browser re-derivation agree byte-for-byte. Every number rides in the edge itself. */
+export interface ChronicleNorms {
+  /** A stable cluster of the bond graph has codified a new norm: its label, the cluster's mind-count, the era. */
+  minted: { norm: string; members: number; strength: number; era: number } | null;
+  /** A norm has gained adherents along the bonds this cron: its label, the membership, the strength. */
+  spread: { norm: string; adherents: number; strength: number } | null;
+  /** A spread drifted into a child variant: the variant's label, its lineage depth, the parent's id. */
+  mutated: { norm: string; depth: number; parent: number; strength: number } | null;
+  /** A norm decayed past its floor or outlived its TTL: its label, the crons it lived, its last strength. */
+  died: { norm: string; lived: number; strength: number } | null;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -793,6 +818,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   // ㉚ LAND: a parcel claim or seizure is rare, deliberate news (real value burned), so a short gravitas gap
   //     guards a same-cron duplicate of one kind. Mirrored verbatim in the browser CHRON_.
   LAND_SOLD: 6, LAND_OVERRIDDEN: 6,
+  // ㉛ NORMS: a norm is minted rarely (a cluster must first hold stable), spreads and mutates more freely while
+  //     it lives, and dies slowly. Pure gravitas — the membrane one-edges each class per cron already; these gaps
+  //     only guard a same-cron duplicate. Mirrored verbatim in the browser CHRON_.
+  NORM_MINTED: 90, NORM_SPREAD: 40, NORM_MUTATED: 60, NORM_DIED: 60,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -975,6 +1004,15 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   //     MURMUR burned, {n} the seizure count. Byte-for-byte the browser CHRON_ mirror (shared.js + app.js). Mirrored.
   LAND_SOLD: "Parcel {parcel} claimed by {owner} for {price} MURMUR, burned forever.",
   LAND_OVERRIDDEN: "Parcel {parcel} seized by {owner} — image overridden ({n}th time) for {price} MURMUR.",
+  // ㉛ EMERGENT NORMS — institutions no hand wrote. {norm} is the norm's own byte-stable ASCII label
+  //     ("condition->action", the condition an OPEN compositional tree over the live read-outs), {members} the
+  //     cluster's mind-count, {adherents} the membership it spread to, {depth} its lineage depth, {parent} the id
+  //     of the norm it drifted from, {lived} the crons it held, {strength} its 0..1 force, {era} the age it was
+  //     minted in. Every number is re-derivable by replaying the bond graph. Mirrored verbatim in the frontend CHRON_.
+  NORM_MINTED: "A norm no hand wrote is minted — a cluster of {members} minds codifies '{norm}' at strength {strength}; era {era} now obeys a rule nobody named.",
+  NORM_SPREAD: "The norm spreads — '{norm}' travels the bonds to {adherents} minds, held now at strength {strength}.",
+  NORM_MUTATED: "The norm mutates — '{norm}' drifts into a variant at lineage depth {depth} (strength {strength}); what was inherited is no longer what was written.",
+  NORM_DIED: "The norm dies — '{norm}' is followed no more; it lived {lived} crons and faded to a last strength of {strength}.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -2070,6 +2108,37 @@ export class Chronicler {
         if (!this.ready(kind, ctx)) continue;
         out.push(await this.emit(ctx, kind, LAND_SEVERITY[kind] ?? 3, [],
           landTokens(kind, ev), {}));
+      }
+    }
+
+    // ㉛ EMERGENT NORMS: the institutions no hand wrote (norms.ts signals, folded in ONLY while NORMS_ENABLED —
+    //     off ⇒ no `norms` key ⇒ these four detectors never speak). The membrane one-edges each class per cron, so
+    //     a non-null facet is news this cron and cannot replay. NO actors: a norm belongs to a cluster, not one fly.
+    const nm = ctx.norms;
+    if (nm) {
+      if (nm.minted && this.ready("NORM_MINTED", ctx)) {
+        const m = nm.minted;
+        out.push(await this.emit(ctx, "NORM_MINTED", 3, [],
+          { norm: m.norm, members: m.members, strength: m.strength, era: m.era },
+          { members: m.members, strength: m.strength, era: m.era }));
+      }
+      if (nm.spread && this.ready("NORM_SPREAD", ctx)) {
+        const sp = nm.spread;
+        out.push(await this.emit(ctx, "NORM_SPREAD", 2, [],
+          { norm: sp.norm, adherents: sp.adherents, strength: sp.strength },
+          { adherents: sp.adherents, strength: sp.strength }));
+      }
+      if (nm.mutated && this.ready("NORM_MUTATED", ctx)) {
+        const mu = nm.mutated;
+        out.push(await this.emit(ctx, "NORM_MUTATED", 3, [],
+          { norm: mu.norm, depth: mu.depth, parent: mu.parent, strength: mu.strength },
+          { depth: mu.depth, parent: mu.parent, strength: mu.strength }));
+      }
+      if (nm.died && this.ready("NORM_DIED", ctx)) {
+        const d = nm.died;
+        out.push(await this.emit(ctx, "NORM_DIED", 2, [],
+          { norm: d.norm, lived: d.lived, strength: d.strength },
+          { lived: d.lived, strength: d.strength }));
       }
     }
 

@@ -117,6 +117,10 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   HERO_SUMMONING: "英雄{heroName}自火焰中被{address}召唤 —— 命运所归。",
   EPOCH_SHAPING: "神殿锻造了新纪元：'{epochName}'，{regime}政体 —— 历史屈从于天意。",
   WONDER_FOUNDATION: "奇观'{wonderName}'由{address}在{nationName}奠基 —— 献祭的永恒纪念碑。",
+  NORM_MINTED: "一条无人书写的规范被铸造 —— 一簇 {members} 个心智将'{norm}'以强度 {strength} 立为法则；第 {era} 纪元起服从一条无人命名的规则。",
+  NORM_SPREAD: "规范在扩散 ——'{norm}'沿纽带传至 {adherents} 个心智，如今以强度 {strength} 持守。",
+  NORM_MUTATED: "规范在变异 ——'{norm}'漂移为一个变体，谱系深度 {depth}（强度 {strength}）；所继承的已非当初所书。",
+  NORM_DIED: "规范消亡 ——'{norm}'不再被遵循；它存续了 {lived} 次巡天，衰减至最后的强度 {strength}。",
 };
 
 const fr = {
@@ -226,6 +230,10 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   HERO_SUMMONING: "Des flammes, le héros {heroName} a été convoqué par {address} — marqué par le destin.",
   EPOCH_SHAPING: "Le temple a forgé une nouvelle ère : '{epochName}' sous le régime {regime} — l'histoire ploie à la volonté divine.",
   WONDER_FOUNDATION: "La merveille '{wonderName}' a été fondée à {nationName} par {address} — un monument éternel au sacrifice.",
+  NORM_MINTED: "Une norme qu'aucune main n'a écrite est forgée — un groupe de {members} esprits codifie « {norm} » à la force {strength} ; l'ère {era} obéit désormais à une règle que nul n'a nommée.",
+  NORM_SPREAD: "La norme se propage — « {norm} » voyage le long des liens vers {adherents} esprits, tenue désormais à la force {strength}.",
+  NORM_MUTATED: "La norme mute — « {norm} » dérive en une variante à la profondeur de lignée {depth} (force {strength}) ; ce qui fut hérité n'est plus ce qui fut écrit.",
+  NORM_DIED: "La norme meurt — « {norm} » n'est plus suivie ; elle a vécu {lived} crons et s'est éteinte à une dernière force de {strength}.",
 };
 
 const es = {
@@ -335,6 +343,10 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   HERO_SUMMONING: "De la llama, el héroe {heroName} fue convocado por {address} — marcado por el destino.",
   EPOCH_SHAPING: "El templo forjó una nueva era: '{epochName}' bajo el régimen {regime} — la historia se doblega a la voluntad divina.",
   WONDER_FOUNDATION: "La maravilla '{wonderName}' fue fundada en {nationName} por {address} — un monumento eterno al sacrificio.",
+  NORM_MINTED: "Se acuña una norma que ninguna mano escribió — un grupo de {members} mentes codifica '{norm}' con fuerza {strength}; la era {era} obedece ahora una regla que nadie nombró.",
+  NORM_SPREAD: "La norma se extiende — '{norm}' viaja por los vínculos hasta {adherents} mentes, sostenida ahora con fuerza {strength}.",
+  NORM_MUTATED: "La norma muta — '{norm}' deriva en una variante a profundidad de linaje {depth} (fuerza {strength}); lo heredado ya no es lo que se escribió.",
+  NORM_DIED: "La norma muere — '{norm}' ya no se sigue; vivió {lived} crons y se desvaneció hasta una última fuerza de {strength}.",
 };
 
 const ja = {
@@ -444,6 +456,10 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   HERO_SUMMONING: "炎より英雄{heroName}が{address}に召喚された —— 運命に選ばれて。",
   EPOCH_SHAPING: "神殿は新しき紀元を鍛えた：'{epochName}'、{regime}政体 —— 歴史は天意に屈する。",
   WONDER_FOUNDATION: "奇跡'{wonderName}'が{address}により{nationName}に奠基された —— 犠牲の永遠の記念碑。",
+  NORM_MINTED: "誰も書かなかった規範が鋳造される —— {members} の心の塊が'{norm}'を強度 {strength} で成文化し、第 {era} 紀元は誰も名づけなかった規則に従う。",
+  NORM_SPREAD: "規範が広がる ——'{norm}'は絆を伝って {adherents} の心へ旅し、いま強度 {strength} で保たれている。",
+  NORM_MUTATED: "規範が変異する ——'{norm}'は系譜の深さ {depth}（強度 {strength}）の変種へ漂移する；受け継がれたものは、もはや書かれたものではない。",
+  NORM_DIED: "規範が死す ——'{norm}'はもう従われない；それは {lived} クロン生き、最後の強度 {strength} へ衰えた。",
 };
 
 const ko = {
@@ -553,6 +569,10 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   HERO_SUMMONING: "불꽃에서 영웅 {heroName}이 {address}에 의해 소환되었다 — 운명에 새겨져.",
   EPOCH_SHAPING: "신전이 새로운 기원을 단조했다: '{epochName}', {regime} 정체 — 역사가 천의에 굽히다.",
   WONDER_FOUNDATION: "경이 '{wonderName}'이 {address}에 의해 {nationName}에 창건되었다 — 희생의 영원한 기념비.",
+  NORM_MINTED: "아무도 적지 않은 규범이 주조된다 — {members}개의 마음 무리가 '{norm}'을 강도 {strength}로 성문화하고, 제 {era} 시대는 아무도 이름 짓지 않은 규칙에 복종한다.",
+  NORM_SPREAD: "규범이 퍼진다 — '{norm}'이 유대를 타고 {adherents}개의 마음에 닿아, 이제 강도 {strength}로 유지된다.",
+  NORM_MUTATED: "규범이 변이한다 — '{norm}'이 계보 깊이 {depth}(강도 {strength})의 변형으로 표류한다; 상속된 것은 더 이상 적힌 것이 아니다.",
+  NORM_DIED: "규범이 소멸한다 — '{norm}'은 더 이상 지켜지지 않는다; 그것은 {lived} 크론을 살다 마지막 강도 {strength}로 사그라졌다.",
 };
 
 const ar = {
@@ -662,6 +682,10 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   HERO_SUMMONING: "من اللهب، استُدعي البطل {heroName} بيد {address} — موسومٌ بالقدر.",
   EPOCH_SHAPING: "صاغ الهيكل حقبة جديدة: '{epochName}' تحت نظام {regime} — ينحني التاريخ للمشيئة الإلهية.",
   WONDER_FOUNDATION: "تأسست الأعجوبة '{wonderName}' في {nationName} بيد {address} — نصبٌ أبدي للتضحية.",
+  NORM_MINTED: "تُسَكُّ قاعدةٌ لم تكتبها يد — عنقود من {members} عقلٍ يُدوّن '{norm}' بقوة {strength}؛ والعصر {era} يطيع الآن قاعدةً لم يُسمِّها أحد.",
+  NORM_SPREAD: "تنتشر القاعدة — '{norm}' يسافر عبر الروابط إلى {adherents} عقلًا، ويُحمل الآن بقوة {strength}.",
+  NORM_MUTATED: "تتحور القاعدة — '{norm}' ينحرف إلى نسخة عند عمق سلالة {depth} (قوة {strength})؛ فما وُرِّث لم يعد ما كُتب.",
+  NORM_DIED: "تموت القاعدة — '{norm}' لم يعد مُتبعًا؛ لقد عاش {lived} دورةً وتلاشى إلى قوةٍ أخيرة بلغت {strength}.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

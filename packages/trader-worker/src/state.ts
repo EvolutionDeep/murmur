@@ -73,6 +73,7 @@ import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js";
 import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
+import { NormsMembrane, type NormsFacts, type NormsSignals } from "./norms.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
@@ -194,6 +195,10 @@ const KEY_TEMPLE = "temple:v1";
 const KEY_LAND = "land:v1";
 /** The DO storage key prefix for a parcel's image bytes (base64), one key per claimed parcel. */
 const LAND_IMG_PREFIX = "land:img:";
+/** ㉛ Emergent Norms (the live norm ledger, the cluster tracker, counts) — its OWN key: a corrupt/absent blob
+ *  restarts an empty society (no norm is back-dated), never ledger state. Bounded (≤ NORM_CAP norms + a pruned
+ *  cluster tracker), DO-safe. */
+const KEY_NORMS = "norms:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -369,6 +374,8 @@ export class FlyStateDO {
   private lexicon: LexiconMembrane | null = null;
   /** ㉔ The Rumor Mill membrane (a tale afoot, its bend, its quiet, the telling-day echo) — null while RM_ENABLED=false (byte-for-byte inert). */
   private rumor: RumorMill | null = null;
+  /** ㉛ The Emergent Norms membrane (norms minted from bond clusters, spread, mutated, dead) — null while NORMS_ENABLED=false (byte-for-byte inert). */
+  private norms: NormsMembrane | null = null;
   /** ㉕ The Treaty chancery (seals set, ratified, broken — the roll of formal peace) — null while TR_ENABLED=false (byte-for-byte inert). */
   private treaty: TreatyMembrane | null = null;
   /** ㉖ The Public Works yard (granaries raised, monuments mended, aqueducts fallen) — null while WORKS_ENABLED=false (byte-for-byte inert). */
@@ -779,6 +786,20 @@ export class FlyStateDO {
     this.rumor = new RumorMill({ enabled: true });
     if (stored) this.rumor.restore(stored);
     return this.rumor;
+  }
+
+  /**
+   * ㉛ Lazily load the Emergent Norms membrane (null while NORMS_ENABLED=false — byte-for-byte inert rollback).
+   * A corrupt/absent blob restarts an empty society: no norm is back-dated, nothing is minted, and the ledger is
+   * never poisoned. The causal leg's ceiling is read from config (hard-capped at 0.3 in loadConfig).
+   */
+  private async ensureNorms(): Promise<NormsMembrane | null> {
+    if (!this.cfg.norms.enabled) return null;
+    if (this.norms) return this.norms;
+    const stored = await this.state.storage.get<string>(KEY_NORMS);
+    this.norms = new NormsMembrane({ enabled: true, maxIntensity: this.cfg.norms.maxIntensity });
+    if (stored) this.norms.restore(stored);
+    return this.norms;
   }
 
   /**
@@ -1628,6 +1649,7 @@ export class FlyStateDO {
     if (this.guilds) batch[KEY_GUILDS] = this.guilds.serialize();
     if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
     if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
+    if (this.norms) batch[KEY_NORMS] = this.norms.serialize();
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
@@ -2105,6 +2127,9 @@ export class FlyStateDO {
       // ㉔ RUMOR MILL: fold the mill's tale edges ONLY while RM is on. Off ⇒ no `rumor` key ⇒ the
       // historian's three rumor detectors never speak (byte-for-byte the pre-Rumor build).
       const rumor = this.cfg.rumor.enabled ? this.rumor?.signals() ?? null : null;
+      // ㉛ EMERGENT NORMS: fold the membrane's norm edges ONLY while NORMS is on. Off ⇒ no `norms` key ⇒ the
+      // historian's four norms detectors never speak (byte-for-byte the pre-Norms build).
+      const norms = this.cfg.norms.enabled ? this.norms?.signals() ?? null : null;
       // ㉕ TREATY: fold the chancery's diplomatic edges ONLY while TR is on. Off ⇒ no `treaty` key ⇒ the
       // historian's three treaty detectors never speak (byte-for-byte the pre-Treaty build).
       const treaty = this.cfg.treaty.enabled ? this.treaty?.signals() ?? null : null;
@@ -2261,6 +2286,7 @@ export class FlyStateDO {
         reform,
         temple,
         land,
+        norms,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2534,6 +2560,49 @@ export class FlyStateDO {
       rm.round(tick, facts);
     } catch (e) {
       console.warn("[DO] rumor drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉛ EMERGENT NORMS — cluster the economy's OWN bond graph (a pure public read-out, never a write), mint a norm
+   * when a cluster holds stable across crons, then spread / mutate / decay the live norms. PURE read-out end to
+   * end — the one causal leg is the Channel-A stimulus folded at step 3d, never money, never a connectome write.
+   * Runs after driveLand and BEFORE observeChronicle, so this cron's norm edges fold into the historian's context.
+   * Best-effort: an institution can never break the live tick. Inert while NORMS_ENABLED=false.
+   */
+  private async driveNorms(tick: number, snapshot: PopulationSnapshot | null, temperature: number, economy: AgentEconomy): Promise<void> {
+    const nm = await this.ensureNorms();
+    if (!nm) return;
+    try {
+      const col = snapshot?.collective;
+      const totals = this.lastEconomy?.totals ?? null;
+      const social = economy.socialReadout();
+      let bond = 0;
+      let rep = 0;
+      if (social.bonds.length) bond = social.bonds.reduce((a, b) => a + Math.abs(b.score), 0) / social.bonds.length;
+      if (social.rep.length) rep = social.rep.reduce((a, r) => a + r.score, 0) / social.rep.length;
+      const ids = Array.from(new Set(social.bonds.flatMap((b) => [b.a, b.b])));
+      const size = col?.size ?? 0;
+      const facts: NormsFacts = {
+        tick,
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        reading: {
+          arousal: col?.arousal ?? 0,
+          cohesion: col?.cohesion ?? 0,
+          valence: ((col?.valence ?? 0) + 1) / 2,
+          rest: col?.rest ?? 0,
+          temperature,
+          gini: totals?.gini ?? 0,
+          size01: Math.min(1, size / 100),
+          bond: Math.min(1, bond),
+          rep: (rep + 1) / 2,
+        },
+        bonds: social.bonds.map((b) => ({ a: b.a, b: b.b, score: b.score })),
+        ids,
+      };
+      nm.round(facts);
+    } catch (e) {
+      console.warn("[DO] norms drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -3143,6 +3212,24 @@ export class FlyStateDO {
       }
     }
 
+    // 3d) ㉛ EMERGENT NORMS STIMULUS LEG — the causal leg of the norms membrane: the compliance the swarm lives up
+    //     to tastes of plenty and light; the compliance it violates is a bounded threat. It rides the SAME four
+    //     visitor channels (no sensory channel added ⇒ manifestHash never rotates), is hard-capped at
+    //     cfg.norms.maxIntensity ≤ 0.3, and moves no money. Gated behind NORMS_ENABLED (default OFF ⇒ this appends
+    //     nothing and `stimuli` is byte-for-byte today's). The membrane is loaded here from restored state, so the
+    //     leg reads LAST cron's compliance — the same honest one-cron lag the civic bus ① keeps. Best-effort.
+    if (this.cfg.norms.enabled) {
+      try {
+        const nm = await this.ensureNorms();
+        if (nm) {
+          const felt = nm.stimuli({ maxIntensity: this.cfg.norms.maxIntensity });
+          if (felt.length) stimuli.push(...felt);
+        }
+      } catch (e) {
+        console.warn("[DO] norms stimulus failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // 4) Run the decision sub-ticks. The agent economy now settles on EVERY sub-tick (not just once per
     //    cron), sharing ONE per-cron deal budget — so trades are ~5× more frequent while the total real
     //    settlements per cron stays bounded. Each sub-tick has a unique tickIndex, so every EIP-3009
@@ -3439,6 +3526,12 @@ export class FlyStateDO {
     // swarm simply has no parcel to claim). Its edges fold into THIS cron's historian context, so it too
     // precedes step 7.
     await this.driveLand(swarm.getTickIndex(), snapshot);
+
+    // ㉛ EMERGENT NORMS rides after the land: it clusters the economy's OWN bond graph (a pure public read-out),
+    //     mints a norm when a cluster holds stable, then spreads / mutates / decays it — pure read-out end to end;
+    //     its one causal leg is the Channel-A stimulus folded at step 3d above. No economy (cold) ⇒ no drive. Its
+    //     edges fold into THIS cron's historian context, so it too precedes step 7.
+    if (economy) await this.driveNorms(swarm.getTickIndex(), snapshot, temperature, economy);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -3768,6 +3861,8 @@ export class FlyStateDO {
       if (temple) (economy as { temple?: unknown }).temple = temple;
       const land = await this.landReadout();
       if (land) (economy as { land?: unknown }).land = land;
+      const norms = await this.normsReadout();
+      if (norms) (economy as { norms?: unknown }).norms = norms;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3886,7 +3981,8 @@ export class FlyStateDO {
     const reform = await this.reformReadout();
     const temple = await this.templeReadout();
     const land = await this.landReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land) {
+    const norms = await this.normsReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -3906,6 +4002,7 @@ export class FlyStateDO {
       ...(reform ? { reform } : null),
       ...(temple ? { temple } : null),
       ...(land ? { land } : null),
+      ...(norms ? { norms } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -4048,6 +4145,14 @@ export class FlyStateDO {
     if (!rm) return null;
     rm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return rm.signals();
+  }
+
+  /** ㉛ The emergent norms read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Norms build). */
+  private async normsReadout(): Promise<NormsSignals | null> {
+    const nm = await this.ensureNorms();
+    if (!nm) return null;
+    nm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
+    return nm.signals();
   }
 
   /** ㉕ The treaty chancery read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Treaty build). */
@@ -5500,6 +5605,7 @@ export class FlyStateDO {
     this.templeLayer = null; // ㉙ and the temple: every queued burn, hero and wonder is unremembered with everything else
     this.landLayer = null;   // ㉚ and the land: every claimed parcel and queued edge is unremembered with everything else
     this.landEvents = [];
+    this.norms = null;       // ㉛ and the norms: every minted, spread, mutated and dead institution is unwritten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -5526,6 +5632,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_REFORM);
     await this.state.storage.delete(KEY_TEMPLE);
     await this.state.storage.delete(KEY_LAND);
+    await this.state.storage.delete(KEY_NORMS);
     // ㉚ the per-parcel images live under their own keys (kept out of the serialize blob) — sweep them too
     const landImgs = await this.state.storage.list<string>({ prefix: LAND_IMG_PREFIX });
     const landImgKeys = [...landImgs.keys()];
