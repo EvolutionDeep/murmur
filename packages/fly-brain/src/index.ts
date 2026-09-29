@@ -85,6 +85,45 @@ export {
   type HatchBudget,
 } from "./genome.js";
 
+// GP Strategy-Genome Engine (Phase 2a, capability 2)
+export {
+  R6_SCALE,
+  R6_ONE,
+  R6_ZERO,
+  R6_SIGNED_MAX,
+  R6_SIGNED_MIN,
+  TERMINALS,
+  TERMINAL_COUNT,
+  OPERATORS,
+  OPERATOR_COUNT,
+  NodeKind,
+  MAX_NODES,
+  MIN_DEPTH,
+  MAX_DEPTH,
+  STRATEGY_GENOME_VERSION,
+  hash32,
+  hash01,
+  evalStrategy,
+  validateTree,
+  isLegalTree,
+  treeHash,
+  canonicalTreeBytes,
+  generateTree,
+  mutateTree,
+  crossoverTrees,
+  serializeTree,
+  deserializeTree,
+  subtreeSize,
+  subtreeDepth,
+  treeDepth,
+  type GpNode,
+  type StrategyTree,
+  type StrategyCtx,
+  type TreeValidation,
+  type TerminalSymbol,
+  type OperatorSymbol,
+} from "./strategy-genome.js";
+
 // FlyWire connectome-data module (real FAFB 783 topology)
 export {
   buildFromFlyWire,
