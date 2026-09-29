@@ -89,6 +89,8 @@ export class LexiconMembrane {
   private dead: string[] = [];                      // ≤ LEX_DEAD_ROLL, FIFO
   private deadSet = new Set<string>();              // a dead word is never re-coined (no resurrections this cron)
   private counts = { coinages: 0, spreads: 0, deaths: 0 };
+  /** The last rows round() compiled off the annals roll (facts-derived; transient, NEVER serialized). */
+  private lastRows: LexiconRow[] = [];
 
   private pending: LexiconSignals = {
     coinage: null, spread: null, dying: null,
@@ -158,12 +160,28 @@ export class LexiconMembrane {
     }
 
     // Read-out closes on the END-of-round truth (fresh tellings may have moved the rows).
-    this.pending.lexicon = rowsOf();
-    this.pending.dead = this.dead.slice();
-    this.pending.counts = { ...this.counts };
+    this.lastRows = rowsOf();
+    this.refreshPending();
   }
 
   signals(): LexiconSignals { return this.pending; }
+
+  /**
+   * Rebuild the STANDING read-out fields (lexicon rows / dead roll / counts) from the membrane's own internal
+   * state — pure and side-effect free: it coins no word, marks no spread and judges no silence. restore()
+   * calls it so a DO reload reflects the persisted desk at once, and the /economy read-out calls it so the
+   * public numbers never lag a cron. The rows are the last ones round() compiled off the annals roll (empty
+   * until the first round after a reload, since per-kind tellings are memory, not ledger); the dead roll and
+   * counts are always restored truth. This cron's edge events (coinage / spread / dying) are preserved.
+   */
+  refreshPending(): void {
+    this.pending = {
+      ...this.pending,
+      lexicon: this.lastRows.map((r) => ({ ...r })),
+      dead: this.dead.slice(),
+      counts: { ...this.counts },
+    };
+  }
 
   // ─── persistence (bounded, additive) ───────────────────────────────────────────────────────────────
 
@@ -212,5 +230,7 @@ export class LexiconMembrane {
         if (this.dead.includes(LEX_WORDS[kind])) this.deadSet.add(kind);
       }
     } catch { /* corrupt → keep defaults: an empty desk, never a poisoned ledger */ }
+    // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
+    this.refreshPending();
   }
 }

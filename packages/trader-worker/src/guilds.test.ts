@@ -162,3 +162,19 @@ test("㉒ bounded: 500 hands, four rows, a sub-kilobyte book", () => {
   assert.equal(sig.roster.length, 4, "exactly the four trades, always");
   assert.equal(m.serialize().length < 1024, true, "the guildhall book stays small");
 });
+
+test("㉒ restore() rebuilds the read-out so signals() counts are truthful BEFORE any round() (fix: /economy showed 0)", () => {
+  const m = new GuildsMembrane(CFG);
+  assert.deepEqual(m.signals().counts, zero);   // construction snapshot reads zero — the bug's start
+  m.restore(JSON.stringify({
+    v: 1, chartered: ["forager", "mooder"],
+    lastShare: { forager: 0.6, mooder: 0.3, trader: 0.1, brooder: 0 },
+    counts: { charters: 2, pacts: 6, monopolies: 1 },
+  }));
+  const sig = m.signals();          // NO round() in between — the DO-reload read-out path
+  assert.deepEqual(sig.counts, { charters: 2, pacts: 6, monopolies: 1 }, "restored counts surface immediately, not 0");
+  // refreshPending is a PURE rebuild: it fires no edge event.
+  assert.equal(sig.charter, null);
+  assert.equal(sig.pact, null);
+  assert.equal(sig.monopoly, null);
+});

@@ -152,3 +152,25 @@ test("㉑ serialize stays far below the DO value wall across many festivals", ()
   assert.ok(m.serialize().length < 4096, `blob was ${m.serialize().length} bytes`);
   assert.ok(m.signals().counts.games > 100, "the long run actually held many festivals");
 });
+
+test("㉑ restore() rebuilds the read-out so signals() is truthful BEFORE any round() (fix: /economy showed 0)", () => {
+  const m = new GamesMembrane(CFG);
+  assert.equal(m.signals().counts.games, 0);   // construction snapshot reads zero — the bug's start
+  m.restore(JSON.stringify({
+    v: 1, lastSeenEra: 4, open: null,
+    record: { id: 6, deals: 60, era: 3 },
+    lastGames: { era: 3, event: GAMES_EVENTS[0], venue: "Musca" },
+    seen: [2, 3], counts: { games: 2, crowns: 2, records: 1 },
+  }));
+  const sig = m.signals();          // NO round() in between — the DO-reload read-out path
+  assert.equal(sig.counts.games, 2, "restored counts surface immediately, not 0");
+  assert.equal(sig.counts.crowns, 2);
+  assert.equal(sig.counts.records, 1);
+  assert.deepEqual(sig.standing, { id: 6, deals: 60, era: 3 });
+  assert.deepEqual(sig.lastGames, { era: 3, event: GAMES_EVENTS[0], venue: "Musca" });
+  assert.equal(sig.pendingGames, false);
+  // refreshPending is a PURE rebuild: it fires no edge event.
+  assert.equal(sig.games, null);
+  assert.equal(sig.champion, null);
+  assert.equal(sig.record, null);
+});

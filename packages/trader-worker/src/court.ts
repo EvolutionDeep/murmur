@@ -183,8 +183,7 @@ export class CourtMembrane {
 
     // Read-out closes on the END-of-round truth: counts/openCases snapshotted at the top would miss this
     // cron's own indictment/verdict/amnesty deltas (the historian and the drawer read signals() post-round).
-    this.pending.openCases = this.cases.length;
-    this.pending.counts = { ...this.counts };
+    this.refreshPending();
   }
 
   /** The three ledger facts, ranked by gravity, reduced to a candidate matter (or null if none is triable). */
@@ -256,6 +255,22 @@ export class CourtMembrane {
 
   signals(): CourtSignals { return this.pending; }
 
+  /**
+   * Rebuild the STANDING read-out fields (outlaws / openCases / counts) from the membrane's own internal
+   * state — pure and side-effect free: it fires no edge event, moves no case and never touches the amnesty
+   * bell. restore() calls it so a DO reload reflects the persisted docket at once, and the /economy read-out
+   * calls it so the public numbers never lag a cron. This cron's edge events are preserved as round() left
+   * them (null after a fresh restore, which is correct: nothing has happened "this cron" yet).
+   */
+  refreshPending(): void {
+    this.pending = {
+      ...this.pending,
+      outlaws: this.outlaws.slice(),
+      openCases: this.cases.length,
+      counts: { ...this.counts },
+    };
+  }
+
   // ─── persistence (bounded, additive) ───────────────────────────────────────────────────────────────
 
   serialize(): string {
@@ -298,5 +313,7 @@ export class CourtMembrane {
       }
       if (Array.isArray(p.seen)) this.seenKeys = p.seen.filter((s: unknown) => typeof s === "string").slice(-COURT_KEYS);
     } catch { /* corrupt → keep defaults: an empty docket, never a poisoned ledger */ }
+    // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
+    this.refreshPending();
   }
 }

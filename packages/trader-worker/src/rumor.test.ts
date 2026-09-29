@@ -206,3 +206,26 @@ test("rumor: the topic map speaks listed kinds by market noun and the rest by lo
   assert.equal(rumorTopic("GUILD_MONOPOLY"), "monopoly");
   assert.equal(rumorTopic("APPRENTICE_PACT"), "apprentice pact", "unlisted kinds keep a readable fallback");
 });
+
+test("rumor: restore() rebuilds the read-out so signals() is truthful BEFORE any round() (fix: /economy showed 0)", () => {
+  const mill = new RumorMill(CFG);
+  assert.deepEqual(mill.signals().counts, { afoot: 0, bends: 0, faded: 0 });   // construction snapshot
+  assert.equal(mill.signals().active, null);
+  mill.restore(JSON.stringify({
+    v: 1, lastMaxSeq: 40, seen: true,
+    counts: { afoot: 9, bends: 3, faded: 7 },
+    active: { topic: "feud", seq: 40, sev0: 5, sevHeard: 5, heard: 30, era: 4, bornTick: 100, afootFired: true, bendFired: true, bent: true, holders: [2, 8] },
+  }));
+  const sig = mill.signals();          // NO round() in between — the DO-reload read-out path
+  assert.deepEqual(sig.counts, { afoot: 9, bends: 3, faded: 7 }, "restored counts surface immediately, not 0");
+  assert.ok(sig.active, "the restored tale is live again");
+  assert.equal(sig.active!.heard, 30);
+  assert.equal(sig.active!.topic, "feud");
+  // echo reflects the restored grave tale (sevHeard 5 ⇒ HALT) at the restored heard ratio.
+  assert.equal(sig.echo!.act, "HALT");
+  assert.equal(sig.echo!.ratio, Math.min(1, 30 / RM_HEARD_CAP));
+  // refreshPending is a PURE rebuild: it fires no edge event and never runs the causal apply().
+  assert.equal(sig.afoot, null);
+  assert.equal(sig.bent, null);
+  assert.equal(sig.faded, null);
+});

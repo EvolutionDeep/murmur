@@ -158,3 +158,21 @@ test("㉓ bounded: at most the watched vocabulary held, at most eight rows shown
   assert.equal(sig.lexicon.length <= 8, true, "the drawer sees the top eight tellings only");
   assert.equal(m.serialize().length < 4096, true, "the desk's book stays small");
 });
+
+test("㉓ restore() rebuilds the read-out so signals() counts/dead are truthful BEFORE any round() (fix: /economy showed 0)", () => {
+  const m = new LexiconMembrane(CFG);
+  assert.deepEqual(m.signals().counts, { coinages: 0, spreads: 0, deaths: 0 });   // construction snapshot
+  m.restore(JSON.stringify({
+    v: 1,
+    entries: { FEUD: { word: LEX_WORDS.FEUD, born: 2, nextMark: LEX_COIN_AT, lastSeq: 90 } },
+    dead: [LEX_WORDS.PANIC],
+    counts: { coinages: 3, spreads: 1, deaths: 2 },
+  }));
+  const sig = m.signals();          // NO round() in between — the DO-reload read-out path
+  assert.deepEqual(sig.counts, { coinages: 3, spreads: 1, deaths: 2 }, "restored counts surface immediately, not 0");
+  assert.deepEqual(sig.dead, [LEX_WORDS.PANIC], "the restored dead roll surfaces immediately");
+  // refreshPending is a PURE rebuild: it fires no edge event.
+  assert.equal(sig.coinage, null);
+  assert.equal(sig.spread, null);
+  assert.equal(sig.dying, null);
+});

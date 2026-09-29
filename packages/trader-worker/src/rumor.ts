@@ -202,9 +202,7 @@ export class RumorMill {
     if (this.active && tick - this.active.bornTick >= RM_LIFE) this.quiet(0, tick);
 
     // Read-out closes on the END-of-round truth.
-    this.pending.active = this.active ? this.view() : null;
-    this.pending.counts = { ...this.counts };
-    this.pending.echo = this.echo();
+    this.refreshPending();
   }
 
   /** Take up a telling as THE tale: it starts with the actors' own mouths (heard = 1). */
@@ -269,6 +267,22 @@ export class RumorMill {
 
   signals(): RumorSignals { return this.pending; }
 
+  /**
+   * Rebuild the STANDING read-out fields (active tale / counts / live echo) from the mill's own internal
+   * state — pure and side-effect free: it adopts no telling, grows no ears, bends nothing and never fires
+   * the causal apply(). restore() calls it so a DO reload reflects the persisted market at once, and the
+   * /economy read-out calls it so the public numbers never lag a cron. This cron's edge events (afoot / bent
+   * / faded) are preserved as round() left them (null after a fresh restore).
+   */
+  refreshPending(): void {
+    this.pending = {
+      ...this.pending,
+      active: this.active ? this.view() : null,
+      counts: { ...this.counts },
+      echo: this.echo(),
+    };
+  }
+
   // ─── persistence (bounded, additive; a corrupt blob restarts an empty market, never a poisoned ledger) ─
 
   serialize(): string {
@@ -309,6 +323,8 @@ export class RumorMill {
         this.active = null;
       }
     } catch { /* corrupt → defaults: an empty market, a cursor at zero, nothing re-told */ }
+    // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
+    this.refreshPending();
   }
 }
 

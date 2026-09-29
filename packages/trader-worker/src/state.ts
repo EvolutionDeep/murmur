@@ -3993,6 +3993,7 @@ export class FlyStateDO {
   private async courtReadout(): Promise<CourtSignals | null> {
     const crt = await this.ensureCourt();
     if (!crt) return null;
+    crt.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return crt.signals();
   }
 
@@ -4000,6 +4001,7 @@ export class FlyStateDO {
   private async gamesReadout(): Promise<GamesSignals | null> {
     const gms = await this.ensureGames();
     if (!gms) return null;
+    gms.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return gms.signals();
   }
 
@@ -4007,6 +4009,7 @@ export class FlyStateDO {
   private async guildsReadout(): Promise<GuildsSignals | null> {
     const gld = await this.ensureGuilds();
     if (!gld) return null;
+    gld.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return gld.signals();
   }
 
@@ -4014,6 +4017,7 @@ export class FlyStateDO {
   private async lexiconReadout(): Promise<LexiconSignals | null> {
     const lx = await this.ensureLexicon();
     if (!lx) return null;
+    lx.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return lx.signals();
   }
 
@@ -4021,6 +4025,7 @@ export class FlyStateDO {
   private async rumorReadout(): Promise<RumorSignals | null> {
     const rm = await this.ensureRumor();
     if (!rm) return null;
+    rm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return rm.signals();
   }
 

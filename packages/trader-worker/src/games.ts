@@ -157,13 +157,27 @@ export class GamesMembrane {
     }
 
     // Read-out closes on the END-of-round truth (the historian and the drawer read signals() post-round).
-    this.pending.lastGames = this.lastGames ? { ...this.lastGames } : null;
-    this.pending.standing = this.record ? { ...this.record } : null;
-    this.pending.pendingGames = this.open != null;
-    this.pending.counts = { ...this.counts };
+    this.refreshPending();
   }
 
   signals(): GamesSignals { return this.pending; }
+
+  /**
+   * Rebuild the STANDING read-out fields (lastGames / standing mark / pendingGames / counts) from the
+   * membrane's own internal state — pure and side-effect free: it proclaims no festival, crowns no champion
+   * and never touches the era bell. restore() calls it so a DO reload reflects the persisted stadium at
+   * once, and the /economy read-out calls it so the public numbers never lag a cron. This cron's edge events
+   * (games / champion / record) are preserved as round() left them (null after a fresh restore).
+   */
+  refreshPending(): void {
+    this.pending = {
+      ...this.pending,
+      lastGames: this.lastGames ? { ...this.lastGames } : null,
+      standing: this.record ? { ...this.record } : null,
+      pendingGames: this.open != null,
+      counts: { ...this.counts },
+    };
+  }
 
   // ─── persistence (bounded, additive) ───────────────────────────────────────────────────────────────
 
@@ -212,5 +226,7 @@ export class GamesMembrane {
           .map((e: number) => Math.floor(e)).slice(-GAMES_SEEN_ERAS);
       }
     } catch { /* corrupt → keep defaults: an empty stadium, never a poisoned ledger */ }
+    // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
+    this.refreshPending();
   }
 }

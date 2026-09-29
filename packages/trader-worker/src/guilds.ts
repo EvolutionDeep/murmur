@@ -180,11 +180,26 @@ export class GuildsMembrane {
 
     // Read-out closes on the END-of-round truth (the historian and the drawer read signals() post-round).
     this.lastRoster = GUILD_ROLES.map((role) => ({ role, members: members[role], share: round3(shareOf(role)) }));
-    this.pending.roster = this.lastRoster.map((r) => ({ ...r }));
-    this.pending.counts = { ...this.counts };
+    this.refreshPending();
   }
 
   signals(): GuildsSignals { return this.pending; }
+
+  /**
+   * Rebuild the STANDING read-out fields (roster / counts) from the membrane's own internal state — pure and
+   * side-effect free: it charters no trade, strikes no pact and proclaims no monopoly. restore() calls it so
+   * a DO reload reflects the persisted guildhall at once, and the /economy read-out calls it so the public
+   * numbers never lag a cron. The roster is the last one round() tallied off the workforce (empty until the
+   * first round after a reload, since headcounts are memory, not ledger); counts are always restored truth.
+   * This cron's edge events (charter / pact / monopoly) are preserved as round() left them.
+   */
+  refreshPending(): void {
+    this.pending = {
+      ...this.pending,
+      roster: this.lastRoster.map((r) => ({ ...r })),
+      counts: { ...this.counts },
+    };
+  }
 
   // ─── persistence (bounded, additive) ───────────────────────────────────────────────────────────────
 
@@ -222,5 +237,7 @@ export class GuildsMembrane {
         this.lastShare = next;
       }
     } catch { /* corrupt → keep defaults: an empty guildhall, never a poisoned ledger */ }
+    // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
+    this.refreshPending();
   }
 }

@@ -190,3 +190,27 @@ test("⑳ serialize stays far below the DO value wall", () => {
   }
   assert.ok(m.serialize().length < 16_000, `blob is ${m.serialize().length} bytes`);
 });
+
+test("⑳ restore() rebuilds the read-out so signals() is truthful BEFORE any round() (fix: /economy showed 0)", () => {
+  const m = new CourtMembrane(CFG);
+  // A freshly constructed membrane reads all-zero (the construction snapshot) — the bug's starting point.
+  assert.equal(m.signals().counts.indicted, 0);
+  assert.deepEqual(m.signals().outlaws, []);
+  // A persisted docket: real cumulative counts, an exile on the roll, one live case.
+  m.restore(JSON.stringify({
+    v: 1,
+    cases: [{ key: "debt:7", crime: "debt", defendantId: 7, prosecutorId: 7, filedTick: 5, evidence: 0.8, convenedTick: 0, jurors: [], verdict: null, votesGuilty: 0 }],
+    outlaws: [{ id: 8, crime: "treason", since: 4 }],
+    seen: ["debt:7"], counts: { indicted: 9, convicted: 2, cleared: 1, exiles: 4, amnesties: 1 }, amnestyEra: 3,
+  }));
+  const sig = m.signals();          // NO round() in between — this is exactly the DO-reload read-out path
+  assert.equal(sig.counts.indicted, 9, "restored counts surface immediately, not 0");
+  assert.equal(sig.counts.convicted, 2);
+  assert.equal(sig.counts.exiles, 4);
+  assert.equal(sig.openCases, 1, "the restored live case is on the docket");
+  assert.deepEqual(sig.outlaws, [{ id: 8, crime: "treason", since: 4 }]);
+  // refreshPending is a PURE rebuild: it fires no edge event.
+  assert.equal(sig.indictment, null);
+  assert.equal(sig.verdict, null);
+  assert.equal(sig.amnesty, null);
+});
