@@ -266,6 +266,11 @@ export interface Env {
   STRATEGY_ENABLED?: string;            // "true"/"false" (default FALSE — ships dark; GP trees modulate decisions within existing caps)
   ELITES_ENABLED?: string;              // "true"/"false" (default FALSE — ships dark; MAP-Elites archive drives novelty selection in planEvolution)
 
+  // --- Phase 3: intergenerational knowledge transfer (capability ③) ---
+  //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
+  CULTURAL_TRANSMISSION_ENABLED?: string; // "true"/"false" (default FALSE — ships dark; a真亲子 hatch copies a discounted parent bond/rep + compressed playbook prior to the child)
+  LAMARCK_ENABLED?: string;               // "true"/"false" (default FALSE — ships dark; a parent's lifetime performance biases the child's 4 genome scalars ±5% at breed, clamped to bounds)
+
   // --- ㉖ THE LEXICON: the words the telling makes — coinage, spread, silence (see src/lexicon.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The desk has
   //     no knobs (its thresholds are exported constants); only the master switch reads an env key.
@@ -730,6 +735,15 @@ export interface RuntimeConfig {
   };
   elites: {
     enabled: boolean;         // master switch (default OFF — dark deploy): MAP-Elites archive drives novelty selection in planEvolution
+  };
+
+  // Phase 3 capability ③: intergenerational knowledge transfer. Both default OFF (dark deploy) ⇒ a child
+  // hatches blank exactly as in Phase 2b (byte-for-byte inert). OFF never touches social/playbook/genome.
+  cultural: {
+    enabled: boolean;         // master switch (default OFF): vertical cultural transmission at noteHatch (discounted parent bond/rep + compressed playbook prior;真亲子 only)
+  };
+  lamarck: {
+    enabled: boolean;         // master switch (default OFF): Lamarckian genome imprinting — parent lifetime performance biases the child's 4 genome scalars ±5% (clamped) at breed
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1221,6 +1235,25 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     so planEvolution uses the pure-PnL selection byte-for-byte. When armed, a bounded behavioural
       //     archive drives novelty exploration alongside PnL fitness. Set ELITES_ENABLED=true to arm.
       enabled: (env.ELITES_ENABLED ?? "false").toLowerCase() === "true",
+    },
+
+    cultural: {
+      // Phase 3 capability ③: vertical cultural transmission. Shipped DISABLED (dark deploy): default OFF
+      //     so a child hatches blank, byte-for-byte the Phase 2b build. When armed, a真亲子 hatch copies a
+      //     DISCOUNTED subset of the parent's social memory (positive bond ×50%, negative ×25%, rep ×50%)
+      //     plus a COMPRESSED playbook summary (per (good,regime) net outcome + valid rate) into the child
+      //     as a prior. Strictly真亲子 only: an id-reuse (reopenSlot) hatch never inherits the dead fly's
+      //     residue. Moves no money, touches no neuron. Set CULTURAL_TRANSMISSION_ENABLED=true to arm.
+      enabled: (env.CULTURAL_TRANSMISSION_ENABLED ?? "false").toLowerCase() === "true",
+    },
+    lamarck: {
+      // Phase 3 capability ③: Lamarckian genome imprinting. Shipped DISABLED (dark deploy): default OFF so
+      //     the child genome is exactly the mutate/cross output, byte-for-byte Phase 2b. When armed, the
+      //     parent's lifetime performance vector biases the child's 4 heritable genome scalars by ±5% (plus
+      //     a small deterministic rngSeed jitter) ON TOP of mutate/cross, then clamps back into legal bounds
+      //     — folded into genomeHash so the on-chain identity stays reproducible. manifestHash never rotates
+      //     (only scalar VALUES change; no topology, no sensory channel). Set LAMARCK_ENABLED=true to arm.
+      enabled: (env.LAMARCK_ENABLED ?? "false").toLowerCase() === "true",
     },
 
     socialStimulus: {

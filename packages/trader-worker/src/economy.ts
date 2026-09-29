@@ -60,6 +60,7 @@ import {
   R6_SCALE,
   evalStrategy,
   generateTree,
+  mutateTree,
   treeHash,
   serializeTree,
   deserializeTree,
@@ -548,6 +549,21 @@ export interface EconomyConfig {
   elites?: {
     enabled: boolean;
   };
+  // --- CULTURAL (Phase 3 capability ③: vertical cultural transmission at noteHatch): OPTIONAL — absent/false
+  //     ⇒ noteHatch behaves byte-for-byte as Phase 2b (a child hatches blank). When armed, a真亲子 hatch copies
+  //     a DISCOUNTED subset of the parent's social memory + a COMPRESSED playbook summary into the child as a
+  //     prior. NEVER touches connectome/genome/manifestHash; moves no money. ---
+  cultural?: {
+    enabled: boolean;
+  };
+  // --- LAMARCK (Phase 3 capability ③: genome imprinting at breed): OPTIONAL — absent/false ⇒ the child genome
+  //     is exactly the mutate/cross output (byte-for-byte Phase 2b). When armed, economy.lamarckVector() derives
+  //     a bounded signed performance vector that breed.ts applies as a ±5% bias on the child's 4 genome scalars
+  //     (clamped back into legal bounds, folded into genomeHash). The economy side ONLY computes the vector —
+  //     it never writes the genome itself, so the one-way law and manifestHash invariant both hold. ---
+  lamarck?: {
+    enabled: boolean;
+  };
 }
 
 /**
@@ -595,6 +611,17 @@ const PLAYBOOK_GOOD_SWITCH_MAX = 0.25;   // max probability of playbook overridi
 const PLAYBOOK_SALT_EPS = 0x706c6179;    // deterministic salt for ε-greedy draw ("play")
 const PLAYBOOK_SALT_GOOD = 0x626f6f6b;  // deterministic salt for good-switch draw ("book")
 const PLAYBOOK_SALT_CONF = 0x6d656d6f;  // deterministic salt for confidence modulation ("memo")
+// --- Phase 3 capability ③: intergenerational knowledge transfer (cultural + Lamarckian; all deterministic) ---
+const CULTURAL_BOND_POS_SHARE = 0.5;    // a child inherits 50% of a parent's POSITIVE bond (a discounted trust prior)
+const CULTURAL_BOND_NEG_SHARE = 0.25;   // a child inherits 25% of a parent's NEGATIVE bond (a fainter grudge prior)
+const CULTURAL_REP_SHARE = 0.5;         // a child inherits 50% of the parent's reputation as its starting name
+const CULTURAL_PB_OUTCOME_SHARE = 0.5;  // the compressed playbook prior carries half the parent's mean outcome magnitude
+const CULTURAL_SALT_PB = 0x63756c74;    // deterministic salt for the compressed-summary context hash ("cult")
+const CULTURAL_SALT_TREE = 0x73656564;  // deterministic salt for the vertical strategy-tree mutation seed ("seed")
+const LAMARCK_SALT = 0x6c616d61;        // deterministic salt for the Lamarckian rngSeed jitter draw ("lama")
+const LAMARCK_PROFIT_SCALE = 1_000_000; // atomic-USDC soft-scale for the profit normaliser (rational, no transcendental)
+const GOOD_KIND_COUNT = 4;              // signal / momentum / attestation / prediction
+const REGIME_COUNT = 3;                 // COLD(0) / CALM(1) / HOT(2)
 const GOOD_KINDS: GoodKind[] = ["signal", "momentum", "attestation", "prediction"];
 /** How many neural-provenance receipts to keep published (newest first) for /proofs + the chain. */
 const PROOFS_CAP = 64;
@@ -1585,6 +1612,22 @@ export class AgentEconomy {
   }
 
   /**
+   * CULTURAL resolved (Phase 3 capability ③): false/absent ⇒ noteHatch is byte-for-byte the Phase 2b path
+   * (no parent memory is copied, an id-reuse slot keeps its residue exactly as before). Default OFF.
+   */
+  private culturalOn(): boolean {
+    return !!this.cfg.cultural && this.cfg.cultural.enabled === true;
+  }
+
+  /**
+   * LAMARCK resolved (Phase 3 capability ③): false/absent ⇒ lamarckVector() returns null and breed.ts leaves
+   * the child genome exactly as mutate/cross produced it. Default OFF.
+   */
+  private lamarckOn(): boolean {
+    return !!this.cfg.lamarck && this.cfg.lamarck.enabled === true;
+  }
+
+  /**
    * Update the MAP-Elites archive from this tick's readings + agent ledger. Called once per cron boundary.
    * Each agent's behaviour descriptor bins are computed from (arousal, settle rate, good entropy) and the
    * archive cell is contested: a higher-fitness (netUsdc) agent replaces the incumbent. Bounded: at most
@@ -2538,12 +2581,20 @@ export class AgentEconomy {
     // birth. Reopen it FIRST — clear its tombstone, reset its wallet to a fresh newborn, and sever it from
     // its PREVIOUS house/children — so the reborn individual is ledger-clean before it is born into the NEW
     // parent's line below. A brand-new offspring id was never dead, so this is a no-op on the normal path.
-    if (this.dead.has(childId)) this.reopenSlot(childId, this.cfg.hatchSeedUsdc);
+    // Phase 3 capability ③: capture the reuse flag BEFORE reopenSlot lifts the tombstone. A recycled slot still
+    // carries the DEAD fly's social/playbook/strategy residue (reopenSlot deliberately leaves those keyed by
+    // id/address — its documented scope cut). transmitCulture below wipes that residue and re-seeds the child
+    // ONLY from `parentId` (the真亲), so a reused id can never DOUBLE-INHERIT an unrelated dead fly's memory.
+    const reusedSlot = this.dead.has(childId);
+    if (reusedSlot) this.reopenSlot(childId, this.cfg.hatchSeedUsdc);
     const parent = this.kinOf(parentId);
     const child = this.kinOf(childId);
     child.bornTick = this.tickIndex;
     child.gen = parent.gen + 1;
     if (parent.children.length < CHILD_CAP) parent.children.push(childId);
+    // Phase 3 capability ③: vertical cultural transmission (+ vertical strategy-tree inheritance when the
+    // strategy layer is armed). Gated by culturalOn() ⇒ byte-for-byte inert (the Phase 2b path) while OFF.
+    this.transmitCulture(parentId, childId, reusedSlot);
     // Inheritance first: the child is born into the name the parent already bears.
     const inherited = parent.house != null ? this.houses.get(parent.house) : undefined;
     if (inherited) {
@@ -2585,6 +2636,173 @@ export class AgentEconomy {
     child.house = house.id;
     return { houseId: house.id, name: house.name, sigil: house.sigil, childId, founded: true };
   }
+
+  /**
+   * Phase 3 capability ③ — VERTICAL CULTURAL TRANSMISSION at a真亲子 hatch. Inert (returns immediately) unless
+   * culturalOn(), so the OFF path is byte-for-byte the Phase 2b build. The child is seeded ONLY from `parentId`
+   * (the true parent that bred it), NEVER from whatever dead fly once held `childId`:
+   *   ① WIPE the child slot's residual social memory, playbook ring and strategy tree first — the DOUBLE-
+   *      INHERITANCE guard. On a brand-new id these are empty (a harmless no-op); on a RECYCLED id (reusedSlot)
+   *      they still hold the previous individual's bonds/grudges/ring/tree, which must NOT leak into the newborn
+   *      (reopenSlot deliberately leaves them — its documented scope cut — so we clear them here).
+   *   ② Copy a DISCOUNTED subset of the parent's social memory as the child's prior: a POSITIVE bond ×50%, a
+   *      NEGATIVE bond ×25% (a fainter inherited grudge), and the parent's reputation ×50%. Every inherited score
+   *      is decayed to now, re-clamped to [−1,1] and pruned to BOND_TOP_K, so the prior can never exceed the
+   *      parent's own lived memory and never grows DO storage.
+   *   ③ Inject a COMPRESSED playbook summary (per (good,regime) mean outcome + valid rate) as the child's starting
+   *      ring — NOT a verbatim copy — bounded to PLAYBOOK_CAP. Only while the playbook layer is itself armed
+   *      (otherwise rings are neither recorded nor persisted, so injecting would be inert anyway).
+   *   ④ When the STRATEGY layer is armed, seed the child's GP tree by deterministically MUTATING the parent's live
+   *      tree (vertical strategy inheritance); with no parent tree the child falls back to the id-derived default
+   *      on first access. Deterministic throughout: every seed is hash-derived (FNV-1a); zero Math.random/Date.now.
+   */
+  private transmitCulture(parentId: number, childId: number, reusedSlot: boolean): void {
+    if (!this.culturalOn()) return;
+    if (parentId === childId) return;   // a fly is never its own parent — nothing to transmit
+    // ① WIPE the child slot's residue (the double-inheritance guard). A safe no-op on a fresh id.
+    this.social.delete(childId);
+    this.playbook.delete(childId);
+    this.strategyTrees.delete(childId);
+    // ② Discounted social-memory prior from the TRUE parent.
+    const pm = this.social.get(parentId);
+    const tick = this.tickIndex;
+    if (pm) {
+      const cm = this.memOf(childId);
+      cm.rep = AgentEconomy.clampSigned(pm.rep * CULTURAL_REP_SHARE);
+      cm.repTick = pm.repTick;   // the inherited name ages on the parent's clock (fades like any memory)
+      for (const b of pm.bonds) {
+        if (b.other === childId) continue;   // never inherit a bond pointing at yourself
+        const live = AgentEconomy.clampSigned(AgentEconomy.fadeBond(b.score, b.lastTick, tick));
+        const share = live >= 0 ? CULTURAL_BOND_POS_SHARE : CULTURAL_BOND_NEG_SHARE;
+        cm.bonds.push({ other: b.other, score: AgentEconomy.clampSigned(live * share), trades: 0, lastTick: tick });
+      }
+      if (cm.bonds.length > BOND_TOP_K) {
+        cm.bonds.sort((x, y) => Math.abs(y.score) - Math.abs(x.score) || y.trades - x.trades || x.other - y.other);
+        cm.bonds.length = BOND_TOP_K;
+      }
+    }
+    // ③ Compressed playbook prior (only while the playbook layer records/persists rings).
+    if (this.playbookOn()) {
+      const summary = this.compressPlaybook(parentId, childId);
+      if (summary.length > 0) this.playbook.set(childId, summary);
+    }
+    // ④ Vertical strategy-tree inheritance (only while the strategy layer is armed).
+    if (this.strategyOn()) {
+      const pTree = this.strategyTrees.get(parentId) ?? this.strategyTreeOf(parentId) ?? undefined;
+      if (pTree) {
+        const seed = hash32(parentId, childId, CULTURAL_SALT_TREE);
+        const childTree = mutateTree(pTree, seed, this.tickIndex);
+        if (isLegalTree(childTree)) this.strategyTrees.set(childId, childTree);
+      }
+    }
+  }
+
+  /**
+   * Compress the parent's playbook ring into a bounded prior for the child: aggregate by (good, regime) into at
+   * most 4×3 = 12 buckets (≤ PLAYBOOK_CAP), each summarised as the MEAN signed outcome (discounted by
+   * CULTURAL_PB_OUTCOME_SHARE) + the bucket's valid rate. Deterministic: buckets are emitted in fixed
+   * (good asc, regime asc) order, so no sort is needed on the normal path; if the cap were ever exceeded the
+   * strongest |mean| win, ties broken by a hash01 draw — never by iteration luck. A summary, not a copy, so the
+   * child's ring stays ≤ PLAYBOOK_CAP and DO storage never grows beyond the Phase 1 per-fly budget.
+   */
+  private compressPlaybook(parentId: number, childId: number): PlaybookEntry[] {
+    const ring = this.playbook.get(parentId);
+    if (!ring || ring.length === 0) return [];
+    const netSum = new Map<number, number>();
+    const cnt = new Map<number, number>();
+    const validSum = new Map<number, number>();
+    for (const e of ring) {
+      const key = e.good * REGIME_COUNT + e.regime;
+      netSum.set(key, (netSum.get(key) ?? 0) + e.outcome);
+      cnt.set(key, (cnt.get(key) ?? 0) + 1);
+      validSum.set(key, (validSum.get(key) ?? 0) + (e.valid ? 1 : 0));
+    }
+    const bornTick = this.kin.get(childId)?.bornTick ?? this.tickIndex;
+    const out: PlaybookEntry[] = [];
+    for (let good = 0; good < GOOD_KIND_COUNT; good++) {
+      for (let regime = 0; regime < REGIME_COUNT; regime++) {
+        const key = good * REGIME_COUNT + regime;
+        const n = cnt.get(key) ?? 0;
+        if (n <= 0) continue;
+        const mean = (netSum.get(key) ?? 0) / n;
+        const validRate = (validSum.get(key) ?? 0) / n;
+        out.push({
+          ctx: hash32(good, regime, CULTURAL_SALT_PB),
+          action: 0,
+          good,
+          regime,
+          outcome: Math.round(mean * CULTURAL_PB_OUTCOME_SHARE),
+          valid: validRate >= 0.5 ? 1 : 0,
+          tick: bornTick,
+        });
+      }
+    }
+    // 4×3 = 12 ≤ PLAYBOOK_CAP(16): the cap can never bind, but guard anyway with a deterministic strongest-first cut.
+    if (out.length > PLAYBOOK_CAP) {
+      out.sort((a, b) => Math.abs(b.outcome) - Math.abs(a.outcome)
+        || hash01(b.good, b.regime, CULTURAL_SALT_PB) - hash01(a.good, a.regime, CULTURAL_SALT_PB)
+        || a.good - b.good || a.regime - b.regime);
+      out.length = PLAYBOOK_CAP;
+    }
+    return out;
+  }
+
+  /**
+   * Phase 3 capability ③ — LAMARCKIAN genome imprint vector. Derives a bounded, deterministic signed vector in
+   * [−1,1]^4 from the PARENT's lifetime economic performance; breed.ts applies it as a ±5% multiplicative bias on
+   * the child's 4 heritable genome scalars (weightGain/threshGain/tauGain/weightJitter) ON TOP of mutate/cross,
+   * then clamps back into legal bounds and folds the result into genomeHash. Returns null when lamarckOn() is
+   * false (the child genome is then exactly the mutate/cross output). The economy ONLY computes this vector — it
+   * never writes the genome itself, so the one-way law holds and manifestHash never rotates (only scalar VALUES
+   * change downstream). Signals (all integer-derived, quantised to r6; no transcendental, no Math.random/Date.now):
+   *   · weightGain   ← soft-signed lifetime net P&L (a profitable parent begets a slightly more sensitive child);
+   *   · threshGain   ← best regime (a COLD-market specialist begets a calmer, higher-threshold child);
+   *   · tauGain      ← settlement reliability (valid rate): a dependable parent begets a slower-integrating child;
+   *   · weightJitter ← good-diversity (distinct goods traded): a generalist begets more exploratory jitter.
+   */
+  lamarckVector(parentId: number, _tick: number):
+    { weightGain: number; threshGain: number; tauGain: number; weightJitter: number } | null {
+    if (!this.lamarckOn()) return null;
+    const ring = this.playbook.get(parentId);
+    const gc = this.goodCounts.get(parentId) ?? [0, 0, 0, 0];
+    const regimeNet = [0, 0, 0];
+    let totalNet = 0, validN = 0, totalN = 0;
+    if (ring) {
+      for (const e of ring) {
+        totalNet += e.outcome;
+        if (e.regime >= 0 && e.regime < REGIME_COUNT) regimeNet[e.regime] += e.outcome;
+        if (e.valid) validN++;
+        totalN++;
+      }
+    }
+    // Fallback performance signal when the playbook layer never recorded a ring: the ledger's realised net.
+    if (totalN === 0) {
+      const idx = this.indexOfId.get(parentId);
+      if (idx != null) {
+        const a = this.agents[idx];
+        try { totalNet = Number(BigInt(a.earned) - BigInt(a.paid)); } catch { totalNet = 0; }
+      }
+    }
+    // ① profit: rational soft-sign, bounded (−1,1) — no transcendental, identical across engines.
+    const profitNorm = totalNet / (Math.abs(totalNet) + LAMARCK_PROFIT_SCALE);
+    // ② best regime → COLD(0):+1, CALM(1):0, HOT(2):−1 (a cold-market specialist is the calmest lineage).
+    let bestRegime = 1, best = regimeNet[1];
+    for (let r = 0; r < REGIME_COUNT; r++) { if (regimeNet[r] > best) { best = regimeNet[r]; bestRegime = r; } }
+    const regimeBias = 1 - bestRegime;
+    // ③ reliability: valid rate mapped to [−1,1] (no history ⇒ neutral 0).
+    const relBias = totalN > 0 ? (validN / totalN - 0.5) * 2 : 0;
+    // ④ diversity: distinct goods traded / 4 mapped to [−1,1] (a broad forager begets more jitter).
+    let distinct = 0;
+    for (let i = 0; i < GOOD_KIND_COUNT; i++) if ((gc[i] ?? 0) > 0) distinct++;
+    const divBias = (distinct / GOOD_KIND_COUNT - 0.5) * 2;
+    const r6 = (x: number) => Math.round(AgentEconomy.clampSigned(x) * 1_000_000) / 1_000_000;
+    return { weightGain: r6(profitNorm), threshGain: r6(regimeBias), tauGain: r6(relBias), weightJitter: r6(divBias) };
+  }
+
+  /** Phase 3 read-out accessor: a fly's raw social-memory record (bonds + rep), or undefined if it has none. */
+  getSocial(id: number): AgentSocial | undefined { return this.social.get(id); }
+  /** Phase 3 read-out accessor: a fly's playbook ring (bounded ≤ PLAYBOOK_CAP), or undefined if it has none. */
+  getPlaybook(id: number): readonly PlaybookEntry[] | undefined { return this.playbook.get(id); }
 
   /**
    * The house banner a fly bears — a pure ledger read for the culture layer (no dynasty gating: a

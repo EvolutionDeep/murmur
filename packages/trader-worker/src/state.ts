@@ -591,6 +591,12 @@ export class FlyStateDO {
       // ELITES (Phase 2b, capability ②): MAP-Elites novelty archive drives exploration in planEvolution.
       // OFF ⇒ archive never updates, planEvolution uses pure-PnL selection byte-for-byte.
       elites: { enabled: this.cfg.elites.enabled },
+      // CULTURAL (Phase 3, capability ③): vertical cultural transmission at noteHatch. OFF ⇒ a child hatches
+      // blank, byte-for-byte Phase 2b (no parent memory copied, id-reuse residue untouched).
+      cultural: { enabled: this.cfg.cultural.enabled },
+      // LAMARCK (Phase 3, capability ③): genome imprinting at breed. OFF ⇒ lamarckVector returns null and the
+      // child genome is exactly the mutate/cross output, byte-for-byte Phase 2b.
+      lamarck: { enabled: this.cfg.lamarck.enabled },
     };
   }
 
@@ -1281,8 +1287,21 @@ export class FlyStateDO {
     // a fee is only ever spent on a genuinely NEW genome; a non-duplicate error (unknown parent) is fatal.
     let child: LineageEntry;
     try {
+      // Phase 3 capability ③ (Lamarckian): the parent's lifetime performance biases the child's 4 genome
+      // scalars ±5% at breed. null when LAMARCK_ENABLED is off ⇒ the genome is exactly the mutate/cross output
+      // (byte-for-byte Phase 2b). The vector is deterministic (derived from the parent's ledger/playbook), and
+      // its jitter is seeded by the SAME rngSeed applyBreed uses, so a re-run reproduces the identical child.
+      const imprintVec = economy.lamarckVector(plan.payerId, tickIndex);
       const resolved = await resolveNovelBreed(plan, (op, parents, seed) =>
-        applyBreed(entries, { op, parents, rngSeed: seed, breeder: plan.payerAddress }, { flywireTopology: this.cfg.flywireTopology }),
+        applyBreed(
+          entries,
+          { op, parents, rngSeed: seed, breeder: plan.payerAddress },
+          {
+            flywireTopology: this.cfg.flywireTopology,
+            tickIndex,
+            ...(imprintVec ? { imprint: { vector: imprintVec, rngSeed: seed } } : {}),
+          },
+        ),
       );
       if (!resolved) {
         console.warn("[DO] evolution: no novel offspring this cron (every attempt duplicated)");

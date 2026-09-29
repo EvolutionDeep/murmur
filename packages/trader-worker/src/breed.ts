@@ -25,11 +25,69 @@ import {
   mutateTree,
   crossoverTrees,
   treeHash as gpTreeHash,
+  FLYWIRE_GENOME_BOUNDS,
+  FLYWIRE_DEFAULTS,
   type Genome,
   type ConnectomeStructuralSpec,
   type StrategyTree,
 } from "@fly/fly-brain";
 import type { RuntimeConfig } from "./config.js";
+
+// --- Phase 3 capability ③: Lamarckian genome imprinting (deterministic; no Math.random, no Date.now) ---
+const LAMARCK_MAX = 0.05;          // ±5% max multiplicative bias on a genome scalar (the heritable imprint ceiling)
+const LAMARCK_JITTER = 0.01;       // ±1% deterministic rngSeed jitter layered on the bias (breaks sibling ties)
+const LAMARCK_SALT = 0x6c616d61;   // "lama" — FNV salt for the per-field jitter draw (matches economy.ts)
+
+/** The 4 heritable FlyWire genome scalars a Lamarckian imprint may bias (topology/seed are NEVER touched). */
+const IMPRINT_FIELDS = ["weightGain", "threshGain", "tauGain", "weightJitter"] as const;
+type ImprintField = (typeof IMPRINT_FIELDS)[number];
+
+/**
+ * A bounded signed performance vector in [−1,1]^4 derived by the economy from a PARENT's lifetime record
+ * (economy.lamarckVector). Each component steers one genome scalar: positive ⇒ bias up, negative ⇒ bias down.
+ */
+export interface GenomeImprint {
+  weightGain: number;
+  threshGain: number;
+  tauGain: number;
+  weightJitter: number;
+}
+
+/** FNV-1a 32-bit over three integers — the same deterministic hash the economy uses (self-contained here). */
+function imprintHash32(a: number, b: number, c: number): number {
+  let h = 0x811c9dc5;
+  const mix = (x: number) => {
+    for (let s = 0; s < 32; s += 8) { h = Math.imul(h ^ ((x >>> s) & 0xff), 0x01000193) >>> 0; }
+  };
+  mix(a >>> 0); mix(b >>> 0); mix(c >>> 0);
+  return h >>> 0;
+}
+
+function imprintRound4(x: number): number { return Math.round(x * 10000) / 10000; }
+function imprintClamp(x: number, lo: number, hi: number): number { return x < lo ? lo : x > hi ? hi : x; }
+
+/**
+ * Apply a Lamarckian imprint to a child genome's 4 heritable scalars, ON TOP of the mutate/cross output.
+ * For each field: multiplier = 1 + LAMARCK_MAX·signed + jitter, where `signed` is the parent-performance bias
+ * clamped to [−1,1] and `jitter` is a small deterministic ±LAMARCK_JITTER draw from (rngSeed, fieldIndex). The
+ * result is clamped back into FLYWIRE_GENOME_BOUNDS and rounded to 4 decimals — so an imprint can NEVER push a
+ * scalar outside its legal range and NEVER touches seed/topology (manifestHash invariant holds). Pure in
+ * (genome, vector, rngSeed): the same inputs always yield the same imprinted genome, so the folded genomeHash
+ * stays reproducible by anyone re-running the breed.
+ */
+function applyLamarckImprint(g: Genome, vec: GenomeImprint, rngSeed: number): Genome {
+  const out: Genome = { ...g };
+  for (let i = 0; i < IMPRINT_FIELDS.length; i++) {
+    const f: ImprintField = IMPRINT_FIELDS[i];
+    const bounds = FLYWIRE_GENOME_BOUNDS[f];
+    const current = out[f] ?? FLYWIRE_DEFAULTS[f];
+    const signed = imprintClamp(Number(vec[f]) || 0, -1, 1);
+    const jitter = (imprintHash32(rngSeed, i, LAMARCK_SALT) / 0xffffffff - 0.5) * 2 * LAMARCK_JITTER;
+    const mult = 1 + LAMARCK_MAX * signed + jitter;
+    out[f] = imprintRound4(imprintClamp(current * mult, bounds[0], bounds[1]));
+  }
+  return out;
+}
 
 /** Bump when the lineage record shape changes. */
 export const LINEAGE_SCHEMA_VERSION = 1;
@@ -132,6 +190,13 @@ export async function applyBreed(
     parentTrees?: Map<string, StrategyTree>;
     /** Tick index for deterministic tree mutation seed (Phase 2b). */
     tickIndex?: number;
+    /**
+     * Phase 3 capability ③ (Lamarckian): a parent-performance imprint vector + the seed for its jitter. When
+     * present AND flywireTopology is on, the child's 4 genome scalars are biased ±5% (clamped to legal bounds)
+     * ON TOP of mutate/cross, BEFORE genomeHash — so the on-chain identity reflects the imprint and stays
+     * reproducible. Absent ⇒ the genome is exactly the mutate/cross output (byte-for-byte Phase 2b).
+     */
+    imprint?: { vector: GenomeImprint; rngSeed: number };
   } = {},
 ): Promise<LineageEntry> {
   const byHash = new Map(entries.map((e) => [e.genomeHash, e]));
@@ -182,6 +247,13 @@ export async function applyBreed(
     }
   } else {
     throw new Error(`unsupported op ${String(req.op)}`);
+  }
+
+  // Phase 3 capability ③ (Lamarckian): bias the child's 4 heritable scalars by the parent-performance imprint,
+  // ON TOP of mutate/cross and BEFORE hashing, so genomeHash folds the imprint in (identity stays reproducible).
+  // FlyWire mode only — the 4 scalars are the heritable parameters there; PRNG mode varies layer sizes instead.
+  if (opts.imprint && flywire) {
+    child = applyLamarckImprint(child, opts.imprint.vector, (opts.imprint.rngSeed >>> 0));
   }
 
   // Phase 2b: fold the strategy tree hash into genomeHash (format unchanged: still bytes32 / 64 hex).
