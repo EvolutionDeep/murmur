@@ -278,14 +278,33 @@ interface WarRuntime {
 }
 
 /**
- * Persisted per-UTC-day budget for the autonomous evolution step, so a mid-day DO eviction can't reset the
+ * Persisted per-day budget for the autonomous evolution step, so a mid-day DO eviction can't reset the
  * daily breeding count and overspend. Armed (onchain + real spend) evolution only; never written when inert.
+ * dayKey is derived deterministically from tickIndex (1440 ticks ≈ 1 day) for PoCA replay fidelity.
  */
 interface EvolutionGuard {
-  dayKey: string;                    // UTC calendar day ("YYYY-MM-DD") these counters bucket to
+  dayKey: string;                    // tick-derived day bucket ("t<N>") these counters belong to
   global: number;                    // offspring bred today across the whole swarm
   perAgent: Record<number, number>;  // offspring funded per agent id today
 }
+
+// ─── Deterministic FNV-1a hash for the evolution path (same construction as economy/culture/faith, private
+// salt ⇒ an evolution draw can never alias another layer's). Replaces Math.random + Date.now so that
+// planEvolution/driveEvolution is a PURE function of (tickIndex, state) for PoCA replay. ─────────────────
+function evoHash32(a: number, b: number, c: number): number {
+  let h = 0x811c9dc5;
+  const mix = (x: number) => {
+    for (let s = 0; s < 32; s += 8) { h = Math.imul(h ^ ((x >>> s) & 0xff), 0x01000193) >>> 0; }
+  };
+  mix(a >>> 0); mix(b >>> 0); mix(c >>> 0);
+  return h >>> 0;
+}
+/** Uniform 0..1 draw from (tick, counter, salt) — reproducible without persisted RNG state. */
+function evoHash01(a: number, b: number, salt: number): number {
+  return evoHash32(a, b, salt) / 0xffffffff;
+}
+/** Ticks per evolution "day" (cron fires every ≈60 s, so 1440 ticks ≈ 24 h). */
+const EVO_TICKS_PER_DAY = 1440;
 
 /**
  * Lowest VACANT live-population id in [0, cap): the first slot not held by a currently-live fly. With
@@ -1170,9 +1189,9 @@ export class FlyStateDO {
     return this.evolutionGuard;
   }
 
-  /** Reset the daily breeding counters when the UTC day rolls over. */
-  private rollEvolutionDay(g: EvolutionGuard, nowMs: number): void {
-    const key = new Date(nowMs).toISOString().slice(0, 10);
+  /** Reset the daily breeding counters when the tick-derived day rolls over (deterministic for PoCA replay). */
+  private rollEvolutionDay(g: EvolutionGuard, tickIndex: number): void {
+    const key = `t${Math.floor(tickIndex / EVO_TICKS_PER_DAY)}`;
     if (key !== g.dayKey) {
       g.dayKey = key;
       g.global = 0;
@@ -1212,7 +1231,7 @@ export class FlyStateDO {
     await this.anchorLineage(economy, entries, rows);
 
     const guard = await this.ensureEvolutionGuard();
-    this.rollEvolutionDay(guard, Date.now());
+    this.rollEvolutionDay(guard, tickIndex);
     if (ev.globalDaily > 0 && guard.global >= ev.globalDaily) return;                   // daily swarm budget spent
     // GERMLINE ADVANCEMENT: each agent breeds from its OWN most-recent offspring when it has one (so lines
     // accumulate generations and `cross` recombines two diverged germlines), else from its genesis root —
@@ -1220,13 +1239,19 @@ export class FlyStateDO {
     // order == fly-id order (population.ts spawns fly i from populationSeeds[i]); see evolution.ts.
     const genomeHashById = germlineResolver(rows, entries);
 
-    const rngSeed = (Date.now() & 0xffffffff) >>> 0;
+    // Deterministic rngSeed: derived from (tickIndex, salt) so the same tick always produces the same
+    // offspring genome. Replaces the former `(Date.now() & 0xffffffff) >>> 0`.
+    const rngSeed = evoHash32(tickIndex, 0, ev.salt);
     const lim: EvolutionLimits = {
       perCron: ev.maxPerCron, perCronUsed: 0,
       perAgentDaily: ev.perAgentDaily, globalDaily: ev.globalDaily, globalUsed: guard.global,
       perAgentUsed: guard.perAgent, crossBias: ev.crossBias,
     };
-    const plan = planEvolution(rows, genomeHashById, lim, Math.random, rngSeed);
+    // Deterministic rng closure: each call draws from hash01(tickIndex, callCounter, salt). planEvolution
+    // calls rng() at most once (the cross/mutate decision), but the counter makes it safe for any call count.
+    let rngCounter = 0;
+    const deterministicRng = (): number => evoHash01(tickIndex, rngCounter++, ev.salt);
+    const plan = planEvolution(rows, genomeHashById, lim, deterministicRng, rngSeed);
     if (!plan) return;                                                                  // nobody fit / budget hit
 
     // Compute + validate the offspring BEFORE spending. applyBreed is pure and refuses unknown parents and

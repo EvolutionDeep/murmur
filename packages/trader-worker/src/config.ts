@@ -208,6 +208,7 @@ export interface Env {
   EVOLUTION_CROSS_BIAS?: string;        // 0..1 — with ≥2 eligible, P(cross top-2) else mutate top-1 (default 0.5)
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
+  EVOLUTION_SALT?: string;              // deterministic salt for evolution draws (hex int, default 0x65766f = "evo"); ensures the hash01 PRNG stream never aliases economy/culture/faith draws.
   POP_LIVE_RETIRE?: string;             // "true"/"false" (default TRUE) — when a fly dies, RETIRE it from the live swarm (free its id/slot/shard brain) so the population reflects ONLY the living and a dead fly never holds a breeding slot. Reuses the vacated id (and its HD wallet + shard slice) for the next hatch, tombstoned so a cold boot can't resurrect the dead founder. false ⇒ the old behaviour: deaths close a wallet only, roster never shrinks, ids never recycle. Rollback switch.
   LAW_ENABLED?: string;                 // "true"/"false" (default TRUE) — ⑧ THE COMMONS: at each NEW era a deterministic assembly is convened from the swarm's own read-out condition (standing + stake of its wealthiest/honoured living flies) and votes — a pure function of (era, address, hashes) — to nudge TWO bounded institution knobs (the credit line and its interest). ECONOMIC-SIDE ONLY: it re-prices credit the economy already reads, moves no money and touches no neuron. A sub-switch of INSTITUTIONS — false (or institutions off) ⇒ no assembly, effective ≡ base config, byte-for-byte today.
   LAW_ASSEMBLY_SIZE?: string;           // seats in the commons (default 7; clamped 2..16 and to the living population).
@@ -608,6 +609,7 @@ export interface RuntimeConfig {
     perAgentDaily: number;    // max offspring one agent may fund per UTC day
     globalDaily: number;      // max offspring bred per UTC day across the swarm
     crossBias: number;        // 0..1 — P(cross top-2) when ≥2 eligible, else mutate top-1
+    salt: number;             // deterministic FNV-1a salt for evolution draws (replaces Math.random/Date.now)
     hatchLive: boolean;       // hatch bred offspring into LIVE trading flies (grow to maxLivePopulation) vs lineage-only
     hatchSeedUsdc: number;    // parent→child bootstrap USDC transferred to the offspring's own wallet on hatch
     treasury: string | null;  // revenue address collecting each fee; null ⇒ step skipped entirely
@@ -1057,6 +1059,7 @@ export function loadConfig(env: Env): RuntimeConfig {
       perAgentDaily: clampInt(Number(env.EVOLUTION_PER_AGENT_DAILY ?? "1"), 0, 1000),
       globalDaily: clampInt(Number(env.EVOLUTION_GLOBAL_DAILY ?? "4"), 0, 1000),
       crossBias: clamp(Number(env.EVOLUTION_CROSS_BIAS ?? "0.5"), 0, 1),
+      salt: clampInt(Number(env.EVOLUTION_SALT ?? "0x65766f"), 0, 0x7fffffff),
       hatchLive,
       hatchSeedUsdc: clamp(Number(env.EVOLUTION_HATCH_SEED_USDC ?? "0.002"), 0.000001, 100),
     },
