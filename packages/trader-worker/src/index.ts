@@ -5,6 +5,7 @@ import { FlyStateDO } from "./state.js";
 import { OPENAPI_SPEC } from "./openapi.js";
 import { handleCommunity } from "./community.js";
 import { serveHistory } from "./history.js";
+import { serveReplayEconomy } from "./economyReplay.js";
 
 // FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
 // swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
@@ -96,10 +97,12 @@ export default {
             "GET  /lineage      (the connectome breeding market: every genome + its on-chain ancestry — genesis roots + bred individuals)",
             "GET  /lineage/:hash (one bred brain: genome body + parents/children + re-derived structural spec + on-chain commit)",
             "GET  /lineage/verify?hash=0x… (recompute a genome's hash, replay its brain, confirm its on-chain ancestry → PASS/FAIL)",
+            "GET  /lineage/stats (④ cross-generation capability report: survival / netUsdc-per-1k-tick / settle success / predict hit-rate / lifespan, per generation × temperature band — read-only, zero new state)",
             "GET  /arena        (human-vs-swarm MURMUR arena: live book + parimutuel odds + you-vs-the-swarm hit rate)",
             "GET  /bourse       (⑲ the MURMUR coin tape as the swarm feels it: fever/whales/argus-tithe flow/silences — read-only, inert until BOURSE_ENABLED)",
             "GET  /community  (token-gated governance forum: browse free; post/propose/vote need a MURMUR-holding wallet signature — see /community for the sub-endpoints)",
             "GET  /history      (D1 long-term archive: one row per cron — temperature/regime/deals/volume/gini/topStates)",
+            "GET  /replay/economy?fromEra&toEra (deterministic economy replay: re-run an archived era's serialize() blob along its recorded temperature pulse stream → byte-identical trajectory + replayHash; read-only, served from D1)",
             "GET  /stimuli",
             "GET  /snapshot?flyId=N   (full neural state of one fly + its agent wallet)",
             "GET  /flies/:id",
@@ -133,6 +136,17 @@ export default {
       const histHeaders = new Headers(histResp.headers);
       for (const [k, v] of Object.entries(corsHeaders(origin))) histHeaders.set(k, v);
       return new Response(histResp.body, { status: histResp.status, headers: histHeaders });
+    }
+
+    // P0.3 — deterministic economy replay, served in the Worker straight from D1 (see economyReplay.ts), never
+    // a DO round-trip. Like /history this is an orthogonal, READ-ONLY D1 query: it replays each archived era's
+    // serialize() blob along its recorded temperature pulse stream and returns the byte-reproducible trajectory
+    // + replayHash. Keeping it off the coordinator's single input gate means a replay can't delay the cron.
+    if (path === "/replay/economy" && request.method === "GET") {
+      const replayResp = await serveReplayEconomy(env.DB, url);
+      const replayHeaders = new Headers(replayResp.headers);
+      for (const [k, v] of Object.entries(corsHeaders(origin))) replayHeaders.set(k, v);
+      return new Response(replayResp.body, { status: replayResp.status, headers: replayHeaders });
     }
 
     // Forward every other request to the DO (with the /v1 prefix already stripped)

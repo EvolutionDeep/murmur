@@ -1,0 +1,411 @@
+{
+  "artifact": "pre-p1-cross-generation-baseline",
+  "phase": "P0.4",
+  "generatedBy": "scripts/baseline-curve.ts",
+  "mode": "simulated",
+  "deterministic": true,
+  "reproducibleRunToRun": true,
+  "llmCalls": 0,
+  "params": {
+    "seed": 24301,
+    "populationSize": 24,
+    "budget": 24,
+    "totalTicks": 1200,
+    "hatchTicks": [
+      100,
+      300,
+      550,
+      850
+    ],
+    "childrenPerWave": 6,
+    "hatchSpreadTicks": 7,
+    "temperatureFn": "0.5 + 0.45*sin(tick*0.11)",
+    "dynasty": {
+      "enabled": true,
+      "oldAgeTicks": 600,
+      "penuryGraceTicks": 50,
+      "plagueTemp": 0.86,
+      "plaguePct": 0.1
+    }
+  },
+  "sim": {
+    "hatched": 24,
+    "deaths": 42
+  },
+  "boundaries": [
+    "Prediction layer not exercised by a pure-economy offline run => predictStats empty, predictHitRate null.",
+    "Per-agent band temperature = market temperature at the agent's birth tick (reproducible representative).",
+    "Dynasty mortality thresholds tightened via config overrides so deaths occur within the offline window; production defaults untouched."
+  ],
+  "curve": [
+    {
+      "generation": 0,
+      "agents": 24,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": 0.093918,
+      "settleSuccessRate": 1,
+      "predictHitRate": null,
+      "avgLifespanTicks": 1047.63
+    },
+    {
+      "generation": 1,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.45184,
+      "settleSuccessRate": 0.9944,
+      "predictHitRate": null,
+      "avgLifespanTicks": 600
+    },
+    {
+      "generation": 2,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.273908,
+      "settleSuccessRate": 1,
+      "predictHitRate": null,
+      "avgLifespanTicks": 567.83
+    },
+    {
+      "generation": 3,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.048364,
+      "settleSuccessRate": 0.9574,
+      "predictHitRate": null,
+      "avgLifespanTicks": 530.33
+    },
+    {
+      "generation": 4,
+      "agents": 6,
+      "survivalRate": 1,
+      "avgNetUsdcPer1kTick": 0,
+      "settleSuccessRate": null,
+      "predictHitRate": null,
+      "avgLifespanTicks": 333.5
+    }
+  ],
+  "report": {
+    "asOfTick": 1201,
+    "generations": 4,
+    "agents": 48,
+    "byGeneration": [
+      {
+        "generation": 0,
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093917852595429,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.625,
+        "bands": [
+          {
+            "generation": 0,
+            "band": "CALM",
+            "agents": 24,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": 0.093917852595429,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 1047.625
+          }
+        ]
+      },
+      {
+        "generation": 1,
+        "agents": 6,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.45184,
+        "settleSuccessRate": 0.9943714821763602,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600,
+        "bands": [
+          {
+            "generation": 1,
+            "band": "COLD",
+            "agents": 2,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.465285,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 600
+          },
+          {
+            "generation": 1,
+            "band": "CALM",
+            "agents": 1,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.5538266666666667,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 600
+          },
+          {
+            "generation": 1,
+            "band": "HOT",
+            "agents": 3,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.4088811111111111,
+            "settleSuccessRate": 0.9879518072289156,
+            "predictHitRate": null,
+            "avgLifespanTicks": 600
+          }
+        ]
+      },
+      {
+        "generation": 2,
+        "agents": 6,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.2739078426659361,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 567.8333333333334,
+        "bands": [
+          {
+            "generation": 2,
+            "band": "COLD",
+            "agents": 3,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.23901551695991288,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 596
+          },
+          {
+            "generation": 2,
+            "band": "CALM",
+            "agents": 1,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.29841333333333336,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 600
+          },
+          {
+            "generation": 2,
+            "band": "HOT",
+            "agents": 2,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.31399358589127224,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 509.5
+          }
+        ]
+      },
+      {
+        "generation": 3,
+        "agents": 6,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.04836416525007601,
+        "settleSuccessRate": 0.9574468085106383,
+        "predictHitRate": null,
+        "avgLifespanTicks": 530.3333333333334,
+        "bands": [
+          {
+            "generation": 3,
+            "band": "COLD",
+            "agents": 3,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.05245330850741919,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 467
+          },
+          {
+            "generation": 3,
+            "band": "CALM",
+            "agents": 1,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.06452839931153184,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 581
+          },
+          {
+            "generation": 3,
+            "band": "HOT",
+            "agents": 2,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": -0.03414833333333333,
+            "settleSuccessRate": 0.8571428571428571,
+            "predictHitRate": null,
+            "avgLifespanTicks": 600
+          }
+        ]
+      },
+      {
+        "generation": 4,
+        "agents": 6,
+        "survivalRate": 1,
+        "avgNetUsdcPer1kTick": 0,
+        "settleSuccessRate": null,
+        "predictHitRate": null,
+        "avgLifespanTicks": 333.5,
+        "bands": [
+          {
+            "generation": 4,
+            "band": "COLD",
+            "agents": 1,
+            "survivalRate": 1,
+            "avgNetUsdcPer1kTick": 0,
+            "settleSuccessRate": null,
+            "predictHitRate": null,
+            "avgLifespanTicks": 351
+          },
+          {
+            "generation": 4,
+            "band": "CALM",
+            "agents": 2,
+            "survivalRate": 1,
+            "avgNetUsdcPer1kTick": 0,
+            "settleSuccessRate": null,
+            "predictHitRate": null,
+            "avgLifespanTicks": 330
+          },
+          {
+            "generation": 4,
+            "band": "HOT",
+            "agents": 3,
+            "survivalRate": 1,
+            "avgNetUsdcPer1kTick": 0,
+            "settleSuccessRate": null,
+            "predictHitRate": null,
+            "avgLifespanTicks": 330
+          }
+        ]
+      }
+    ],
+    "bins": [
+      {
+        "generation": 0,
+        "band": "CALM",
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093917852595429,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.625
+      },
+      {
+        "generation": 1,
+        "band": "COLD",
+        "agents": 2,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.465285,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600
+      },
+      {
+        "generation": 1,
+        "band": "CALM",
+        "agents": 1,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.5538266666666667,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600
+      },
+      {
+        "generation": 1,
+        "band": "HOT",
+        "agents": 3,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.4088811111111111,
+        "settleSuccessRate": 0.9879518072289156,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600
+      },
+      {
+        "generation": 2,
+        "band": "COLD",
+        "agents": 3,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.23901551695991288,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 596
+      },
+      {
+        "generation": 2,
+        "band": "CALM",
+        "agents": 1,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.29841333333333336,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600
+      },
+      {
+        "generation": 2,
+        "band": "HOT",
+        "agents": 2,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.31399358589127224,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 509.5
+      },
+      {
+        "generation": 3,
+        "band": "COLD",
+        "agents": 3,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.05245330850741919,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 467
+      },
+      {
+        "generation": 3,
+        "band": "CALM",
+        "agents": 1,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.06452839931153184,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 581
+      },
+      {
+        "generation": 3,
+        "band": "HOT",
+        "agents": 2,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": -0.03414833333333333,
+        "settleSuccessRate": 0.8571428571428571,
+        "predictHitRate": null,
+        "avgLifespanTicks": 600
+      },
+      {
+        "generation": 4,
+        "band": "COLD",
+        "agents": 1,
+        "survivalRate": 1,
+        "avgNetUsdcPer1kTick": 0,
+        "settleSuccessRate": null,
+        "predictHitRate": null,
+        "avgLifespanTicks": 351
+      },
+      {
+        "generation": 4,
+        "band": "CALM",
+        "agents": 2,
+        "survivalRate": 1,
+        "avgNetUsdcPer1kTick": 0,
+        "settleSuccessRate": null,
+        "predictHitRate": null,
+        "avgLifespanTicks": 330
+      },
+      {
+        "generation": 4,
+        "band": "HOT",
+        "agents": 3,
+        "survivalRate": 1,
+        "avgNetUsdcPer1kTick": 0,
+        "settleSuccessRate": null,
+        "predictHitRate": null,
+        "avgLifespanTicks": 330
+      }
+    ]
+  }
+}

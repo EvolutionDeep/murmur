@@ -137,3 +137,31 @@ CREATE TABLE IF NOT EXISTS community_vote_events (
   sig         TEXT    NOT NULL UNIQUE       -- EIP-712 Vote signature (a re-vote re-signs with a fresh ts)
 );
 CREATE INDEX IF NOT EXISTS idx_community_vote_events_proposal ON community_vote_events (proposal_id, recorded_at);
+
+-- ============================================================================================
+-- P0.3 — Economy era snapshots (the measurement/replay bedrock). ONE row per CLOSED era: the
+-- economy.serialize() blob captured at that era's OPEN (the replay seed state) plus the per-cron market
+-- temperatures felt DURING the era (the pulse stream). GET /replay/economy re-runs a blob along its recorded
+-- pulse stream to reproduce that era's economic trajectory byte-for-byte (see src/economyReplay.ts). Written
+-- best-effort from FlyStateDO.trackEraSnapshot() the moment the historian's era index advances; a D1 failure
+-- never blocks the tick. PURE READ-OUT archival: it changes no brain, wallet, digest or manifestHash, and the
+-- blob is the SAME additive `economy:v1` payload the DO already persists (KEY_VERSION never bumped).
+-- `CREATE TABLE IF NOT EXISTS` keeps this idempotent (safe to re-run remotely) and is mirrored lazily in code
+-- (ensureEconomySnapshotsSchema) before the first insert.
+--   era       — the era that CLOSED (PRIMARY KEY: one snapshot per era; INSERT OR REPLACE is idempotent)
+--   tick      — population tickIndex at the era boundary
+--   ts        — wall-clock ms of archival (METADATA ONLY; never an input to the replay)
+--   blob      — economy.serialize() captured at the era's OPEN (the replay seed state)
+--   blob_hash — sha256(blob), tamper-evidence for the seed state
+--   temps     — JSON number[] of the per-cron market temperatures recorded DURING the era (the pulse stream)
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS economy_snapshots (
+  era       INTEGER PRIMARY KEY,
+  tick      INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  blob      TEXT    NOT NULL,
+  blob_hash TEXT    NOT NULL,
+  temps     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economy_snapshots_tick ON economy_snapshots (tick);

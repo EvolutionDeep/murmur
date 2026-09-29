@@ -1746,6 +1746,98 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/replay/economy": {
+      get: {
+        tags: ["economy", "provenance"],
+        operationId: "getReplayEconomy",
+        summary: "Deterministic economy replay: reproduce an archived era's trajectory byte-for-byte",
+        description:
+          "READ-ONLY, served in the Worker straight from D1 (never a DO round-trip). Each closed era archives its `economy.serialize()` blob (the seed state captured at the era's OPEN) plus the per-cron market temperatures felt during it (the pulse stream). This endpoint re-runs that blob along its recorded pulse stream through the SAME simulated settlement kernel and returns the resulting economic trajectory. The replay is a PURE function of (blob, temperatures, seed): the deal kernel uses zero Math.random and zero wall-clock in its decisions (every draw is a deterministic FNV-1a hash of the tick; the one wall-clock field, `Settlement.ts`, is metadata excluded from the projection), so the same inputs produce a byte-identical trajectory run-to-run, pinned by `replayHash`. BOUNDARY: it replays the economic decision kernel only — neural read-outs are synthesized deterministically from (seed, tick, temperature), the connectome is NOT re-run and dynasty mortality is NOT replayed. `combinedHash` chains the per-era hashes so one digest pins the whole window.",
+        parameters: [
+          { name: "fromEra", in: "query", required: false, schema: { type: "integer" }, description: "Lowest era to replay (inclusive). Default: the latest archived era only." },
+          { name: "toEra", in: "query", required: false, schema: { type: "integer" }, description: "Highest era to replay (inclusive). Default: the latest archived era only." },
+          { name: "seed", in: "query", required: false, schema: { type: "integer", default: 24301 }, description: "Deterministic PRNG seed for the synthesized neural read-outs (default 0x5EED). Same seed ⇒ same trajectory." },
+        ],
+        ...ok(
+          obj({
+            enabled: { type: "boolean", description: "False when D1 is not bound (no archive to replay)." },
+            seed: { type: ["integer", "null"], description: "The PRNG seed the replay ran under." },
+            fromEra: { type: ["integer", "null"], description: "Lowest era replayed (null when nothing is archived yet)." },
+            toEra: { type: ["integer", "null"], description: "Highest era replayed (null when nothing is archived yet)." },
+            count: { type: "integer", description: "Number of eras replayed." },
+            eras: {
+              type: "array",
+              description: "One replay summary per era, ascending by era.",
+              items: obj({
+                era: { type: "integer" },
+                tick: { type: "integer", description: "tickIndex at the era boundary." },
+                blobHash: { type: "string", description: "sha256 of the archived seed blob (tamper-evidence)." },
+                seedPulses: { type: "integer", description: "Number of temperature pulses recorded during the era." },
+                replayHash: { type: "string", description: "sha256(canonical(trajectory)) — identical across runs for identical inputs (the byte-identity anchor)." },
+                tickCount: { type: "integer", description: "Number of ticks replayed." },
+                finalState: { type: "object", additionalProperties: true, description: "Deterministic terminal state: tickIndex/volumeAtomic/volumeUsdc/count/settleOk/settleFail/gini + the per-agent ledger." },
+              }, ["era", "replayHash"]),
+            },
+            combinedHash: { type: ["string", "null"], description: "sha256 over the ordered per-era replayHashes — one digest pinning the whole window." },
+            boundary: { type: "string", description: "The honest replay boundary, served verbatim." },
+            note: { type: "string", description: "Present when there is nothing to replay yet." },
+            error: { type: "string", description: "Present (with HTTP 500) when the replay threw." },
+          }, ["enabled", "eras"]),
+          "The replayed era window (or an honest empty/disabled payload).",
+        ).response,
+      },
+    },
+    "/lineage/stats": {
+      get: {
+        tags: ["lineage"],
+        operationId: "getLineageStats",
+        summary: "Cross-generation capability report (per generation × temperature band)",
+        description:
+          "READ-ONLY, zero new state: a pure read-time fold over data the system ALREADY keeps — the breeding lineage (which generation each fly embodies + its born/death tick), the economy leaderboard (realized netUsdc), the prediction leaderboard (hit rate) and social memory (kept/broken ⇒ the per-agent settlement success signal). For each generation g, binned by the market-temperature band the agents lived through (COLD ≤ 0.33 / CALM / HOT ≥ 0.66), it reports survival rate, average netUsdc per 1000 ticks of life, settlement success rate, prediction hit rate and average lifespan. This is the 'capability ④' measurement lens; it never mutates a brain, wallet, digest or the manifestHash. `byGeneration` is the headline curve (band breakdown nested under each generation); `bins` is the flat (generation × band) cell list.",
+        parameters: [
+          { name: "asOfTick", in: "query", required: false, schema: { type: "integer" }, description: "The tick still-alive agents' lifespans are measured up to. Default: the economy's current tickIndex." },
+        ],
+        ...ok(
+          obj({
+            enabled: { type: "boolean", description: "False when the agent economy is disabled." },
+            mode: { type: "string", enum: ["simulated", "onchain"], description: "The economy's settlement mode." },
+            temperature: { type: "number", description: "The representative market temperature used for band binning (0..1)." },
+            asOfTick: { type: "integer", description: "The horizon still-alive agents were measured up to." },
+            generations: { type: "integer", description: "Highest generation present (0 when only genesis founders exist)." },
+            agents: { type: "integer", description: "Total agents folded into the report." },
+            byGeneration: {
+              type: "array",
+              description: "Per-generation headline rollup, ascending by generation.",
+              items: obj({
+                generation: { type: "integer" },
+                agents: { type: "integer" },
+                survivalRate: { type: "number", description: "alive / agents (0..1)." },
+                avgNetUsdcPer1kTick: { type: "number", description: "Mean over agents of (netUsdc per 1000 ticks of life)." },
+                settleSuccessRate: { type: ["number", "null"], description: "sum(settleOk)/sum(settleTotal) across the generation; null when no attempts were made." },
+                predictHitRate: { type: ["number", "null"], description: "sum(hits)/sum(rounds); null when no decisive rounds were bet." },
+                avgLifespanTicks: { type: "number", description: "Mean lifespan in sub-ticks." },
+                bands: { type: "array", description: "This generation's COLD/CALM/HOT breakdown (same cell shape as `bins`).", items: { type: "object", additionalProperties: true } },
+              }, ["generation", "agents"]),
+            },
+            bins: {
+              type: "array",
+              description: "Every (generation × band) cell, ascending by generation then COLD<CALM<HOT.",
+              items: obj({
+                generation: { type: "integer" },
+                band: { type: "string", enum: ["COLD", "CALM", "HOT"] },
+                agents: { type: "integer" },
+                survivalRate: { type: "number" },
+                avgNetUsdcPer1kTick: { type: "number" },
+                settleSuccessRate: { type: ["number", "null"] },
+                predictHitRate: { type: ["number", "null"] },
+                avgLifespanTicks: { type: "number" },
+              }, ["generation", "band", "agents"]),
+            },
+          }, ["enabled", "byGeneration", "bins"]),
+          "The cross-generation capability report.",
+        ).response,
+      },
+    },
   },
   components: {
     schemas: {

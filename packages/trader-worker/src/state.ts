@@ -95,6 +95,8 @@ import {
 import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./commons.js";
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
+import { writeEconomySnapshot } from "./economyReplay.js";
+import { generationReport, type GenAgentEntry, type GenLeaderRow, type GenPredictRow } from "./generationStats.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
 import {
   planWar, cursorAfterWarOpen, housePower, stakeOf, taxLevy, feudPairs, winnerOf, pairKey,
@@ -435,6 +437,13 @@ export class FlyStateDO {
   private evolutionGuard: EvolutionGuard | null = null;
   private lastSnapshot: PopulationSnapshot | null = null;
   private lastEconomy: EconomySnapshot | null = null;
+  /** P0.3 — era-boundary economy snapshot accumulator (in-memory; see trackEraSnapshot). The era being
+   *  accumulated, its OPEN-state serialize() blob, the tickIndex at that open, and the per-cron market
+   *  temperatures felt since. Archived to D1's economy_snapshots the moment the era index advances. */
+  private eraSnapEra: number | null = null;
+  private eraSnapBlob: string | null = null;
+  private eraSnapTick = 0;
+  private eraSnapTemps: number[] = [];
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
   private prevTemperature: number | null = null;
   private pendingStimuli: StimulusEvent[] = [];
@@ -1670,6 +1679,53 @@ export class FlyStateDO {
     }
   }
 
+  /**
+   * P0.3 — ERA-BOUNDARY ECONOMY SNAPSHOT (read-only archival; best-effort, never blocks the tick).
+   *
+   * Captures `economy.serialize()` at each era's OPEN as a replay seed, accumulates that era's per-cron
+   * market temperatures as the pulse stream, and — the moment the historian's era index advances — archives
+   * the CLOSED era's (blob + temps) to D1's `economy_snapshots` table. GET /replay/economy later re-runs that
+   * blob along its recorded pulse stream to reproduce the era's economic trajectory byte-for-byte (see
+   * economyReplay.ts). PURE ADDITIVE archival: it touches no wallet, no brain, no digest, no manifestHash.
+   *
+   * Called BEFORE this cron's economy.step so the seed blob has not yet felt the temperature it pairs with
+   * (no off-by-one). The accumulator is in-memory (like pendingStimuli/bourseSignals): a DO evicted mid-era
+   * simply re-seeds at the current era on the next cron and archives that (shorter) segment when it closes —
+   * still a self-consistent (blob, temps) pair, so the replay stays valid.
+   */
+  private async trackEraSnapshot(economy: AgentEconomy, temperature: number, tick: number): Promise<void> {
+    try {
+      const curEra = this.chronicler ? this.chronicler.eraInfo().era : 0;
+      if (this.eraSnapEra == null) {
+        // First cron after a (re)load: seed the accumulator at the current era's pre-step state.
+        this.eraSnapEra = curEra;
+        this.eraSnapBlob = economy.serialize();
+        this.eraSnapTick = tick;
+        this.eraSnapTemps = [];
+      } else if (curEra !== this.eraSnapEra) {
+        // Era boundary: archive the CLOSED era, then re-seed for the new one (blob = this pre-step state).
+        const closedEra = this.eraSnapEra;
+        const closedBlob = this.eraSnapBlob;
+        const closedTick = this.eraSnapTick;
+        const closedTemps = this.eraSnapTemps;
+        this.eraSnapEra = curEra;
+        this.eraSnapBlob = economy.serialize();
+        this.eraSnapTick = tick;
+        this.eraSnapTemps = [];
+        const db = this.env.DB;
+        if (db && closedBlob != null && closedTemps.length) {
+          await writeEconomySnapshot(db, { era: closedEra, tick: closedTick, blob: closedBlob, temps: closedTemps });
+          console.log(`[DO] era ${closedEra} economy snapshot archived (${closedTemps.length} pulses, tick ${closedTick})`);
+        }
+      }
+      // Record THIS cron's temperature into the open era's pulse stream (bounded against a pathological era).
+      const t = temperature < 0 ? 0 : temperature > 1 ? 1 : temperature;
+      if (Number.isFinite(t) && this.eraSnapTemps.length < 8192) this.eraSnapTemps.push(t);
+    } catch (e) {
+      console.warn("[DO] era snapshot tracking failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   /** Load the cached /history summary from DO storage, or seed it ONCE from a full-table aggregate when the DO
    *  has none (a fresh isolate over an existing archive). After this, getHistory reads it straight from memory —
    *  the per-request full-table scan is gone. */
@@ -2792,6 +2848,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/bourse") return await this.getBourse();
       if (req.method === "GET" && path === "/lineage") return await this.getLineage(url);
       if (req.method === "GET" && path === "/lineage/verify") return await this.getLineageVerify(url);
+      // P0.4 — the cross-generation capability report. MUST precede the /lineage/:hash prefix capture below.
+      if (req.method === "GET" && path === "/lineage/stats") return await this.getLineageStats(url);
       if (req.method === "GET" && path.startsWith("/lineage/")) return await this.getLineageOne(path.split("/")[2]);
       if (req.method === "GET" && path === "/history") return await this.getHistory(url);
       if (req.method === "GET" && path === "/annals") return await this.getAnnals(url);
@@ -3064,6 +3122,9 @@ export class FlyStateDO {
         economy.applyLaw(eff.creditCapBaseUsdc, eff.iouRatePer10);
       }
     }
+    // P0.3 — track the era-boundary economy snapshot BEFORE this cron's step (read-only archival; the seed
+    // blob must not yet feel the temperature it pairs with). Best-effort: never blocks the tick.
+    if (economy) await this.trackEraSnapshot(economy, temperature, swarm.getTickIndex());
     // Per-CRON settlement budget (previously spent in a single step; now spread across the sub-ticks).
     let econBudget = this.cfg.economy.maxDealsPerTick;
     const cronSettlements: Settlement[] = [];
@@ -4613,6 +4674,73 @@ export class FlyStateDO {
         lastTs: pulse.lastTs,
       },
     });
+  }
+
+  /**
+   * P0.4 — GET /lineage/stats: the cross-generation capability report (read-only, zero new state).
+   *
+   * A pure read-time fold over data the ledger ALREADY keeps: dynasty.kin (generation + bornTick), the dead
+   * set + graves (liveness + death tick), social memory (kept/broken ⇒ the per-agent settlement success
+   * signal), the economy leaderboard (realized netUsdc) and the prediction leaderboard (hit rate). For each
+   * generation, binned by the market-temperature band, it reports survival rate, avg netUsdc/1k ticks, settle
+   * success rate, predict hit rate and avg lifespan (see generationStats.ts). This is the "capability ④"
+   * measurement lens Phase 4 diffs against the frozen pre-Phase-1 baseline. NEVER mutates a brain/wallet/digest.
+   */
+  private async getLineageStats(url: URL): Promise<Response> {
+    if (!this.cfg.economy.enabled) {
+      return json({ enabled: false, asOfTick: 0, generations: 0, agents: 0, byGeneration: [], bins: [] });
+    }
+    const economy = await this.ensureEconomy();
+    // Parse the economy's OWN persisted read-out for the lineage + social linkage (no new accessor on the
+    // live-money class; serialize() is the same blob already written to DO storage every cron).
+    let parsed: any = {};
+    try { parsed = JSON.parse(economy.serialize()); } catch { parsed = {}; }
+    const kin: any[] = Array.isArray(parsed?.dynasty?.kin) ? parsed.dynasty.kin : [];
+    const agents: any[] = Array.isArray(parsed?.agents) ? parsed.agents : [];
+    const deadSet = new Set<number>(Array.isArray(parsed?.dynasty?.dead) ? parsed.dynasty.dead.map(Number) : []);
+    const graves: any[] = Array.isArray(parsed?.dynasty?.graves) ? parsed.dynasty.graves : [];
+    const graveTickById = new Map<number, number>();
+    for (const g of graves) { const id = Number(g?.id); if (!graveTickById.has(id)) graveTickById.set(id, Number(g?.tick) || 0); }
+    const socialMem: any[] = Array.isArray(parsed?.social?.mem) ? parsed.social.mem : [];
+    const socialById = new Map<number, { kept: number; broken: number }>();
+    for (const m of socialMem) socialById.set(Number(m?.id), { kept: Number(m?.kept) || 0, broken: Number(m?.broken) || 0 });
+
+    // Representative market temperature for the band binning: the last felt temperature (the best read-time
+    // proxy for the band every agent is trading through). Documented boundary: a per-agent lifetime average
+    // would need a D1 history scan; the read-time proxy keeps this endpoint zero-new-state and O(roster).
+    const rawT = this.prevTemperature ?? 0.5;
+    const temperature = rawT < 0 ? 0 : rawT > 1 ? 1 : rawT;
+
+    const entries: GenAgentEntry[] = [];
+    const seen = new Set<number>();
+    const push = (id: number, generation: number, bornTick: number): void => {
+      if (!Number.isFinite(id) || seen.has(id)) return;
+      seen.add(id);
+      const alive = !deadSet.has(id);
+      const soc = socialById.get(id);
+      const settleOk = soc ? soc.kept : 0;
+      const settleTotal = soc ? soc.kept + soc.broken : 0;
+      entries.push({
+        id, generation, bornTick,
+        deathTick: alive ? null : (graveTickById.get(id) ?? null),
+        alive, temperature, settleOk, settleTotal,
+      });
+    };
+    for (const k of kin) push(Number(k?.id), Number(k?.gen) || 0, Number(k?.bornTick) || 0);
+    // Any wallet without a kin record is a genesis founder (generation 0, born at the ledger's first tick).
+    for (const a of agents) push(Number(a?.id), 0, 0);
+
+    const leaderboard: GenLeaderRow[] = economy.leaderboard().map((r) => ({ id: r.id, netUsdc: r.netUsdc, deals: r.deals, sales: r.sales }));
+    const prediction = await this.ensurePrediction();
+    const predictStats: GenPredictRow[] = prediction
+      ? prediction.leaderboard().map((r) => ({ id: r.id, rounds: r.rounds, hits: r.hits }))
+      : [];
+
+    const curTick = Number(parsed?.tickIndex ?? 0) || 0;
+    const asOfRaw = url.searchParams.get("asOfTick");
+    const asOfTick = asOfRaw != null && Number.isFinite(Number(asOfRaw)) ? Number(asOfRaw) : curTick;
+    const report = generationReport(entries, leaderboard, predictStats, { asOfTick });
+    return json({ enabled: true, mode: economy.facilitatorMode ?? "simulated", temperature, ...report });
   }
 
   // ---------- on-chain prediction market (agents stake USDC on the next tick's temperature) ----------
