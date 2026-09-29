@@ -613,3 +613,62 @@ test("M9: drift guard — the code-defaults EQUAL wrangler.toml's live [vars], s
   assert.equal(cfg.economy.netMinBroadcastUsdc, Number(minBc), `code-default vs wrangler ${minBc}`);
   assert.equal(cfg.economy.netFlushTicks, Number(flushTicks), `code-default vs wrangler ${flushTicks}`);
 });
+
+// ═══════════════════════════════════════════════════════ N1 (#113) — GC sweepTo upper-bounded by maxShardParts
+
+test("N1: a corrupt prev.partCount of 1e9 is clamped by maxShardParts — GC never constructs an unbounded array", async () => {
+  // chunkSize 10 ⇒ maxShardParts(10) = ceil(32 MB / 10) = 3_355_444. A prev.partCount of 1e9 exceeds that.
+  const { anyDo, storage, chunkSize } = makeDO({ threshold: 100, chunkSize: 10 });
+  const maxParts = maxShardParts(chunkSize);
+
+  // Seed a first successful persist so econPersistGen is set.
+  setEconBlob(anyDo, filler("A", 250));
+  await persist(anyDo);
+  assert.equal(gen(anyDo), 1, "first persist commits gen 1");
+
+  // Corrupt the stored manifest's prev to an absurdly large partCount (simulating bit-rot or a hostile write).
+  const m = manifestOf(storage)!;
+  storage.map.set(K_MANIFEST, { ...m, prev: { gen: 0, partCount: 1_000_000_000, totalBytes: 1, fnv: 0 } });
+
+  // Clear the delete audit trail so we only observe the NEXT persist's GC.
+  storage.deleted.length = 0;
+
+  // Run persist again — the large-blob path reads oldPrev.partCount = 1e9 for sameGenBefore when gen matches.
+  // The gen alternates: econPersistGen is 1, so newGen = 0. prev.gen is 0, so sameGenBefore = 1e9.
+  setEconBlob(anyDo, filler("B", 200));
+  await persist(anyDo);
+
+  // The GC delete set must be bounded by maxParts, NOT by the corrupt 1e9.
+  let totalGcKeys = 0;
+  for (const batch of storage.deleted) totalGcKeys += batch.length;
+  assert.ok(
+    totalGcKeys <= maxParts * 2,
+    `GC deleted ${totalGcKeys} keys — must be ≤ 2×maxParts (${maxParts * 2}); the corrupt 1e9 was clamped`,
+  );
+});
+
+test("N1: small-blob path — a corrupt oldSnap.partCount of 1e9 is clamped by maxShardParts", async () => {
+  // Use a threshold that keeps the blob SMALL (below shard threshold) while a corrupt manifest exists.
+  const { anyDo, storage, chunkSize } = makeDO({ threshold: 10_000, chunkSize: 10 });
+  const maxParts = maxShardParts(chunkSize);
+
+  // Simulate: a previous sharded generation existed, now the blob fell below threshold.
+  // Plant a corrupt manifest with partCount = 1e9 (as if the last shard write recorded garbage).
+  storage.map.set(K_MANIFEST, { gen: 1, partCount: 1_000_000_000, totalBytes: 9999, fnv: 42 });
+  anyDo.econPersistGen = 1;   // memory thinks shards are live
+
+  storage.deleted.length = 0;
+
+  // Persist a SMALL blob (below threshold 10000) — takes the small-blob path.
+  setEconBlob(anyDo, filler("S", 50));
+  await persist(anyDo);
+
+  // The GC sweep for the small-blob path generates keys for gen 0 and gen 1.
+  // Each sweep is bounded by maxParts, so total keys ≤ 2 × maxParts.
+  let totalGcKeys = 0;
+  for (const batch of storage.deleted) totalGcKeys += batch.length;
+  assert.ok(
+    totalGcKeys <= maxParts * 2,
+    `GC deleted ${totalGcKeys} keys — must be ≤ 2×maxParts (${maxParts * 2}); the corrupt 1e9 was clamped`,
+  );
+});

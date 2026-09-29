@@ -1948,7 +1948,9 @@ export class FlyStateDO {
         // previous occupancy of the same gen behind). The bound is dynamic so no index can leak, and gen^1's
         // parts are never touched — they are the double buffer.
         const sameGenBefore = oldPrev && oldPrev.gen === newGen ? oldPrev.partCount : 0;
-        const sweepTo = Math.max(GC_PART_SCAN_FLOOR, parts.length, sameGenBefore);
+        // N1 (#113): clamp the GC sweep upper bound to maxShardParts so a corrupt prev.partCount (e.g. 1e9)
+        // can never make us construct an unbounded delete-key array → OOM the 128 MB isolate.
+        const sweepTo = Math.min(maxShardParts(chunkSize), Math.max(GC_PART_SCAN_FLOOR, parts.length, sameGenBefore));
         if (parts.length < sweepTo) gcParts.push({ gen: newGen, from: parts.length, to: sweepTo });
       } else {
         // SMALL BLOB: legacy single-key path (today's exact behaviour)
@@ -1960,7 +1962,9 @@ export class FlyStateDO {
         // skipped while partCount is 0, and legacy is committed atomically with that manifest). Sweep them —
         // but only when shards ever existed, so a never-sharded DO still issues zero deletes per cron.
         if (oldSnap || oldPrev || this.econPersistGen != null) {
-          const sweepTo = Math.max(GC_PART_SCAN_FLOOR, oldSnap?.partCount ?? 0, oldPrev?.partCount ?? 0);
+          // N1 (#113): same upper-bound clamp as the large-blob path — a corrupt stored partCount can never
+          // drive an unbounded allocation here either.
+          const sweepTo = Math.min(maxShardParts(chunkSize), Math.max(GC_PART_SCAN_FLOOR, oldSnap?.partCount ?? 0, oldPrev?.partCount ?? 0));
           gcParts.push({ gen: 0, from: 0, to: sweepTo }, { gen: 1, from: 0, to: sweepTo });
         }
       }

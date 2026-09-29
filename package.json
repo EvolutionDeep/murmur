@@ -52,5 +52,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@cloudflare/workerd-windows-64": "^1.20260929.1"
   }
 }

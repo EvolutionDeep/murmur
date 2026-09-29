@@ -451,7 +451,10 @@ export class NormsMembrane {
     const m = mutateNorm(parent, sig, tick);
     const id = this.nextId++;
     const child: Norm = {
-      id, cond: m.cond, action: m.action, strength: clamp(MINT_STRENGTH * 0.8, 0, 1),
+      // M2 fix (#113): inherit the MUTATED strength from mutateNorm, not a hardcoded constant.
+      // Previously this was `clamp(MINT_STRENGTH * 0.8, 0, 1)` which discarded m.strength entirely,
+      // making target===2 mutations (~1/3 of all mutations) invisible no-ops (the child was a clone).
+      id, cond: m.cond, action: m.action, strength: m.strength,
       depth: parent.depth + 1, parentId: parent.id, adherents: [dst], bornTick: tick, lastAdherentTick: tick,
       clusterSig: parent.clusterSig, mutations: 0,
     };

@@ -768,6 +768,47 @@ export const OPENAPI_SPEC = {
                 dying: { type: ["object", "null"], additionalProperties: true, description: "This cron's silence edge, or null." },
               },
             },
+            // ─── #113 N2: flag-guarded fields (absent when the respective capability switch is OFF) ───────────────
+            playbook: {
+              type: "array",
+              description: "Capability ① PLAYBOOK consequence-memory ring per agent (flag-guarded: absent when PLAYBOOK_ENABLED=false). Each entry is {id, e} where e is an array of 7-integer tuples [ctx, action, good, regime, outcome, valid, tick].",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "e"],
+                properties: {
+                  id: { type: "integer", description: "Agent id." },
+                  e: { type: "array", items: { type: "array", items: { type: "integer" }, minItems: 7, maxItems: 7 }, description: "Ring entries: [ctx, action, good, regime, outcome, valid, tick]." },
+                },
+              },
+            },
+            elitesArchive: {
+              type: "array",
+              description: "Capability ② MAP-Elites archive (flag-guarded: absent when ELITES_ENABLED=false). Each cell holds the best agent for that behavioural niche.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["c", "a", "f", "h", "t", "b"],
+                properties: {
+                  c: { type: "integer", description: "Cell index in the MAP-Elites grid." },
+                  a: { type: "integer", description: "Agent id occupying this cell." },
+                  f: { type: "number", description: "Fitness score (netUsdc)." },
+                  h: { type: "string", description: "Expression-tree hash (novelty key)." },
+                  t: { type: "integer", description: "Tick the elite was recorded." },
+                  b: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "Behavioural descriptor bins [arousal, settleRate, entropy]." },
+                },
+              },
+            },
+            // ─── #113 N2: membrane read-out keys (each absent when its capability switch is OFF → dark-deployment byte-equivalent) ───
+            culture: { type: ["object", "null"], additionalProperties: true, description: "⑤ Culture membrane read-out (flag-guarded: absent when CULTURE_ENABLED=false). Dominant fashion + tradition holder." },
+            religion: { type: ["object", "null"], additionalProperties: true, description: "⑪ Religion/Faith membrane read-out (flag-guarded: absent when RELIGION_ENABLED=false). Reigning god, holy-day, sects, faith events." },
+            norms: { type: ["object", "null"], additionalProperties: true, description: "㉛ Emergent Norms membrane read-out (flag-guarded: absent when NORMS_ENABLED=false). Minted/spread/mutated/died edges + standing norm table." },
+            conventions: { type: ["object", "null"], additionalProperties: true, description: "㉜ Emergent Conventions membrane read-out (flag-guarded: absent when CONVENTIONS_ENABLED=false). Custom crystallisation, breach, inheritance." },
+            rules: { type: ["object", "null"], additionalProperties: true, description: "㉝ Emergent Rules membrane read-out (flag-guarded: absent when RULES_ENABLED=false). Promoted conventions becoming enforceable rules." },
+            facilitator: { type: ["object", "null"], additionalProperties: true, description: "③ Settlement-rail telemetry (Circle facilitator stats: relay counts, breaker, gas). Absent in simulator mode." },
+            commons: { type: ["object", "null"], additionalProperties: true, description: "⑧ The Commons membrane read-out (flag-guarded: absent when LAW_ENABLED=false). Seated assembly, era law, effective credit line." },
+            tech: { type: ["object", "null"], additionalProperties: true, description: "⑬ Tech membrane read-out (flag-guarded: absent when TECH_ENABLED=false). Research tree, unlocked technologies." },
+            cities: { type: ["object", "null"], additionalProperties: true, description: "⑭ Cities membrane read-out (flag-guarded: absent when CITIES_ENABLED=false). City foundations, populations, specialisations." },
           }, ["agents", "totals"]),
           "Full economy view.",
         ).response,
