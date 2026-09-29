@@ -62,6 +62,7 @@ const SALT_TOURNAMENT = 0x54524e4d; // "TRNM"
  * r6 input: the caller passes Math.trunc(arousal * 1e6); we bin on the integer.
  */
 export function binArousal(arousalR6: number): number {
+  if (!Number.isFinite(arousalR6)) return 0;   // L10: NaN/±Inf must never reach cellIndex (would poison a Map key)
   // arousal ∈ [0, R6_SCALE]; 4 bins of 250_000 each
   const b = Math.floor(arousalR6 / 250_000);
   return Math.max(0, Math.min(BINS_PER_DIM - 1, b));
@@ -72,6 +73,7 @@ export function binArousal(arousalR6: number): number {
  * Input: r6 integer = Math.trunc(settleOk / total * 1e6).
  */
 export function binSettleRate(rateR6: number): number {
+  if (!Number.isFinite(rateR6)) return 0;   // L10 guard
   const b = Math.floor(rateR6 / 250_000);
   return Math.max(0, Math.min(BINS_PER_DIM - 1, b));
 }
@@ -82,6 +84,7 @@ export function binSettleRate(rateR6: number): number {
  * Bins: [0, 0.5), [0.5, 1.0), [1.0, 1.5), [1.5, 2.0].
  */
 export function binEntropy(entropyR6: number): number {
+  if (!Number.isFinite(entropyR6)) return 0;   // L10 guard
   const b = Math.floor(entropyR6 / 500_000);
   return Math.max(0, Math.min(BINS_PER_DIM - 1, b));
 }
@@ -147,11 +150,26 @@ export class ElitesArchive {
   entries(): IterableIterator<[number, EliteEntry]> { return this.cells.entries(); }
 
   /**
+   * L14: drop every entry whose agentId no longer satisfies `keep` (e.g. dead / never-funded ids after a
+   * restore). Ghost elites can't be picked as parents (planEvolution re-checks eligibility), but they skew
+   * the novelty filter's `inc.fitness < c.fitness` baseline — pruning keeps the archive honest. Returns the
+   * number of cells removed.
+   */
+  prune(keep: (agentId: number) => boolean): number {
+    let removed = 0;
+    for (const [ci, e] of Array.from(this.cells)) {
+      if (!keep(e.agentId)) { this.cells.delete(ci); removed++; }
+    }
+    return removed;
+  }
+
+  /**
    * Attempt to insert a candidate into its behaviour cell.
    * Returns true if the candidate replaced the incumbent (or the cell was empty).
    */
   insert(candidate: EliteEntry, score: ScoringFn = defaultScoring): boolean {
     const ci = cellIndex(candidate.bins[0], candidate.bins[1], candidate.bins[2]);
+    if (!Number.isFinite(ci) || ci < 0 || ci >= ARCHIVE_CELLS) return false;   // L10: never set a NaN/out-of-range Map key
     const incumbent = this.cells.get(ci);
     if (!incumbent || score(incumbent, candidate)) {
       this.cells.set(ci, candidate);

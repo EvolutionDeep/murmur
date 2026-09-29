@@ -58,6 +58,7 @@ import { housePower, type WarHouse, type HouseFeud } from "./war.js";
 import type { Fap } from "@fly/fly-brain";
 import {
   R6_SCALE,
+  R6_SIGNED_MAX,
   evalStrategy,
   generateTree,
   mutateTree,
@@ -115,6 +116,8 @@ export interface AgentState {
   deals: number;     // settlements completed as buyer
   sales: number;     // settlements completed as seller
   lastTick: number;  // last tick this agent settled anything (-1 = never)
+  /** Additive per-agent settle failure count (H6 fix: feeds MAP-Elites settle-rate descriptor). Default 0 on old payloads. */
+  settleFail?: number;
 }
 
 /** One completed (or declined) x402 settlement between two agents. */
@@ -466,6 +469,10 @@ export interface EconomySnapshot {
   /** A rolling window of recent settlements for the ledger HUD. */
   recent: Settlement[];
   totals: EconomyTotals;
+  /** PLAYBOOK read-out (flag-guarded, absent when OFF → dark-deployment byte-equivalent). Shape matches evolution.js contract. */
+  playbook?: Array<{ id: number; e: number[][] }>;
+  /** MAP-Elites archive read-out (flag-guarded, absent when OFF → dark-deployment byte-equivalent). Shape matches evolution.js contract. */
+  elitesArchive?: Array<{ c: number; a: number; f: number; h: string; t: number; b: [number, number, number] }>;
 }
 
 export interface EconomyConfig {
@@ -620,9 +627,10 @@ const FEUD_WORST_K = 5;                  // houseFeuds blend: how many of a pair
 // --- playbook tuning (Phase 1, capability ①: consequence-driven long-term memory; all deterministic) ---
 const PLAYBOOK_CAP = 16;                 // max entries per fly (bounded ring buffer; ~640B/fly)
 const PLAYBOOK_HALF_LIFE = 12000;        // sub-ticks for exponential decay of old entries (~3.3h at 1/s)
-const PLAYBOOK_EPSILON = 0.08;           // ε-greedy exploration floor: min 8% uniform-random pick (deterministic hash01)
+const PLAYBOOK_EPSILON = 0.08;           // ε-greedy exploration floor: min 8% uniform-random counterparty pick; the GOOD override uses ε/2 = 4% (a lighter nudge on the neural good choice)
 const PLAYBOOK_MAX_BIAS = 0.35;          // max reweighting magnitude on counterparty weights (never expands risk caps)
 const PLAYBOOK_GOOD_SWITCH_MAX = 0.25;   // max probability of playbook overriding the neural good choice
+const PLAYBOOK_RESTORE_CAP = 256;         // L13: hard cap on outer playbook array length during restore (bounded iteration)
 const PLAYBOOK_SALT_EPS = 0x706c6179;    // deterministic salt for ε-greedy draw ("play")
 const PLAYBOOK_SALT_GOOD = 0x626f6f6b;  // deterministic salt for good-switch draw ("book")
 const PLAYBOOK_SALT_CONF = 0x6d656d6f;  // deterministic salt for confidence modulation ("memo")
@@ -1122,9 +1130,9 @@ export class AgentEconomy {
         if (tickIndex - bo.lastFailTick < wait) continue;
       }
 
-      // #98 Fix 2: budget gate — only EXPENSIVE broadcast attempts consume budget.
+      // #98 Fix 2 + M5 fix: budget gate at PAIR level (at least one pair is always attempted).
+      // The CHUNK-level gate is inside the while loop below so the budget counts real broadcasts, not pairs.
       if (flushBudget > 0 && flushed >= flushBudget) break;
-      flushed++;
 
       const debtorId = pn.net > 0n ? pn.lo : pn.hi;
       const creditorId = pn.net > 0n ? pn.hi : pn.lo;
@@ -1135,8 +1143,10 @@ export class AgentEconomy {
       let primaryHash = "0x";
       let chunk = 0;
       while (remaining > 0n) {
+        // M5 fix: budget counted at CHUNK granularity (each chunk = one real broadcast attempt).
+        if (flushBudget > 0 && flushed >= flushBudget) break;
+        flushed++;
         const value = maxDeal > 0n && remaining > maxDeal ? maxDeal : remaining;
-        remaining -= value;
         const amountStr = String(value);
         const base = {
           tick: tickIndex, ts: Date.now(), good, resource: `net:${good}:${creditor.id}`,
@@ -1145,6 +1155,7 @@ export class AgentEconomy {
         } as const;
         const capReason = this.spendCapReason(debtor.id, amountStr);
         if (capReason) { out.push({ ...base, txHash: "0x", valid: false, reason: capReason }); break; }
+        // H6: per-agent settle failure tracking for the MAP-Elites settle-rate descriptor.
         // NEURAL PROVENANCE: the EIP-3009 nonce IS the sha256 of the net receipt (every folded trade's
         // frozen neural drives + this net's terms + the previous chain head). The buyer signs it and it is
         // mined into the calldata / AuthorizationUsed event, so the transfer cryptographically commits to
@@ -1172,6 +1183,7 @@ export class AgentEconomy {
           // A net that fails verification on-chain dents the debtor's reputation (light: rails can fail
           // for non-moral reasons, so this is a smudge, not a grudge — the book stays for true stiffs).
           this.settleFail++;
+          debtor.settleFail = (debtor.settleFail ?? 0) + 1;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
           // PLAYBOOK: a failed on-chain payment is a negative consequence for the debtor.
           this.playbookRecord(debtor.id, 0, good, 0, 0, tickIndex);
@@ -1184,6 +1196,7 @@ export class AgentEconomy {
         if (receipt.shadow) { out.push({ ...base, txHash: "0x", valid: false, reason: "shadow-dry-run" }); break; }
         if (!receipt.success) {
           this.settleFail++;
+          debtor.settleFail = (debtor.settleFail ?? 0) + 1;
           this.rememberFailedPayment(debtor.id, creditor.id, tickIndex);
           // PLAYBOOK: a failed settle is a negative consequence for the debtor.
           this.playbookRecord(debtor.id, 0, good, 0, 0, tickIndex);
@@ -1192,6 +1205,7 @@ export class AgentEconomy {
           out.push({ ...base, txHash: receipt.txHash || "0x", valid: false, reason: receipt.invalidReason ?? "settle-failed" }); break;
         }
         // Mined: commit this chunk on the internal ledger, meter the daily caps, count real volume.
+        remaining -= value;   // H7: decrement ONLY on success — a failed break preserves remaining for carry-forward.
         debtor.balance = subAtomic(debtor.balance, amountStr);
         debtor.paid = addAtomic(debtor.paid, amountStr);
         debtor.deals++;
@@ -1259,11 +1273,15 @@ export class AgentEconomy {
         out.push({ ...base, txHash: receipt.txHash, valid: true, proofHash: receiptHash });
         chunk++;
       }
-      // NOTE: constituents are deliberately left byte-identical to what their own cron already published
-      // (net-pending, txHash "0x"). The frontend dedups them on tick+parties+amount; mutating txHash to the
-      // real net hash would change the dedup key and re-draw every folded trade as a duplicate edge. The
-      // net settlement record itself carries the linkage (resource net:good:creditor + extra.trades).
-      this.pendingNets.delete(key);
+      // H7 fix: only delete the pair when fully broadcast; otherwise carry the remaining net forward
+      // (preserving sign direction + firstTick for the backoff/age mechanism). This prevents silent
+      // debt-forgiveness when a spendCapReason/verify/settle failure breaks the chunk loop early.
+      if (remaining === 0n) {
+        this.pendingNets.delete(key);
+      } else {
+        pn.net = (pn.net > 0n ? 1n : -1n) * remaining;
+        pn.trades = Math.max(1, pn.trades);
+      }
       this.flushSeq++;
     }
 
@@ -1439,10 +1457,10 @@ export class AgentEconomy {
       const rep = this.effectiveRep(cand.id, tick);
       // PLAYBOOK amplifier scales the social contribution [0.5..1.0]; ε-greedy zeroes it (uniform).
       const amp = pbMod ? (pbMod.explore ? 0 : pbMod.amplifier) : 1;
-      // STRATEGY tilt compounds with playbook: both are bounded [0.5..1.5]×[0.5..1.0] ⇒ max 0.75.
-      // ㉝ RULES tilt compounds too, bounded [0.5..2.0]. The Math.max(0.05,…) floor keeps EVERY weight strictly
-      //    positive (total ≥ 0.05 whenever picks.length ≥ 1 ⇒ no division by zero) and the band keeps cpRuleMod
-      //    finite (⇒ no NaN), so the deterministic roulette is unchanged and no cap is bypassed.
+      // L3 fix: STRATEGY tilt compounds with playbook: amp∈[0,1], stratTilt∈[0.5,1.5] ⇒ product ∈ [0, 1.5].
+      // ㉝ RULES tilt compounds too, bounded [0.5..2.0]. Combined range: [0.25, 1.5]×[0.5,2.0] ⇒ [0.125, 3.0].
+      //    The Math.max(0.05,…) floor is what guarantees total > 0 (⇒ no division by zero) and the band keeps
+      //    cpRuleMod finite (⇒ no NaN), so the deterministic roulette is unchanged and no cap is bypassed.
       const w = Math.max(0.05, 1 + amp * stratTilt * cpRuleMod * (0.6 * bond + 0.4 * rep));
       picks.push(idx);
       weights.push(w);
@@ -1693,11 +1711,13 @@ export class AgentEconomy {
       const idx = this.indexOfId.get(r.id);
       if (idx == null) continue;
       const agent = this.agents[idx];
-      const totalSettles = agent.deals + agent.sales;
-      const rateR6 = tickIndex > 0 ? Math.trunc((totalSettles / tickIndex) * 1_000_000) : 0;
+      // H6 fix: use per-agent settle counters (deals+sales = successes, settleFail = failures) instead of
+      // the degenerate totalSettles/tickIndex ratio that collapsed toward 0 as the swarm aged.
+      const agentSettleOk = agent.deals + agent.sales;
+      const agentSettleFail = agent.settleFail ?? 0;
       const gc = this.goodCounts.get(r.id) ?? [0, 0, 0, 0];
-      const arousalR6 = Math.trunc(Math.max(0, Math.min(1, r.arousal)) * 1_000_000);
-      const bins = computeBins(arousalR6, totalSettles, Math.max(totalSettles, tickIndex), gc as [number, number, number, number]);
+      const arousalR6 = Number.isFinite(r.arousal) ? Math.trunc(Math.max(0, Math.min(1, r.arousal)) * 1_000_000) : 0;
+      const bins = computeBins(arousalR6, agentSettleOk, agentSettleOk + agentSettleFail, gc as [number, number, number, number]);
       // Fitness = netUsdc (earned - paid) in atomic, converted to a float for comparison.
       const netAtomic = BigInt(agent.earned) - BigInt(agent.paid);
       const fitness = Number(netAtomic) / 1e6;
@@ -1787,7 +1807,7 @@ export class AgentEconomy {
    * All values are existing neural/social read-outs × R6_SCALE, Math.trunc()'d to r6 integers.
    * NEVER adds a new sensory channel — manifestHash invariant holds.
    */
-  private buildStrategyCtx(r: FlyReading, tick: number): StrategyCtx {
+  private buildStrategyCtx(r: FlyReading, _tick: number): StrategyCtx {
     const ctx = new Map<number, number>();
     // Neural read-outs (already 0..1 except turnBias which is -1..1)
     ctx.set(0, Math.trunc(clamp01(r.arousal) * R6_SCALE));       // arousal
@@ -1820,10 +1840,12 @@ export class AgentEconomy {
     const tree = this.strategyTreeOf(r.id);
     if (!tree) return 1.0;
     const ctx = this.buildStrategyCtx(r, tick);
-    const raw = evalStrategy(tree, ctx);  // r6 integer in [-4_000_000, +4_000_000]
-    // Map to [0.5, 1.5]: tilt = 1.0 + (raw / R6_SIGNED_MAX) * 0.5
-    const norm = raw / 4_000_000;          // -1..1
-    return 1.0 + norm * 0.5;               // 0.5..1.5
+    const raw = evalStrategy(tree, ctx);  // r6 integer in [-R6_SIGNED_MAX, +R6_SIGNED_MAX]
+    // L4 fix: use the exported R6_SIGNED_MAX constant (not a hardcoded magic number) and clamp the result
+    // so the tilt can never silently escape [0.5, 1.5] if fly-brain ever changes the bound.
+    const norm = raw / R6_SIGNED_MAX;      // -1..1
+    const tilt = 1.0 + norm * 0.5;         // 0.5..1.5
+    return tilt < 0.5 ? 0.5 : tilt > 1.5 ? 1.5 : tilt;
   }
 
   /**
@@ -1843,8 +1865,10 @@ export class AgentEconomy {
     const b = this.cfg.rules!;
     const cfgLo = axis === "buy" ? b.buyMin : b.cpMin;
     const cfgHi = axis === "buy" ? b.buyMax : b.cpMax;
-    const lo = Math.max(AgentEconomy.RULE_FLOOR, Number.isFinite(cfgLo) ? cfgLo : AgentEconomy.RULE_FLOOR);
-    const hi = Math.min(AgentEconomy.RULE_CEIL, Number.isFinite(cfgHi) ? cfgHi : AgentEconomy.RULE_CEIL);
+    // M1 fix: BOTH edges are clamped into the hard envelope [RULE_FLOOR, RULE_CEIL] before ordering,
+    // so the result is ALWAYS inside [0.5, 2.0] regardless of what cfgLo/cfgHi contain.
+    const lo = Math.min(AgentEconomy.RULE_CEIL, Math.max(AgentEconomy.RULE_FLOOR, Number.isFinite(cfgLo) ? cfgLo : AgentEconomy.RULE_FLOOR));
+    const hi = Math.max(AgentEconomy.RULE_FLOOR, Math.min(AgentEconomy.RULE_CEIL, Number.isFinite(cfgHi) ? cfgHi : AgentEconomy.RULE_CEIL));
     const l = Math.min(lo, hi), h = Math.max(lo, hi);
     return raw < l ? l : raw > h ? h : raw;
   }
@@ -1942,43 +1966,63 @@ export class AgentEconomy {
   }
 
   /**
-   * Compute a per-good decaying outcome score from a fly's playbook. Returns an array of 4 floats
-   * (one per GoodKind), each the exponential-weighted mean outcome normalised to [-1, 1].
-   * A good that consistently yielded positive outcomes scores high; one that failed scores low.
+   * H5 fix: Compute per-good decaying outcome scores SPLIT BY ACTION (bought vs sold).
+   * Returns { bought: number[4], sold: number[4] } — each the exponential-weighted mean consequence
+   * normalised to [-1, 1] using LAMARCK_PROFIT_SCALE (1e6 atomic = 1 USDC) as the real-money scale.
+   *
+   * boughtScore[good]: "did buying this good work out?"
+   *   - valid buy (action=0, valid=1): +|outcome|/scale (a successful purchase delivered value)
+   *   - invalid buy (action=0, valid=0): -1 (failure is maximally bad)
+   * soldScore[good]: "did selling this good work out?"
+   *   - valid sell (action=1, valid=1): +outcome/scale (earned income)
+   *   - invalid sell (action=1, valid=0): -1
+   *
+   * The old code ignored `e.action`, conflating "I was the seller" with "positive consequence" and
+   * saturating at ±1 for any amount ≥ 0.01 USDC (divisor 10000 vs real amounts ~50000 atomic).
    */
-  private playbookGoodScores(id: number, tick: number): number[] {
-    const scores = [0, 0, 0, 0];
-    const weights = [0, 0, 0, 0];
+  private playbookGoodScores(id: number, tick: number): { bought: number[]; sold: number[] } {
+    const boughtS = [0, 0, 0, 0], boughtW = [0, 0, 0, 0];
+    const soldS = [0, 0, 0, 0], soldW = [0, 0, 0, 0];
     const ring = this.playbook.get(id);
-    if (!ring) return scores;
+    if (!ring) return { bought: boughtS, sold: soldS };
     for (const e of ring) {
       const age = Math.max(0, tick - e.tick);
       const w = Math.pow(0.5, age / PLAYBOOK_HALF_LIFE);
-      // Normalise outcome: valid trades contribute their signed atomic amount scaled to [-1,1];
-      // invalid trades contribute -1 (a failure is maximally bad regardless of amount).
-      const norm = e.valid ? Math.max(-1, Math.min(1, e.outcome / 10000)) : -1;
-      scores[e.good] += w * norm;
-      weights[e.good] += w;
+      if (e.action === 0) {
+        // Buyer side: a valid buy means the good was delivered — positive consequence scaled by price.
+        const norm = e.valid ? Math.max(-1, Math.min(1, Math.abs(e.outcome) / LAMARCK_PROFIT_SCALE)) : -1;
+        boughtS[e.good] += w * norm;
+        boughtW[e.good] += w;
+      } else {
+        // Seller side: a valid sell means income earned — positive consequence scaled by amount.
+        const norm = e.valid ? Math.max(-1, Math.min(1, e.outcome / LAMARCK_PROFIT_SCALE)) : -1;
+        soldS[e.good] += w * norm;
+        soldW[e.good] += w;
+      }
     }
     for (let i = 0; i < 4; i++) {
-      scores[i] = weights[i] > 0 ? scores[i] / weights[i] : 0;
+      boughtS[i] = boughtW[i] > 0 ? boughtS[i] / boughtW[i] : 0;
+      soldS[i] = soldW[i] > 0 ? soldS[i] / soldW[i] : 0;
     }
-    return scores;
+    return { bought: boughtS, sold: soldS };
   }
 
   /**
    * PLAYBOOK good override: with bounded probability, switch the neurally-chosen good to one with a
-   * better playbook score. The switch probability is capped at PLAYBOOK_GOOD_SWITCH_MAX (25%) so the
-   * neurons' choice is never fully overridden — only nudged by consequence memory.
-   * ε-greedy floor: even if ALL goods score negatively, a minimum exploration probability remains.
+   * better BOUGHT-score (H5 fix: reads only the buy-side consequence ledger, not the sell-side, so the
+   * override reflects "which good served me well when I bought it" rather than "which good I sold").
+   * The switch probability is capped at PLAYBOOK_GOOD_SWITCH_MAX (25%) so the neurons' choice is never
+   * fully overridden — only nudged by consequence memory.
+   * ε-greedy floor: PLAYBOOK_EPSILON/2 = 4% minimum exploration (L8 fix: the good override uses half the
+   * counterparty ε because overriding WHAT to buy is a lighter nudge than overriding WHO to buy from).
    * Deterministic: the draw is hash01(tick, id, PLAYBOOK_SALT_GOOD).
    */
   private playbookGoodOverride(id: number, baseGood: GoodKind, tick: number): GoodKind {
-    const scores = this.playbookGoodScores(id, tick);
+    const { bought: scores } = this.playbookGoodScores(id, tick);
     const baseIdx = GOOD_KINDS.indexOf(baseGood);
     if (baseIdx < 0) return baseGood;
     const baseScore = scores[baseIdx];
-    // Find the best-scoring good
+    // Find the best-scoring good (by buy-side consequence)
     let bestIdx = baseIdx;
     let bestScore = baseScore;
     for (let i = 0; i < 4; i++) {
@@ -1988,8 +2032,7 @@ export class AgentEconomy {
     // Switch probability: proportional to the score gap, capped at PLAYBOOK_GOOD_SWITCH_MAX.
     const gap = Math.max(0, bestScore - baseScore);
     const switchProb = Math.min(PLAYBOOK_GOOD_SWITCH_MAX, gap * PLAYBOOK_GOOD_SWITCH_MAX * 2);
-    // ε-greedy exploration floor: always at least PLAYBOOK_EPSILON chance of trying the alternative,
-    // even when the playbook has no signal (gap ≈ 0). This prevents lock-in to a stale preference.
+    // ε-greedy exploration floor (4%): prevents lock-in to a stale preference.
     const finalProb = Math.max(PLAYBOOK_EPSILON * 0.5, switchProb);
     const draw = hash01(tick, id, PLAYBOOK_SALT_GOOD);
     return draw < finalProb ? GOOD_KINDS[bestIdx] : baseGood;
@@ -2653,9 +2696,11 @@ export class AgentEconomy {
    *     HD address keeps the SAME on-chain purse, but every lifetime counter starts clean;
    *   · SEVERS the id from its previous life (removed from every house roster + every parent's child list),
    *     then resets its own kin record — so the (id, bornTick) individual is ledger-isolated from the dead
-   *     fly that once bore this id. Known trade-off: SOCIAL memory (rep/bonds/grudges) and institutions
-   *     stay keyed by the reused id/address — a deliberate scope cut, since those are trust-scores on the
-   *     SAME purse and this ledger never mints; a full per-(id,bornTick) social split is a future step.
+   *     fly that once bore this id;
+   *   · M4 fix: ERASES the dead fly's social memory, playbook ring, strategy tree and goodCounts so the
+   *     reborn individual never inherits a stranger's bonds/grudges/episodic memory/GP tree. This runs
+   *     UNCONDITIONALLY (regardless of CULTURAL_ENABLED), preserving dark-deployment byte-equivalence:
+   *     transmitCulture's own erasure becomes a harmless no-op on the reused-slot path.
    */
   reopenSlot(id: number, openingUsdc: number): void {
     const opening = usdcToAtomic(openingUsdc);
@@ -2667,6 +2712,7 @@ export class AgentEconomy {
       const a = this.agents[idx];
       a.address = this.addressOf(id);   // same HD path ⇒ the same on-chain wallet (a reborn purse, not new funds)
       a.balance = opening; a.paid = "0"; a.earned = "0"; a.deals = 0; a.sales = 0; a.lastTick = -1;
+      a.settleFail = 0;
     }
     this.dead.delete(id);
     for (const h of this.houses.values()) {
@@ -2678,6 +2724,11 @@ export class AgentEconomy {
       if (ci >= 0) k.children.splice(ci, 1);
     }
     this.kin.set(id, { bornTick: this.tickIndex, house: null, children: [], gen: 0 });
+    // M4: unconditional id-reuse hygiene — erase the dead fly's residue so the reborn individual starts clean.
+    this.social.delete(id);
+    this.playbook.delete(id);
+    this.strategyTrees.delete(id);
+    this.goodCounts.delete(id);
   }
 
   /**
@@ -2707,13 +2758,13 @@ export class AgentEconomy {
     const d = this.dcfg();
     if (!d) return null;
     // ID-REUSE (live-retirement): this slot may be a retired fly's vacated id being recolonised by a new
-    // birth. Reopen it FIRST — clear its tombstone, reset its wallet to a fresh newborn, and sever it from
-    // its PREVIOUS house/children — so the reborn individual is ledger-clean before it is born into the NEW
-    // parent's line below. A brand-new offspring id was never dead, so this is a no-op on the normal path.
-    // Phase 3 capability ③: capture the reuse flag BEFORE reopenSlot lifts the tombstone. A recycled slot still
-    // carries the DEAD fly's social/playbook/strategy residue (reopenSlot deliberately leaves those keyed by
-    // id/address — its documented scope cut). transmitCulture below wipes that residue and re-seeds the child
-    // ONLY from `parentId` (the真亲), so a reused id can never DOUBLE-INHERIT an unrelated dead fly's memory.
+    // birth. Reopen it FIRST — clear its tombstone, reset its wallet to a fresh newborn, sever it from
+    // its PREVIOUS house/children, and ERASE its social/playbook/strategy/goodCounts residue (M4 fix) —
+    // so the reborn individual is fully clean before it is born into the NEW parent's line below.
+    // A brand-new offspring id was never dead, so this is a no-op on the normal path.
+    // Phase 3 capability ③: capture the reuse flag BEFORE reopenSlot lifts the tombstone. transmitCulture
+    // below re-seeds the child ONLY from `parentId` (the真亲) when CULTURAL is ON; when OFF, reopenSlot's
+    // unconditional erasure already guarantees no double-inheritance of a dead fly's memory.
     const reusedSlot = this.dead.has(childId);
     if (reusedSlot) this.reopenSlot(childId, this.cfg.hatchSeedUsdc);
     const parent = this.kinOf(parentId);
@@ -2921,9 +2972,11 @@ export class AgentEconomy {
     // ③ reliability: valid rate mapped to [−1,1] (no history ⇒ neutral 0).
     const relBias = totalN > 0 ? (validN / totalN - 0.5) * 2 : 0;
     // ④ diversity: distinct goods traded / 4 mapped to [−1,1] (a broad forager begets more jitter).
+    // M3 fix: absence of data (distinct=0) returns neutral 0, not the extreme −1 that penalised every
+    // never-traded parent's offspring with a systematic −5% weightJitter bias.
     let distinct = 0;
     for (let i = 0; i < GOOD_KIND_COUNT; i++) if ((gc[i] ?? 0) > 0) distinct++;
-    const divBias = (distinct / GOOD_KIND_COUNT - 0.5) * 2;
+    const divBias = distinct > 0 ? (distinct / GOOD_KIND_COUNT - 0.5) * 2 : 0;
     const r6 = (x: number) => Math.round(AgentEconomy.clampSigned(x) * 1_000_000) / 1_000_000;
     return { weightGain: r6(profitNorm), threshGain: r6(regimeBias), tauGain: r6(relBias), weightJitter: r6(divBias) };
   }
@@ -3348,6 +3401,16 @@ export class AgentEconomy {
     // Dynasty tithe: the seller's house (if any) takes its cut of the earned income, straight from the
     // balance the seller just grew. Pure ledger movement inside the already-committed transfer above.
     this.titheHouse(seller.id, amount);
+    // H6-B fix: track per-agent good-trade counts for the MAP-Elites entropy descriptor in SIMULATED mode
+    // too (previously only incremented in flush()'s mined branch, so entropy was dead in local/test runs).
+    if (this.elitesOn()) {
+      const gi = GOOD_IDX[good];
+      for (const aid of [buyer.id, seller.id]) {
+        let gc = this.goodCounts.get(aid);
+        if (!gc) { gc = [0, 0, 0, 0]; this.goodCounts.set(aid, gc); }
+        gc[gi]++;
+      }
+    }
 
     // Meter real spend against the daily caps — ONCHAIN ONLY (simulated has no real budget to meter).
     if (onchain) this.recordSpend(buyer.id, amount);
@@ -3668,6 +3731,18 @@ export class AgentEconomy {
         netPending: this.pendingNets.size,
         netPendingTrades,
       },
+      // PLAYBOOK /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
+      // Shape matches evolution.js contract: [{id, e: [[ctx,action,good,regime,outcome,valid,tick],…]}]
+      ...(this.playbookOn() ? {
+        playbook: Array.from(this.playbook.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, ring]) => ({ id, e: ring.map((x) => [x.ctx, x.action, x.good, x.regime, x.outcome, x.valid, x.tick]) })),
+      } : {}),
+      // MAP-Elites /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
+      // Shape matches evolution.js contract: [{c, a, f, h, t, b:[arousal, settleRate, entropy]}]
+      ...(this.elitesOn() ? {
+        elitesArchive: this.elitesArchive.serialize(),
+      } : {}),
     };
   }
 
@@ -4042,7 +4117,7 @@ export class AgentEconomy {
     this.playbook = new Map();
     const pb = p.playbook;
     if (Array.isArray(pb)) {
-      for (const rec of pb) {
+      for (const rec of pb.slice(0, PLAYBOOK_RESTORE_CAP)) {
         if (!rec || typeof rec !== "object") continue;
         const id = Number(rec.id);
         if (!Number.isFinite(id)) continue;
@@ -4083,6 +4158,9 @@ export class AgentEconomy {
     this.goodCounts = new Map();
     if (this.elitesOn()) {
       if (p.elitesArchive) this.elitesArchive = ElitesArchive.deserialize(p.elitesArchive);
+      // L14: prune ghost elites whose agentId is no longer a live, funded wallet (agents/dead are both
+      // restored above). Keeps the novelty filter's fitness baseline honest; cells re-converge from live data.
+      this.elitesArchive.prune((id) => this.indexOfId.has(id) && !this.dead.has(id));
       if (Array.isArray(p.goodCounts)) {
         for (const rec of p.goodCounts) {
           if (!rec || typeof rec !== "object") continue;

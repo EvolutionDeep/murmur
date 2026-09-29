@@ -228,9 +228,12 @@ test("cultural: an id-reuse hatch inherits ONLY the true parent — NEVER the de
   assert.ok(ring.some((e) => e.good === 0 && e.regime === 0), "the true parent's good=0 bucket is inherited");
 });
 
-test("cultural OFF: an id-reuse hatch keeps the residue and copies nothing (byte-for-byte the Phase 2b path)", async () => {
-  // Same scenario, cultural NOT armed ⇒ transmitCulture is a no-op: the dead fly's residue survives reopenSlot
-  // (its documented scope cut) and NO parent prior is copied. This is the inert baseline the guard contrasts with.
+test("cultural OFF: an id-reuse hatch ERASES the residue (M4 hygiene) and copies nothing", async () => {
+  // Same scenario, cultural NOT armed ⇒ transmitCulture is a no-op, but reopenSlot's UNCONDITIONAL id-reuse
+  // hygiene (M4 fix) wipes the dead fly's social/playbook residue anyway: a reborn individual must never
+  // inherit a stranger's bonds/grudges/episodic memory. No parent prior is copied either (that stays gated
+  // behind culturalOn()). Dark-deployment note: reopenSlot only runs on an id-reuse hatch (dynasty layer
+  // live), so a CULTURAL=OFF, dynasty=OFF deployment stays byte-for-byte the Phase 2b path.
   const config = cfg({ dynasty: { oldAgeTicks: 5, penuryGraceTicks: 1_000_000 }, playbook: { enabled: true } });
   const base = new AgentEconomy(config);
   await base.step(population("EXPLORE"), collective(0.3), 10);
@@ -244,10 +247,9 @@ test("cultural OFF: an id-reuse hatch keeps the residue and copies nothing (byte
   });
 
   econ.noteHatch(1, 0, HASH_B);
-  const reborn = econ.getSocial(0)!;
-  // OFF ⇒ no wipe, no copy: the residue bond is exactly as it was (+0.9), NOT #1's discounted prior.
-  assert.ok(reborn.bonds.some((b) => b.other === 9 && near(b.score, 0.9)), "cultural OFF leaves the dead fly's residue untouched");
-  assert.ok(!reborn.bonds.some((b) => near(b.score, -0.2)), "cultural OFF copies no parent prior");
+  // M4: the dead fly's residue is erased on slot reuse even with cultural OFF — no bond survives at all.
+  assert.equal(econ.getSocial(0), undefined, "cultural OFF: reopenSlot still wipes the dead fly's social residue (M4)");
+  assert.equal(econ.getPlaybook(0), undefined, "cultural OFF: the dead fly's playbook ring is wiped too (M4)");
 });
 
 // ============================================================ (b) CULTURAL: playbook compression
