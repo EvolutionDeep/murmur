@@ -165,3 +165,46 @@ CREATE TABLE IF NOT EXISTS economy_snapshots (
   temps     TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_economy_snapshots_tick ON economy_snapshots (tick);
+
+-- ============================================================================================
+-- ㉓ The Lexicon's PERMANENT archive (task #107 — "record the invented words completely, accurately,
+-- forever; they are the foundation of civilisation"). The lexicon membrane compiles a closed 20-word
+-- dictionary BACKWARDS out of the chronicle's hot roll; the DO blob under `lexicon:v1` is its LIVE truth
+-- (tombstones included, survives eviction AND reset). This table is the OFF-DO PERMANENT layer: EVERY
+-- COINAGE / SPREAD / SILENCE edge the desk fires is appended here as ONE immutable row — NEVER UPDATEd,
+-- NEVER DELETEd. Written best-effort from FlyStateDO.archiveLexiconEvents() (drained each cron) and
+-- backfilled once from the persisted dictionary (backfillLexiconDictionary) so words coined before this
+-- archive shipped are never lost; a D1 failure never blocks the tick AND is made observable on GET
+-- /lexicon (archiveErrors). APPEND-ONLY idempotence: INSERT OR IGNORE on the UNIQUE(kind,event,tick) guard
+-- means a retried cron is a no-op, never an overwrite of history. PURE READ-OUT: archiving a word changes
+-- no brain, wallet, ledger or settlement (stateDigest / manifestHash / chroniclerHash all unchanged).
+-- Served at GET /lexicon (paginated by id). `CREATE TABLE IF NOT EXISTS` keeps this idempotent (safe to
+-- re-run remotely) and is mirrored lazily in code (ensureD1Lexicon) before the first insert.
+--   event         — COINAGE (a word entered common tongue) | SPREAD (its lifetime tellings doubled) |
+--                   SILENCE (it went unspoken for the dormancy gap and was tombstoned, not deleted)
+--   uses          — ROLLING window tellings at the moment of the event (can shrink as the roll ages)
+--   lifetime_uses — MONOTONE tellings since coinage (the honest "told N times" number, never shrinks)
+--   gap           — silence gap in tellings (SILENCE rows only; 0 otherwise)
+--   coined_by     — lead actor (fly id) of the telling that was newest when the word was coined (P2-2)
+--   born          — the tick the word entered the lexicon
+--   grammar_hash  — lexiconGrammarHash() at write time (anchors the word-list + thresholds that made it)
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS lexicon_events (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,   -- append order (the /lexicon pagination cursor)
+  tick          INTEGER NOT NULL,                    -- swarm tickIndex when the edge fired
+  ts            INTEGER NOT NULL,                    -- unix ms when archived (metadata only; NOT a decision input)
+  era           INTEGER NOT NULL,                    -- era index at the moment of the event
+  era_name      TEXT    NOT NULL,                    -- evocative era name ("the Golden Age", …)
+  event         TEXT    NOT NULL,                    -- COINAGE | SPREAD | SILENCE
+  kind          TEXT    NOT NULL,                    -- the chronicle kind the word was made from (FEUD, GOLDEN_AGE, …)
+  word          TEXT    NOT NULL,                    -- the coined word itself ("feud", "golden age", …)
+  uses          INTEGER NOT NULL,                    -- ROLLING window tellings at the event
+  lifetime_uses INTEGER NOT NULL,                    -- MONOTONE lifetime tellings at the event
+  gap           INTEGER NOT NULL,                    -- silence gap (SILENCE rows; else 0)
+  coined_by     TEXT,                                -- lead actor fly id at coinage (null if none)
+  born          INTEGER NOT NULL,                    -- tick the word entered the lexicon
+  grammar_hash  TEXT    NOT NULL,                    -- lexiconGrammarHash() at write time
+  UNIQUE (kind, event, tick)                         -- append-only idempotence guard (a retry never overwrites)
+);
+CREATE INDEX IF NOT EXISTS idx_lexicon_events_id ON lexicon_events (id);
