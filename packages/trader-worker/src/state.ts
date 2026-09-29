@@ -74,6 +74,7 @@ import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js
 import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { NormsMembrane, type NormsFacts, type NormsSignals } from "./norms.js";
+import { ConventionsMembrane, type ConventionsFacts, type ConventionsSignals } from "./conventions.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
@@ -199,6 +200,10 @@ const LAND_IMG_PREFIX = "land:img:";
  *  restarts an empty society (no norm is back-dated), never ledger state. Bounded (≤ NORM_CAP norms + a pruned
  *  cluster tracker), DO-safe. */
 const KEY_NORMS = "norms:v1";
+/** ㉜ Emergent Conventions (the live convention ledger, the pair tracker, counts) — its OWN key: a corrupt/absent
+ *  blob restarts an empty society (no convention is back-dated), never ledger state. Bounded (≤ CONV_CAP
+ *  conventions + a pruned pair tracker), DO-safe. Shares the 200KB guard with ㉛'s norms. */
+const KEY_CONVENTIONS = "conventions:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -376,6 +381,8 @@ export class FlyStateDO {
   private rumor: RumorMill | null = null;
   /** ㉛ The Emergent Norms membrane (norms minted from bond clusters, spread, mutated, dead) — null while NORMS_ENABLED=false (byte-for-byte inert). */
   private norms: NormsMembrane | null = null;
+  /** ㉜ The Emergent Conventions membrane (customs crystallised from repeated pairwise trade, spread, inherited, breached, dead) — null while CONVENTIONS_ENABLED=false (byte-for-byte inert). */
+  private conventions: ConventionsMembrane | null = null;
   /** ㉕ The Treaty chancery (seals set, ratified, broken — the roll of formal peace) — null while TR_ENABLED=false (byte-for-byte inert). */
   private treaty: TreatyMembrane | null = null;
   /** ㉖ The Public Works yard (granaries raised, monuments mended, aqueducts fallen) — null while WORKS_ENABLED=false (byte-for-byte inert). */
@@ -800,6 +807,20 @@ export class FlyStateDO {
     this.norms = new NormsMembrane({ enabled: true, maxIntensity: this.cfg.norms.maxIntensity });
     if (stored) this.norms.restore(stored);
     return this.norms;
+  }
+
+  /**
+   * ㉜ Lazily load the Emergent Conventions membrane (null while CONVENTIONS_ENABLED=false — byte-for-byte inert
+   * rollback). A corrupt/absent blob restarts an empty society: no convention is back-dated, nothing crystallises,
+   * and the ledger is never poisoned. The causal leg's ceiling is read from config (hard-capped at 0.3).
+   */
+  private async ensureConventions(): Promise<ConventionsMembrane | null> {
+    if (!this.cfg.conventions.enabled) return null;
+    if (this.conventions) return this.conventions;
+    const stored = await this.state.storage.get<string>(KEY_CONVENTIONS);
+    this.conventions = new ConventionsMembrane({ enabled: true, maxIntensity: this.cfg.conventions.maxIntensity });
+    if (stored) this.conventions.restore(stored);
+    return this.conventions;
   }
 
   /**
@@ -1650,6 +1671,7 @@ export class FlyStateDO {
     if (this.lexicon) batch[KEY_LEXICON] = this.lexicon.serialize();
     if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
     if (this.norms) batch[KEY_NORMS] = this.norms.serialize();
+    if (this.conventions) batch[KEY_CONVENTIONS] = this.conventions.serialize();
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
@@ -2130,6 +2152,9 @@ export class FlyStateDO {
       // ㉛ EMERGENT NORMS: fold the membrane's norm edges ONLY while NORMS is on. Off ⇒ no `norms` key ⇒ the
       // historian's four norms detectors never speak (byte-for-byte the pre-Norms build).
       const norms = this.cfg.norms.enabled ? this.norms?.signals() ?? null : null;
+      // ㉜ EMERGENT CONVENTIONS: fold the membrane's convention edges ONLY while CONVENTIONS is on. Off ⇒ no
+      // `conventions` key ⇒ the historian's five convention detectors never speak (byte-for-byte the pre-Conventions build).
+      const conventions = this.cfg.conventions.enabled ? this.conventions?.signals() ?? null : null;
       // ㉕ TREATY: fold the chancery's diplomatic edges ONLY while TR is on. Off ⇒ no `treaty` key ⇒ the
       // historian's three treaty detectors never speak (byte-for-byte the pre-Treaty build).
       const treaty = this.cfg.treaty.enabled ? this.treaty?.signals() ?? null : null;
@@ -2287,6 +2312,7 @@ export class FlyStateDO {
         temple,
         land,
         norms,
+        conventions,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2603,6 +2629,40 @@ export class FlyStateDO {
       nm.round(facts);
     } catch (e) {
       console.warn("[DO] norms drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉜ EMERGENT CONVENTIONS — watch each PAIR of the economy's OWN bond graph (a pure public read-out, never a
+   * write), crystallise a convention when a pair keeps trading the same way (steady cadence, low variance, no
+   * betrayal), then spread / inherit / breach / decay the live conventions, and OFFER the widest-and-steadiest up
+   * to the norms membrane for ABSORPTION (the two emergent layers compose). PURE read-out end to end — the one
+   * causal leg is the Channel-A stimulus folded at step 3e (plus the bounded 1.5× breach threat), never money,
+   * never a connectome write. Runs after driveNorms and BEFORE observeChronicle. Best-effort. Inert while
+   * CONVENTIONS_ENABLED=false.
+   */
+  private async driveConventions(tick: number, economy: AgentEconomy): Promise<void> {
+    const cm = await this.ensureConventions();
+    if (!cm) return;
+    try {
+      const social = economy.socialReadout();
+      const facts: ConventionsFacts = {
+        tick,
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        bonds: social.bonds.map((b) => ({ a: b.a, b: b.b, score: b.score, trades: b.trades })),
+        ids: Array.from(new Set(social.bonds.flatMap((b) => [b.a, b.b]))),
+      };
+      cm.round(facts);
+      // norms ABSORBS conventions: hand this cron's promotion candidate to the norms membrane (null while
+      // NORMS_ENABLED=false ⇒ no absorption; the convention simply re-offers later). Bounded + deterministic.
+      const promote = cm.signals().promote;
+      if (promote) {
+        const nm = await this.ensureNorms();
+        const ok = nm ? nm.absorb({ sig: promote.sig, tick, era: promote.era, strength: promote.strength, origin: promote.label }) : false;
+        cm.confirmAbsorb(ok);
+      }
+    } catch (e) {
+      console.warn("[DO] conventions drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -3230,6 +3290,25 @@ export class FlyStateDO {
       }
     }
 
+    // 3e) ㉜ EMERGENT CONVENTIONS STIMULUS LEG — the causal leg of the conventions membrane: the concordance the
+    //     swarm lives up to tastes of plenty and light; friction is a bounded threat; a BREACH this cron adds ONE
+    //     extra bounded threat at min(BREACH_BASE × 1.5, cap) — the 1.5× penalty can NEVER exceed the ceiling. It
+    //     rides the SAME four visitor channels (no sensory channel added ⇒ manifestHash never rotates), is
+    //     hard-capped at cfg.conventions.maxIntensity ≤ 0.3, and moves no money. Gated behind CONVENTIONS_ENABLED
+    //     (default OFF ⇒ this appends nothing and `stimuli` is byte-for-byte today's). Reads LAST cron's
+    //     concordance — the same honest one-cron lag the civic bus ① keeps. Best-effort.
+    if (this.cfg.conventions.enabled) {
+      try {
+        const cm = await this.ensureConventions();
+        if (cm) {
+          const felt = cm.stimuli({ maxIntensity: this.cfg.conventions.maxIntensity });
+          if (felt.length) stimuli.push(...felt);
+        }
+      } catch (e) {
+        console.warn("[DO] conventions stimulus failed (non-fatal):", (e as Error).message);
+      }
+    }
+
     // 4) Run the decision sub-ticks. The agent economy now settles on EVERY sub-tick (not just once per
     //    cron), sharing ONE per-cron deal budget — so trades are ~5× more frequent while the total real
     //    settlements per cron stays bounded. Each sub-tick has a unique tickIndex, so every EIP-3009
@@ -3532,6 +3611,13 @@ export class FlyStateDO {
     //     its one causal leg is the Channel-A stimulus folded at step 3d above. No economy (cold) ⇒ no drive. Its
     //     edges fold into THIS cron's historian context, so it too precedes step 7.
     if (economy) await this.driveNorms(swarm.getTickIndex(), snapshot, temperature, economy);
+
+    // ㉜ EMERGENT CONVENTIONS rides after the norms: it watches each PAIR of the economy's OWN bond graph (a pure
+    //     public read-out), crystallises a custom when a pair keeps trading the same way, then spreads / inherits /
+    //     breaches / decays it and offers the steadiest up to norms for absorption — pure read-out end to end; its
+    //     one causal leg is the Channel-A stimulus folded at step 3e above. No economy (cold) ⇒ no drive. Its edges
+    //     fold into THIS cron's historian context, so it too precedes step 7.
+    if (economy) await this.driveConventions(swarm.getTickIndex(), economy);
 
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
@@ -3863,6 +3949,8 @@ export class FlyStateDO {
       if (land) (economy as { land?: unknown }).land = land;
       const norms = await this.normsReadout();
       if (norms) (economy as { norms?: unknown }).norms = norms;
+      const conventions = await this.conventionsReadout();
+      if (conventions) (economy as { conventions?: unknown }).conventions = conventions;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -3982,7 +4070,8 @@ export class FlyStateDO {
     const temple = await this.templeReadout();
     const land = await this.landReadout();
     const norms = await this.normsReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms) {
+    const conventions = await this.conventionsReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms && !conventions) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -4003,6 +4092,7 @@ export class FlyStateDO {
       ...(temple ? { temple } : null),
       ...(land ? { land } : null),
       ...(norms ? { norms } : null),
+      ...(conventions ? { conventions } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -4153,6 +4243,14 @@ export class FlyStateDO {
     if (!nm) return null;
     nm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
     return nm.signals();
+  }
+
+  /** ㉜ The emergent conventions read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Conventions build). */
+  private async conventionsReadout(): Promise<ConventionsSignals | null> {
+    const cm = await this.ensureConventions();
+    if (!cm) return null;
+    cm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron (#92 contract)
+    return cm.signals();
   }
 
   /** ㉕ The treaty chancery read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Treaty build). */
@@ -5606,6 +5704,7 @@ export class FlyStateDO {
     this.landLayer = null;   // ㉚ and the land: every claimed parcel and queued edge is unremembered with everything else
     this.landEvents = [];
     this.norms = null;       // ㉛ and the norms: every minted, spread, mutated and dead institution is unwritten with everything else
+    this.conventions = null; // ㉜ and the conventions: every crystallised, spread, inherited, breached and dead custom is unwritten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;
@@ -5633,6 +5732,7 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_TEMPLE);
     await this.state.storage.delete(KEY_LAND);
     await this.state.storage.delete(KEY_NORMS);
+    await this.state.storage.delete(KEY_CONVENTIONS);
     // ㉚ the per-parcel images live under their own keys (kept out of the serialize blob) — sweep them too
     const landImgs = await this.state.storage.list<string>({ prefix: LAND_IMG_PREFIX });
     const landImgKeys = [...landImgs.keys()];

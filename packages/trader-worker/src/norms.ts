@@ -68,6 +68,8 @@ export const SPREAD_CAP = 0.6;
 export const MUT_P = 0.25;
 /** Consecutive crons a cluster may go unseen before the tracker forgets it (bounded cluster map). */
 export const CLUSTER_MISS = 3;
+/** Probability a convention promoted by ㉜ conventions is absorbed into a norm (hash-gated, bounded). */
+export const ABSORB_P = 0.5;
 /** Cluster-tracker entries kept in the serialized blob (pruned by run, descending). */
 export const CLUSTER_CAP = 64;
 
@@ -86,6 +88,7 @@ const MUTSIG_SALT = 0x4c1f;    // the child variant's derivation seed
 const MTTARGET_SALT = 0x7a03;  // which parameter the mutation drifts
 const MUTDIR_SALT = 0x33d6;    // the mutation's sign (±0.1)
 const MUTLEAF_SALT = 0x5b8e;   // which leaf the mutation drifts
+const ABSORB_SALT = 0x9c37;    // ㉜←㉛ whether a promoted convention is absorbed into a norm
 
 /** The nine read-out channels a condition leaf may test — the OPEN terminal set of the condition space. */
 export const CH_NAMES = ["arousal", "cohesion", "valence", "rest", "temperature", "gini", "size", "bond", "rep"] as const;
@@ -507,6 +510,35 @@ export class NormsMembrane {
   }
 
   signals(): NormsSignals { return this.pending; }
+
+  /**
+   * ㉜←㉛ ABSORB a convention the conventions membrane promoted: when a local custom spreads wide and holds
+   * stable, it is offered up and MAY be lifted into a society-wide norm. Hash-gated (ABSORB_P), bounded by
+   * NORM_CAP, and fully deterministic — the absorbed norm's OPEN condition/action derive from the convention's
+   * own signature exactly as a cluster-minted norm's do, so the two emergent layers compose without either
+   * touching money, a cap or a settlement. Returns true iff a norm was actually minted. Inert while disabled.
+   */
+  absorb(seed: { sig: number; tick: number; era: number; strength: number; origin?: string }): boolean {
+    if (!this.cfg.enabled) return false;
+    if (this.norms.size >= NORM_CAP) return false;
+    const sig = (Number.isFinite(seed.sig) ? Math.floor(seed.sig) : 0) >>> 0;
+    const tick = Math.max(0, Math.floor(Number.isFinite(seed.tick) ? seed.tick : 0));
+    if (!(hash01(sig, tick, ABSORB_SALT) < ABSORB_P)) return false;   // hash-gated: only some promotions take
+    const cond = deriveCond(sig, tick);
+    const action = deriveAction(sig, tick);
+    const id = this.nextId++;
+    const norm: Norm = {
+      id, cond, action, strength: clamp01(seed.strength), depth: 0, parentId: null,
+      adherents: [], bornTick: tick, lastAdherentTick: tick, clusterSig: sig, mutations: 0,
+    };
+    this.norms.set(id, norm);
+    this.counts.minted++;
+    if (!this.pending.minted) {
+      this.pending.minted = { norm: normLabel(norm), members: 0, strength: r2(norm.strength), era: Math.floor(Number.isFinite(seed.era) ? seed.era : 0) };
+    }
+    this.refreshPending();
+    return true;
+  }
 
   /**
    * Rebuild the STANDING read-out fields (norm list / counts / lineage / mutation rate / compliance) from the

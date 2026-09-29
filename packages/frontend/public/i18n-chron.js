@@ -121,6 +121,11 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   NORM_SPREAD: "规范在扩散 ——'{norm}'沿纽带传至 {adherents} 个心智，如今以强度 {strength} 持守。",
   NORM_MUTATED: "规范在变异 ——'{norm}'漂移为一个变体，谱系深度 {depth}（强度 {strength}）；所继承的已非当初所书。",
   NORM_DIED: "规范消亡 ——'{norm}'不再被遵循；它存续了 {lived} 次巡天，衰减至最后的强度 {strength}。",
+  CONVENTION_CRYSTALLIZED: "一条约定结晶而成 ——'{conv}'从反复的交易中以强度 {strength} 凝定；第 {era} 纪元起持守一份契约从未书写的惯例。",
+  CONVENTION_SPREAD: "约定在扩散 ——'{conv}'被 {pairs} 对伙伴采纳，如今以强度 {strength} 持守。",
+  CONVENTION_INHERITED: "约定被继承 ——'{conv}'传至一对新伙伴，谱系深度 {depth}（强度 {strength}）；这份惯例比它的创立者更长寿。",
+  CONVENTION_BREACHED: "约定被违背 ——'{conv}'遭到违反，一笔有界的 {penalty} 惩罚降临到这对伙伴身上（强度 {strength}）。",
+  CONVENTION_DIED: "约定消亡 ——'{conv}'不再被持守；它存续了 {lived} 次巡天，衰减至最后的强度 {strength}。",
 };
 
 const fr = {
@@ -234,6 +239,11 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   NORM_SPREAD: "La norme se propage — « {norm} » voyage le long des liens vers {adherents} esprits, tenue désormais à la force {strength}.",
   NORM_MUTATED: "La norme mute — « {norm} » dérive en une variante à la profondeur de lignée {depth} (force {strength}) ; ce qui fut hérité n'est plus ce qui fut écrit.",
   NORM_DIED: "La norme meurt — « {norm} » n'est plus suivie ; elle a vécu {lived} crons et s'est éteinte à une dernière force de {strength}.",
+  CONVENTION_CRYSTALLIZED: "Une convention cristallise — « {conv} » se durcit au fil d'échanges répétés à la force {strength} ; l'ère {era} garde désormais une coutume qu'aucun contrat n'a jamais écrite.",
+  CONVENTION_SPREAD: "La convention se répand — « {conv} » est reprise par {pairs} duos, tenue désormais à la force {strength}.",
+  CONVENTION_INHERITED: "La convention est héritée — « {conv} » passe à un nouveau duo à la profondeur de lignée {depth} (force {strength}) ; la coutume survit à ses fondateurs.",
+  CONVENTION_BREACHED: "La convention est violée — « {conv} » est enfreinte, et une pénalité bornée de {penalty} s'abat sur le duo (force {strength}).",
+  CONVENTION_DIED: "La convention meurt — « {conv} » n'est plus gardée ; elle a vécu {lived} crons et s'est éteinte à une dernière force de {strength}.",
 };
 
 const es = {
@@ -347,6 +357,11 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   NORM_SPREAD: "La norma se extiende — '{norm}' viaja por los vínculos hasta {adherents} mentes, sostenida ahora con fuerza {strength}.",
   NORM_MUTATED: "La norma muta — '{norm}' deriva en una variante a profundidad de linaje {depth} (fuerza {strength}); lo heredado ya no es lo que se escribió.",
   NORM_DIED: "La norma muere — '{norm}' ya no se sigue; vivió {lived} crons y se desvaneció hasta una última fuerza de {strength}.",
+  CONVENTION_CRYSTALLIZED: "Una convención cristaliza — '{conv}' se endurece tras intercambios repetidos con fuerza {strength}; la era {era} guarda ahora una costumbre que ningún contrato escribió jamás.",
+  CONVENTION_SPREAD: "La convención se difunde — '{conv}' es adoptada por {pairs} parejas, sostenida ahora con fuerza {strength}.",
+  CONVENTION_INHERITED: "La convención se hereda — '{conv}' pasa a una nueva pareja en la profundidad de linaje {depth} (fuerza {strength}); la costumbre sobrevive a sus fundadores.",
+  CONVENTION_BREACHED: "La convención se quebranta — '{conv}' es violada, y una penalización acotada de {penalty} se abate sobre la pareja (fuerza {strength}).",
+  CONVENTION_DIED: "La convención muere — '{conv}' ya no se guarda; vivió {lived} crons y se desvaneció hasta una última fuerza de {strength}.",
 };
 
 const ja = {
@@ -460,6 +475,11 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   NORM_SPREAD: "規範が広がる ——'{norm}'は絆を伝って {adherents} の心へ旅し、いま強度 {strength} で保たれている。",
   NORM_MUTATED: "規範が変異する ——'{norm}'は系譜の深さ {depth}（強度 {strength}）の変種へ漂移する；受け継がれたものは、もはや書かれたものではない。",
   NORM_DIED: "規範が死す ——'{norm}'はもう従われない；それは {lived} クロン生き、最後の強度 {strength} へ衰えた。",
+  CONVENTION_CRYSTALLIZED: "慣習が結晶する ——'{conv}'は繰り返しの取引から強度 {strength} で硬化する；第 {era} 紀元は契約が決して書かなかった習わしを守る。",
+  CONVENTION_SPREAD: "慣習が広がる ——'{conv}'は {pairs} 組の間に受け継がれ、いま強度 {strength} で保たれている。",
+  CONVENTION_INHERITED: "慣習が相続される ——'{conv}'は系譜深度 {depth}（強度 {strength}）で新たな組へ受け渡される；習わしは創始者より長生きする。",
+  CONVENTION_BREACHED: "慣習が破られる ——'{conv}'は違反され、有界の {penalty} の罰がその組にのしかかる（強度 {strength}）。",
+  CONVENTION_DIED: "慣習が死す ——'{conv}'はもう守られない；それは {lived} クロン生き、最後の強度 {strength} へ衰えた。",
 };
 
 const ko = {
@@ -573,6 +593,11 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   NORM_SPREAD: "규범이 퍼진다 — '{norm}'이 유대를 타고 {adherents}개의 마음에 닿아, 이제 강도 {strength}로 유지된다.",
   NORM_MUTATED: "규범이 변이한다 — '{norm}'이 계보 깊이 {depth}(강도 {strength})의 변형으로 표류한다; 상속된 것은 더 이상 적힌 것이 아니다.",
   NORM_DIED: "규범이 소멸한다 — '{norm}'은 더 이상 지켜지지 않는다; 그것은 {lived} 크론을 살다 마지막 강도 {strength}로 사그라졌다.",
+  CONVENTION_CRYSTALLIZED: "관습이 결정화된다 —'{conv}'는 반복된 거래 속에서 강도 {strength}로 굳어진다; 제 {era} 시대는 어떤 계약도 적지 않은 관습을 지킨다.",
+  CONVENTION_SPREAD: "관습이 퍼진다 —'{conv}'는 {pairs} 쌍에 의해 채택되어, 이제 강도 {strength}로 유지된다.",
+  CONVENTION_INHERITED: "관습이 계승된다 —'{conv}'는 계보 깊이 {depth}(강도 {strength})로 새로운 쌍에 넘어간다; 관습은 그 창립자보다 오래 산다.",
+  CONVENTION_BREACHED: "관습이 위반된다 —'{conv}'는 어겨지고, 유계한 {penalty} 벌이 그 쌍에 내려앉는다(강도 {strength}).",
+  CONVENTION_DIED: "관습이 소멸한다 —'{conv}'는 더 이상 지켜지지 않는다; 그것은 {lived} 크론을 살다 마지막 강도 {strength}로 사그라졌다.",
 };
 
 const ar = {
@@ -686,6 +711,11 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   NORM_SPREAD: "تنتشر القاعدة — '{norm}' يسافر عبر الروابط إلى {adherents} عقلًا، ويُحمل الآن بقوة {strength}.",
   NORM_MUTATED: "تتحور القاعدة — '{norm}' ينحرف إلى نسخة عند عمق سلالة {depth} (قوة {strength})؛ فما وُرِّث لم يعد ما كُتب.",
   NORM_DIED: "تموت القاعدة — '{norm}' لم يعد مُتبعًا؛ لقد عاش {lived} دورةً وتلاشى إلى قوةٍ أخيرة بلغت {strength}.",
+  CONVENTION_CRYSTALLIZED: "تتبلور عادةٌ — '{conv}' تتصلّب من تجاراتٍ متكررة بقوة {strength}؛ والعصر {era} يحفظ الآن عرفًا لم يكتبه أي عقدٍ قط.",
+  CONVENTION_SPREAD: "تنتشر العادة — '{conv}' يتبنّاها {pairs} من الأزواج، وتُمسَك الآن بقوة {strength}.",
+  CONVENTION_INHERITED: "تُورَّث العادة — '{conv}' تنتقل إلى زوجٍ جديد عند عمق نسبٍ {depth} (قوة {strength})؛ فالعرف يعمر أطول من مؤسّسيه.",
+  CONVENTION_BREACHED: "تُنتهك العادة — '{conv}' يُخالَف، وعقوبةٌ محدودةٌ قدرها {penalty} تنزل على الثنائي (قوة {strength}).",
+  CONVENTION_DIED: "تموت العادة — '{conv}' لم يعد محفوظًا؛ لقد عاش {lived} دورةً وتلاشى إلى قوةٍ أخيرة بلغت {strength}.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };

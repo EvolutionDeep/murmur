@@ -299,6 +299,17 @@ export interface Env {
   NORMS_ENABLED?: string;               // "true"/"false" (default FALSE — dark deploy; flip on by hand)
   NORMS_STIMULUS_MAX?: string;          // causal-leg ceiling on any one felt channel, 0..0.3 (default 0.3; 0 ⇒ the leg emits nothing)
 
+  // --- ㉜ EMERGENT CONVENTIONS: pairwise repeated-interaction customs (see src/conventions.ts) ---
+  //     A pair that keeps trading the same way (steady frequency, low variance, no betrayal) CRYSTALLIZES a
+  //     convention; it can spread, be inherited, be breached (a BOUNDED 1.5× Channel-A threat — never money, never
+  //     an economic multiplier, never a real-spend cap), decay, die, and be absorbed into a ㉛ norm. Like ㉛ its
+  //     bounds are exported constants (CONV_CAP etc.); only the master switch + the causal-leg ceiling read an env
+  //     key. PURE READ-OUT of the bond graph + ONE bounded Channel-A leg, hard-capped at 0.3; never signs/broadcasts.
+  //     Shipped DISABLED (dark deploy): CONVENTIONS_ENABLED=false ⇒ state.ts never constructs the membrane ⇒ the
+  //     five CONVENTION_* kinds can never speak (byte-for-byte rollback).
+  CONVENTIONS_ENABLED?: string;         // "true"/"false" (default FALSE — dark deploy; flip on by hand)
+  CONVENTIONS_STIMULUS_MAX?: string;    // causal-leg ceiling on any one felt channel AND the 1.5× breach penalty, 0..0.3 (default 0.3)
+
   // --- ㉕ THE TREATY: formal diplomacy between houses — sealed, ratified, breached (see src/treaty.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The chancery
   //     has no knobs (its lines are exported constants: TR_SIGN_AT / TR_BREACH_AT / TR_TERM…); only the
@@ -735,6 +746,12 @@ export interface RuntimeConfig {
   norms: {
     enabled: boolean;         // master switch (default OFF — dark deploy)
     maxIntensity: number;     // ceiling (and master scale) on the causal leg's stimulus, 0..0.3 (default 0.3)
+  };
+  // ㉜ EMERGENT CONVENTIONS: bounds are constants (CONV_CAP etc.); the only knob is the causal leg's Channel-A
+  //     ceiling, which ALSO hard-bounds the 1.5× breach penalty. OFF ⇒ never constructed, pre-Conventions build.
+  conventions: {
+    enabled: boolean;         // master switch (default OFF — dark deploy)
+    maxIntensity: number;     // ceiling (and master scale) on the causal leg + the 1.5× breach penalty, 0..0.3
   };
   treaty: {
     enabled: boolean;         // the chancery's lines are constants (TR_SIGN_AT etc.) — no knobs by design
@@ -1235,6 +1252,18 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     be dialed above the bounded-stimulus red line. clamp() alone does NOT guard NaN, hence the finite check.
       maxIntensity: (() => {
         const mi = Number(env.NORMS_STIMULUS_MAX ?? "0.3");
+        return clamp(Number.isFinite(mi) ? mi : 0.3, 0, 0.3);
+      })(),
+    },
+    conventions: {
+      // ㉜ Shipped DISABLED (dark deploy): the default is "false", so an unset CONVENTIONS_ENABLED leaves the
+      //     membrane inert and the chronicle byte-for-byte the pre-Conventions build. Flip on by hand.
+      enabled: (env.CONVENTIONS_ENABLED ?? "false").toLowerCase() === "true",
+      // NaN-safe + HARD-CAPPED at 0.3: this scales the Channel-A causal leg AND bounds the 1.5× breach penalty
+      //     (min(BREACH_BASE × 1.5, cap)), so the penalty can never exceed the bounded-stimulus red line and a
+      //     malformed env var falls back to 0.3 rather than leak NaN. clamp() alone does NOT guard NaN.
+      maxIntensity: (() => {
+        const mi = Number(env.CONVENTIONS_STIMULUS_MAX ?? "0.3");
         return clamp(Number.isFinite(mi) ? mi : 0.3, 0, 0.3);
       })(),
     },

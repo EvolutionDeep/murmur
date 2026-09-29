@@ -202,7 +202,15 @@ export type ChronicleKind =
   | "NORM_MINTED"
   | "NORM_SPREAD"
   | "NORM_MUTATED"
-  | "NORM_DIED";
+  | "NORM_DIED"
+  // ㉜ EMERGENT CONVENTIONS: the customs no contract wrote (conventions.ts) — a pair that keeps trading the same
+  //     way CRYSTALLIZES a convention, it SPREADS to neighbouring pairs, is INHERITED by a new pair (lineage),
+  //     is BREACHED (a bounded 1.5× Channel-A threat — never money), decays and at last DIES.
+  | "CONVENTION_CRYSTALLIZED"
+  | "CONVENTION_SPREAD"
+  | "CONVENTION_INHERITED"
+  | "CONVENTION_BREACHED"
+  | "CONVENTION_DIED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -339,6 +347,9 @@ export interface ChronicleContext {
   /** ㉛ EMERGENT NORMS read-out (norms.ts signals): this cron's mint, spread, mutation and death edges. Absent ⇒
    *  no NORM_MINTED/NORM_SPREAD/NORM_MUTATED/NORM_DIED (NORMS_ENABLED=false never folds these in). */
   norms?: ChronicleNorms | null;
+  /** ㉜ EMERGENT CONVENTIONS read-out (conventions.ts signals): this cron's crystallise, spread, inherit, breach
+   *  and death edges. Absent ⇒ no CONVENTION_* kind speaks (CONVENTIONS_ENABLED=false never folds these in). */
+  conventions?: ChronicleConventions | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -598,6 +609,22 @@ export interface ChronicleNorms {
   died: { norm: string; lived: number; strength: number } | null;
 }
 
+/** ㉜ EMERGENT CONVENTIONS: the chronicle-facing edges of ONE cron (conventions.ts signals). The facet carries a
+ *  byte-stable ASCII label — "good[lo-hi]f freq(a~b)" — plus every number in the edge, so the server text and the
+ *  browser re-derivation agree byte-for-byte. Every field is re-derivable by replaying the bond graph. */
+export interface ChronicleConventions {
+  /** A pair's repeated low-variance trade has hardened into a convention: its label, the good, its cadence, era. */
+  crystallized: { conv: string; good: string; freq: number; strength: number; era: number } | null;
+  /** A convention has reached neighbouring pairs this cron: its label, the pair count, the strength. */
+  spread: { conv: string; pairs: number; strength: number } | null;
+  /** A spread became an inherited child convention: its label, its lineage depth, the parent's id, the strength. */
+  inherited: { conv: string; depth: number; parent: number; strength: number } | null;
+  /** A founding pair's bond collapsed — the custom was breached: its label, the bounded penalty, the strength. */
+  breached: { conv: string; penalty: number; strength: number } | null;
+  /** A convention decayed past its floor or outlived its TTL: its label, the crons it lived, its last strength. */
+  died: { conv: string; lived: number; strength: number } | null;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -822,6 +849,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     it lives, and dies slowly. Pure gravitas — the membrane one-edges each class per cron already; these gaps
   //     only guard a same-cron duplicate. Mirrored verbatim in the browser CHRON_.
   NORM_MINTED: 90, NORM_SPREAD: 40, NORM_MUTATED: 60, NORM_DIED: 60,
+  // ㉜ CONVENTIONS: a convention crystallises only after a long steady run, spreads and is inherited while it
+  //     lives, a breach is rarer news, and it dies slowly. Pure gravitas — the membrane one-edges each class per
+  //     cron already; these gaps only guard a same-cron duplicate. Mirrored verbatim in the browser CHRON_.
+  CONVENTION_CRYSTALLIZED: 80, CONVENTION_SPREAD: 36, CONVENTION_INHERITED: 54, CONVENTION_BREACHED: 30, CONVENTION_DIED: 54,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -1013,6 +1044,16 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   NORM_SPREAD: "The norm spreads — '{norm}' travels the bonds to {adherents} minds, held now at strength {strength}.",
   NORM_MUTATED: "The norm mutates — '{norm}' drifts into a variant at lineage depth {depth} (strength {strength}); what was inherited is no longer what was written.",
   NORM_DIED: "The norm dies — '{norm}' is followed no more; it lived {lived} crons and faded to a last strength of {strength}.",
+  // ㉜ EMERGENT CONVENTIONS: the customs no contract wrote (conventions.ts). {conv} is the byte-stable ASCII label
+  //     ("good[lo-hi]f freq(a~b)"), {strength} its 0..1 force, {era} the age it crystallised in, {pairs} the pairs
+  //     it spread to, {depth} its lineage depth, {parent} the id it was inherited from, {penalty} the bounded 1.5×
+  //     Channel-A breach penalty, {lived} the crons it held. Every number is re-derivable by replaying the bonds.
+  //     Mirrored verbatim in the frontend CHRON_.
+  CONVENTION_CRYSTALLIZED: "A convention crystallizes — '{conv}' hardens out of repeated trade at strength {strength}; era {era} now keeps a custom no contract ever wrote.",
+  CONVENTION_SPREAD: "The convention spreads — '{conv}' is taken up by {pairs} pairs, held now at strength {strength}.",
+  CONVENTION_INHERITED: "The convention is inherited — '{conv}' passes to a new pair at lineage depth {depth} (strength {strength}); the custom outlives its founders.",
+  CONVENTION_BREACHED: "The convention is breached — '{conv}' is violated, and a bounded penalty of {penalty} bears down on the pair (strength {strength}).",
+  CONVENTION_DIED: "The convention dies — '{conv}' is kept no more; it lived {lived} crons and faded to a last strength of {strength}.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -2138,6 +2179,44 @@ export class Chronicler {
         const d = nm.died;
         out.push(await this.emit(ctx, "NORM_DIED", 2, [],
           { norm: d.norm, lived: d.lived, strength: d.strength },
+          { lived: d.lived, strength: d.strength }));
+      }
+    }
+
+    // ㉜ EMERGENT CONVENTIONS: the customs no contract wrote (conventions.ts signals, folded in ONLY while
+    //     CONVENTIONS_ENABLED — off ⇒ no `conventions` key ⇒ these five detectors never speak). The membrane
+    //     one-edges each class per cron, so a non-null facet is news this cron and cannot replay. NO actors: a
+    //     convention belongs to a pair relationship, not one fly.
+    const cv = ctx.conventions;
+    if (cv) {
+      if (cv.crystallized && this.ready("CONVENTION_CRYSTALLIZED", ctx)) {
+        const c = cv.crystallized;
+        out.push(await this.emit(ctx, "CONVENTION_CRYSTALLIZED", 3, [],
+          { conv: c.conv, strength: c.strength, era: c.era },
+          { freq: c.freq, strength: c.strength, era: c.era }));
+      }
+      if (cv.spread && this.ready("CONVENTION_SPREAD", ctx)) {
+        const sp = cv.spread;
+        out.push(await this.emit(ctx, "CONVENTION_SPREAD", 2, [],
+          { conv: sp.conv, pairs: sp.pairs, strength: sp.strength },
+          { pairs: sp.pairs, strength: sp.strength }));
+      }
+      if (cv.inherited && this.ready("CONVENTION_INHERITED", ctx)) {
+        const ih = cv.inherited;
+        out.push(await this.emit(ctx, "CONVENTION_INHERITED", 3, [],
+          { conv: ih.conv, depth: ih.depth, strength: ih.strength },
+          { depth: ih.depth, parent: ih.parent, strength: ih.strength }));
+      }
+      if (cv.breached && this.ready("CONVENTION_BREACHED", ctx)) {
+        const br = cv.breached;
+        out.push(await this.emit(ctx, "CONVENTION_BREACHED", 3, [],
+          { conv: br.conv, penalty: br.penalty, strength: br.strength },
+          { penalty: br.penalty, strength: br.strength }));
+      }
+      if (cv.died && this.ready("CONVENTION_DIED", ctx)) {
+        const d = cv.died;
+        out.push(await this.emit(ctx, "CONVENTION_DIED", 2, [],
+          { conv: d.conv, lived: d.lived, strength: d.strength },
           { lived: d.lived, strength: d.strength }));
       }
     }
