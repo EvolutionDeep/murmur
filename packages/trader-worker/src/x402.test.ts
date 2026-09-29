@@ -25,10 +25,13 @@ import {
   makeRefundAuth,
   pseudoTxHash,
   recoverAuthorizationSigner,
+  toNonce32,
   toV2PaymentRequirements,
   usdcToAtomic,
   CircleBreaker,
   NonceRing,
+  OnChainFacilitator,
+  type NonceRingEntry,
   type PaymentAuthorization,
   type PaymentPayload,
   type PaymentRequirements,
@@ -195,16 +198,21 @@ test("toV2PaymentRequirements translates at the boundary: CAIP-2 network + eip30
 test("NonceRing converges seen nonces, refreshes on re-remember, and evicts oldest past cap", () => {
   const ring = new NonceRing(3);
   assert.equal(ring.seen("0xaa"), null, "empty ring has never seen anything");
-  ring.remember("0xAA", "0xtx-a");
-  ring.remember("0xbb", "0xtx-b");
-  ring.remember("0xcc", "0xtx-c");
-  assert.equal(ring.seen("0xaa"), "0xtx-a", "lookup is case-insensitive (nonces lower-case on the rail)");
-  ring.remember("0xaa", "0xtx-a");            // refresh: a re-settled nonce moves to newest
-  ring.remember("0xdd", "0xtx-d");            // cap 3 exceeded ⇒ oldest (0xbb) evicted
+  ring.remember("0xAA", "0xtx-a", "0xfrom-a", "0xto-a", "100");
+  ring.remember("0xbb", "0xtx-b", "0xfrom-b", "0xto-b", "200");
+  ring.remember("0xcc", "0xtx-c", "0xfrom-c", "0xto-c", "300");
+  const hit = ring.seen("0xaa");
+  assert.ok(hit, "lookup is case-insensitive (nonces lower-case on the rail)");
+  assert.equal(hit.txHash, "0xtx-a");
+  assert.equal(hit.from, "0xfrom-a");
+  assert.equal(hit.to, "0xto-a");
+  assert.equal(hit.value, "100");
+  ring.remember("0xaa", "0xtx-a", "0xfrom-a", "0xto-a", "100"); // refresh: a re-settled nonce moves to newest
+  ring.remember("0xdd", "0xtx-d", "0xfrom-d", "0xto-d", "400"); // cap 3 exceeded ⇒ oldest (0xbb) evicted
   assert.equal(ring.size, 3);
   assert.equal(ring.seen("0xbb"), null, "the LEAST recently used nonce is the one evicted");
-  assert.equal(ring.seen("0xaa"), "0xtx-a", "a refreshed nonce survives eviction");
-  assert.equal(ring.seen("0xdd"), "0xtx-d");
+  assert.ok(ring.seen("0xaa"), "a refreshed nonce survives eviction");
+  assert.ok(ring.seen("0xdd"));
 });
 
 // ---------- Circle breaker (②) ----------
@@ -282,4 +290,119 @@ test("makeRefundAuth is deterministic with an injected nonce and random (neural-
   });
   assert.match(String(r1.nonce), /^0x[0-9a-f]{64}$/, "a random refund nonce is full bytes32");
   assert.notEqual(r1.nonce, r2.nonce, "two refunds never share a nonce (and carry no receipt semantics)");
+});
+
+// ---------- C2 FIX: replay convergence requires verified signature + triple match ----------
+
+/**
+ * Minimal mock for OnChainFacilitator deps — only what settleExternal touches before the replay gate.
+ * publicClient.readContract is never reached in the exploit test (sig fails first) and is a no-op stub
+ * for the positive test (ring hit returns before balance read).
+ */
+function mockOnChainFacilitator() {
+  const relayAddr = `0x${"ff".repeat(20)}` as Address;
+  return new OnChainFacilitator({
+    asset: ARC_USDC,
+    chainId: 5042,
+    publicClient: {
+      readContract: async () => 999_999_999n,
+      call: async () => ({ data: "0x" as Hex }),
+      waitForTransactionReceipt: async () => ({ status: "success", gasUsed: 21000n, effectiveGasPrice: 1n }),
+    } as any,
+    wallet: {
+      account: { address: relayAddr },
+      writeContract: async () => `0x${"aa".repeat(32)}` as Hex,
+    } as any,
+    buyerAccount: () => undefined,
+  });
+}
+
+test("C2 EXPLOIT: settleExternal rejects garbage signature on someone else's settled nonce (no free replay)", async () => {
+  // Simulate: a legitimate payer previously settled nonce "0xbb..bb" — the ring remembers it.
+  const fac = mockOnChainFacilitator();
+  const victimNonce = `0x${"bb".repeat(32)}`;
+  const victimFrom = `0x${"11".repeat(20)}`;
+  const victimTo = `0x${"22".repeat(20)}`;
+  const victimValue = "10000";
+  // Pre-populate the ring (access private field for test purposes).
+  (fac as any).settledNonces.remember(victimNonce, "0xvictim-tx-hash", victimFrom, victimTo, victimValue);
+
+  // Attacker crafts a structurally-valid payload with the victim's nonce but their OWN address + garbage sig.
+  const attackerFrom = `0x${"99".repeat(20)}`;
+  const attackerAuth = auth({
+    from: attackerFrom,
+    to: victimTo,          // payTo matches requirements
+    value: victimValue,    // value passes invariant
+    nonce: victimNonce,    // someone else's settled nonce
+  });
+  const garbageSig = `0x${"de".repeat(65)}` as Hex; // well-formed hex (130 chars) but cryptographically invalid
+  const attackerPayload: PaymentPayload = {
+    x402Version: X402_VERSION, scheme: SCHEME_EXACT, network: "arc",
+    payload: { signature: garbageSig, authorization: attackerAuth },
+  };
+
+  const res = await fac.settleExternal(reqs(), attackerPayload);
+  assert.equal(res.success, false, "attacker MUST NOT get success:true from someone else's nonce");
+  assert.ok(res.invalidReason?.includes("signature"), `rejection reason mentions signature: ${res.invalidReason}`);
+  assert.equal(res.txHash, "0x", "no real txHash leaks to the attacker");
+});
+
+test("C2 EXPLOIT: settleExternal rejects VALID signature from a DIFFERENT payer on a settled nonce (triple mismatch)", async () => {
+  // The victim settled with their key; the attacker has their OWN valid key but reuses the victim's nonce.
+  const fac = mockOnChainFacilitator();
+  const victimNonce = `0x${"cc".repeat(32)}`;
+  const victimFrom = `0x${"11".repeat(20)}`;
+  const victimTo = `0x${"22".repeat(20)}`;
+  (fac as any).settledNonces.remember(victimNonce, "0xvictim-tx", victimFrom, victimTo, "10000");
+
+  // Attacker signs a VALID authorization with their own key but the victim's nonce.
+  const attackerAcct = privateKeyToAccount(("0x" + "99".repeat(32)) as Hex);
+  const attackerAuth = auth({
+    from: attackerAcct.address,
+    to: victimTo,
+    value: "10000",
+    nonce: victimNonce,
+  });
+  const validSig = await attackerAcct.signTypedData({
+    domain: DOMAIN, types: EIP3009_TYPES, primaryType: "TransferWithAuthorization",
+    message: eip3009Message(attackerAuth),
+  });
+  const attackerPayload: PaymentPayload = {
+    x402Version: X402_VERSION, scheme: SCHEME_EXACT, network: "arc",
+    payload: { signature: validSig, authorization: attackerAuth },
+  };
+
+  const res = await fac.settleExternal(reqs(), attackerPayload);
+  assert.equal(res.success, false, "a different payer cannot free-ride the victim's settled nonce");
+  assert.ok(
+    res.invalidReason?.includes("nonce already consumed") || res.invalidReason?.includes("different authorization"),
+    `rejection cites nonce mismatch: ${res.invalidReason}`,
+  );
+});
+
+test("C2 POSITIVE: same payer with valid signature + matching triple gets replayed:true (legitimate re-fetch)", async () => {
+  const fac = mockOnChainFacilitator();
+  const payerAcct = privateKeyToAccount(("0x" + "11".repeat(32)) as Hex);
+  const payTo = `0x${"22".repeat(20)}`;
+  const nonce = `0x${"dd".repeat(32)}`;
+  const value = "10000";
+
+  // Pre-populate ring as if this payer already settled this exact nonce.
+  (fac as any).settledNonces.remember(nonce, "0xoriginal-tx-hash", payerAcct.address, payTo, value);
+
+  // Same payer re-submits the same authorization with a valid signature.
+  const payerAuth = auth({ from: payerAcct.address, to: payTo, value, nonce });
+  const sig = await payerAcct.signTypedData({
+    domain: DOMAIN, types: EIP3009_TYPES, primaryType: "TransferWithAuthorization",
+    message: eip3009Message(payerAuth),
+  });
+  const replayPayload: PaymentPayload = {
+    x402Version: X402_VERSION, scheme: SCHEME_EXACT, network: "arc",
+    payload: { signature: sig, authorization: payerAuth },
+  };
+
+  const res = await fac.settleExternal(reqs(), replayPayload);
+  assert.equal(res.success, true, "the legitimate payer gets their original result back");
+  assert.equal(res.replayed, true, "flagged as a replay convergence (no gas spent)");
+  assert.equal(res.txHash, "0xoriginal-tx-hash", "the original txHash is returned");
 });

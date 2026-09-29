@@ -727,23 +727,35 @@ export function toV2PaymentRequirements(
 
 // ============================== replay ring + circle breaker ==============================
 
+/** A settled-nonce entry binding the authorization triple (from, to, value) to its mined txHash. */
+export interface NonceRingEntry {
+  txHash: string;
+  from: string;
+  to: string;
+  value: string;
+}
+
 /**
- * A bounded FIFO of recently SETTLED authorization nonces → their mined txHash. EIP-3009 nonces are
- * single-use on-chain, so a replay of a settled payload can only ever revert — burning gas/screening to
- * learn what we already know. The ring lets settleExternal converge a replay onto the ORIGINAL result
- * for free (x402's payment-identifier semantics, served server-side). Memory-only BY DESIGN: an eviction
- * worst-case falls back to today's on-chain duplicate-nonce revert — never a double payment.
+ * A bounded FIFO of recently SETTLED authorization nonces → their authorization triple + mined txHash.
+ * EIP-3009 nonces are single-use on-chain, so a replay of a settled payload can only ever revert —
+ * burning gas/screening to learn what we already know. The ring lets settleExternal converge a replay
+ * onto the ORIGINAL result for free (x402's payment-identifier semantics, served server-side), but ONLY
+ * when the replayed authorization matches the ORIGINAL payer/payee/value — preventing an attacker from
+ * free-riding someone else's settled nonce without a valid signature.
+ *
+ * Memory-only BY DESIGN: an eviction worst-case falls back to today's on-chain duplicate-nonce revert —
+ * never a double payment.
  */
 export class NonceRing {
-  private map = new Map<string, string>();
+  private map = new Map<string, NonceRingEntry>();
   constructor(private readonly cap = 512) {}
-  seen(nonce: string): string | null {
+  seen(nonce: string): NonceRingEntry | null {
     return this.map.get(nonce.toLowerCase()) ?? null;
   }
-  remember(nonce: string, txHash: string): void {
+  remember(nonce: string, txHash: string, from: string, to: string, value: string): void {
     const k = nonce.toLowerCase();
     if (this.map.has(k)) this.map.delete(k); // refresh: re-insert moves it to the newest end
-    this.map.set(k, txHash);
+    this.map.set(k, { txHash, from: from.toLowerCase(), to: to.toLowerCase(), value });
     while (this.map.size > this.cap) {
       const oldest = this.map.keys().next().value as string | undefined;
       if (oldest === undefined) break;
@@ -1154,16 +1166,6 @@ export class OnChainFacilitator implements Facilitator {
       if (!v.valid) return fail(v.invalidReason ?? "invalid payload");
       const auth = payload.payload.authorization;
 
-      // Replay convergence (x402 payment-identifier semantics, served server-side): a payload whose
-      // nonce ALREADY settled here gets the original txHash back for free — no gas, no Circle screen,
-      // no double payment (the contract would only ever revert it). This is also Arc Pulse's "re-fetch
-      // the read you already bought": the same paid payload re-serves the product inside its window.
-      const cached = this.settledNonces.seen(toNonce32(auth.nonce));
-      if (cached) {
-        this.st.replayHits++;
-        return { success: true, network: net, txHash: cached, simulated: false, replayed: true };
-      }
-
       const signature = (payload.payload.signature ?? "") as Hex;
       if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return fail("malformed signature");
 
@@ -1180,6 +1182,28 @@ export class OnChainFacilitator implements Facilitator {
       const recovered = await recoverAuthorizationSigner({ domain: this.eip3009Domain(), auth, signature });
       if (!recovered || recovered.toLowerCase() !== from.toLowerCase()) {
         return fail("signature does not match payer");
+      }
+
+      // Replay convergence (x402 payment-identifier semantics, served server-side): AFTER signature
+      // verification proves the caller IS the original payer, a payload whose nonce already settled here
+      // gets the original txHash back for free — no gas, no Circle screen, no double payment (the contract
+      // would only ever revert it). The cached (from, to, value) triple MUST match to prevent an attacker
+      // from free-riding someone else's settled nonce. This is also Arc Pulse's "re-fetch the read you
+      // already bought": the same paid payload re-serves the product inside its window.
+      const cached = this.settledNonces.seen(toNonce32(auth.nonce));
+      if (cached) {
+        // Triple-match gate: the verified signer must be the SAME payer, payee, and value that originally
+        // settled this nonce. Addresses are compared case-insensitively; value is an exact string match.
+        if (
+          cached.from === from.toLowerCase() &&
+          cached.to === to.toLowerCase() &&
+          cached.value === auth.value
+        ) {
+          this.st.replayHits++;
+          return { success: true, network: net, txHash: cached.txHash, simulated: false, replayed: true };
+        }
+        // Nonce collision from a DIFFERENT payer/payee/value → reject (EIP-3009: consumed nonce reverts).
+        return fail("nonce already consumed by a different authorization");
       }
 
       // Authoritative on-chain balance read: the payer must actually hold the USDC right now.
@@ -1206,7 +1230,7 @@ export class OnChainFacilitator implements Facilitator {
       if (this.o.circle) {
         const gated = await this.circleGate(signature, auth, reqs);
         if (gated) {
-          if (gated.success) this.settledNonces.remember(toNonce32(auth.nonce), gated.txHash);
+          if (gated.success) this.settledNonces.remember(toNonce32(auth.nonce), gated.txHash, from, to, auth.value);
           return gated;
         }
         circleTriedAndFell = true;
@@ -1227,7 +1251,7 @@ export class OnChainFacilitator implements Facilitator {
         this.st.relayOk++;
         this.st.gasWeiTotal += receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
         if (circleTriedAndFell) this.st.circleFallbackOk++;
-        this.settledNonces.remember(toNonce32(auth.nonce), hash);
+        this.settledNonces.remember(toNonce32(auth.nonce), hash, from, to, auth.value);
       } else this.st.relayFail++;
       return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
     } catch (err) {
