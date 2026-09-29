@@ -75,6 +75,7 @@ import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexic
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { NormsMembrane, type NormsFacts, type NormsSignals } from "./norms.js";
 import { ConventionsMembrane, type ConventionsFacts, type ConventionsSignals } from "./conventions.js";
+import { RulesMembrane, type RulesFacts, type RulesSignals } from "./rules.js";
 import { TreatyMembrane, type TreatyFacts, type TreatySignals } from "./treaty.js";
 import { WorksMembrane, type WorksFacts, type WorksSignals } from "./works.js";
 import { GuardiansMembrane, type GuardianFacts, type GuardianSignals } from "./guardians.js";
@@ -204,6 +205,10 @@ const KEY_NORMS = "norms:v1";
  *  blob restarts an empty society (no convention is back-dated), never ledger state. Bounded (≤ CONV_CAP
  *  conventions + a pruned pair tracker), DO-safe. Shares the 200KB guard with ㉛'s norms. */
 const KEY_CONVENTIONS = "conventions:v1";
+/** ㉝ Bounded Rules (the live rule ledger, the top-earning tracker, counts) — its OWN key: a corrupt/absent blob
+ *  restarts an empty statute book (no rule is back-dated, no modifier is injected), never ledger state. Bounded
+ *  (≤ RULE_CAP rules + a pruned tracker), DO-safe. Shares the 200KB guard with ㉛'s norms and ㉜'s conventions. */
+const KEY_RULES = "rules:v1";
 /** ⑲ The Bourse (the MURMUR tape's memory: EWMA baselines, tithe total, edge hysteresis) — its OWN key:
  *  a corrupt/absent blob restarts cold (re-learns the norm), never ledger state. Bounded (one small JSON), DO-safe. */
 const KEY_BOURSE = "bourse:v1";
@@ -383,6 +388,8 @@ export class FlyStateDO {
   private norms: NormsMembrane | null = null;
   /** ㉜ The Emergent Conventions membrane (customs crystallised from repeated pairwise trade, spread, inherited, breached, dead) — null while CONVENTIONS_ENABLED=false (byte-for-byte inert). */
   private conventions: ConventionsMembrane | null = null;
+  /** ㉝ The Bounded Rules membrane (statutes minted by top-earning flies, adopted, revoked, dead; a band-fenced economic modifier) — null while RULES_ENABLED=false (byte-for-byte inert). */
+  private rules: RulesMembrane | null = null;
   /** ㉕ The Treaty chancery (seals set, ratified, broken — the roll of formal peace) — null while TR_ENABLED=false (byte-for-byte inert). */
   private treaty: TreatyMembrane | null = null;
   /** ㉖ The Public Works yard (granaries raised, monuments mended, aqueducts fallen) — null while WORKS_ENABLED=false (byte-for-byte inert). */
@@ -602,6 +609,14 @@ export class FlyStateDO {
       // STRATEGY (Phase 2b, capability ②): GP expression trees modulate decisions within existing caps.
       // OFF ⇒ every strategy hook no-ops, the economy is byte-for-byte the Phase 1 build.
       strategy: { enabled: this.cfg.strategy.enabled },
+      // ㉝ RULES (Phase 5, capability ⑤): a band-fenced multiplier tilts buyProbability / the counterparty weight.
+      // OFF ⇒ rulesTilt returns 1.0 and no modifier is ever injected, byte-for-byte the pre-Rules build. The band
+      // edges are code-defaults; economy.ts re-clamps every modifier into the hard envelope [0.5, 2.0] at use.
+      rules: {
+        enabled: this.cfg.rules.enabled,
+        buyMin: this.cfg.rules.buyMin, buyMax: this.cfg.rules.buyMax,
+        cpMin: this.cfg.rules.cpMin, cpMax: this.cfg.rules.cpMax,
+      },
       // ELITES (Phase 2b, capability ②): MAP-Elites novelty archive drives exploration in planEvolution.
       // OFF ⇒ archive never updates, planEvolution uses pure-PnL selection byte-for-byte.
       elites: { enabled: this.cfg.elites.enabled },
@@ -821,6 +836,25 @@ export class FlyStateDO {
     this.conventions = new ConventionsMembrane({ enabled: true, maxIntensity: this.cfg.conventions.maxIntensity });
     if (stored) this.conventions.restore(stored);
     return this.conventions;
+  }
+
+  /**
+   * ㉝ Lazily load the Bounded Rules membrane (null while RULES_ENABLED=false — byte-for-byte inert rollback). A
+   * corrupt/absent blob restarts an empty statute book: no rule is back-dated, nothing is minted, NO modifier is
+   * injected, and the ledger is never poisoned. The constitutional band is read from config (already clamped into
+   * the hard envelope [0.5, 2.0] in loadConfig) and re-clamped once more at construction + at every economy use.
+   */
+  private async ensureRules(): Promise<RulesMembrane | null> {
+    if (!this.cfg.rules.enabled) return null;
+    if (this.rules) return this.rules;
+    const stored = await this.state.storage.get<string>(KEY_RULES);
+    this.rules = new RulesMembrane({
+      enabled: true,
+      buyMin: this.cfg.rules.buyMin, buyMax: this.cfg.rules.buyMax,
+      cpMin: this.cfg.rules.cpMin, cpMax: this.cfg.rules.cpMax,
+    });
+    if (stored) this.rules.restore(stored);
+    return this.rules;
   }
 
   /**
@@ -1672,6 +1706,7 @@ export class FlyStateDO {
     if (this.rumor) batch[KEY_RUMOR] = this.rumor.serialize();
     if (this.norms) batch[KEY_NORMS] = this.norms.serialize();
     if (this.conventions) batch[KEY_CONVENTIONS] = this.conventions.serialize();
+    if (this.rules) batch[KEY_RULES] = this.rules.serialize();
     if (this.treaty) batch[KEY_TREATY] = this.treaty.serialize();
     if (this.works) batch[KEY_WORKS] = this.works.serialize();
     if (this.guardians) batch[KEY_GUARDIANS] = this.guardians.serialize();
@@ -2155,6 +2190,9 @@ export class FlyStateDO {
       // ㉜ EMERGENT CONVENTIONS: fold the membrane's convention edges ONLY while CONVENTIONS is on. Off ⇒ no
       // `conventions` key ⇒ the historian's five convention detectors never speak (byte-for-byte the pre-Conventions build).
       const conventions = this.cfg.conventions.enabled ? this.conventions?.signals() ?? null : null;
+      // ㉝ BOUNDED RULES: fold the membrane's rule edges ONLY while RULES is on. Off ⇒ no `rules` key ⇒ the
+      // historian's four rule detectors never speak (byte-for-byte the pre-Rules build).
+      const rules = this.cfg.rules.enabled ? this.rules?.signals() ?? null : null;
       // ㉕ TREATY: fold the chancery's diplomatic edges ONLY while TR is on. Off ⇒ no `treaty` key ⇒ the
       // historian's three treaty detectors never speak (byte-for-byte the pre-Treaty build).
       const treaty = this.cfg.treaty.enabled ? this.treaty?.signals() ?? null : null;
@@ -2313,6 +2351,7 @@ export class FlyStateDO {
         land,
         norms,
         conventions,
+        rules,
       };
       const entries = await c.observe(ctx);
       if (entries.length) {
@@ -2663,6 +2702,63 @@ export class FlyStateDO {
       }
     } catch (e) {
       console.warn("[DO] conventions drive failed (non-fatal):", (e as Error).message);
+    }
+  }
+
+  /**
+   * ㉝ BOUNDED RULE CREATION — watch the economy's OWN leaderboard (a pure public read-out, never a write): a fly
+   * that holds the top-10% of netUsdc for MINT_STABLE_RUN crons MINTS a rule whose band-fenced modifier multiplies
+   * its own buyProbability / counterparty weight; other flies ADOPT it by a hash gate; a member whose performance
+   * falls below a threshold is auto-REVOKED; an unloved rule decays and dies. Then the cron's band-clamped modifier
+   * map is handed to economy.applyRuleModifiers() AFTER economy.step, so it takes honest effect on the NEXT cron.
+   *
+   * THE SAFEST POSTURE IN THE WHOLE PLAN: the modifier is HARD-CLAMPED into the constitutional band [0.5, 2.0] three
+   * times over (rules.ts at birth/compound/restore, economy.ts at each use point) and only ever tilts a PROPENSITY
+   * (buyProbability, clamp01'd back to [0,1]) and a counterparty WEIGHT (floored at 0.05). It NEVER touches a
+   * settlement, a deal amount, a real-spend cap, a mnemonic, x402, and NEVER signs/broadcasts — the real-money caps
+   * independently hard-limit every actual settlement regardless of any multiplier. Best-effort. Inert while
+   * RULES_ENABLED=false.
+   */
+  private async driveRules(tick: number, snapshot: PopulationSnapshot | null, temperature: number, economy: AgentEconomy): Promise<void> {
+    const rm = await this.ensureRules();
+    if (!rm) return;
+    try {
+      const col = snapshot?.collective;
+      const totals = this.lastEconomy?.totals ?? null;
+      const social = economy.socialReadout();
+      let bond = 0;
+      let rep = 0;
+      if (social.bonds.length) bond = social.bonds.reduce((a, b) => a + Math.abs(b.score), 0) / social.bonds.length;
+      if (social.rep.length) rep = social.rep.reduce((a, r) => a + r.score, 0) / social.rep.length;
+      const size = col?.size ?? 0;
+      // per-fly pure economic read-out (netUsdc + settlement win-rate) — the mint(top-10%)/revoke(threshold) facts
+      const flies: { id: number; netUsdc: number; settleOk: number; settleTotal: number }[] = [];
+      for (const [id, mi] of economy.mofitInputs(tick)) {
+        flies.push({ id, netUsdc: mi.netUsdc, settleOk: mi.settleOk, settleTotal: mi.settleTotal });
+      }
+      const facts: RulesFacts = {
+        tick,
+        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        reading: {
+          arousal: col?.arousal ?? 0,
+          cohesion: col?.cohesion ?? 0,
+          valence: ((col?.valence ?? 0) + 1) / 2,
+          rest: col?.rest ?? 0,
+          temperature,
+          gini: totals?.gini ?? 0,
+          size01: Math.min(1, size / 100),
+          bond: Math.min(1, bond),
+          rep: (rep + 1) / 2,
+        },
+        flies,
+      };
+      rm.round(facts);
+      // ★ THE ONLY ECONOMIC CAUSAL LEG: hand the band-clamped modifier map to the economy AFTER step, so it takes
+      //   effect next cron (the honest one-cron lag). economy.applyRuleModifiers re-clamps at each use point; an
+      //   empty map ⇒ rulesTilt returns 1.0 ⇒ the decision points are byte-for-byte unchanged. Never money.
+      economy.applyRuleModifiers(rm.modifiers());
+    } catch (e) {
+      console.warn("[DO] rules drive failed (non-fatal):", (e as Error).message);
     }
   }
 
@@ -3619,6 +3715,14 @@ export class FlyStateDO {
     //     fold into THIS cron's historian context, so it too precedes step 7.
     if (economy) await this.driveConventions(swarm.getTickIndex(), economy);
 
+    // ㉝ BOUNDED RULES rides after the conventions: it watches the economy's OWN leaderboard (a pure public
+    //     read-out), mints a rule when a fly holds the top-10% of netUsdc, then adopts / revokes / decays it and
+    //     injects the band-clamped modifier into the economy for NEXT cron — the highest-risk membrane, fenced by a
+    //     constitutional band [0.5, 2.0] that only tilts a propensity/weight and NEVER touches money, a cap or a
+    //     settlement. No economy (cold) ⇒ no drive. Its edges fold into THIS cron's historian context, so it too
+    //     precedes step 7.
+    if (economy) await this.driveRules(swarm.getTickIndex(), snapshot, temperature, economy);
+
     // 7) The deterministic historian reads the SAME snapshot + lifetime totals and, if this cron crossed
     //    a history-making threshold (era shift, panic, huddle, first settlement, milestone, ...) appends
     //    a narrative line to the chronicle. PURE READ-OUT: never touches brains, wallets or settlements.
@@ -3951,6 +4055,8 @@ export class FlyStateDO {
       if (norms) (economy as { norms?: unknown }).norms = norms;
       const conventions = await this.conventionsReadout();
       if (conventions) (economy as { conventions?: unknown }).conventions = conventions;
+      const rules = await this.rulesReadout();
+      if (rules) (economy as { rules?: unknown }).rules = rules;
       const commons = await this.commonsReadout();
       if (commons) (economy as { commons?: unknown }).commons = commons;
     }
@@ -4071,7 +4177,8 @@ export class FlyStateDO {
     const land = await this.landReadout();
     const norms = await this.normsReadout();
     const conventions = await this.conventionsReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms && !conventions) {
+    const rules = await this.rulesReadout();
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms && !conventions && !rules) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -4093,6 +4200,7 @@ export class FlyStateDO {
       ...(land ? { land } : null),
       ...(norms ? { norms } : null),
       ...(conventions ? { conventions } : null),
+      ...(rules ? { rules } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -4251,6 +4359,14 @@ export class FlyStateDO {
     if (!cm) return null;
     cm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron (#92 contract)
     return cm.signals();
+  }
+
+  /** ㉝ The bounded rules read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Rules build). */
+  private async rulesReadout(): Promise<RulesSignals | null> {
+    const rm = await this.ensureRules();
+    if (!rm) return null;
+    rm.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron (#92 contract)
+    return rm.signals();
   }
 
   /** ㉕ The treaty chancery read-out for the public endpoints (null ⇒ key absent ⇒ byte-identical pre-Treaty build). */
@@ -5705,6 +5821,7 @@ export class FlyStateDO {
     this.landEvents = [];
     this.norms = null;       // ㉛ and the norms: every minted, spread, mutated and dead institution is unwritten with everything else
     this.conventions = null; // ㉜ and the conventions: every crystallised, spread, inherited, breached and dead custom is unwritten with everything else
+    this.rules = null;       // ㉝ and the rules: every minted, adopted, revoked and dead statute — and every injected modifier — is unwritten with everything else
     this.prevTemperature = 0.5;
     this.lastSnapshot = null;
     this.lastEconomy = null;

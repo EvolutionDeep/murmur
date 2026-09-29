@@ -310,6 +310,18 @@ export interface Env {
   CONVENTIONS_ENABLED?: string;         // "true"/"false" (default FALSE — dark deploy; flip on by hand)
   CONVENTIONS_STIMULUS_MAX?: string;    // causal-leg ceiling on any one felt channel AND the 1.5× breach penalty, 0..0.3 (default 0.3)
 
+  // --- ㉝ BOUNDED RULE CREATION: statutes no authority enacted (see src/rules.ts) ---
+  //     THE HIGHEST-RISK MEMBRANE: unlike ㉛/㉜ (whose only causal leg is a bounded Channel-A stimulus), a rule's
+  //     modifier is a MULTIPLIER on two EXISTING economic decision factors — buyProbability and the counterparty
+  //     weight — so it is fenced by a CONSTITUTIONAL BAND (buyProb× ∈ [0.5, 2.0], cp-weight× ∈ [0.5, 2.0]) that no
+  //     input, mutation, adoption or restored blob may ever escape (rules.ts clampBuy/clampCp + an independent
+  //     re-clamp in economy.ts). The band edges/thresholds/caps are CODE-DEFAULT constants — wrangler.toml is NOT
+  //     touched (the 128 text-binding wall is spent); only the master switch reads an env key. It NEVER touches a
+  //     settlement, a deal amount, a real-spend cap, a mnemonic, x402, and NEVER signs/broadcasts a transaction.
+  //     Shipped DISABLED (dark deploy): RULES_ENABLED=false ⇒ state.ts never constructs the membrane and never
+  //     injects a modifier ⇒ the four RULE_* kinds can never speak (byte-for-byte rollback).
+  RULES_ENABLED?: string;               // "true"/"false" (default FALSE — dark deploy; flip on by hand)
+
   // --- ㉕ THE TREATY: formal diplomacy between houses — sealed, ratified, breached (see src/treaty.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The chancery
   //     has no knobs (its lines are exported constants: TR_SIGN_AT / TR_BREACH_AT / TR_TERM…); only the
@@ -752,6 +764,17 @@ export interface RuntimeConfig {
   conventions: {
     enabled: boolean;         // master switch (default OFF — dark deploy)
     maxIntensity: number;     // ceiling (and master scale) on the causal leg + the 1.5× breach penalty, 0..0.3
+  };
+  // ㉝ BOUNDED RULE CREATION: bounds are constants (RULE_CAP etc.); the knobs are the master switch and the
+  //     CONSTITUTIONAL BAND the modifier lives inside. The band edges are code-defaults clamped into the HARD
+  //     envelope [0.5, 2.0] (rules.ts HARD_BUY_MIN/MAX, HARD_CP_MIN/MAX) — a config may only NARROW the band,
+  //     never widen past the hard floor/ceiling. OFF ⇒ never constructed, byte-for-byte the pre-Rules build.
+  rules: {
+    enabled: boolean;         // master switch (default OFF — dark deploy)
+    buyMin: number;           // constitutional band floor on the buyProbability multiplier (hard 0.5)
+    buyMax: number;           // constitutional band ceiling on the buyProbability multiplier (hard 2.0)
+    cpMin: number;            // constitutional band floor on the counterparty-weight multiplier (hard 0.5)
+    cpMax: number;            // constitutional band ceiling on the counterparty-weight multiplier (hard 2.0)
   };
   treaty: {
     enabled: boolean;         // the chancery's lines are constants (TR_SIGN_AT etc.) — no knobs by design
@@ -1266,6 +1289,20 @@ export function loadConfig(env: Env): RuntimeConfig {
         const mi = Number(env.CONVENTIONS_STIMULUS_MAX ?? "0.3");
         return clamp(Number.isFinite(mi) ? mi : 0.3, 0, 0.3);
       })(),
+    },
+    rules: {
+      // ㉝ Shipped DISABLED (dark deploy): the default is "false", so an unset RULES_ENABLED leaves the membrane
+      //     inert, no modifier is ever injected into the economy, and the chronicle is byte-for-byte the pre-Rules
+      //     build. Flip on by hand. This is the highest-risk membrane, so it ships dark behind an explicit switch.
+      enabled: (env.RULES_ENABLED ?? "false").toLowerCase() === "true",
+      // The CONSTITUTIONAL BAND as CODE-DEFAULT constants (wrangler.toml is NOT touched). These are the shipped
+      //     band edges; rules.ts normaliseBand() re-clamps them into the HARD envelope [0.5, 2.0] at construction,
+      //     and economy.ts re-clamps every modifier independently at each use point — so even a malformed value
+      //     here can never let a multiplier escape [HARD_BUY_MIN, HARD_BUY_MAX] / [HARD_CP_MIN, HARD_CP_MAX].
+      buyMin: 0.5,
+      buyMax: 2.0,
+      cpMin: 0.5,
+      cpMax: 2.0,
     },
     treaty: {
       enabled: (env.TR_ENABLED ?? "true").toLowerCase() !== "false",

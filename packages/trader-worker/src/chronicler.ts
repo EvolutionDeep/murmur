@@ -210,7 +210,15 @@ export type ChronicleKind =
   | "CONVENTION_SPREAD"
   | "CONVENTION_INHERITED"
   | "CONVENTION_BREACHED"
-  | "CONVENTION_DIED";
+  | "CONVENTION_DIED"
+  // ㉝ BOUNDED RULE CREATION: statutes no authority enacted (rules.ts) — a fly that keeps earning (top-10% netUsdc
+  //     for N crons) MINTS a rule whose bounded modifier multiplies its own buyProbability / counterparty weight
+  //     (hard-fenced inside a constitutional band), other flies ADOPT it by a hash gate, a member that falls below
+  //     a performance threshold is REVOKED, and an unloved rule decays past its TTL and DIES. Never money.
+  | "RULE_MINTED"
+  | "RULE_ADOPTED"
+  | "RULE_REVOKED"
+  | "RULE_DIED";
 
 export interface ChronicleEntry {
   seq: number;                      // monotonic ordinal within this chronicle (D1 primary key)
@@ -350,6 +358,9 @@ export interface ChronicleContext {
   /** ㉜ EMERGENT CONVENTIONS read-out (conventions.ts signals): this cron's crystallise, spread, inherit, breach
    *  and death edges. Absent ⇒ no CONVENTION_* kind speaks (CONVENTIONS_ENABLED=false never folds these in). */
   conventions?: ChronicleConventions | null;
+  /** ㉝ BOUNDED RULES read-out (rules.ts signals): this cron's mint, adopt, revoke and death edges. Absent ⇒ no
+   *  RULE_* kind speaks (RULES_ENABLED=false never folds these in). */
+  rules?: ChronicleRules | null;
 }
 
 /** ⑤ the culture membrane's chronicle signals — a majority creed, or a tradition that has held. */
@@ -625,6 +636,20 @@ export interface ChronicleConventions {
   died: { conv: string; lived: number; strength: number } | null;
 }
 
+/** ㉝ BOUNDED RULES: the chronicle-facing edges of ONE cron (rules.ts signals). The facet carries a byte-stable
+ *  ASCII label — "condition=>buy*M/cp*M" — plus every number in the edge, so the server text and the browser
+ *  re-derivation agree byte-for-byte. Every field is re-derivable by replaying the leaderboard + read-outs. */
+export interface ChronicleRules {
+  /** A top-earning fly has forged a bounded rule: its label, the band-fenced modifiers, the strength, the era. */
+  minted: { rule: string; buyMod: number; cpMod: number; strength: number; era: number } | null;
+  /** A rule has been adopted by more flies this cron: its label, the membership, the strength. */
+  adopted: { rule: string; adopters: number; strength: number } | null;
+  /** A member fell below the performance threshold and the rule was revoked: its label, the strength. */
+  revoked: { rule: string; strength: number } | null;
+  /** A rule decayed past its floor or outlived its TTL: its label, the crons it lived, its last strength. */
+  died: { rule: string; lived: number; strength: number } | null;
+}
+
 /** ⑥ the market's chronicle signals — current marks (USDC/good), the credit ledger, the class counts. */
 export interface ChronicleMarket {
   marks: Record<string, number>;   // latest mark per good, in USDC
@@ -853,6 +878,10 @@ export const COOLDOWN: Partial<Record<ChronicleKind, number>> = {
   //     lives, a breach is rarer news, and it dies slowly. Pure gravitas — the membrane one-edges each class per
   //     cron already; these gaps only guard a same-cron duplicate. Mirrored verbatim in the browser CHRON_.
   CONVENTION_CRYSTALLIZED: 80, CONVENTION_SPREAD: 36, CONVENTION_INHERITED: 54, CONVENTION_BREACHED: 30, CONVENTION_DIED: 54,
+  // ㉝ RULES: a rule is minted rarely (a fly must first hold the top-10% for a run), spreads by adoption while it
+  //     lives, a revocation is rarer news, and it dies slowly. Pure gravitas — the membrane one-edges each class per
+  //     cron already; these gaps only guard a same-cron duplicate. Mirrored verbatim in the browser CHRON_.
+  RULE_MINTED: 90, RULE_ADOPTED: 40, RULE_REVOKED: 36, RULE_DIED: 60,
 };
 
 // A regime must hold for this many crons (and the era be at least this old) before a new era dawns.
@@ -1054,6 +1083,14 @@ WORK_DILAPIDATED: "The {work} falls to ruin — {lived} crons it stood and no ha
   CONVENTION_INHERITED: "The convention is inherited — '{conv}' passes to a new pair at lineage depth {depth} (strength {strength}); the custom outlives its founders.",
   CONVENTION_BREACHED: "The convention is breached — '{conv}' is violated, and a bounded penalty of {penalty} bears down on the pair (strength {strength}).",
   CONVENTION_DIED: "The convention dies — '{conv}' is kept no more; it lived {lived} crons and faded to a last strength of {strength}.",
+  // ㉝ BOUNDED RULE CREATION: the statutes no authority enacted (rules.ts). {rule} is the byte-stable ASCII label
+  //     ("condition=>buy*M/cp*M"), {buyMod}/{cpMod} the band-fenced multipliers, {strength} its 0..1 force, {era} the
+  //     age it was minted in, {adopters} the flies that took it up, {lived} the crons it held. Every number is
+  //     re-derivable by replaying the leaderboard + read-outs. Mirrored verbatim in the frontend CHRON_.
+  RULE_MINTED: "A rule is minted — '{rule}' is forged by a fly that kept earning, its bounded modifier fenced inside the constitutional band at strength {strength}; era {era} now keeps a statute no authority enacted.",
+  RULE_ADOPTED: "The rule is adopted — '{rule}' is taken up by {adopters} flies, held now at strength {strength}; a statute spreads by hash-gated choice, never by decree.",
+  RULE_REVOKED: "The rule is revoked — '{rule}' is struck from a fly that fell below the threshold, held now at strength {strength}; the statute binds only while it earns.",
+  RULE_DIED: "The rule dies — '{rule}' is kept no more; it lived {lived} crons and faded to a last strength of {strength}.",
 };
 
 // ------------------------------------------------------------------------------------------------------------
@@ -2217,6 +2254,38 @@ export class Chronicler {
         const d = cv.died;
         out.push(await this.emit(ctx, "CONVENTION_DIED", 2, [],
           { conv: d.conv, lived: d.lived, strength: d.strength },
+          { lived: d.lived, strength: d.strength }));
+      }
+    }
+
+    // ㉝ BOUNDED RULES: the statutes no authority enacted (rules.ts signals, folded in ONLY while RULES_ENABLED —
+    //     off ⇒ no `rules` key ⇒ these four detectors never speak). The membrane one-edges each class per cron, so
+    //     a non-null facet is news this cron and cannot replay. NO actors: a rule's modifier is band-fenced and
+    //     never moves money, so the line narrates the statute, not a purse.
+    const rl = ctx.rules;
+    if (rl) {
+      if (rl.minted && this.ready("RULE_MINTED", ctx)) {
+        const m = rl.minted;
+        out.push(await this.emit(ctx, "RULE_MINTED", 3, [],
+          { rule: m.rule, strength: m.strength, era: m.era },
+          { buyMod: m.buyMod, cpMod: m.cpMod, strength: m.strength, era: m.era }));
+      }
+      if (rl.adopted && this.ready("RULE_ADOPTED", ctx)) {
+        const ad = rl.adopted;
+        out.push(await this.emit(ctx, "RULE_ADOPTED", 2, [],
+          { rule: ad.rule, adopters: ad.adopters, strength: ad.strength },
+          { adopters: ad.adopters, strength: ad.strength }));
+      }
+      if (rl.revoked && this.ready("RULE_REVOKED", ctx)) {
+        const rv = rl.revoked;
+        out.push(await this.emit(ctx, "RULE_REVOKED", 3, [],
+          { rule: rv.rule, strength: rv.strength },
+          { strength: rv.strength }));
+      }
+      if (rl.died && this.ready("RULE_DIED", ctx)) {
+        const d = rl.died;
+        out.push(await this.emit(ctx, "RULE_DIED", 2, [],
+          { rule: d.rule, lived: d.lived, strength: d.strength },
           { lived: d.lived, strength: d.strength }));
       }
     }

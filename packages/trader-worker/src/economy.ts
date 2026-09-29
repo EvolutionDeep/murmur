@@ -544,6 +544,18 @@ export interface EconomyConfig {
   strategy?: {
     enabled: boolean;
   };
+  // --- ㉝ RULES (Phase 5 capability ⑤: bounded rule creation modulates two economic decisions): OPTIONAL —
+  //     absent/false ⇒ every rules hook no-ops (rulesTilt returns 1.0) and the economy is byte-for-byte the
+  //     pre-Rules build. A rule's band-clamped multiplier tilts buyProbability / the counterparty weight WITHIN
+  //     the constitutional band [0.5, 2.0] AND the existing hard caps. NEVER touches a settlement, a deal amount,
+  //     a real-spend cap, a mnemonic, x402, connectome/genome/manifestHash, and NEVER signs/broadcasts. ---
+  rules?: {
+    enabled: boolean;
+    buyMin: number;   // constitutional band floor on the buyProbability multiplier (hard 0.5)
+    buyMax: number;   // constitutional band ceiling on the buyProbability multiplier (hard 2.0)
+    cpMin: number;    // constitutional band floor on the counterparty-weight multiplier (hard 0.5)
+    cpMax: number;    // constitutional band ceiling on the counterparty-weight multiplier (hard 2.0)
+  };
   // --- ELITES (Phase 2b capability ②: MAP-Elites novelty archive): OPTIONAL — absent/false ⇒ archive is
   //     never updated, planEvolution uses pure-PnL selection byte-for-byte. When armed, a bounded 3-D
   //     behavioural archive (4×4×4 = 64 cells) drives novelty exploration alongside PnL fitness. ---
@@ -764,6 +776,19 @@ export class AgentEconomy {
   private stratTempR6 = 0;
   /** Current tick index for strategy seed derivation. */
   private stratTick = 0;
+
+  /**
+   * ㉝ RULES (Phase 5 capability ⑤). Per-fly band-clamped economic modifiers injected by state.ts from the rules
+   *   membrane AFTER each cron's economy.step (so they take honest effect on the NEXT cron — the same one-cron lag
+   *   every membrane keeps). A pure RUNTIME field: NEVER persisted, NEVER folded into stateDigest. Empty until the
+   *   first drive ⇒ rulesTilt returns 1.0 ⇒ the decision points are byte-for-byte the pre-Rules build. Economic
+   *   layer ONLY — never touches the connectome (one-way law), never a settlement, a cap or a purse.
+   */
+  private ruleMods = new Map<number, { buyMult: number; cpMult: number }>();
+  /** The HARD constitutional band envelope. rulesTilt re-clamps EVERY injected modifier into [RULE_FLOOR,
+   *  RULE_CEIL] INDEPENDENTLY of rules.ts, so even a wild value handed to applyRuleModifiers can never escape. */
+  private static readonly RULE_FLOOR = 0.5;
+  private static readonly RULE_CEIL = 2.0;
 
   /**
    * ELITES (Phase 2b capability ②). MAP-Elites novelty archive — a bounded 3-D behavioural grid (4×4×4 =
@@ -1343,6 +1368,10 @@ export class AgentEconomy {
     if (role) base *= PROF_BUY[role];
     // STRATEGY tilt: multiplicative [0.5..1.5], composed AFTER profession but BEFORE the hard clamp.
     base *= this.strategyTilt(r, this.stratTick);
+    // ㉝ RULES tilt: a band-clamped [0.5..2.0] multiplier composed BEFORE the hard clamp01 — so the output is STILL
+    //    hard-capped to [0,1] (the demand≤1 invariant holds no matter how the amp×strategyTilt×rulesTilt chain
+    //    compounds). It tilts WHETHER the fly wants to buy; it never touches the deal amount or a settlement.
+    base *= this.rulesTilt(r, "buy");
     return clamp01(base);
   }
 
@@ -1385,6 +1414,7 @@ export class AgentEconomy {
     // roulette is unchanged — no cap is bypassed, no new risk surface.
     const pbMod = this.playbookOn() ? this.playbookCounterpartyMod(r.id, tick) : null;
     const stratTilt = this.strategyTilt(r, tick);  // 1.0 when OFF (inert)
+    const cpRuleMod = this.rulesTilt(r, "cp");     // ㉝ band-clamped [0.5..2.0], 1.0 when OFF/absent (inert)
     const picks: number[] = [];
     const weights: number[] = [];
     const shunned: number[] = [];
@@ -1398,7 +1428,10 @@ export class AgentEconomy {
       // PLAYBOOK amplifier scales the social contribution [0.5..1.0]; ε-greedy zeroes it (uniform).
       const amp = pbMod ? (pbMod.explore ? 0 : pbMod.amplifier) : 1;
       // STRATEGY tilt compounds with playbook: both are bounded [0.5..1.5]×[0.5..1.0] ⇒ max 0.75.
-      const w = Math.max(0.05, 1 + amp * stratTilt * (0.6 * bond + 0.4 * rep));
+      // ㉝ RULES tilt compounds too, bounded [0.5..2.0]. The Math.max(0.05,…) floor keeps EVERY weight strictly
+      //    positive (total ≥ 0.05 whenever picks.length ≥ 1 ⇒ no division by zero) and the band keeps cpRuleMod
+      //    finite (⇒ no NaN), so the deterministic roulette is unchanged and no cap is bypassed.
+      const w = Math.max(0.05, 1 + amp * stratTilt * cpRuleMod * (0.6 * bond + 0.4 * rep));
       picks.push(idx);
       weights.push(w);
       total += w;
@@ -1607,6 +1640,15 @@ export class AgentEconomy {
     return !!this.cfg.strategy && this.cfg.strategy.enabled === true;
   }
 
+  /**
+   * ㉝ RULES resolved: false/absent ⇒ rulesTilt returns 1.0 and applyRuleModifiers is never called by state.ts,
+   * so both decision points are byte-for-byte the pre-Rules build. Default OFF (ships dark); arms only on an
+   * explicit enabled:true. The highest-risk membrane, so it is inert unless deliberately armed.
+   */
+  private rulesOn(): boolean {
+    return !!this.cfg.rules && this.cfg.rules.enabled === true;
+  }
+
   /** True when the MAP-Elites archive is armed (ELITES_ENABLED=true). OFF ⇒ archive never updates. */
   private elitesOn(): boolean {
     return !!this.cfg.elites && this.cfg.elites.enabled === true;
@@ -1770,6 +1812,41 @@ export class AgentEconomy {
     // Map to [0.5, 1.5]: tilt = 1.0 + (raw / R6_SIGNED_MAX) * 0.5
     const norm = raw / 4_000_000;          // -1..1
     return 1.0 + norm * 0.5;               // 0.5..1.5
+  }
+
+  /**
+   * ㉝ THE CONSTITUTIONAL BAND CLAMP at the point of use (defence in depth). Returns the injected rule modifier
+   * for one fly on one axis ("buy" = buyProbability, "cp" = counterparty weight), HARD-CLAMPED into the envelope
+   * [RULE_FLOOR, RULE_CEIL] = [0.5, 2.0] INDEPENDENTLY of rules.ts: the configured band is first intersected with
+   * the hard envelope (NaN-safe), the edges ordered, and a missing/NaN modifier falls back to the neutral 1.0. The
+   * result is ALWAYS finite and inside [0.5, 2.0] — no wild value handed to applyRuleModifiers can ever escape, and
+   * with RULES OFF (or no injected map) it is exactly 1.0 ⇒ the decision point is byte-for-byte unchanged.
+   */
+  private rulesTilt(r: FlyReading, axis: "buy" | "cp"): number {
+    if (!this.rulesOn()) return 1.0;
+    const m = this.ruleMods.get(r.id);
+    if (!m) return 1.0;
+    const raw = axis === "buy" ? m.buyMult : m.cpMult;
+    if (!Number.isFinite(raw)) return 1.0;
+    const b = this.cfg.rules!;
+    const cfgLo = axis === "buy" ? b.buyMin : b.cpMin;
+    const cfgHi = axis === "buy" ? b.buyMax : b.cpMax;
+    const lo = Math.max(AgentEconomy.RULE_FLOOR, Number.isFinite(cfgLo) ? cfgLo : AgentEconomy.RULE_FLOOR);
+    const hi = Math.min(AgentEconomy.RULE_CEIL, Number.isFinite(cfgHi) ? cfgHi : AgentEconomy.RULE_CEIL);
+    const l = Math.min(lo, hi), h = Math.max(lo, hi);
+    return raw < l ? l : raw > h ? h : raw;
+  }
+
+  /**
+   * ㉝ Inject THIS cron's band-clamped rule modifiers. state.ts calls it AFTER economy.step (from driveRules), so
+   * the modifiers take honest effect on the NEXT cron — the same one-cron lag every membrane keeps. The map is a
+   * pure RUNTIME field, NEVER persisted and NEVER folded into stateDigest; a null/empty map ⇒ rulesTilt returns
+   * 1.0 ⇒ both decision points are byte-for-byte the pre-Rules build. Every value is re-clamped into the
+   * constitutional band at each use point. This tilts a propensity and a counterparty weight ONLY — it NEVER
+   * touches a settlement, a deal amount, a real-spend cap, a mnemonic, x402, and NEVER signs/broadcasts.
+   */
+  applyRuleModifiers(map: Map<number, { buyMult: number; cpMult: number }> | null): void {
+    this.ruleMods = map && map.size ? new Map(map) : new Map();
   }
 
   /**

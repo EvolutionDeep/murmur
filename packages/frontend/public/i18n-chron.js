@@ -126,6 +126,10 @@ REINVENTION: "重新发明 —— 第{id}号蝇从被遗忘时代的灰烬中重
   CONVENTION_INHERITED: "约定被继承 ——'{conv}'传至一对新伙伴，谱系深度 {depth}（强度 {strength}）；这份惯例比它的创立者更长寿。",
   CONVENTION_BREACHED: "约定被违背 ——'{conv}'遭到违反，一笔有界的 {penalty} 惩罚降临到这对伙伴身上（强度 {strength}）。",
   CONVENTION_DIED: "约定消亡 ——'{conv}'不再被持守；它存续了 {lived} 次巡天，衰减至最后的强度 {strength}。",
+    RULE_MINTED: "一条规则被铸造 ——'{rule}'由一只持续盈利的果蝇锻成，其有界的乘子以强度 {strength} 被围禁在宪法 band 之内；第 {era} 纪元起持守一部无任何权威颁布的法令。",
+    RULE_ADOPTED: "规则被采纳 ——'{rule}'被 {adopters} 只果蝇接受，如今以强度 {strength} 持守；一部法令靠哈希门控的抉择传布，绝不靠政令。",
+    RULE_REVOKED: "规则被撤销 ——'{rule}'从一只跌破阈值的果蝇身上被抹去，如今以强度 {strength} 持守；法令仅在它挣得之时才具约束。",
+    RULE_DIED: "规则消亡 ——'{rule}'不再被持守；它存续了 {lived} 次巡天，衰减至最后的强度 {strength}。",
 };
 
 const fr = {
@@ -244,6 +248,10 @@ REINVENTION: "Réinvention — la mouche #{id} a redécouvert {name} des cendres
   CONVENTION_INHERITED: "La convention est héritée — « {conv} » passe à un nouveau duo à la profondeur de lignée {depth} (force {strength}) ; la coutume survit à ses fondateurs.",
   CONVENTION_BREACHED: "La convention est violée — « {conv} » est enfreinte, et une pénalité bornée de {penalty} s'abat sur le duo (force {strength}).",
   CONVENTION_DIED: "La convention meurt — « {conv} » n'est plus gardée ; elle a vécu {lived} crons et s'est éteinte à une dernière force de {strength}.",
+    RULE_MINTED: "Une règle est forgée — « {rule} » est façonnée par une mouche qui n'a cessé de gagner, son modificateur borné enfermé dans la bande constitutionnelle à la force {strength} ; l'ère {era} garde désormais un statut qu'aucune autorité n'a décrété.",
+    RULE_ADOPTED: "La règle est adoptée — « {rule} » est reprise par {adopters} mouches, tenue désormais à la force {strength} ; un statut se répand par choix haché, jamais par décret.",
+    RULE_REVOKED: "La règle est révoquée — « {rule} » est rayée d'une mouche tombée sous le seuil, tenue désormais à la force {strength} ; le statut ne lie que tant qu'il rapporte.",
+    RULE_DIED: "La règle meurt — « {rule} » n'est plus gardée ; elle a vécu {lived} crons et s'est éteinte à une dernière force de {strength}.",
 };
 
 const es = {
@@ -362,6 +370,10 @@ REINVENTION: "Reinvención — la mosca #{id} ha redescubierto {name} de las cen
   CONVENTION_INHERITED: "La convención se hereda — '{conv}' pasa a una nueva pareja en la profundidad de linaje {depth} (fuerza {strength}); la costumbre sobrevive a sus fundadores.",
   CONVENTION_BREACHED: "La convención se quebranta — '{conv}' es violada, y una penalización acotada de {penalty} se abate sobre la pareja (fuerza {strength}).",
   CONVENTION_DIED: "La convención muere — '{conv}' ya no se guarda; vivió {lived} crons y se desvaneció hasta una última fuerza de {strength}.",
+    RULE_MINTED: "Una regla se acuña — '{rule}' es forjada por una mosca que no dejó de ganar, su modificador acotado cercado dentro de la banda constitucional con fuerza {strength}; la era {era} guarda ahora un estatuto que ninguna autoridad promulgó.",
+    RULE_ADOPTED: "La regla se adopta — '{rule}' es recogida por {adopters} moscas, sostenida ahora con fuerza {strength}; un estatuto se difunde por elección cifrada por hash, nunca por decreto.",
+    RULE_REVOKED: "La regla se revoca — '{rule}' es tachada de una mosca que cayó bajo el umbral, sostenida ahora con fuerza {strength}; el estatuto obliga solo mientras rinde.",
+    RULE_DIED: "La regla muere — '{rule}' ya no se guarda; vivió {lived} crons y se desvaneció hasta una última fuerza de {strength}.",
 };
 
 const ja = {
@@ -480,6 +492,10 @@ REINVENTION: "再発明 —— 蠅#{id}、忘れられし時代の灰より{name
   CONVENTION_INHERITED: "慣習が相続される ——'{conv}'は系譜深度 {depth}（強度 {strength}）で新たな組へ受け渡される；習わしは創始者より長生きする。",
   CONVENTION_BREACHED: "慣習が破られる ——'{conv}'は違反され、有界の {penalty} の罰がその組にのしかかる（強度 {strength}）。",
   CONVENTION_DIED: "慣習が死す ——'{conv}'はもう守られない；それは {lived} クロン生き、最後の強度 {strength} へ衰えた。",
+    RULE_MINTED: "規則が鋳造される ——'{rule}'は稼ぎ続けたハエによって鍛えられ、その有界の修飾子は強度 {strength} で憲法 band の内に囲い込まれる；第 {era} 紀元はいかなる権威も制定しなかった法令を守る。",
+    RULE_ADOPTED: "規則が採用される ——'{rule}'は {adopters} 匹のハエに受け上げられ、いま強度 {strength} で保たれる；法令はハッシュ門控の選択によって広まり、布令によっては決して広まらない。",
+    RULE_REVOKED: "規則が撤回される ——'{rule}'は閾値を下回ったハエから抹消され、いま強度 {strength} で保たれる；法令はそれを稼ぐ間のみ縛る。",
+    RULE_DIED: "規則が死す ——'{rule}'はもう保たれない；それは {lived} クロン生き、最後の強度 {strength} へ衰えた。",
 };
 
 const ko = {
@@ -598,6 +614,10 @@ REINVENTION: "재발명 — 파리 #{id}이 잊힌 시대의 재에서 {name}을
   CONVENTION_INHERITED: "관습이 계승된다 —'{conv}'는 계보 깊이 {depth}(강도 {strength})로 새로운 쌍에 넘어간다; 관습은 그 창립자보다 오래 산다.",
   CONVENTION_BREACHED: "관습이 위반된다 —'{conv}'는 어겨지고, 유계한 {penalty} 벌이 그 쌍에 내려앉는다(강도 {strength}).",
   CONVENTION_DIED: "관습이 소멸한다 —'{conv}'는 더 이상 지켜지지 않는다; 그것은 {lived} 크론을 살다 마지막 강도 {strength}로 사그라졌다.",
+    RULE_MINTED: "규칙이 주조된다 —'{rule}'는 계속 벌어들인 파리에 의해 벼려지고, 그 유계한 승수는 강도 {strength}로 헌법 band 안에 둘러쳐진다; 제 {era} 시대는 어떤 권위도 제정하지 않은 법령을 지킨다.",
+    RULE_ADOPTED: "규칙이 채택된다 —'{rule}'는 {adopters} 마리의 파리에 의해 받아들여져, 이제 강도 {strength}로 유지된다; 법령은 해시로 문이 통제된 선택으로 퍼지며, 포고로는 결코 퍼지지 않는다.",
+    RULE_REVOKED: "규칙이 철회된다 —'{rule}'는 임계 아래로 떨어진 파리에게서 지워지고, 이제 강도 {strength}로 유지된다; 법령은 그것이 벌어들이는 동안에만 구속한다.",
+    RULE_DIED: "규칙이 소멸한다 —'{rule}'는 더 이상 지켜지지 않는다; 그것은 {lived} 크론을 살다 마지막 강도 {strength}로 사그라졌다.",
 };
 
 const ar = {
@@ -716,6 +736,10 @@ REINVENTION: "إعادة اختراع — الذبابة #{id} أعادت اكت
   CONVENTION_INHERITED: "تُورَّث العادة — '{conv}' تنتقل إلى زوجٍ جديد عند عمق نسبٍ {depth} (قوة {strength})؛ فالعرف يعمر أطول من مؤسّسيه.",
   CONVENTION_BREACHED: "تُنتهك العادة — '{conv}' يُخالَف، وعقوبةٌ محدودةٌ قدرها {penalty} تنزل على الثنائي (قوة {strength}).",
   CONVENTION_DIED: "تموت العادة — '{conv}' لم يعد محفوظًا؛ لقد عاش {lived} دورةً وتلاشى إلى قوةٍ أخيرة بلغت {strength}.",
+    RULE_MINTED: "تُسَكُّ قاعدةٌ — '{rule}' تُصاغ على يد ذبابةٍ ما انفكّت تربح، ومُعدِّلها المحدود مُسيَّجٌ داخل النطاق الدستوري بقوة {strength}؛ والعصر {era} يحفظ الآن قانونًا لم تُصدره أي سلطة.",
+    RULE_ADOPTED: "تُعتمد القاعدة — '{rule}' يتبنّاها {adopters} من الذباب، وتُمسَك الآن بقوة {strength}؛ فالقانون ينتشر باختيارٍ مُبوَّبٍ بالتجزئة، لا بمرسومٍ أبدًا.",
+    RULE_REVOKED: "تُلغى القاعدة — '{rule}' تُمحى عن ذبابةٍ هبطت دون العتبة، وتُمسَك الآن بقوة {strength}؛ فالقانون لا يُلزم إلا ما دام يُثمر.",
+    RULE_DIED: "تموت القاعدة — '{rule}' لم يعد محفوظًا؛ لقد عاش {lived} دورةً وتلاشى إلى قوةٍ أخيرة بلغت {strength}.",
 };
 
 export const CHRON_TPL = { zh, fr, es, ja, ko, ar };
