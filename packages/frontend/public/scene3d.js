@@ -209,6 +209,15 @@ export class ThreeScene {
     this.controls.autoRotateSpeed = 0.3;
     this.controls.addEventListener("start", () => { this.controls.autoRotate = false; });
 
+    // task 71: disable OrbitControls' built-in wheel zoom — its getZoomScale() divides by
+    // (devicePixelRatio|0) which is 0 when DPR<1 (browser zoom <100%), causing an infinite
+    // normalized_delta that snaps the camera to minDistance in one event. Even with DPR>=1,
+    // large deltaY values (high-res scroll wheels, touchpads) produce uncapped jumps.
+    // Our custom handler below normalises deltaMode and clamps the per-event factor.
+    this.controls.enableZoom = false;
+    this._onWheel = (e) => this._handleWheel(e);
+    this.renderer.domElement.addEventListener("wheel", this._onWheel, { passive: false });
+
     // Sun-aligned key light + sky/ground bounce — the official ocean example's lighting recipe
     this.hemiLight = new THREE.HemisphereLight(0xbfe3ea, 0xd8c08a, 0.6);   // diorama: teal sky bounce + warm sand ground
     this.scene.add(this.hemiLight);
@@ -2055,6 +2064,35 @@ export class ThreeScene {
     c.restore();
   }
 
+  // task 71: custom wheel dolly — replaces OrbitControls' built-in zoom (disabled in _init).
+  // OrbitControls r160's getZoomScale() divides |deltaY| by (100 * (devicePixelRatio|0)); when the
+  // browser is zoomed below 100% (DPR<1) the bitwise-OR truncates to 0 → division by zero →
+  // Infinity → the dolly scale collapses to 0 → update() clamps radius straight to minDistance,
+  // which reads as "one notch snaps to the nearest viewpoint". Even at DPR>=1 a large deltaY
+  // (high-res wheel / trackpad) produced an uncapped jump. Here we normalise deltaMode, convert to
+  // a continuous exponential factor and clamp the per-event step, so one gentle notch is a small
+  // smooth dolly and repeated notches stay continuous. Walk mode owns the pointer, so we bail.
+  _handleWheel(e) {
+    if (!this.camera || !this.controls) return;
+    if (cameraMode() === "walk") return;      // task 48: walk mode owns the pointer, never dolly
+    e.preventDefault();
+
+    // normalise the three deltaMode units to pixels (0=px, 1=lines, 2=pages)
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;                                 // lines → px
+    else if (e.deltaMode === 2) dy *= (window.innerHeight || 720);   // pages → px
+
+    // continuous exponential dolly, clamped so no single event can jump more than ~18%
+    const factor = clamp(Math.exp(dy * 0.0015), 0.82, 1.22);
+
+    const t = this.controls.target, p = this.camera.position;
+    const ox = t.x - p.x, oy = t.y - p.y, oz = t.z - p.z;
+    const dist = Math.hypot(ox, oy, oz) || 1;
+    const s = clamp(dist * factor, this.controls.minDistance, this.controls.maxDistance) / dist;
+    p.set(t.x - ox * s, t.y - oy * s, t.z - oz * s);
+    this.controls.update();
+  }
+
   // 3D picking (task 20②+⑤). The canvas `click` fires AFTER camera.js's pointerup tap; camera.js now
   // bows out in 3D mode (state.threeScene guard), so this handler owns every click semantic here.
   // Order: flies first (primary target), then headstones (only while the necropolis layer is on),
@@ -3172,6 +3210,7 @@ export class ThreeScene {
       if (this._onDown) this._cvEl.removeEventListener("pointerdown", this._onDown);
       if (this._onClick) this._cvEl.removeEventListener("click", this._onClick);
       if (this._onMove) this._cvEl.removeEventListener("pointermove", this._onMove);
+      if (this._onWheel) this._cvEl.removeEventListener("wheel", this._onWheel);
     }
     // task 50: tear the particle system down first — it removes its Points from the scene so the
     // traverse below never double-disposes the shared geometry/material — and drop the debug hooks.
