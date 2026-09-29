@@ -535,24 +535,28 @@ permanently visible on-chain break rather than a silent compromise.
 
 ### Offline CLI verifier
 
-The PoCA verifier script (`scripts/poca-verify.mjs`) provides four modes:
+The PoCA verifier script (`scripts/poca-verify.mjs`) runs all seven criteria against public data:
 
 ```bash
 # Self-test: run the digest + Merkle algorithms against known test vectors (no network)
 node scripts/poca-verify.mjs --selftest
 
-# Registry mode: read the on-chain ContinuityRegistry and verify isUnbroken(0, epochCount-1)
-node scripts/poca-verify.mjs --registry --rpc https://rpc.mainnet.arc.io
+# Full verification (auto-detects registry deploy block via binary search)
+node scripts/poca-verify.mjs
 
-# Sample mode: fetch N random epoch proofs from the live API and verify Merkle inclusion locally
-node scripts/poca-verify.mjs --sample --api https://api.muros.live --n 10
+# Skip deploy-block detection with an explicit start block (faster, avoids extra RPC calls)
+node scripts/poca-verify.mjs --from-block 23234000
 
-# JSON output: machine-readable result for CI integration
-node scripts/poca-verify.mjs --sample --api https://api.muros.live --json
+# Tune rate-limit behaviour for public RPC
+node scripts/poca-verify.mjs --pacing 2000 --retry 5 --log-chunk 10000
+
+# JSON output for CI integration
+node scripts/poca-verify.mjs --json
 ```
 
-> **Note:** `scripts/poca-verify.mjs` is a planned artifact. Until it ships, the same checks can be performed
-> manually using the API endpoints + `cast call` against the registry.
+Key flags for public-RPC reliability: `--from-block <n>` (explicit scan start), `--pacing <ms>` (global
+inter-request delay, default 2000), `--lookback-days <d>` (auto-detection window, default 3),
+`--log-chunk <n>` (eth_getLogs shard size, default 10000; Arc caps ~10K per query).
 
 ### Browser-side verification
 

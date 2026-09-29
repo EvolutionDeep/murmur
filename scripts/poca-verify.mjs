@@ -30,6 +30,8 @@
 //   node scripts/poca-verify.mjs --registry-from ENV_OR_URL # resolve the address from an env var name or a URL
 //   node scripts/poca-verify.mjs --api https://api.muros.live --epochs 0,9 --sample 5 --json
 //   node scripts/poca-verify.mjs --gap-hours 36 --facilitator 0x…
+//   node scripts/poca-verify.mjs --from-block 23234000       # explicit start block (skip deploy detection)
+//   node scripts/poca-verify.mjs --lookback-days 2 --pacing 800  # tune scan window + inter-chunk delay
 // Exit code: 0 when nothing FAILs (PASS/SKIP/degraded all exit 0); 1 when any criterion FAILs or --selftest fails.
 
 import { readFileSync } from "node:fs";
@@ -84,14 +86,16 @@ const wAddr = (w) => "0x" + (w || "").slice(24);
 const wBool = (w) => wUint(w) !== 0n;
 const wBytes32 = (w) => (w || ZERO64);
 
-// ------------------------------ minimal JSON-RPC client (fetch POST) with exponential backoff ------------------------------
+// ------------------------------ minimal JSON-RPC client (fetch POST) with exponential backoff + global pacing ------------------------------
 let RPC_ID = 0;
-let RPC_RETRY_COUNT = 3; // default retries; overridable via --retry N
+let RPC_RETRY_COUNT = 5; // default retries; overridable via --retry N
+let RPC_PACING_MS = 2000; // global inter-request pacing (overridable via --pacing)
+let RPC_LAST_CALL_TS = 0; // timestamp of the last completed rpc() call (for global pacing)
 
-/** Sleep helper with ±20% jitter around the base delay. */
+/** Sleep helper with ±20% jitter around the base delay, capped at 30s. */
 function backoffDelay(attempt) {
-  // Base delays: 1s, 4s, 16s (4^attempt * 250ms pattern: 1000, 4000, 16000)
-  const base = Math.pow(4, attempt) * 1000;
+  // Base delays: 2s, 8s, 30s, 30s, 30s (capped)
+  const base = Math.min(30000, Math.pow(4, attempt) * 2000);
   const jitter = base * 0.2 * (Math.random() * 2 - 1); // ±20%
   return Math.max(0, base + jitter);
 }
@@ -107,9 +111,14 @@ function isRetryable(status, err) {
 async function rpc(url, method, params, { quiet = false } = {}) {
   let lastErr = null;
   for (let attempt = 0; attempt <= RPC_RETRY_COUNT; attempt++) {
+    // Global pacing: ensure at least RPC_PACING_MS between ANY two consecutive HTTP requests
+    if (RPC_PACING_MS > 0 && RPC_LAST_CALL_TS > 0) {
+      const elapsed = Date.now() - RPC_LAST_CALL_TS;
+      if (elapsed < RPC_PACING_MS) await new Promise((r) => setTimeout(r, RPC_PACING_MS - elapsed));
+    }
     if (attempt > 0) {
       const delay = backoffDelay(attempt - 1);
-      if (!quiet) process.stderr.write(`  [rpc] ${method} retry ${attempt}/${RPC_RETRY_COUNT} after ${Math.round(delay)}ms…\n`);
+      if (!quiet) process.stderr.write(`  [rpc] ${method} retry ${attempt}/${RPC_RETRY_COUNT} after ${Math.round(delay)}ms\u2026\n`);
       await new Promise((r) => setTimeout(r, delay));
     }
     try {
@@ -118,6 +127,7 @@ async function rpc(url, method, params, { quiet = false } = {}) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: ++RPC_ID, method, params }),
       });
+      RPC_LAST_CALL_TS = Date.now();
       if (!res.ok) {
         if (isRetryable(res.status, null) && attempt < RPC_RETRY_COUNT) {
           lastErr = new Error(`RPC ${method} HTTP ${res.status}`);
@@ -132,6 +142,7 @@ async function rpc(url, method, params, { quiet = false } = {}) {
       }
       return j.result;
     } catch (e) {
+      RPC_LAST_CALL_TS = Date.now();
       // Network-level error (DNS, timeout, connection refused) — retryable
       if (isRetryable(null, e) && attempt < RPC_RETRY_COUNT) {
         lastErr = e;
@@ -164,7 +175,8 @@ function parseArgs(argv) {
   const a = {
     registry: null, registryFrom: null, api: DEFAULT_API, rpc: DEFAULT_RPC,
     epochs: null, sample: 3, gapHours: 36, cadenceHours: 24, facilitator: null,
-    json: false, selftest: false, logChunk: 5000, maxTxs: 300, quiet: false,
+    json: false, selftest: false, logChunk: 10000, maxTxs: 300, quiet: false,
+    fromBlock: null, lookbackDays: 3, pacing: 2000,
   };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
@@ -179,16 +191,21 @@ function parseArgs(argv) {
       case "--gap-hours": a.gapHours = Number(next()) || 36; break;
       case "--cadence-hours": a.cadenceHours = Number(next()) || 24; break;
       case "--facilitator": a.facilitator = next(); break;
-      case "--log-chunk": a.logChunk = Math.max(1, Math.floor(Number(next()) || 5000)); break;
+      case "--log-chunk": a.logChunk = Math.max(1, Math.floor(Number(next()) || 10000)); break;
       case "--max-txs": a.maxTxs = Math.max(1, Math.floor(Number(next()) || 300)); break;
       case "--json": a.json = true; break;
       case "--selftest": a.selftest = true; break;
-      case "--retry": RPC_RETRY_COUNT = Math.max(0, Math.floor(Number(next()) || 3)); break;
+      case "--retry": RPC_RETRY_COUNT = Math.max(0, Math.floor(Number(next()) || 5)); break;
+      case "--from-block": a.fromBlock = Math.max(0, Math.floor(Number(next()) || 0)); break;
+      case "--lookback-days": a.lookbackDays = Math.max(1, Number(next()) || 3); break;
+      case "--pacing": a.pacing = Math.max(0, Math.floor(Number(next()) || 2000)); RPC_PACING_MS = a.pacing; break;
       case "--quiet": a.quiet = true; break;
       case "-h": case "--help": a.help = true; break;
       default: throw new Error(`unknown argument: ${k}`);
     }
   }
+  // Apply pacing from args (may also be set by --pacing inline above)
+  RPC_PACING_MS = a.pacing;
   return a;
 }
 
@@ -206,10 +223,13 @@ function helpText() {
     "  --gap-hours H              criterion ③ hole threshold in hours (default 36)",
     "  --cadence-hours H          declared epoch cadence in hours (default 24)",
     "  --facilitator 0x…          facilitator wallet for criterion ⑤ (else derived from /arena or a receipt tx)",
-    "  --log-chunk N              eth_getLogs block-range shard size (default 5000)",
+    "  --log-chunk N              eth_getLogs block-range shard size (default 10000; Arc max ~10K per query)",
     "  --max-txs N                cap on tx lookups when scanning USDC transfers (default 300)",
+    "  --from-block N             explicit start block for eth_getLogs scans (skips deploy-block detection)",
+    "  --lookback-days D          auto-detection lookback window in days (default 3; ~172800 blocks/day on Arc)",
+    "  --pacing MS                global inter-request delay in ms to avoid 429 rate-limits (default 2000)",
     "  --json                     machine-readable report on stdout",
-    "  --retry N                  RPC retries on 429/5xx/network (default 3; delays 1s/4s/16s ±20% jitter)",
+    "  --retry N                  RPC retries on 429/5xx/network (default 5; delays 2s/8s/30s/30s/30s ±20% jitter)",
     "  --quiet                    suppress the human report (still sets the exit code)",
     "",
     "Exit 0 when nothing FAILs (PASS/SKIP/degraded); 1 on any FAIL or a failed --selftest.",
@@ -425,15 +445,59 @@ async function readChainEpochs(url, registry, from, to) {
   return out;
 }
 
-/** eth_getLogs sharded by block range (Arc, like most RPCs, caps the span per query). */
+/** eth_getLogs sharded by block range (Arc caps ~10K blocks per query; default chunk=10000).
+ *  Global pacing in rpc() already spaces requests; no additional per-chunk delay needed.
+ *  Adaptive: if the RPC rejects a chunk with "max results" (e.g. USDC Transfer is very dense),
+ *  automatically narrows the chunk and retries until it succeeds or hits the minimum (100 blocks). */
 async function getLogsSharded(url, { address, topics, fromBlock, toBlock, chunk }) {
   const logs = [];
-  for (let start = fromBlock; start <= toBlock; start += chunk) {
-    const end = Math.min(start + chunk - 1, toBlock);
-    const res = await rpc(url, "eth_getLogs", [{ address, topics, fromBlock: "0x" + start.toString(16), toBlock: "0x" + end.toString(16) }], { quiet: true });
-    if (Array.isArray(res)) logs.push(...res);
+  const MIN_CHUNK = 100;
+  let start = fromBlock;
+  let currentChunk = chunk;
+  while (start <= toBlock) {
+    const end = Math.min(start + currentChunk - 1, toBlock);
+    try {
+      const res = await rpc(url, "eth_getLogs", [{ address, topics, fromBlock: "0x" + start.toString(16), toBlock: "0x" + end.toString(16) }]);
+      if (Array.isArray(res)) logs.push(...res);
+      start = end + 1;
+      // Successfully processed — try to grow chunk back toward the original (adaptive recovery)
+      if (currentChunk < chunk) currentChunk = Math.min(chunk, currentChunk * 2);
+    } catch (e) {
+      const msg = String(e.message || "");
+      // Arc returns "exceeded max results" or "range too large" — halve the chunk and retry
+      if ((msg.includes("max results") || msg.includes("range too large") || msg.includes("max allowed range")) && currentChunk > MIN_CHUNK) {
+        currentChunk = Math.max(MIN_CHUNK, Math.floor(currentChunk / 4));
+        continue; // retry same start with smaller chunk
+      }
+      throw e; // non-retryable error
+    }
   }
   return logs;
+}
+
+/** Binary-search for the block at which `address` was deployed (first block with non-empty code).
+ *  Uses ~18 eth_getCode calls (paced by the global rpc() throttle); returns lo0 on failure (safe fallback). */
+async function detectDeployBlock(url, address, headBlock, lookbackBlocks) {
+  const lo0 = Math.max(0, headBlock - lookbackBlocks);
+  // Verify code exists at head (sanity)
+  try {
+    const code = await rpc(url, "eth_getCode", [address, "0x" + headBlock.toString(16)], { quiet: true });
+    if (!code || code === "0x" || code.length <= 2) return lo0; // no code anywhere in range
+  } catch { return lo0; }
+  // Verify code does NOT exist at lo0 (if it does, the whole window has code — just use lo0)
+  try {
+    const code0 = await rpc(url, "eth_getCode", [address, "0x" + lo0.toString(16)], { quiet: true });
+    if (code0 && code0.length > 2) return lo0; // deployed before our window
+  } catch { /* proceed with binary search anyway */ }
+  let lo = lo0, hi = headBlock;
+  while (lo < hi - 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    try {
+      const code = await rpc(url, "eth_getCode", [address, "0x" + mid.toString(16)], { quiet: true });
+      if (code && code.length > 2) hi = mid; else lo = mid;
+    } catch { return lo0; } // on failure, fall back to conservative window
+  }
+  return hi;
 }
 
 // ------------------------------ the seven criteria ------------------------------
@@ -587,7 +651,12 @@ async function criterion5(args, ctx) {
   const fromBlock = Math.min(...blocks), toBlock = Math.max(...blocks);
   ev.push(`scanning USDC Transfer logs over blocks ${fromBlock}..${toBlock} (shard ${args.logChunk})`);
 
-  const logs = await getLogsSharded(args.rpc, { address: ARC_USDC, topics: [TOPIC.Transfer], fromBlock, toBlock, chunk: args.logChunk });
+  let logs;
+  try {
+    logs = await getLogsSharded(args.rpc, { address: ARC_USDC, topics: [TOPIC.Transfer], fromBlock, toBlock, chunk: args.logChunk });
+  } catch (e) {
+    return { id: 5, name: "asset-continuity", status: "SKIP", evidence: [...ev, `USDC log scan failed: ${e.message}`] };
+  }
   const uniqTx = [...new Set(logs.map((l) => l.transactionHash).filter(Boolean))];
   ev.push(`${logs.length} USDC Transfer log(s) in window across ${uniqTx.length} unique tx(s)`);
   // Keep only the transfers the facilitator actually relayed (tx.from == facilitator).
@@ -716,10 +785,27 @@ async function main() {
         // EpochSealed events across the same window (topic1 = indexed epochIndex).
         const head = await rpc(args.rpc, "eth_blockNumber", []);
         const headBlock = Number(BigInt(head));
-        const sealLogs = await getLogsSharded(args.rpc, { address: reg.address, topics: [TOPIC.EpochSealed], fromBlock: 0, toBlock: headBlock, chunk: args.logChunk });
+        // Narrow the scan range: use --from-block if given, else binary-search for deploy block,
+        // else fall back to a conservative lookback window (avoids scanning from block 0 → 23M).
+        const BLOCKS_PER_DAY = 172_800; // Arc ~0.5s/block
+        let scanFrom;
+        if (args.fromBlock != null) {
+          scanFrom = args.fromBlock;
+        } else {
+          const lookbackBlocks = Math.round(args.lookbackDays * BLOCKS_PER_DAY);
+          if (!args.quiet) process.stderr.write(`  [scan] auto-detecting deploy block (lookback ${args.lookbackDays}d \u2248 ${lookbackBlocks} blocks)\u2026\n`);
+          scanFrom = await detectDeployBlock(args.rpc, reg.address, headBlock, lookbackBlocks);
+          if (!args.quiet) process.stderr.write(`  [scan] deploy block \u2248 ${scanFrom}; scanning ${headBlock - scanFrom} blocks to head (${headBlock})\n`);
+          // Post-detection cooldown: the binary search consumed ~20 RPC calls; pause to let the
+          // rate-limiter sliding window reset before the heavier getLogs phase.
+          const cooldown = Math.max(5000, RPC_PACING_MS * 3);
+          if (!args.quiet) process.stderr.write(`  [scan] cooling down ${Math.round(cooldown / 1000)}s before log scan\u2026\n`);
+          await new Promise((r) => setTimeout(r, cooldown));
+        }
+        const sealLogs = await getLogsSharded(args.rpc, { address: reg.address, topics: [TOPIC.EpochSealed], fromBlock: scanFrom, toBlock: headBlock, chunk: args.logChunk });
         ctx.sealEvents = sealLogs.map((l) => {
           const w = words(l.data);
-          return { epochIndex: Number(wUint(l.topics[1])), sealedHead: wBytes32(w[0]), tickCount: Number(wUint(w[1])), merkleRoot: wBytes32(w[2]), ts: Number(wUint(w[3])), blockNumber: Number(BigInt(l.blockNumber)) };
+          return { epochIndex: Number(BigInt(l.topics[1])), sealedHead: wBytes32(w[0]), tickCount: Number(wUint(w[1])), merkleRoot: wBytes32(w[2]), ts: Number(wUint(w[3])), blockNumber: Number(BigInt(l.blockNumber)) };
         }).filter((e) => e.epochIndex >= from && e.epochIndex <= to);
       }
     } catch (e) {
