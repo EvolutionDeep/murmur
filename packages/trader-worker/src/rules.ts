@@ -50,6 +50,7 @@
  */
 
 import { type Cond, deriveCond, evalCond, condLabel } from "./norms.js";
+import { OnceGuard } from "./onceGuard.js";
 
 export const RULES_VERSION = 1;
 
@@ -106,6 +107,8 @@ export const TOP_MISS = 3;
 export const TRACK_CAP = 96;
 /** Modifier quantisation steps (0.05 granularity ⇒ a small, bounded, byte-stable modifier space). */
 export const BAND_QUANT = 20;
+/** OnceGuard capacity for the variant storm fix — generous enough to cover RULE_CAP × swarm within a TTL window. */
+export const VARY_GUARD_CAP = 256;
 
 /** Private salts (duplicated by design, like every layer's — a rules draw can alias no other layer's). */
 const RULESIG_SALT = 0x7b2e;   // the rule signature fold (creator id + tick)
@@ -271,6 +274,8 @@ export class RulesMembrane {
   private mods = new Map<number, RuleMod>();
   private coverage = 0;
   private band: RuleBand;
+  /** H2 fix: "already varied" memory — prevents the same (rule, fly) pair from spawning a variant every cron. */
+  private variedPairs = new OnceGuard(VARY_GUARD_CAP);
   private pending: RulesSignals = {
     minted: null, adopted: null, revoked: null, died: null,
     rules: [], counts: { ...this.counts }, avgModifier: 0, bandHits: 0, coverage: 0,
@@ -306,16 +311,19 @@ export class RulesMembrane {
     // 5) decay + TTL + hysteresis: every rule pays the decay; the unloved and the old die.
     this.decay(tick);
     // 6) fold the band-clamped modifier map this cron's satisfied rules project onto their members.
-    this.computeModifiers(facts.reading);
+    // L1 fix: pass the TRUE population size so coverage is a share of the swarm, not of the tracked elite.
+    this.computeModifiers(facts.reading, flies.length);
 
     // Read-out closes on the END-of-round truth.
     this.refreshPending();
   }
 
   private trackTop(flies: RuleFly[], tick: number, era: number): void {
+    // M6 fix: require netUsdc > 0 (the hard profitability gate, matching evolution.ts L109) so a losing
+    // economy never mints a rule that step 3 immediately revokes (RULE_MINTED + RULE_REVOKED noise).
     // rank by netUsdc desc, deterministic tie-break (id asc); the top ceil(n·frac) are this cron's elite
     const rows = flies
-      .filter((f) => f && Number.isFinite(f.id) && Number.isFinite(f.netUsdc))
+      .filter((f) => f && Number.isFinite(f.id) && Number.isFinite(f.netUsdc) && f.netUsdc > 0)
       .map((f) => ({ id: Math.floor(f.id), netUsdc: f.netUsdc }))
       .sort((a, b) => (b.netUsdc - a.netUsdc) || (a.id - b.id));
     const take = rows.length > 0 ? Math.max(1, Math.ceil(rows.length * MINT_TOP_FRAC)) : 0;
@@ -344,7 +352,6 @@ export class RulesMembrane {
         .slice(0, this.tracks.size - TRACK_CAP);
       for (const [id] of drop) this.tracks.delete(id);
     }
-    void TOP_SALT;
   }
 
   private mint(creator: number, tick: number, era: number): void {
@@ -375,7 +382,10 @@ export class RulesMembrane {
         const p = clamp(rule.strength * ADOPT_GAIN, 0, ADOPT_CAP);
         // id-only draw ⇒ adoption is monotonic in strength: a fly that joins stays joined as p grows.
         if (hash01(rule.id, id, ADOPT_SALT) >= p) continue;
-        if (hash01(rule.id, id, VARY_SALT) < VARY_P && rule.depth < MAX_DEPTH && this.rules.size < RULE_CAP) {
+        // H2 fix: the onceGuard prevents the same (rule, fly) from spawning a variant every cron.
+        const varyKey = `${rule.id}:${id}`;
+        if (hash01(rule.id, id, VARY_SALT) < VARY_P && rule.depth < MAX_DEPTH && this.rules.size < RULE_CAP
+            && this.variedPairs.claim(varyKey)) {
           this.variant(rule, id, tick);
         } else {
           rule.adopters.push(id);
@@ -404,7 +414,8 @@ export class RulesMembrane {
     };
     this.rules.set(id, child);
     parent.variants++;
-    parent.lastTick = tick;
+    // H2 fix: removed `parent.lastTick = tick` — a variant is NOT a compliance event for the parent;
+    // resetting its TTL here made rules effectively immortal (the decay/TTL mechanism was dead).
     this.counts.adopted++;
     if (!this.pending.adopted) {
       this.pending.adopted = { rule: ruleLabel(child), adopters: 1, strength: r2(child.strength) };
@@ -480,7 +491,7 @@ export class RulesMembrane {
    * their multipliers, and the compound is CLAMPED BACK INTO THE BAND — so the final per-fly modifier is inside
    * [0.5, 2.0] no matter how many rules stack. The map is recomputed every round and never persisted.
    */
-  private computeModifiers(reading: RulesReading): void {
+  private computeModifiers(reading: RulesReading, populationSize?: number): void {
     this.mods = new Map<number, RuleMod>();
     if (!this.rules.size) { this.coverage = 0; return; }
     const rv = readingVector(reading);
@@ -504,7 +515,10 @@ export class RulesMembrane {
       });
       touched++;
     }
-    const totalFlies = this.tracks.size > 0 ? Math.max(touched, this.tracks.size) : touched;
+    // L1 fix: the denominator is the TRUE population size (facts.flies.length), not the tracked-elite subset.
+    const totalFlies = (Number.isFinite(populationSize) && (populationSize as number) > 0)
+      ? Math.max(touched, populationSize as number)
+      : touched;
     this.coverage = totalFlies > 0 ? clamp01(touched / totalFlies) : 0;
   }
 
@@ -579,13 +593,16 @@ export class RulesMembrane {
       .sort((a, b) => (b[1].run - a[1].run) || (a[0] - b[0]))
       .slice(0, TRACK_CAP)
       .map(([id, t]) => ({ id, run: t.run, miss: t.miss, lastMint: t.lastMint }));
-    return JSON.stringify({ v: RULES_VERSION, nextId: this.nextId, counts: this.counts, rules, tracks });
+    // variedPairs: undefined when empty ⇒ JSON.stringify omits the key ⇒ byte-for-byte equivalence with pre-guard blobs.
+    const variedPairs = this.variedPairs.serialize();
+    return JSON.stringify({ v: RULES_VERSION, nextId: this.nextId, counts: this.counts, rules, tracks, variedPairs });
   }
 
   restore(blob: unknown): void {
     this.rules.clear();
     this.tracks.clear();
     this.mods.clear();
+    this.variedPairs.clear();
     this.nextId = 1;
     this.counts = { minted: 0, adopted: 0, revoked: 0, died: 0 };
     this.coverage = 0;
@@ -643,6 +660,8 @@ export class RulesMembrane {
           });
         }
       }
+      // H2 fix: restore the variant once-guard (a missing/corrupt key silently degrades to empty — the CAP still binds).
+      this.variedPairs.restore(p.variedPairs);
     } catch { /* corrupt → an empty statute book, nothing minted, nothing told */ }
     // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
     this.refreshPending();

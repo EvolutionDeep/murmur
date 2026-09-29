@@ -31,6 +31,7 @@
  */
 
 import type { StimulusEvent } from "@fly/fly-brain";
+import { OnceGuard, STIMULUS_HARD_CAP } from "./onceGuard.js";
 
 export const NORMS_VERSION = 1;
 
@@ -72,6 +73,8 @@ export const CLUSTER_MISS = 3;
 export const ABSORB_P = 0.5;
 /** Cluster-tracker entries kept in the serialized blob (pruned by run, descending). */
 export const CLUSTER_CAP = 64;
+/** OnceGuard capacity for the mutation storm fix — generous enough to cover NORM_CAP × swarm within a TTL window. */
+export const MUT_GUARD_CAP = 384;
 
 /** Private salts (duplicated by design, like every layer's — a norms draw can alias no other layer's). */
 const CLUSTER_SALT = 0x4f7a;   // label-propagation tie-break
@@ -333,6 +336,8 @@ export class NormsMembrane {
   private nextId = 1;
   private counts = { minted: 0, spread: 0, mutated: 0, died: 0 };
   private compliance = 0;
+  /** H3 fix: "already mutated" memory — prevents the same (norm, dst) pair from spawning a child every cron. */
+  private mutatedPairs = new OnceGuard(MUT_GUARD_CAP);
   private pending: NormsSignals = {
     minted: null, spread: null, mutated: null, died: null,
     norms: [], counts: { ...this.counts }, lineageDepth: 0, mutationRate: 0, compliance: 0,
@@ -349,7 +354,7 @@ export class NormsMembrane {
       norms: this.view(), counts: { ...this.counts },
       lineageDepth: this.maxDepth(), mutationRate: this.mutRate(), compliance: this.compliance,
     };
-    const tick = Math.max(0, Math.floor(facts.tick));
+    const tick = Math.max(0, Math.floor(Number.isFinite(facts.tick) ? facts.tick : 0));
 
     // 1) cluster the bond graph deterministically, then track each cluster's stability and mint when it holds.
     const clusters = clusterBonds(facts.ids, facts.bonds);
@@ -423,7 +428,10 @@ export class NormsMembrane {
         const p = clamp(w * norm.strength * SPREAD_GAIN, 0, SPREAD_CAP);
         // id-only draw ⇒ adoption is monotonic in strength: a mind that joins stays joined as p grows.
         if (hash01(norm.id, dst, SPREAD_SALT) >= p) continue;
-        if (hash01(norm.id, dst, MUT_SALT) < MUT_P && this.norms.size < NORM_CAP) {
+        // H3 fix: the onceGuard prevents the same (norm, dst) from spawning a mutation every cron.
+        const mutKey = `${norm.id}:${dst}`;
+        if (hash01(norm.id, dst, MUT_SALT) < MUT_P && this.norms.size < NORM_CAP
+            && this.mutatedPairs.claim(mutKey)) {
           this.mutateChild(norm, dst, tick);
         } else {
           if (norm.adherents.length < ADHERENT_CAP) norm.adherents.push(dst);
@@ -449,7 +457,8 @@ export class NormsMembrane {
     };
     this.norms.set(id, child);
     parent.mutations++;
-    parent.lastAdherentTick = tick;
+    // H3 fix: removed `parent.lastAdherentTick = tick` — a mutation is NOT a compliance event for the parent;
+    // resetting its TTL here made norms effectively immortal (the decay/TTL mechanism was dead).
     this.counts.mutated++;
     if (!this.pending.mutated) {
       this.pending.mutated = { norm: normLabel(child), depth: child.depth, parent: parent.id, strength: r2(child.strength) };
@@ -493,7 +502,8 @@ export class NormsMembrane {
    */
   stimuli(cfg: { maxIntensity: number }): StimulusEvent[] {
     if (!this.cfg.enabled || !this.norms.size) return [];
-    const cap = clamp01(cfg.maxIntensity);
+    // L12 fix: apply the HARD stimulus ceiling independently of config.ts (defence in depth).
+    const cap = Math.min(STIMULUS_HARD_CAP, clamp01(cfg.maxIntensity));
     // NaN-safe gate: `!(cap > 0)` is true for both 0 and NaN, so a malformed ceiling can never leak a NaN.
     if (!(cap > 0)) return [];
     const c = this.compliance;
@@ -594,12 +604,15 @@ export class NormsMembrane {
       .sort((a, b) => b[1].run - a[1].run || a[0] - b[0])
       .slice(0, CLUSTER_CAP)
       .map(([sig, c]) => ({ sig, run: c.run, miss: c.miss, members: c.members.slice(0, ADHERENT_CAP), lastMint: c.lastMint }));
-    return JSON.stringify({ v: NORMS_VERSION, nextId: this.nextId, counts: this.counts, compliance: r2(this.compliance), norms, clusters });
+    // mutatedPairs: undefined when empty ⇒ JSON.stringify omits the key ⇒ byte-for-byte equivalence with pre-guard blobs.
+    const mutatedPairs = this.mutatedPairs.serialize();
+    return JSON.stringify({ v: NORMS_VERSION, nextId: this.nextId, counts: this.counts, compliance: r2(this.compliance), norms, clusters, mutatedPairs });
   }
 
   restore(blob: unknown): void {
     this.norms.clear();
     this.clusters.clear();
+    this.mutatedPairs.clear();
     this.nextId = 1;
     this.counts = { minted: 0, spread: 0, mutated: 0, died: 0 };
     this.compliance = 0;
@@ -653,6 +666,8 @@ export class NormsMembrane {
           });
         }
       }
+      // H3 fix: restore the mutation once-guard (a missing/corrupt key silently degrades to empty — the CAP still binds).
+      this.mutatedPairs.restore(p.mutatedPairs);
     } catch { /* corrupt → an empty society, nothing minted, nothing told */ }
     // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
     this.refreshPending();

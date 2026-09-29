@@ -36,6 +36,7 @@
  */
 
 import type { StimulusEvent } from "@fly/fly-brain";
+import { OnceGuard, STIMULUS_HARD_CAP } from "./onceGuard.js";
 
 export const CONVENTIONS_VERSION = 1;
 
@@ -94,6 +95,8 @@ export const ABSORB_STRENGTH = 0.7;
 export const ABSORB_RUN = 5;
 /** Crons a convention waits after one absorption offer before it may offer again. */
 export const ABSORB_COOLDOWN = 120;
+/** OnceGuard capacity for the inheritance storm fix — generous enough to cover CONV_CAP × pairs within a TTL window. */
+export const INHERIT_GUARD_CAP = 256;
 /** The four tradeable goods — the descriptor's good axis (mirrors economy.ts GOOD_IDX order). */
 export const GOOD_COUNT = 4;
 export const GOOD_NAMES = ["signal", "momentum", "attestation", "prediction"] as const;
@@ -229,6 +232,8 @@ export class ConventionsMembrane {
   private counts = { crystallized: 0, spread: 0, inherited: 0, breached: 0, died: 0, absorbed: 0 };
   private concordance = 0;
   private breachThisCron = false;
+  /** H4 fix: "already inherited" memory — prevents the same (conv, pairSig) from spawning a child every cron. */
+  private inheritedPairs = new OnceGuard(INHERIT_GUARD_CAP);
   private pending: ConventionsSignals = {
     crystallized: null, spread: null, inherited: null, breached: null, died: null,
     conventions: [], counts: { ...this.counts }, lineageDepth: 0, breachRate: 0, concordance: 0, promote: null,
@@ -313,7 +318,7 @@ export class ConventionsMembrane {
     // bound the tracker: prune the least-established entries beyond PAIR_TRACK_CAP
     if (this.pairs.size > PAIR_TRACK_CAP) {
       const drop = Array.from(this.pairs.entries())
-        .sort((x, y) => (x[1].run - y[1].run) || (x[1].miss - y[1].miss))
+        .sort((x, y) => (x[1].run - y[1].run) || (x[1].miss - y[1].miss) || (x[0] < y[0] ? -1 : 1))
         .slice(0, this.pairs.size - PAIR_TRACK_CAP);
       for (const [key] of drop) this.pairs.delete(key);
     }
@@ -396,7 +401,10 @@ export class ConventionsMembrane {
         if (adopted.has(sig)) continue;
         const p = clamp(cand.w * c.strength * SPREAD_GAIN, 0, SPREAD_CAP);
         if (hash01(c.id, sig, SPREAD_SALT) >= p) continue;      // hash-gated adoption
-        if (hash01(c.id, sig, INHERIT_SALT) < INHERIT_P && c.depth < MAX_DEPTH && this.convs.size < CONV_CAP) {
+        // H4 fix: the onceGuard prevents the same (conv, pairSig) from spawning an inheritance every cron.
+        const inheritKey = `${c.id}:${sig}`;
+        if (hash01(c.id, sig, INHERIT_SALT) < INHERIT_P && c.depth < MAX_DEPTH && this.convs.size < CONV_CAP
+            && this.inheritedPairs.claim(inheritKey)) {
           this.inheritChild(c, cand.lo, cand.hi, sig, tick);
         } else {
           if (c.adopters.length < ADOPTER_CAP) c.adopters.push(sig);
@@ -424,7 +432,8 @@ export class ConventionsMembrane {
     };
     this.convs.set(id, child);
     parent.inherited++;
-    parent.lastTick = tick;
+    // H4 fix: removed `parent.lastTick = tick` — an inheritance is NOT an honour event for the parent;
+    // resetting its TTL here made conventions effectively immortal (the decay/TTL mechanism was dead).
     this.counts.inherited++;
     if (!this.pending.inherited) {
       this.pending.inherited = { conv: convLabel(child), depth: child.depth, parent: parent.id, strength: r2(child.strength) };
@@ -505,7 +514,8 @@ export class ConventionsMembrane {
    */
   stimuli(cfg: { maxIntensity: number }): StimulusEvent[] {
     if (!this.cfg.enabled || !this.convs.size) return [];
-    const cap = clamp01(cfg.maxIntensity);
+    // L12 fix: apply the HARD stimulus ceiling independently of config.ts (defence in depth).
+    const cap = Math.min(STIMULUS_HARD_CAP, clamp01(cfg.maxIntensity));
     // NaN-safe gate: `!(cap > 0)` is true for both 0 and NaN, so a malformed ceiling can never leak a NaN.
     if (!(cap > 0)) return [];
     const c = this.concordance;
@@ -583,12 +593,15 @@ export class ConventionsMembrane {
       .sort((a, b) => (b[1].run - a[1].run) || (a[0] < b[0] ? -1 : 1))
       .slice(0, PAIR_TRACK_CAP)
       .map(([key, t]) => ({ key, run: t.run, miss: t.miss, lastTrades: t.lastTrades, lastScore: r2(t.lastScore), mean: r2(t.mean), m2: r2(t.m2), n: t.n, lastCrystal: t.lastCrystal, a: t.a, b: t.b }));
-    return JSON.stringify({ v: CONVENTIONS_VERSION, nextId: this.nextId, counts: this.counts, concordance: r2(this.concordance), convs, pairs });
+    // inheritedPairs: undefined when empty ⇒ JSON.stringify omits the key ⇒ byte-for-byte equivalence with pre-guard blobs.
+    const inheritedPairs = this.inheritedPairs.serialize();
+    return JSON.stringify({ v: CONVENTIONS_VERSION, nextId: this.nextId, counts: this.counts, concordance: r2(this.concordance), convs, pairs, inheritedPairs });
   }
 
   restore(blob: unknown): void {
     this.convs.clear();
     this.pairs.clear();
+    this.inheritedPairs.clear();
     this.nextId = 1;
     this.counts = { crystallized: 0, spread: 0, inherited: 0, breached: 0, died: 0, absorbed: 0 };
     this.concordance = 0;
@@ -652,6 +665,8 @@ export class ConventionsMembrane {
           });
         }
       }
+      // H4 fix: restore the inheritance once-guard (a missing/corrupt key silently degrades to empty — the CAP still binds).
+      this.inheritedPairs.restore(p.inheritedPairs);
     } catch { /* corrupt → an empty society, nothing crystallised, nothing told */ }
     // Rebuild the read-out from the just-restored state so signals() is truthful BEFORE the next round().
     this.refreshPending();
@@ -673,5 +688,5 @@ function hash01(a: number, b: number, salt: number): number {
   return hash32(a, b, salt) / 0xffffffff;
 }
 
-// keep SIG_SALT referenced (reserved for a future descriptor fold) without affecting behaviour
-void SIG_SALT;
+// L2 fix: removed dead `void SIG_SALT;` — the constant is declared but never used in any computation;
+// folding it into a tie-break would change existing deterministic output (not recommended).
