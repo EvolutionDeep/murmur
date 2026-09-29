@@ -209,6 +209,11 @@ export interface Env {
   EVOLUTION_HATCH_LIVE?: string;        // "true"/"false" (default false) — hatch each bred offspring into a LIVE trading fly (grows the population up to EVOLUTION_MAX_LIVE_POPULATION) instead of lineage-only. Inert unless evolution is already armed (onchain + real spend); the parent self-funds the child's opening balance via EVOLUTION_HATCH_SEED_USDC.
   EVOLUTION_HATCH_SEED_USDC?: string;   // parent→child bootstrap transferred to the offspring's OWN HD wallet on hatch, USDC (default 0.002); bounded by the same kill switch + daily caps as the breeding fee, and only ever moved once (a MINED transfer is what founds the live child).
   EVOLUTION_SALT?: string;              // deterministic salt for evolution draws (hex int, default 0x65766f = "evo"); ensures the hash01 PRNG stream never aliases economy/culture/faith draws.
+
+  // --- Phase 4: multi-objective fitness + tournament selection (capability ④) ---
+  //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
+  EVOLUTION_MULTI_OBJECTIVE?: string;   // "true"/"false" (default FALSE — ships dark; multi-objective fitness RANKING + hash01 tournament parent selection). NEVER relaxes the netUsdc>0 hard gate or any money/survival cap — it only re-orders who breeds among the already-eligible. OFF ⇒ selection is byte-for-byte the current top-1 / elites-novelty path.
+  EVOLUTION_TOURNAMENT_K?: string;      // tournament size: candidates sampled per draw (default 3, clamped 2..16)
   POP_LIVE_RETIRE?: string;             // "true"/"false" (default TRUE) — when a fly dies, RETIRE it from the live swarm (free its id/slot/shard brain) so the population reflects ONLY the living and a dead fly never holds a breeding slot. Reuses the vacated id (and its HD wallet + shard slice) for the next hatch, tombstoned so a cold boot can't resurrect the dead founder. false ⇒ the old behaviour: deaths close a wallet only, roster never shrinks, ids never recycle. Rollback switch.
   LAW_ENABLED?: string;                 // "true"/"false" (default TRUE) — ⑧ THE COMMONS: at each NEW era a deterministic assembly is convened from the swarm's own read-out condition (standing + stake of its wealthiest/honoured living flies) and votes — a pure function of (era, address, hashes) — to nudge TWO bounded institution knobs (the credit line and its interest). ECONOMIC-SIDE ONLY: it re-prices credit the economy already reads, moves no money and touches no neuron. A sub-switch of INSTITUTIONS — false (or institutions off) ⇒ no assembly, effective ≡ base config, byte-for-byte today.
   LAW_ASSEMBLY_SIZE?: string;           // seats in the commons (default 7; clamped 2..16 and to the living population).
@@ -627,6 +632,14 @@ export interface RuntimeConfig {
     hatchLive: boolean;       // hatch bred offspring into LIVE trading flies (grow to maxLivePopulation) vs lineage-only
     hatchSeedUsdc: number;    // parent→child bootstrap USDC transferred to the offspring's own wallet on hatch
     treasury: string | null;  // revenue address collecting each fee; null ⇒ step skipped entirely
+    // Phase 4 capability ④: multi-objective fitness + tournament selection. Default OFF ⇒ parent choice is
+    // byte-for-byte the current top-1/elites-novelty path. The dimension weights + normalization caps are
+    // CODE-DEFAULT CONSTANTS in mofit.ts (MOFIT_WEIGHTS / MOFIT_*_CAP) — deliberately NOT env knobs, so the
+    // fitness function cannot be retuned without rotating CODE_COMMITMENT.
+    multiObjective: {
+      enabled: boolean;       // master switch (default OFF — dark deploy): multi-objective RANKING + tournament selection
+      tournamentK: number;    // candidates sampled per tournament draw (default 3, clamped 2..16)
+    };
   };
 
   // Dynasty (economic-ledger layer: houses/inheritance/death — purely downstream of the economy, the
@@ -1097,6 +1110,14 @@ export function loadConfig(env: Env): RuntimeConfig {
       salt: clampInt(Number(env.EVOLUTION_SALT ?? "0x65766f"), 0, 0x7fffffff),
       hatchLive,
       hatchSeedUsdc: clamp(Number(env.EVOLUTION_HATCH_SEED_USDC ?? "0.002"), 0.000001, 100),
+      multiObjective: {
+        // Phase 4 capability ④: multi-objective fitness + tournament selection. Shipped DISABLED (dark
+        //     deploy): default OFF so parent choice is byte-for-byte the current top-1/elites path. When
+        //     armed, the eligible pool (netUsdc>0 hard gate UNCHANGED) is ranked by a bounded weighted
+        //     score and the primary parent is drawn by hash01 tournament. Set EVOLUTION_MULTI_OBJECTIVE=true to arm.
+        enabled: (env.EVOLUTION_MULTI_OBJECTIVE ?? "false").toLowerCase() === "true",
+        tournamentK: clampInt(Number(env.EVOLUTION_TOURNAMENT_K ?? "3"), 2, 16),
+      },
     },
 
     dynasty: {

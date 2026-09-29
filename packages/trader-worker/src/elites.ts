@@ -20,6 +20,14 @@
 // PHASE 4 EXTENSIBILITY. The selection function accepts a `ScoringFn` callback so Phase 4 can plug in
 // multi-objective fitness (NSGA-II crowding distance, tournament selection) without rewriting the archive
 // structure. The archive cell stores an opaque `fitness` number that the scorer defines.
+//
+// PHASE 4 (capability ④) LANDED: `tournamentSelectParent` below is the tournament-selection draw. It samples
+// K candidates WITHOUT replacement via hash01 and resolves the winner through the SAME `ScoringFn` callback
+// the cell-contest uses — so a multi-objective scorer (see mofit.ts) injected by the caller governs BOTH cell
+// occupancy and parent choice. No Math.random, no Date.now: same (tickIndex, callIndex, candidates) ⇒ same
+// winner, byte-for-byte.
+
+import type { MofitVector } from "./mofit.js";
 
 /** FNV-1a 32-bit hash (identical to economy.ts internal hash32 — byte-for-byte deterministic). */
 function hash32(a: number, b: number, c: number): number {
@@ -44,6 +52,8 @@ export const BINS_PER_DIM = 4;
 export const ARCHIVE_CELLS = BINS_PER_DIM * BINS_PER_DIM * BINS_PER_DIM;
 /** Salt for novelty cell draws. */
 const SALT_ELITES = 0x454c4954; // "ELIT"
+/** Salt for Phase 4 tournament draws ("TRNM") — a disjoint stream so a tournament draw never aliases a novelty draw. */
+const SALT_TOURNAMENT = 0x54524e4d; // "TRNM"
 
 // ---------- Behaviour descriptor binning ----------
 
@@ -98,6 +108,18 @@ export interface EliteEntry {
 }
 
 // ---------- Archive ----------
+
+/**
+ * A parent-selection candidate. Phase 4 (additive): `vec` optionally carries the normalized multi-objective
+ * fitness vector (mofit.ts) for evidence/introspection — the selection itself compares the opaque scalar
+ * `fitness` through the injected ScoringFn, exactly like the cell contest does.
+ */
+export interface ParentCandidate {
+  agentId: number;
+  fitness: number;
+  bins: [number, number, number];
+  vec?: MofitVector;
+}
 
 /**
  * The MAP-Elites archive: a bounded grid of behaviour cells, each holding at most one elite.
@@ -177,6 +199,49 @@ export class ElitesArchive {
     let best = candidates[0];
     for (let i = 1; i < candidates.length; i++) {
       if (candidates[i].fitness > best.fitness) best = candidates[i];
+    }
+    return best.agentId;
+  }
+
+  /**
+   * PHASE 4 (capability ④) — TOURNAMENT SELECTION: sample `k` candidates WITHOUT replacement (deterministic
+   * hash01 draws over the shrinking pool) and return the winner under the injected `ScoringFn` — the SAME
+   * callback type that governs cell contests, so a multi-objective scorer plugs in here without the archive
+   * knowing its shape. Ties resolve deterministically: strictly-greater replaces, otherwise the lower agentId
+   * wins, so the result never depends on candidate ordering.
+   *
+   * Guarantees:
+   *   • k ≤ 1 or a single candidate ⇒ degenerates to argmax under the scorer (a 1-way tournament).
+   *   • k ≥ candidates.length ⇒ every candidate is sampled once — also argmax (full-pool tournament).
+   *   • PURE: no mutation of the archive or the input; no Math.random; no Date.now. Same inputs ⇒ same winner.
+   */
+  tournamentSelectParent(
+    tickIndex: number,
+    callIndex: number,
+    k: number,
+    candidates: ParentCandidate[],
+    score: ScoringFn = defaultScoring,
+  ): number | null {
+    if (candidates.length === 0) return null;
+    const size = Math.max(1, Math.floor(k));
+    // Sample WITHOUT replacement: each draw indexes into the shrinking pool (Fisher–Yates prefix, hash-gated).
+    const pool = candidates.slice();
+    const sampled: ParentCandidate[] = [];
+    for (let s = 0; s < size && pool.length > 0; s++) {
+      const draw = hash01(tickIndex, (callIndex << 8) + s, SALT_TOURNAMENT);
+      const idx = Math.min(pool.length - 1, Math.floor(draw * pool.length));
+      sampled.push(pool[idx]);
+      pool.splice(idx, 1);
+    }
+    // Resolve the winner under the injected scorer. `score(incumbent, challenger) === true` means the
+    // challenger takes the slot — the exact cell-contest semantics, reused for the tournament.
+    let best = sampled[0];
+    for (let i = 1; i < sampled.length; i++) {
+      const c = sampled[i];
+      const incumbentAsEntry = { agentId: best.agentId, fitness: best.fitness, treeHash: "", tick: 0, bins: best.bins };
+      const challengerAsEntry = { agentId: c.agentId, fitness: c.fitness, treeHash: "", tick: 0, bins: c.bins };
+      if (score(incumbentAsEntry, challengerAsEntry)) best = c;
+      else if (c.fitness === best.fitness && c.agentId < best.agentId) best = c;   // deterministic tiebreak
     }
     return best.agentId;
   }

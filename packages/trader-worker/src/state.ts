@@ -1277,7 +1277,28 @@ export class FlyStateDO {
     // ELITES (Phase 2b): when armed, pass the archive for novelty-driven parent selection. The netUsdc > 0
     // hard gate inside planEvolution still binds — novelty never promotes a loss-maker. OFF ⇒ null ⇒ pure-PnL.
     const elitesArchive = economy.getElitesArchive();
-    const elitesArg = elitesArchive ? { archive: elitesArchive, tickIndex, exploreRate: 0.3 } : null;
+    // PHASE 4 (capability ④) — MULTI-OBJECTIVE + TOURNAMENT. When armed (and an archive is present to host
+    // the draw), gather the bounded multi-objective observations for every leaderboard agent and hand them to
+    // planEvolution, which RE-SCORES the eligible pool and picks the parent by deterministic hash01 tournament
+    // instead of top-1/novelty. The prediction dimension is folded here (the PredictionMarket lives outside the
+    // economy); it stays null when prediction is off, which mofit.ts treats as neutral (never a penalty) — so
+    // an offline pure-economy run stays like-for-like. Default OFF ⇒ mofit=null ⇒ byte-for-byte the pre-Phase-4
+    // selection path. Reads only; writes nothing to the connectome (one-way law holds).
+    let mofitCtx: { inputs: Map<number, import("./mofit.js").MofitInput>; tournamentK: number } | null = null;
+    if (elitesArchive && ev.multiObjective.enabled) {
+      const inputs = economy.mofitInputs(tickIndex);
+      const prediction = await this.ensurePrediction();
+      if (prediction) {
+        for (const pr of prediction.leaderboard()) {
+          const base = inputs.get(pr.id);
+          if (base) { base.predictRounds = pr.rounds; base.predictHits = pr.hits; }
+        }
+      }
+      mofitCtx = { inputs, tournamentK: ev.multiObjective.tournamentK };
+    }
+    const elitesArg = elitesArchive
+      ? { archive: elitesArchive, tickIndex, exploreRate: 0.3, mofit: mofitCtx }
+      : null;
     const plan = planEvolution(rows, genomeHashById, lim, deterministicRng, rngSeed, elitesArg);
     if (!plan) return;                                                                  // nobody fit / budget hit
 

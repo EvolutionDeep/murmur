@@ -1,0 +1,1090 @@
+{
+  "artifact": "phase4-cross-generation-capability-curve",
+  "phase": "P4-capability-4",
+  "generatedBy": "scripts/capability-curve.ts",
+  "mode": "simulated",
+  "deterministic": true,
+  "llmCalls": 0,
+  "reproducibility": {
+    "tournamentArmRunToRun": true,
+    "controlArmRunToRun": true,
+    "economicKernelReplayHashStable": true,
+    "replayHash": "8d4830be5d4ee021f75f95bdc79476f110e60d3bbfd3c5134d947eda89a3844c"
+  },
+  "params": {
+    "seed": 24301,
+    "populationSize": 24,
+    "budget": 24,
+    "totalTicks": 1200,
+    "tournamentK": 3,
+    "hatchTicks": [
+      100,
+      300,
+      550,
+      850
+    ],
+    "childrenPerWave": 6,
+    "hatchSpreadTicks": 7,
+    "temperatureFn": "0.5 + 0.45*sin(tick*0.11)",
+    "dynasty": {
+      "enabled": true,
+      "oldAgeTicks": 600,
+      "penuryGraceTicks": 50,
+      "plagueTemp": 0.86,
+      "plaguePct": 0.1
+    }
+  },
+  "boundaries": [
+    "(a) Prediction layer not exercised offline ⇒ predict dimension UNOBSERVED (neutral, weight renormalized away); NO before/after predictHitRate comparison is fabricated.",
+    "(b) Band口径 unified with the frozen baseline: per-agent temperature = market temperature at BIRTH tick (not the /lineage/stats last-felt proxy).",
+    "(c) Reproducibility = ECONOMIC decision kernel byte-identical run-to-run; NOT a full live trajectory (connectome not re-run; read-outs synthesized from seed/tick/temperature).",
+    "(d) Offline synthReadings is genome-independent ⇒ no genetic heritability of offspring PnL. The isolated capability signal is the realized quality of the BREEDER each rule selects."
+  ],
+  "sim": {
+    "treatment": {
+      "hatched": 24,
+      "deaths": 42,
+      "skipped": 0,
+      "breedingEvents": 24,
+      "diversity": {
+        "distinctBreeders": 10,
+        "events": 24,
+        "ratio": 0.416667
+      }
+    },
+    "control": {
+      "hatched": 24,
+      "deaths": 42,
+      "skipped": 0,
+      "breedingEvents": 24,
+      "diversity": {
+        "distinctBreeders": 3,
+        "events": 24,
+        "ratio": 0.125
+      }
+    }
+  },
+  "crossGenerationCurve": {
+    "treatment": {
+      "waves": [
+        {
+          "wave": 0,
+          "events": 6,
+          "meanNetUsdc": 0.07494,
+          "meanSurvivalTicks": 116.5,
+          "meanComposite": 0.42242,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 2,
+              "meanNetUsdc": 0.050051,
+              "meanComposite": 0.411332
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.078095,
+              "meanComposite": 0.423816
+            },
+            {
+              "band": "HOT",
+              "events": 3,
+              "meanNetUsdc": 0.090481,
+              "meanComposite": 0.429347
+            }
+          ]
+        },
+        {
+          "wave": 1,
+          "events": 6,
+          "meanNetUsdc": 0.228108,
+          "meanSurvivalTicks": 316.5,
+          "meanComposite": 0.490881,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 3,
+              "meanNetUsdc": 0.219577,
+              "meanComposite": 0.48711
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.380485,
+              "meanComposite": 0.558597
+            },
+            {
+              "band": "HOT",
+              "events": 2,
+              "meanNetUsdc": 0.164715,
+              "meanComposite": 0.462679
+            }
+          ]
+        },
+        {
+          "wave": 2,
+          "events": 6,
+          "meanNetUsdc": 0.305162,
+          "meanSurvivalTicks": 566.5,
+          "meanComposite": 0.525609,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 3,
+              "meanNetUsdc": 0.347114,
+              "meanComposite": 0.544234
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.224892,
+              "meanComposite": 0.48994
+            },
+            {
+              "band": "HOT",
+              "events": 2,
+              "meanNetUsdc": 0.282368,
+              "meanComposite": 0.515505
+            }
+          ]
+        },
+        {
+          "wave": 3,
+          "events": 6,
+          "meanNetUsdc": 0.385967,
+          "meanSurvivalTicks": 866.5,
+          "meanComposite": 0.562101,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 1,
+              "meanNetUsdc": 0.364683,
+              "meanComposite": 0.552608
+            },
+            {
+              "band": "CALM",
+              "events": 2,
+              "meanNetUsdc": 0.41267,
+              "meanComposite": 0.573975
+            },
+            {
+              "band": "HOT",
+              "events": 3,
+              "meanNetUsdc": 0.375261,
+              "meanComposite": 0.55735
+            }
+          ]
+        }
+      ],
+      "risesAcrossGenerations": true
+    },
+    "control": {
+      "waves": [
+        {
+          "wave": 0,
+          "events": 6,
+          "meanNetUsdc": 0.089631,
+          "meanSurvivalTicks": 116.5,
+          "meanComposite": 0.428949,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 2,
+              "meanNetUsdc": 0.079791,
+              "meanComposite": 0.42455
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.079588,
+              "meanComposite": 0.424479
+            },
+            {
+              "band": "HOT",
+              "events": 3,
+              "meanNetUsdc": 0.099538,
+              "meanComposite": 0.433373
+            }
+          ]
+        },
+        {
+          "wave": 1,
+          "events": 6,
+          "meanNetUsdc": 0.371585,
+          "meanSurvivalTicks": 316.5,
+          "meanComposite": 0.554649,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 3,
+              "meanNetUsdc": 0.382634,
+              "meanComposite": 0.559579
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.380485,
+              "meanComposite": 0.558597
+            },
+            {
+              "band": "HOT",
+              "events": 2,
+              "meanNetUsdc": 0.350562,
+              "meanComposite": 0.545278
+            }
+          ]
+        },
+        {
+          "wave": 2,
+          "events": 6,
+          "meanNetUsdc": 0.60888,
+          "meanSurvivalTicks": 566.5,
+          "meanComposite": 0.660595,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 3,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.660575
+            },
+            {
+              "band": "CALM",
+              "events": 1,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.660602
+            },
+            {
+              "band": "HOT",
+              "events": 2,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.660622
+            }
+          ]
+        },
+        {
+          "wave": 3,
+          "events": 6,
+          "meanNetUsdc": 0.60888,
+          "meanSurvivalTicks": 866.5,
+          "meanComposite": 0.661173,
+          "byBand": [
+            {
+              "band": "COLD",
+              "events": 1,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.66114
+            },
+            {
+              "band": "CALM",
+              "events": 2,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.66118
+            },
+            {
+              "band": "HOT",
+              "events": 3,
+              "meanNetUsdc": 0.60888,
+              "meanComposite": 0.66118
+            }
+          ]
+        }
+      ],
+      "risesAcrossGenerations": true
+    }
+  },
+  "interpretation": [
+    "Cross-generation rise: the multi-objective tournament's mean breeder composite fitness is non-decreasing across breeding waves (risesAcrossGenerations=true); realized netUsdc of the selected breeder rises wave-over-wave as the deterministic economy matures and selection reliably tracks the best available profitable fly.",
+    "The greedy top-1 control ALSO rises (risesAcrossGenerations=true) and reaches a higher absolute composite, because it always takes the single richest fly — the rise is therefore partly economy maturation, NOT solely attributable to the Phase-4 rule. Stated plainly to avoid over-claiming.",
+    "The Phase-4 rule's distinct contribution is NOVELTY PRESSURE: it spreads breeding across 10 distinct profitable flies vs the control's 3 (24 events each) — a 3.333333x diversity gain that counters the premature-convergence failure mode MAP-Elites + tournament selection exist to prevent, at a modest cost in greedy peak fitness.",
+    "The netUsdc>0 hard gate held throughout: every one of the 24 breeding events selected a strictly profitable breeder (skipped=0 refused hatches); no loss-maker ever founded a generation.",
+    "predictHitRate has NO before/after comparison (boundary (a)): the prediction layer is unexercised offline, so the predict dimension is neutral/renormalized-away in BOTH arms and in the frozen baseline."
+  ],
+  "breederCapabilityByBand": {
+    "treatment": [
+      {
+        "band": "COLD",
+        "events": 9,
+        "meanNetUsdc": 0.24054,
+        "meanSurvivalTicks": 411.444444,
+        "meanSettleRate": 1,
+        "meanComposite": 0.496589
+      },
+      {
+        "band": "CALM",
+        "events": 5,
+        "meanNetUsdc": 0.301762,
+        "meanSurvivalTicks": 547.2,
+        "meanSettleRate": 1,
+        "meanComposite": 0.524061
+      },
+      {
+        "band": "HOT",
+        "events": 10,
+        "meanNetUsdc": 0.229139,
+        "meanSurvivalTicks": 475.7,
+        "meanSettleRate": 1,
+        "meanComposite": 0.491646
+      }
+    ],
+    "control": [
+      {
+        "band": "COLD",
+        "events": 9,
+        "meanNetUsdc": 0.415889,
+        "meanSurvivalTicks": 411.444444,
+        "meanSettleRate": 1,
+        "meanComposite": 0.574522
+      },
+      {
+        "band": "CALM",
+        "events": 5,
+        "meanNetUsdc": 0.457343,
+        "meanSurvivalTicks": 547.2,
+        "meanSettleRate": 1,
+        "meanComposite": 0.593208
+      },
+      {
+        "band": "HOT",
+        "events": 10,
+        "meanNetUsdc": 0.404414,
+        "meanSurvivalTicks": 475.7,
+        "meanSettleRate": 1,
+        "meanComposite": 0.569546
+      }
+    ]
+  },
+  "breederEvents": {
+    "treatment": [
+      {
+        "event": 1,
+        "tick": 100,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 9,
+        "netUsdc": 0.039512,
+        "survivalTicks": 99,
+        "settleRate": 1,
+        "composite": 0.406641
+      },
+      {
+        "event": 2,
+        "tick": 107,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 12,
+        "netUsdc": 0.060591,
+        "survivalTicks": 106,
+        "settleRate": 1,
+        "composite": 0.416023
+      },
+      {
+        "event": 3,
+        "tick": 114,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.078095,
+        "survivalTicks": 113,
+        "settleRate": 1,
+        "composite": 0.423816
+      },
+      {
+        "event": 4,
+        "tick": 121,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 12,
+        "netUsdc": 0.067779,
+        "survivalTicks": 120,
+        "settleRate": 1,
+        "composite": 0.419244
+      },
+      {
+        "event": 5,
+        "tick": 128,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 12,
+        "netUsdc": 0.091659,
+        "survivalTicks": 127,
+        "settleRate": 1,
+        "composite": 0.429871
+      },
+      {
+        "event": 6,
+        "tick": 135,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.112005,
+        "survivalTicks": 134,
+        "settleRate": 1,
+        "composite": 0.438927
+      },
+      {
+        "event": 7,
+        "tick": 300,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 11,
+        "netUsdc": 0.11297,
+        "survivalTicks": 299,
+        "settleRate": 1,
+        "composite": 0.439675
+      },
+      {
+        "event": 8,
+        "tick": 307,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 13,
+        "netUsdc": 0.216459,
+        "survivalTicks": 306,
+        "settleRate": 1,
+        "composite": 0.485683
+      },
+      {
+        "event": 9,
+        "tick": 314,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.380485,
+        "survivalTicks": 313,
+        "settleRate": 1,
+        "composite": 0.558597
+      },
+      {
+        "event": 10,
+        "tick": 321,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.35137,
+        "survivalTicks": 320,
+        "settleRate": 1,
+        "composite": 0.545671
+      },
+      {
+        "event": 11,
+        "tick": 328,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 13,
+        "netUsdc": 0.216459,
+        "survivalTicks": 327,
+        "settleRate": 1,
+        "composite": 0.485724
+      },
+      {
+        "event": 12,
+        "tick": 335,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 8,
+        "netUsdc": 0.090902,
+        "survivalTicks": 334,
+        "settleRate": 1,
+        "composite": 0.429934
+      },
+      {
+        "event": 13,
+        "tick": 550,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 12,
+        "netUsdc": 0.224892,
+        "survivalTicks": 549,
+        "settleRate": 1,
+        "composite": 0.4899
+      },
+      {
+        "event": 14,
+        "tick": 557,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 17,
+        "netUsdc": 0.364683,
+        "survivalTicks": 556,
+        "settleRate": 1,
+        "composite": 0.552043
+      },
+      {
+        "event": 15,
+        "tick": 564,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 16,
+        "netUsdc": 0.451766,
+        "survivalTicks": 563,
+        "settleRate": 1,
+        "composite": 0.59076
+      },
+      {
+        "event": 16,
+        "tick": 571,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 12,
+        "netUsdc": 0.224892,
+        "survivalTicks": 570,
+        "settleRate": 1,
+        "composite": 0.48994
+      },
+      {
+        "event": 17,
+        "tick": 578,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 16,
+        "netUsdc": 0.451766,
+        "survivalTicks": 577,
+        "settleRate": 1,
+        "composite": 0.590787
+      },
+      {
+        "event": 18,
+        "tick": 585,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 11,
+        "netUsdc": 0.11297,
+        "survivalTicks": 584,
+        "settleRate": 1,
+        "composite": 0.440224
+      },
+      {
+        "event": 19,
+        "tick": 850,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 17,
+        "netUsdc": 0.364683,
+        "survivalTicks": 849,
+        "settleRate": 1,
+        "composite": 0.552608
+      },
+      {
+        "event": 20,
+        "tick": 857,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 856,
+        "settleRate": 1,
+        "composite": 0.661153
+      },
+      {
+        "event": 21,
+        "tick": 864,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.524581,
+        "survivalTicks": 863,
+        "settleRate": 1,
+        "composite": 0.623701
+      },
+      {
+        "event": 22,
+        "tick": 871,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 17,
+        "netUsdc": 0.364683,
+        "survivalTicks": 870,
+        "settleRate": 1,
+        "composite": 0.552648
+      },
+      {
+        "event": 23,
+        "tick": 878,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 18,
+        "netUsdc": 0.236518,
+        "survivalTicks": 877,
+        "settleRate": 1,
+        "composite": 0.4957
+      },
+      {
+        "event": 24,
+        "tick": 885,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 13,
+        "netUsdc": 0.216459,
+        "survivalTicks": 884,
+        "settleRate": 1,
+        "composite": 0.486798
+      }
+    ],
+    "control": [
+      {
+        "event": 1,
+        "tick": 100,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 8,
+        "netUsdc": 0.079791,
+        "survivalTicks": 99,
+        "settleRate": 1,
+        "composite": 0.424543
+      },
+      {
+        "event": 2,
+        "tick": 107,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 8,
+        "netUsdc": 0.079791,
+        "survivalTicks": 106,
+        "settleRate": 1,
+        "composite": 0.424556
+      },
+      {
+        "event": 3,
+        "tick": 114,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 8,
+        "netUsdc": 0.079588,
+        "survivalTicks": 113,
+        "settleRate": 1,
+        "composite": 0.424479
+      },
+      {
+        "event": 4,
+        "tick": 121,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 8,
+        "netUsdc": 0.08821,
+        "survivalTicks": 120,
+        "settleRate": 1,
+        "composite": 0.428325
+      },
+      {
+        "event": 5,
+        "tick": 128,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.098398,
+        "survivalTicks": 127,
+        "settleRate": 1,
+        "composite": 0.432866
+      },
+      {
+        "event": 6,
+        "tick": 135,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 15,
+        "netUsdc": 0.112005,
+        "survivalTicks": 134,
+        "settleRate": 1,
+        "composite": 0.438927
+      },
+      {
+        "event": 7,
+        "tick": 300,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.337903,
+        "survivalTicks": 299,
+        "settleRate": 1,
+        "composite": 0.539645
+      },
+      {
+        "event": 8,
+        "tick": 307,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.363222,
+        "survivalTicks": 306,
+        "settleRate": 1,
+        "composite": 0.550911
+      },
+      {
+        "event": 9,
+        "tick": 314,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.380485,
+        "survivalTicks": 313,
+        "settleRate": 1,
+        "composite": 0.558597
+      },
+      {
+        "event": 10,
+        "tick": 321,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.382634,
+        "survivalTicks": 320,
+        "settleRate": 1,
+        "composite": 0.559566
+      },
+      {
+        "event": 11,
+        "tick": 328,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.382634,
+        "survivalTicks": 327,
+        "settleRate": 1,
+        "composite": 0.559579
+      },
+      {
+        "event": 12,
+        "tick": 335,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.382634,
+        "survivalTicks": 334,
+        "settleRate": 1,
+        "composite": 0.559593
+      },
+      {
+        "event": 13,
+        "tick": 550,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 549,
+        "settleRate": 1,
+        "composite": 0.660561
+      },
+      {
+        "event": 14,
+        "tick": 557,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 556,
+        "settleRate": 1,
+        "composite": 0.660575
+      },
+      {
+        "event": 15,
+        "tick": 564,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 563,
+        "settleRate": 1,
+        "composite": 0.660588
+      },
+      {
+        "event": 16,
+        "tick": 571,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 570,
+        "settleRate": 1,
+        "composite": 0.660602
+      },
+      {
+        "event": 17,
+        "tick": 578,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 577,
+        "settleRate": 1,
+        "composite": 0.660615
+      },
+      {
+        "event": 18,
+        "tick": 585,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 584,
+        "settleRate": 1,
+        "composite": 0.660629
+      },
+      {
+        "event": 19,
+        "tick": 850,
+        "band": "COLD",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 849,
+        "settleRate": 1,
+        "composite": 0.66114
+      },
+      {
+        "event": 20,
+        "tick": 857,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 856,
+        "settleRate": 1,
+        "composite": 0.661153
+      },
+      {
+        "event": 21,
+        "tick": 864,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 863,
+        "settleRate": 1,
+        "composite": 0.661167
+      },
+      {
+        "event": 22,
+        "tick": 871,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 870,
+        "settleRate": 1,
+        "composite": 0.66118
+      },
+      {
+        "event": 23,
+        "tick": 878,
+        "band": "HOT",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 877,
+        "settleRate": 1,
+        "composite": 0.661194
+      },
+      {
+        "event": 24,
+        "tick": 885,
+        "band": "CALM",
+        "childGen": 1,
+        "parentId": 14,
+        "netUsdc": 0.60888,
+        "survivalTicks": 884,
+        "settleRate": 1,
+        "composite": 0.661207
+      }
+    ]
+  },
+  "generationCurve": {
+    "treatment": [
+      {
+        "generation": 0,
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093918,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.63
+      },
+      {
+        "generation": 1,
+        "agents": 24,
+        "survivalRate": 0.25,
+        "avgNetUsdcPer1kTick": -0.193528,
+        "settleSuccessRate": 0.9944,
+        "predictHitRate": null,
+        "avgLifespanTicks": 507.92
+      }
+    ],
+    "control": [
+      {
+        "generation": 0,
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093918,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.63
+      },
+      {
+        "generation": 1,
+        "agents": 24,
+        "survivalRate": 0.25,
+        "avgNetUsdcPer1kTick": -0.193528,
+        "settleSuccessRate": 0.9944,
+        "predictHitRate": null,
+        "avgLifespanTicks": 507.92
+      }
+    ]
+  },
+  "baselineCurve": [
+    {
+      "generation": 0,
+      "agents": 24,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": 0.093918,
+      "settleSuccessRate": 1,
+      "predictHitRate": null,
+      "avgLifespanTicks": 1047.63
+    },
+    {
+      "generation": 1,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.45184,
+      "settleSuccessRate": 0.9944,
+      "predictHitRate": null,
+      "avgLifespanTicks": 600
+    },
+    {
+      "generation": 2,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.273908,
+      "settleSuccessRate": 1,
+      "predictHitRate": null,
+      "avgLifespanTicks": 567.83
+    },
+    {
+      "generation": 3,
+      "agents": 6,
+      "survivalRate": 0,
+      "avgNetUsdcPer1kTick": -0.048364,
+      "settleSuccessRate": 0.9574,
+      "predictHitRate": null,
+      "avgLifespanTicks": 530.33
+    },
+    {
+      "generation": 4,
+      "agents": 6,
+      "survivalRate": 1,
+      "avgNetUsdcPer1kTick": 0,
+      "settleSuccessRate": null,
+      "predictHitRate": null,
+      "avgLifespanTicks": 333.5
+    }
+  ],
+  "report": {
+    "asOfTick": 1201,
+    "generations": 1,
+    "agents": 48,
+    "byGeneration": [
+      {
+        "generation": 0,
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093917852595429,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.625,
+        "bands": [
+          {
+            "generation": 0,
+            "band": "CALM",
+            "agents": 24,
+            "survivalRate": 0,
+            "avgNetUsdcPer1kTick": 0.093917852595429,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 1047.625
+          }
+        ]
+      },
+      {
+        "generation": 1,
+        "agents": 24,
+        "survivalRate": 0.25,
+        "avgNetUsdcPer1kTick": -0.19352800197900302,
+        "settleSuccessRate": 0.9943566591422122,
+        "predictHitRate": null,
+        "avgLifespanTicks": 507.9166666666667,
+        "bands": [
+          {
+            "generation": 1,
+            "band": "COLD",
+            "agents": 9,
+            "survivalRate": 0.1111111111111111,
+            "avgNetUsdcPer1kTick": -0.20055294182244404,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 526.6666666666666
+          },
+          {
+            "generation": 1,
+            "band": "CALM",
+            "agents": 5,
+            "survivalRate": 0.4,
+            "avgNetUsdcPer1kTick": -0.18335367986230638,
+            "settleSuccessRate": 1,
+            "predictHitRate": null,
+            "avgLifespanTicks": 488.2
+          },
+          {
+            "generation": 1,
+            "band": "HOT",
+            "agents": 10,
+            "survivalRate": 0.3,
+            "avgNetUsdcPer1kTick": -0.19229271717825444,
+            "settleSuccessRate": 0.9865951742627346,
+            "predictHitRate": null,
+            "avgLifespanTicks": 500.9
+          }
+        ]
+      }
+    ],
+    "bins": [
+      {
+        "generation": 0,
+        "band": "CALM",
+        "agents": 24,
+        "survivalRate": 0,
+        "avgNetUsdcPer1kTick": 0.093917852595429,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 1047.625
+      },
+      {
+        "generation": 1,
+        "band": "COLD",
+        "agents": 9,
+        "survivalRate": 0.1111111111111111,
+        "avgNetUsdcPer1kTick": -0.20055294182244404,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 526.6666666666666
+      },
+      {
+        "generation": 1,
+        "band": "CALM",
+        "agents": 5,
+        "survivalRate": 0.4,
+        "avgNetUsdcPer1kTick": -0.18335367986230638,
+        "settleSuccessRate": 1,
+        "predictHitRate": null,
+        "avgLifespanTicks": 488.2
+      },
+      {
+        "generation": 1,
+        "band": "HOT",
+        "agents": 10,
+        "survivalRate": 0.3,
+        "avgNetUsdcPer1kTick": -0.19229271717825444,
+        "settleSuccessRate": 0.9865951742627346,
+        "predictHitRate": null,
+        "avgLifespanTicks": 500.9
+      }
+    ]
+  }
+}

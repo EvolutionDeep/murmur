@@ -22,7 +22,8 @@ import type { LeaderRow } from "./economy.js";
 import type { LineageEntry } from "./breed.js";
 import { GENOME_BOUNDS, FLYWIRE_GENOME_BOUNDS, FLYWIRE_DEFAULTS, mutateGenome, mutateGenomeFlyWire, type Genome } from "@fly/fly-brain";
 import type { MutationPath } from "./temple.js";
-import type { ElitesArchive } from "./elites.js";
+import type { ElitesArchive, ParentCandidate } from "./elites.js";
+import { mofitVector, mofitScore, type MofitInput } from "./mofit.js";
 
 /** One autonomous breeding decision the cron step should carry out (null = nothing worth breeding). */
 export interface EvolutionPlan {
@@ -76,9 +77,13 @@ export interface EvolutionLimits {
  * genome (null/"") are ineligible. `rng` supplies the cross/mutate draw; `rngSeed` is recorded on the plan so
  * the offspring is reproducible.
  *
- * PHASE 4 EXTENSION POINT: the `elites` parameter accepts any ElitesArchive; Phase 4 can replace the scalar
- * fitness with multi-objective crowding distance or tournament selection inside the archive's ScoringFn
- * without changing this function's signature or the hard gates below.
+ * PHASE 4 (capability ④) — MULTI-OBJECTIVE + TOURNAMENT: the `elites` parameter may additionally carry a
+ * `mofit` context (per-agent raw observations + tournament size). When present, every eligible fly's opaque
+ * scalar fitness is RE-SCORED with the bounded multi-objective score (mofit.ts) and the parent is drawn via
+ * deterministic hash01 TOURNAMENT selection through the archive's ScoringFn — instead of the Phase 2b novelty
+ * draw or pure top-1. The netUsdc > 0 hard gate and every budget gate above STILL bind first: the score only
+ * RE-ORDERS the already-eligible pool. When `mofit` is absent (config OFF), the selection path is byte-for-byte
+ * the pre-Phase-4 build.
  */
 export function planEvolution(
   rows: LeaderRow[],
@@ -86,7 +91,12 @@ export function planEvolution(
   lim: EvolutionLimits,
   rng: () => number,
   rngSeed: number,
-  elites?: { archive: ElitesArchive; tickIndex: number; exploreRate: number } | null,
+  elites?: {
+    archive: ElitesArchive;
+    tickIndex: number;
+    exploreRate: number;
+    mofit?: { inputs: Map<number, MofitInput>; tournamentK: number } | null;
+  } | null,
 ): EvolutionPlan | null {
   // 1) Hard budget gates first: never breed past the per-cron or per-day ceilings.
   if (lim.perCron <= 0 || lim.perCronUsed >= lim.perCron) return null;
@@ -114,7 +124,7 @@ export function planEvolution(
   //    so novelty can NEVER promote a loss-maker. Without elites, `top` is simply eligible[0] (unchanged).
   let top = eligible[0];
   if (elites && elites.archive) {
-    const candidates = eligible.map((e) => ({
+    const candidates: ParentCandidate[] = eligible.map((e) => ({
       agentId: e.row.id,
       fitness: e.row.netUsdc,
       bins: [0, 0, 0] as [number, number, number], // bins are resolved inside selectParent via archive cells
@@ -125,9 +135,28 @@ export function planEvolution(
         if (entry.agentId === c.agentId) { c.bins = entry.bins; break; }
       }
     }
-    const selectedId = elites.archive.selectParent(
-      elites.tickIndex, 0, elites.exploreRate, candidates,
-    );
+    const mofit = elites.mofit;
+    let selectedId: number | null;
+    if (mofit) {
+      // PHASE 4 (capability ④) — MULTI-OBJECTIVE TOURNAMENT. Overwrite each candidate's opaque `fitness`
+      // with the bounded [0,1] multi-objective score (mofit.ts), then draw the parent via deterministic
+      // hash01 tournament selection through the SAME ScoringFn the cell contest uses. The netUsdc > 0 hard
+      // gate already filtered this pool upstream, so the tournament only RE-ORDERS profitable flies — it can
+      // never promote a loss-maker, relax a cap, or bypass a budget gate. Same (tickIndex, inputs) ⇒ same
+      // winner, byte-for-byte; no Math.random, no Date.now.
+      for (const c of candidates) {
+        const raw = mofit.inputs.get(c.agentId);
+        if (raw) { c.vec = mofitVector(raw); c.fitness = mofitScore(c.vec, raw); }
+      }
+      selectedId = elites.archive.tournamentSelectParent(
+        elites.tickIndex, 0, mofit.tournamentK, candidates,
+      );
+    } else {
+      // Pre-Phase-4 novelty path — byte-for-byte unchanged when multi-objective is OFF.
+      selectedId = elites.archive.selectParent(
+        elites.tickIndex, 0, elites.exploreRate, candidates,
+      );
+    }
     if (selectedId != null) {
       const found = eligible.find((e) => e.row.id === selectedId);
       if (found) top = found;

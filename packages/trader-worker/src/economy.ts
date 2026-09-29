@@ -85,6 +85,7 @@ import {
 import type { ReceiptPinner } from "./ipfs.js";
 import { MarketBooks, type GoodBookView } from "./books.js";
 import { ElitesArchive, computeBins, type EliteEntry } from "./elites.js";
+import type { MofitInput } from "./mofit.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
 export type GoodKind = "signal" | "momentum" | "attestation" | "prediction";
@@ -1660,6 +1661,45 @@ export class AgentEconomy {
   /** Public accessor for the MAP-Elites archive (used by state.ts planEvolution wiring). */
   getElitesArchive(): ElitesArchive | null {
     return this.elitesOn() ? this.elitesArchive : null;
+  }
+
+  /**
+   * PHASE 4 (capability ④) — read-only multi-objective fitness observations for tournament selection.
+   *
+   * Pure read-out over the SAME ledger the leaderboard + social memory already keep; it writes NOTHING, so
+   * the one-way law (economy reads neural/ledger facts, never writes back) holds. The prediction dimension
+   * is deliberately left null here — the PredictionMarket lives outside the economy — and is folded in by
+   * the caller (state.ts) from prediction.leaderboard(); an agent with no prediction record stays neutral.
+   *
+   * Dimensions gathered (see mofit.ts for normalization):
+   *   netUsdc       — realized PnL (the leaderboard key; the SAME value the netUsdc > 0 hard gate filters on)
+   *   survivalTicks — currentTick − kin.bornTick (≥ 0); an agent with no kin record is treated as just-born
+   *   settleOk/Total— social kept / (kept + broken); no social record ⇒ 0/0 (unobserved ⇒ neutral upstream)
+   *   rep           — social reputation (−1..+1); no social record ⇒ null (neutral)
+   *
+   * @param currentTick the sub-tick the selection is planned for (the survival dimension's "now")
+   */
+  mofitInputs(currentTick: number): Map<number, MofitInput> {
+    const out = new Map<number, MofitInput>();
+    const now = Number.isFinite(currentTick) ? currentTick : 0;
+    for (const row of this.leaderboard()) {
+      const id = row.id;
+      const kin = this.kin.get(id);
+      const social = this.social.get(id);
+      const bornTick = kin && Number.isFinite(kin.bornTick) ? kin.bornTick : now;
+      const kept = social && Number.isFinite(social.kept) && social.kept > 0 ? social.kept : 0;
+      const broken = social && Number.isFinite(social.broken) && social.broken > 0 ? social.broken : 0;
+      out.set(id, {
+        netUsdc: row.netUsdc,
+        survivalTicks: Math.max(0, now - bornTick),
+        settleOk: kept,
+        settleTotal: kept + broken,
+        predictRounds: null,   // folded in by the caller from PredictionMarket (economy never sees it)
+        predictHits: null,
+        rep: social && Number.isFinite(social.rep) ? social.rep : null,
+      });
+    }
+    return out;
   }
 
   // ---------- STRATEGY: GP expression trees modulating economic decisions (Phase 2b, capability ②) ----------
