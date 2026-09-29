@@ -134,6 +134,23 @@ a stale commitment — this is operational discipline, not a code guarantee. CI'
 knob-default drift; source-tree drift is caught by the codegen step itself failing if the generated file
 differs from the committed one.
 
+### `lexiconGrammarHash` (the word-hoard's independent anchor)
+
+The lexicon (`GET /lexicon`) publishes its own `grammarHash` — the **`lexiconGrammarHash`**: `sha256` of the
+lexicon's word-list + firing/spread/silence thresholds + schema version, computed at runtime by the
+`LexiconMembrane` and stamped on the top-level payload AND on every permanent D1 archive row. It answers a
+different question from `CODE_COMMITMENT`: **"which grammar produced THIS dictionary?"** — the *accuracy*
+anchor behind the word-hoard's complete · accurate · permanent claim, so a sceptic reading an archived COINAGE /
+SPREAD / SILENCE event can confirm the word-list + thresholds in force when it fired.
+
+**It is deliberately INDEPENDENT of the PoCA chain.** The lexicon is a **PURE READ-OUT**: it reads the annals
+roll the historian already keeps and touches no brain, wallet or ledger. Therefore `lexiconGrammarHash` is **not**
+part of `PocoStateInput`, is **not** folded into `stateDigest` / `cronDigest`, and a change to it does **not**
+rotate `CODE_COMMITMENT` or trigger an epoch seal — reading (or re-tuning) the word-hoard leaves the continuity
+chain undisturbed. The lexicon *source* (`lexicon.ts`) is of course covered by `CODE_COMMITMENT` like every other
+file under `packages/trader-worker/src` (rule 1); the grammar hash VALUE is a runtime data anchor, not a
+commitment-preimage field.
+
 ### Merkle tree rules
 
 | Rule | Specification |

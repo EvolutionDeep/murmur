@@ -1,11 +1,11 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=161';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=113';
-import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=161';
-import { select } from './inspector.js?v=161';
-import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=161';
-import { closeLand } from './landDrawer.js?v=161';
+import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=162';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=114';
+import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=162';
+import { select } from './inspector.js?v=162';
+import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=162';
+import { closeLand } from './landDrawer.js?v=162';
 
 // ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
 export const PROF_ICON = { forager: "❍", mooder: "❂", trader: "⇅", brooder: "❄" };
@@ -712,18 +712,79 @@ export function renderGuildSection() {
     body.appendChild(none);
   }
 }
-// ================= ㉓ the lexicon section (coinages, spreads, silences) =================
-// A plain-language desk read-out of lexicon.ts: how many words the tellings have made, how many have
-// doubled, how many the silence has buried — the living rows (word, tellings, the era it entered) and the
-// dead roll. PURE READ-OUT — the dictionary is compiled backwards out of the chronicle itself; naming
-// changes no line, moves no coin. The whole volume (tab included) hides while /economy ships no lexicon key.
+// ================= ㉓ the lexicon section (the COMPLETE · ACCURATE · PERMANENT word-hoard) =================
+// task #108 — this volume now consumes GET /lexicon, the word-hoard's OWN endpoint, instead of the truncated
+// read-out folded into /economy. It shows the whole truth the user was promised: EVERY word (living AND
+// tombstoned, fixed vocabulary order, no truncation), each word's honest MONOTONE lifetimeUses (never the
+// rolling `uses`, which can shrink and used to make "told N times" contradict itself — the A-2 bug), who
+// coined it, the era it was born, its spreads and last telling; this cron's three edges; and a paginated page
+// of the PERMANENT append-only D1 archive (COINAGE / SPREAD / SILENCE, forever). grammarHash + archiveCount +
+// archived are surfaced so permanence and accuracy are visible, not asserted. PURE READ-OUT — naming changes
+// no line, moves no coin. The whole volume (tab included) hides while neither /lexicon nor /economy has arrived.
+export const LEX_LIMIT = 200;              // archive page size (the endpoint clamps 1..1000)
+const LEX_REFRESH_MS = 20000;             // min gap between throttled auto-refreshes while the volume is open
+const LEX = { order: "desc", loading: false, lastFetch: 0 };
+
+/** Small DOM helper: one lexicon row div (class + text + optional tooltip). */
+function lexRow(cls, text, title) {
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = text;
+  if (title) d.title = title;
+  return d;
+}
+/** Compact UTC stamp for an archive row (metadata only — the tick/era carry the canonical ordering). */
+function lexTs(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return new Date(n).toISOString().slice(0, 16).replace("T", " ");
+}
+/**
+ * Pull the COMPLETE lexicon from its own endpoint into state.lexiconFull, then re-render. force=true bypasses
+ * the throttle (an explicit open / order flip / load-older); force=false is the throttled poll refresh.
+ */
+export function loadLexicon(force) {
+  const now = Date.now();
+  if (!force && (LEX.loading || now - LEX.lastFetch < LEX_REFRESH_MS)) return;
+  LEX.loading = true;
+  getJSON(`/lexicon?limit=${LEX_LIMIT}&order=${LEX.order}`, 8000).then((d) => {
+    LEX.loading = false; LEX.lastFetch = Date.now();
+    if (d) { state.lexiconFull = d; renderLexSection(); }
+  }).catch(() => { LEX.loading = false; });
+}
+/** Load the next OLDER archive page (before = the oldest id already shown) and accumulate it — desc only. */
+function lexArchiveMore() {
+  const cur = state.lexiconFull;
+  if (!cur || !Array.isArray(cur.archive) || !cur.archive.length || LEX.loading || LEX.order !== "desc") return;
+  let oldest = Infinity;
+  for (const e of cur.archive) if (e && Number.isFinite(e.id) && e.id < oldest) oldest = e.id;
+  if (!Number.isFinite(oldest)) return;
+  LEX.loading = true;
+  getJSON(`/lexicon?limit=${LEX_LIMIT}&order=${LEX.order}&before=${oldest}`, 8000).then((d) => {
+    LEX.loading = false;
+    if (!d) return;
+    const seen = new Set(cur.archive.map((e) => e && e.id));
+    const merged = cur.archive.slice();
+    for (const e of (d.archive || [])) if (e && !seen.has(e.id)) merged.push(e);
+    state.lexiconFull = { ...d, archive: merged };   // fresh meta + the accumulated permanent history
+    renderLexSection();
+  }).catch(() => { LEX.loading = false; });
+}
+/** Flip the archive sort (newest-first ⇄ oldest-first) and refetch the first page in the new order. */
+function lexArchiveToggleOrder() {
+  LEX.order = LEX.order === "desc" ? "asc" : "desc";
+  loadLexicon(true);
+}
+
 export function renderLexSection() {
   const host = $("chron-lexicon");
   const body = $("lx-body");
   if (!host || !body) return;
   const tab = document.querySelector('#chron-tabs .chron-tab[data-vol="lexicon"]');
-  const u = state.econLexicon;
-  if (!u || !u.counts) {
+  const full = state.lexiconFull;        // the COMPLETE /lexicon contract (words[], archive[], edges, hashes)
+  const folded = state.econLexicon;      // the /economy read-out (counts + edges only — proves LEX is on)
+  // Hide the whole volume (tab included) until a source arrives — i.e. /economy ships no lexicon key.
+  if (!full && (!folded || !folded.counts)) {
     host.hidden = true;
     if (tab) { tab.hidden = true; if (tab.classList.contains("is-on")) setChronVol("annals"); }
     return;
@@ -731,30 +792,101 @@ export function renderLexSection() {
   if (tab) tab.hidden = false;
   host.hidden = false;
   body.textContent = "";
-  const n = u.counts;
-  const head = document.createElement("div");
-  head.className = "lx-row lx-head";
-  head.textContent = T("lx.head", { coinages: n.coinages, spreads: n.spreads, deaths: n.deaths });
-  head.title = T("lx.headTitle");
-  body.appendChild(head);
-  const rows = u.lexicon || [];
-  for (const r of rows) {
-    const row = document.createElement("div");
-    row.className = "lx-row lx-word";
-    row.textContent = T("lx.row", { word: r.word, uses: r.uses, born: r.born });
-    body.appendChild(row);
+
+  // The complete permanent record lives on /lexicon. Until it lands, show an honest counts header (the folded
+  // counts ARE accurate) + a loading hint, and kick off the fetch. NEVER render a per-word "told N times" off
+  // the folded rolling `uses` — that is exactly the A-2 self-contradiction; only lifetimeUses is honest.
+  if (!full) {
+    const n = folded.counts;
+    body.appendChild(lexRow("lx-row lx-head", T("lx.head", { coinages: n.coinages, spreads: n.spreads, deaths: n.deaths }), T("lx.headTitle")));
+    body.appendChild(lexRow("lx-row lx-loading", T("lx.loading")));
+    loadLexicon(true);
+    return;
   }
-  if ((u.dead || []).length) {
-    const grave = document.createElement("div");
-    grave.className = "lx-row lx-dead";
-    grave.textContent = T("lx.dead", { words: u.dead.join(" · ") });
-    body.appendChild(grave);
+
+  const n = full.counts || { coinages: 0, spreads: 0, deaths: 0 };
+  // ① counts header — coinages / spreads / deaths
+  body.appendChild(lexRow("lx-row lx-head", T("lx.head", { coinages: n.coinages, spreads: n.spreads, deaths: n.deaths }), T("lx.headTitle")));
+  // ② the permanence strapline — complete · accurate · permanent (the promise made visible)
+  body.appendChild(lexRow("lx-row lx-perm", T("lx.permanence")));
+  // ③ provenance meta: grammar hash + schema version (ACCURACY anchor) and the archive seal count (PERMANENCE)
+  body.appendChild(lexRow("lx-row lx-meta", T("lx.grammar", { hash: full.grammarHash ? shortHash(full.grammarHash) : "—", version: full.version != null ? full.version : "?" })));
+  body.appendChild(lexRow("lx-row lx-meta", T("lx.archiveMeta", { count: full.archiveCount != null ? full.archiveCount : 0 })));
+  if ((full.archiveErrors || 0) > 0) body.appendChild(lexRow("lx-row lx-warn", T("lx.archiveErrors", { n: full.archiveErrors })));
+  if ((full.queueDepth || 0) > 0 || (full.queued || 0) > 0) body.appendChild(lexRow("lx-row lx-meta", T("lx.queue", { depth: full.queueDepth || 0, queued: full.queued || 0 })));
+
+  // enabled=false ⇒ graceful degradation: an honest empty-state hint, never a fabricated dictionary.
+  if (full.enabled === false) {
+    body.appendChild(lexRow("lx-row lx-disabled", T("lx.disabled")));
+    return;
   }
-  if (!rows.length) {
-    const none = document.createElement("div");
-    none.className = "lx-row lx-none";
-    none.textContent = T("lx.none");
-    body.appendChild(none);
+
+  // ④ the COMPLETE dictionary — every held word, living AND tombstoned, in fixed vocabulary order, untruncated.
+  const words = Array.isArray(full.words) ? full.words : [];
+  let living = 0, dead = 0;
+  for (const w of words) { if (w && w.status === "dead") dead++; else if (w) living++; }
+  body.appendChild(lexRow("lx-row lx-dict-head", T("lx.dictHead", { living, dead }), T("lx.dictHeadTitle")));
+  if (!words.length) {
+    body.appendChild(lexRow("lx-row lx-none", T("lx.none")));
+  } else {
+    for (const w of words) {
+      if (!w) continue;
+      if (w.status === "dead") {
+        // a tombstone — shown PERMANENTLY, never hidden: the graveyard is forever (dead words are never deleted).
+        body.appendChild(lexRow("lx-row lx-grave", T("lx.graveRow", {
+          word: w.word, status: T("lx.statusDead"), told: w.lifetimeUses != null ? w.lifetimeUses : 0,
+          bornEra: w.bornEra || "—", deathTick: w.deathTick != null ? w.deathTick : "—",
+        })));
+      } else {
+        body.appendChild(lexRow("lx-row lx-word", T("lx.wordRow", {
+          word: w.word, status: T("lx.statusLiving"), told: w.lifetimeUses != null ? w.lifetimeUses : 0,
+          coinedBy: w.coinedBy != null ? "#" + w.coinedBy : T("lx.coinerUnknown"),
+          bornEra: w.bornEra || "—", spreads: w.spreads != null ? w.spreads : 0, lastTold: w.lastTold != null ? w.lastTold : 0,
+        })));
+      }
+    }
+  }
+
+  // ⑤ this cron's three edges (coinage / spread / dying) — the desk's live movement
+  const e = full.edges || {};
+  body.appendChild(lexRow("lx-row lx-edges-head", T("lx.edgesHead")));
+  let anyEdge = false;
+  if (e.coinage) { anyEdge = true; body.appendChild(lexRow("lx-row lx-edge lx-edge-coin", T("lx.edgeCoinage", { word: e.coinage.word, uses: e.coinage.uses, era: e.coinage.era }))); }
+  if (e.spread) { anyEdge = true; body.appendChild(lexRow("lx-row lx-edge lx-edge-spread", T("lx.edgeSpread", { word: e.spread.word, uses: e.spread.uses }))); }
+  if (e.dying) { anyEdge = true; body.appendChild(lexRow("lx-row lx-edge lx-edge-dying", T("lx.edgeDying", { word: e.dying.word, gap: e.dying.gap }))); }
+  if (!anyEdge) body.appendChild(lexRow("lx-row lx-edge-none", T("lx.edgesNone")));
+
+  // ⑥ the PERMANENT append-only archive — paginated with limit + before + order (nothing is ever deleted).
+  body.appendChild(lexRow("lx-row lx-arch-head", T("lx.archiveHead", { count: full.archiveCount != null ? full.archiveCount : 0 }), T("lx.archiveHeadTitle")));
+  const ctl = document.createElement("div");
+  ctl.className = "lx-arch-controls";
+  const ordBtn = document.createElement("button");
+  ordBtn.type = "button"; ordBtn.className = "lx-btn";
+  ordBtn.textContent = T(LEX.order === "asc" ? "lx.archiveOrderAsc" : "lx.archiveOrderDesc");
+  ordBtn.addEventListener("click", lexArchiveToggleOrder);
+  ctl.appendChild(ordBtn);
+  const arch = Array.isArray(full.archive) ? full.archive : [];
+  if (LEX.order === "desc" && arch.length > 0 && (full.archiveCount || 0) > arch.length && !LEX.loading) {
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button"; moreBtn.className = "lx-btn";
+    moreBtn.textContent = T("lx.archiveMore");
+    moreBtn.addEventListener("click", lexArchiveMore);
+    ctl.appendChild(moreBtn);
+  }
+  body.appendChild(ctl);
+  if (!arch.length) {
+    body.appendChild(lexRow("lx-row lx-arch-empty", T("lx.archiveEmpty")));
+  } else {
+    for (const ev of arch) {
+      if (!ev) continue;
+      const evName = ev.event ? T("lx.evt" + ev.event) : "";
+      body.appendChild(lexRow("lx-row lx-arch lx-arch-" + String(ev.event || "none").toLowerCase(), T("lx.archiveRow", {
+        id: ev.id, ts: lexTs(ev.ts), event: evName, word: ev.word,
+        told: ev.lifetimeUses != null ? ev.lifetimeUses : 0,
+        coinedBy: ev.coinedBy != null ? T("lx.archBy", { id: ev.coinedBy }) : "",
+        eraName: ev.eraName || "—",
+      })));
+    }
   }
 }
 // ================= ㉔ the rumor mill section (a tale afoot, its bend, its quiet) =================
@@ -1391,6 +1523,8 @@ export function openChronVol(vol) {
   const d = $("panel-chron"); if (d) d.classList.add("chron-volmode");
   const bb = $("chron-backbar"); if (bb) bb.hidden = false;
   setChronVol(vol);
+  // task #108: opening the lexicon volume pulls the COMPLETE permanent word-hoard from its OWN endpoint
+  if (vol === "lexicon") loadLexicon(true);
 }
 /** Back to the rail: the index lists every volume again and the page yields the column. */
 export function closeChronVol() {

@@ -1,10 +1,10 @@
 // inspector.js — select/deselect + fillInspector + neural feed + bloom/raster canvas
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, FAP_GLOSS, FAP_ROLE, KIND_COL, NM_REF_HZ, STATE_COLOR, TAU, clamp, fapColor, houseOf, mix, nmDaHz, nmHzIsReal, nmOaHz, paletteAt, rgba, sim } from './shared.js?v=161';
-import { t as T } from './i18n.js?v=113';
-import { closeHistory, closePredict, closePulse, closeWallets } from './drawers.js?v=161';
-import { updateWallet } from './economy.js?v=161';
-import { getJSON, synthAgentFor } from './polling.js?v=161';
+import { state, $, FAP_GLOSS, FAP_ROLE, KIND_COL, NM_REF_HZ, STATE_COLOR, TAU, clamp, fapColor, houseOf, mix, nmDaHz, nmHzIsReal, nmOaHz, paletteAt, rgba, sim } from './shared.js?v=162';
+import { t as T } from './i18n.js?v=114';
+import { closeHistory, closePredict, closePulse, closeWallets } from './drawers.js?v=162';
+import { updateWallet } from './economy.js?v=162';
+import { getJSON, synthAgentFor } from './polling.js?v=162';
 
 // ================= inspector =================
 export const DRIVES = [["arousal", "arousal", false], ["turn", "turn bias", true], ["cohesion", "cohesion", false], ["wingbeat", "wingbeat", false], ["rest", "rest", false]];
