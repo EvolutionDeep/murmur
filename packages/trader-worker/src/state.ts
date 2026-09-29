@@ -387,12 +387,142 @@ export function joinShards(parts: string[]): string {
   return parts.join("");
 }
 
-/** The manifest shape stored at KEY_ECON_MANIFEST (the crash-safe commit point). */
-export interface EconShardManifest {
+/** One generation's shard shape: enough to re-read AND verify that generation's parts on its own. */
+export interface EconShardSnapshot {
   gen: number;          // alternating 0/1 generation (double-buffer)
   partCount: number;    // number of part keys written
   totalBytes: number;   // original blob.length (for truncation detection)
   fnv: number;          // FNV-1a hash of the full blob (integrity check)
+}
+
+/** The manifest shape stored at KEY_ECON_MANIFEST (the crash-safe commit point). */
+export interface EconShardManifest extends EconShardSnapshot {
+  /**
+   * #99 H1: the snapshot of the generation this commit REPLACED (gen^1). A live manifest can only describe
+   * the generation it points at, so without `prev` the tier-2 fallback has no length/hash of its own to
+   * verify gen^1 against and the double-buffer is decorative. Optional ⇒ a pre-#99 manifest (which lacks
+   * the key) still reads: tier 2 then degrades to a best-effort probe with the live shape, i.e. exactly
+   * the pre-#99 behaviour, so this is purely additive.
+   */
+  prev?: EconShardSnapshot;
+}
+
+/**
+ * #99 M7: the largest economy blob we are willing to reassemble from shards. DO storage caps a single value
+ * at 25 MB and the isolate heap at 128 MB; 32 MB is the design ceiling #98's sharding was sized for (128
+ * parts at the 256 KB default chunk). It exists purely as a sanity bound — a manifest whose `partCount`
+ * exceeds `maxShardParts(chunkSize)` is CORRUPT and must never drive an `Array.from({ length })` allocation.
+ */
+export const PERSIST_MAX_BLOB = 32 * 1024 * 1024;
+
+/**
+ * #99 M7: the floor of the post-commit orphan sweep (#98 hardcoded a bare 64). The real bound is
+ * `Math.max(GC_PART_SCAN_FLOOR, partCount, prevPartCount)`, so a blob that outgrows 64 parts — or a
+ * `persistChunkSize` that is later lowered — can never leave an unreachable index behind in DO storage.
+ */
+export const GC_PART_SCAN_FLOOR = 64;
+
+/** #99 M7: MAX_PARTS = ceil(PERSIST_MAX_BLOB / persistChunkSize) — the hard ceiling on the shard count. */
+export function maxShardParts(chunkSize: number): number {
+  const cs = Number.isFinite(chunkSize) && chunkSize > 0 ? chunkSize : 1;
+  return Math.ceil(PERSIST_MAX_BLOB / cs);
+}
+
+/** #99: narrow a possibly-corrupt stored manifest into a snapshot we are willing to read parts against. */
+export function shardSnapshotOf(m: EconShardSnapshot | null | undefined): EconShardSnapshot | undefined {
+  if (!m || typeof m !== "object") return undefined;
+  if (typeof m.gen !== "number" || !Number.isInteger(m.gen)) return undefined;
+  if (typeof m.partCount !== "number" || !(m.partCount > 0)) return undefined;
+  if (typeof m.totalBytes !== "number" || !(m.totalBytes >= 0)) return undefined;
+  if (typeof m.fnv !== "number") return undefined;
+  return { gen: m.gen, partCount: m.partCount, totalBytes: m.totalBytes, fnv: m.fnv };
+}
+
+/** The two DurableObjectStorage calls the sharded reader needs — narrow enough to unit-test with a stub. */
+export interface EconBlobStore {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  get<T = unknown>(keys: string[]): Promise<Map<string, T>>;
+}
+
+/** Which rung of the #99 H1 three-tier fallback produced a blob (diagnostics + fault-injection tests). */
+export type EconBlobTier = "manifest" | "gen-xor" | "legacy" | "none";
+
+export interface EconBlobRead {
+  /** The recovered serialized economy, or null when nothing readable exists (⇒ a fresh economy). */
+  blob: string | null;
+  /** The generation `blob` lives in; null when it came from the legacy single key (or from nowhere). */
+  gen: number | null;
+  tier: EconBlobTier;
+}
+
+/** Read + verify ONE generation's parts against a snapshot. Any shortfall (missing part, wrong length, FNV
+ *  mismatch, storage throw) yields null so the caller can fall through to the next tier. Never throws. */
+async function readShardGen(store: EconBlobStore, gen: number, snap: EconShardSnapshot): Promise<string | null> {
+  if (!(snap.partCount > 0)) return null;
+  try {
+    const keys = Array.from({ length: snap.partCount }, (_, i) => `${KEY_ECON_PART_PREFIX}${gen}:${i}`);
+    const partsMap = await store.get<string>(keys);
+    const joined = keys.map((k) => partsMap.get(k) ?? "").join("");
+    if (joined.length === snap.totalBytes && blobFNV1a(joined) === snap.fnv) return joined;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * #99 H1: the crash-safe economy read, as a PURE function of storage so it can be fault-injected in tests.
+ *
+ * Three tiers, most-recent first:
+ *   1. `manifest` — the generation the committed manifest points at (the normal path);
+ *   2. `gen-xor`  — the OTHER generation (gen^1), verified against `manifest.prev`. This is the real
+ *      double-buffer: a torn or failed commit leaves gen^1's parts fully intact, and GC no longer deletes
+ *      them, so a corrupted live generation degrades to "one cron stale", never to "everything is gone";
+ *   3. `legacy`   — the pre-#98 single key, kept for one generation after sharding begins.
+ *
+ * Only then does the caller see null (⇒ a fresh economy). #98's version went 1 → 3 and GC deleted both 2
+ * and 3 on the first successful commit, so tier 1 was in practice the ONLY tier — which is what turned C1
+ * (a generation counter advanced before the commit point) into a total-loss bug.
+ */
+export async function readShardedEconomyBlob(store: EconBlobStore, chunkSize: number): Promise<EconBlobRead> {
+  const maxParts = maxShardParts(chunkSize);
+  const manifest = await store.get<EconShardManifest>(KEY_ECON_MANIFEST);
+  const live = shardSnapshotOf(manifest);
+  if (live) {
+    // #99 M7: bound partCount BEFORE allocating, so a corrupt/hostile manifest can never make us build an
+    // unbounded key array (a huge `length` would RangeError or OOM the 128 MB isolate first).
+    if (live.partCount > maxParts) {
+      console.warn(
+        `[DO] #99 economy manifest partCount ${live.partCount} exceeds MAX_PARTS ${maxParts}; ignoring shards`,
+      );
+    } else {
+      // Tier 1 — the generation the committed manifest points at.
+      const t1 = await readShardGen(store, live.gen, live);
+      if (t1 !== null) return { blob: t1, gen: live.gen, tier: "manifest" };
+
+      // Tier 2 (#99 H1) — gen^1. `prev` gives that generation its OWN length/hash; without it (a pre-#99
+      // manifest) we can only probe with the live shape, which succeeds when the blob did not change
+      // between the two commits and otherwise fails closed. Either way it is never worse than before.
+      const otherGen = 1 - live.gen;
+      const prev = shardSnapshotOf(manifest?.prev);
+      const probe = prev && prev.gen === otherGen ? prev : live;
+      if (probe.partCount <= maxParts) {
+        const t2 = await readShardGen(store, otherGen, probe);
+        if (t2 !== null) {
+          console.warn(
+            `[DO] #99 economy gen ${live.gen} failed integrity; recovered gen ${otherGen} from the double buffer`,
+          );
+          return { blob: t2, gen: otherGen, tier: "gen-xor" };
+        }
+      }
+      console.warn("[DO] #99 sharded economy unreadable at BOTH generations; falling back to the legacy key");
+    }
+  }
+
+  // Tier 3 — the pre-#98 legacy single key (also the live key whenever the blob is under the shard threshold).
+  const legacy = await store.get<string>(KEY_ECONOMY);
+  if (typeof legacy === "string" && legacy.length > 0) return { blob: legacy, gen: null, tier: "legacy" };
+  return { blob: null, gen: null, tier: "none" };
 }
 
 export class FlyStateDO {
@@ -683,32 +813,16 @@ export class FlyStateDO {
   }
 
   /**
-   * #98 Fix 1: read the economy blob from either the sharded format (manifest + parts) or the legacy
-   * single-key format. Crash-safe: if the manifest exists but parts are incomplete/corrupt (hash mismatch),
-   * falls back to the legacy key. If neither is available, returns null (fresh economy).
+   * #98 Fix 1 / #99 H1: read the economy blob from the sharded format (manifest + parts) or the legacy
+   * single-key format, via the three-tier fallback in `readShardedEconomyBlob` (manifest generation →
+   * gen^1 double buffer → legacy). Crash-safe: a torn or corrupt generation degrades to one-cron-stale
+   * data, never to a fresh economy. null ⇒ nothing readable ⇒ makeEconomy(undefined) hatches a new one.
    */
   private async readEconomyBlob(): Promise<string | null> {
-    const manifest = await this.state.storage.get<EconShardManifest>(KEY_ECON_MANIFEST);
-    if (manifest && typeof manifest.gen === "number" && manifest.partCount > 0) {
-      try {
-        const keys = Array.from({ length: manifest.partCount }, (_, i) => `${KEY_ECON_PART_PREFIX}${manifest.gen}:${i}`);
-        const partsMap = await this.state.storage.get<string>(keys);
-        // Verify all parts are present and join
-        const joined = keys.map((k) => partsMap.get(k) ?? "").join("");
-        if (joined.length === manifest.totalBytes && blobFNV1a(joined) === manifest.fnv) {
-          this.econPersistGen = manifest.gen;
-          return joined;
-        }
-        // Hash/length mismatch: partial write or corruption — fall through to legacy
-        console.warn("[DO] #98 sharded economy blob integrity check failed; falling back to legacy key");
-      } catch (e) {
-        console.warn("[DO] #98 sharded economy read failed; falling back to legacy key:", (e as Error).message);
-      }
-    }
-    // Legacy single-key path (backward-compatible with pre-#98 blobs)
-    const legacy = await this.state.storage.get<string>(KEY_ECONOMY);
-    if (legacy) this.econPersistGen = null;   // legacy format active
-    return legacy ?? null;
+    const r = await readShardedEconomyBlob(this.state.storage, this.cfg.cron.persistChunkSize);
+    // gen N ⇒ the next persist writes gen N^1; null (legacy/nothing) ⇒ the next persist starts at gen 1.
+    this.econPersistGen = r.gen;
+    return r.blob;
   }
 
   /**
@@ -1771,39 +1885,74 @@ export class FlyStateDO {
     // #98 Fix 1: sharded economy persist — when the serialized blob exceeds the threshold, split it into
     // bounded chunks written individually (each well under the DO per-value timeout), then commit via a
     // manifest in the main batch. Crash-safe: if the batch fails, old data (legacy key or previous gen
-    // parts) remains valid. The read path (readEconomyBlob) always prefers a valid manifest over legacy.
-    let shardGcOldGen = -1;   // set >= 0 when we need to GC old-generation parts after the batch
-    let shardGcLegacy = false; // set true when we should best-effort delete the legacy single key
+    // parts) remains valid. The read path (readShardedEconomyBlob) always prefers a valid manifest over legacy.
+    //
+    // #99 C1 (CRITICAL): `this.econPersistGen` is the ONLY input that decides which generation the NEXT
+    // persist overwrites, so it may advance ONLY after the atomic commit point below has succeeded. #98
+    // assigned it here, before the put(): a failed commit then left the live manifest pointing at gen G
+    // while memory believed gen G^1 was live, so the next persist computed newGen = G and wrote straight
+    // into the generation still being referenced — a torn write there destroyed the only readable copy.
+    // `commitGen` holds the intended value until the put() resolves; `undefined` means "no economy".
+    //
+    // #99 H1 (HIGH): gen^1's parts are the tier-2 fallback target of readShardedEconomyBlob, so GC NEVER
+    // deletes them any more. Only the pre-#98 legacy single key is retired, and only ONE GENERATION LATE
+    // (`prev` below proves a sharded generation already committed before this one).
+    let commitGen: number | null | undefined = undefined;
+    let gcLegacy = false;                                       // retire the pre-#98 single key (delayed a generation)
+    const gcParts: { gen: number; from: number; to: number }[] = [];   // orphan-index sweeps (never gen^1's live range)
     if (this.economy) {
       const econBlob = this.economy.serialize();
       const threshold = this.cfg.cron.persistShardThreshold;
-      if (econBlob.length > threshold) {
+      const chunkSize = this.cfg.cron.persistChunkSize;
+      const large = econBlob.length > threshold;
+      // The stored manifest describes the generation that is LIVE right now and, via `prev`, the one before
+      // it. It is read BEFORE anything is written so the GC bounds below are exact rather than guessed.
+      // Skipped entirely in the steady-state small-blob case, which does no shard I/O at all.
+      const oldManifest =
+        large || this.econPersistGen != null
+          ? await this.state.storage.get<EconShardManifest>(KEY_ECON_MANIFEST)
+          : undefined;
+      const oldSnap = shardSnapshotOf(oldManifest);
+      const oldPrev = shardSnapshotOf(oldManifest?.prev);
+      if (large) {
         // LARGE BLOB: shard write path
         const newGen = 1 - (this.econPersistGen ?? 0);   // alternate 0↔1 (double-buffer)
-        const chunkSize = this.cfg.cron.persistChunkSize;
         const parts = splitBlob(econBlob, chunkSize);
         // Write each part as a separate bounded put — no single value exceeds chunkSize bytes
         for (let i = 0; i < parts.length; i++) {
           await this.state.storage.put(`${KEY_ECON_PART_PREFIX}${newGen}:${i}`, parts[i]);
         }
-        // The manifest in the batch is the COMMIT POINT
+        // The manifest in the batch is the COMMIT POINT. `prev` carries the outgoing generation's own
+        // length/hash so tier 2 can VERIFY gen^1 — a live manifest alone cannot describe a dead generation.
         const manifest: EconShardManifest = {
           gen: newGen,
           partCount: parts.length,
           totalBytes: econBlob.length,
           fnv: blobFNV1a(econBlob),
+          ...(oldSnap ? { prev: oldSnap } : {}),
         };
         batch[KEY_ECON_MANIFEST] = manifest;
-        this.econPersistGen = newGen;
-        shardGcOldGen = 1 - newGen;
-        shardGcLegacy = true;
+        commitGen = newGen;                    // #99 C1: adopted only once put(batch) has resolved
+        gcLegacy = oldSnap != null;            // #99 H1: legacy retires one generation AFTER sharding starts
+        // #99 M7: sweep THIS generation's orphaned high indices (a blob that shrank leaves the tail of the
+        // previous occupancy of the same gen behind). The bound is dynamic so no index can leak, and gen^1's
+        // parts are never touched — they are the double buffer.
+        const sameGenBefore = oldPrev && oldPrev.gen === newGen ? oldPrev.partCount : 0;
+        const sweepTo = Math.max(GC_PART_SCAN_FLOOR, parts.length, sameGenBefore);
+        if (parts.length < sweepTo) gcParts.push({ gen: newGen, from: parts.length, to: sweepTo });
       } else {
         // SMALL BLOB: legacy single-key path (today's exact behaviour)
         batch[KEY_ECONOMY] = econBlob;
         // Nullify the manifest so readEconomyBlob falls through to the legacy key
         batch[KEY_ECON_MANIFEST] = { gen: 0, partCount: 0, totalBytes: 0, fnv: 0 } satisfies EconShardManifest;
-        if (this.econPersistGen != null) shardGcOldGen = this.econPersistGen;
-        this.econPersistGen = null;
+        commitGen = null;                      // #99 C1: legacy is live again ⇒ no generation is current
+        // The blob fell back under the threshold, so BOTH generations' parts are now orphans (tier 1/2 are
+        // skipped while partCount is 0, and legacy is committed atomically with that manifest). Sweep them —
+        // but only when shards ever existed, so a never-sharded DO still issues zero deletes per cron.
+        if (oldSnap || oldPrev || this.econPersistGen != null) {
+          const sweepTo = Math.max(GC_PART_SCAN_FLOOR, oldSnap?.partCount ?? 0, oldPrev?.partCount ?? 0);
+          gcParts.push({ gen: 0, from: 0, to: sweepTo }, { gen: 1, from: 0, to: sweepTo });
+        }
       }
     }
 
@@ -1841,17 +1990,25 @@ export class FlyStateDO {
       batch[KEY_LAST_SNAPSHOT] = snapshot;
     }
     batch[KEY_LAST_CRON] = Date.now();
-    await this.state.storage.put(batch);
+    await this.state.storage.put(batch);          // ← THE ATOMIC COMMIT POINT (manifest + every membrane key)
 
-    // #98 Fix 1: best-effort GC of stale shard parts / legacy key AFTER the commit point succeeded.
-    // A failure here is harmless (orphans are ignored by the read path) and never blocks the cron.
-    if (shardGcOldGen >= 0) {
+    // #99 C1: only now that the commit is durable may the in-memory generation advance. If the put above
+    // threw, econPersistGen still names the generation the LIVE manifest points at, so the next persist
+    // writes into the OTHER one and committed data is never overwritten. This is the whole fix: the counter
+    // is a post-commit effect, never a pre-commit intention.
+    if (commitGen !== undefined) this.econPersistGen = commitGen;
+
+    // #98 Fix 1 / #99 H1+M7: best-effort GC AFTER the commit point succeeded. A failure here is harmless
+    // (orphans are unreachable — the read path is bounded by manifest.partCount) and never blocks the cron.
+    // gen^1's parts are NEVER deleted: they are the tier-2 double-buffer fallback.
+    if (gcLegacy || gcParts.length > 0) {
       try {
         const staleKeys: string[] = [];
-        // Delete old-generation parts (we don't know exact count; use a generous upper bound)
-        for (let i = 0; i < 64; i++) staleKeys.push(`${KEY_ECON_PART_PREFIX}${shardGcOldGen}:${i}`);
-        if (shardGcLegacy) staleKeys.push(KEY_ECONOMY);
-        await this.state.storage.delete(staleKeys);
+        for (const s of gcParts) {
+          for (let i = s.from; i < s.to; i++) staleKeys.push(`${KEY_ECON_PART_PREFIX}${s.gen}:${i}`);
+        }
+        if (gcLegacy) staleKeys.push(KEY_ECONOMY);   // #99 H1: the legacy key ONLY (never a shard generation)
+        if (staleKeys.length > 0) await this.state.storage.delete(staleKeys);
       } catch { /* best-effort */ }
     }
   }

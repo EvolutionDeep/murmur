@@ -67,6 +67,24 @@ function imprintRound4(x: number): number { return Math.round(x * 10000) / 10000
 function imprintClamp(x: number, lo: number, hi: number): number { return x < lo ? lo : x > hi ? hi : x; }
 
 /**
+ * #99 M8: freeze a recorded imprint to EXACTLY the four heritable fields of `IMPRINT_FIELDS`, so a lineage
+ * entry can never carry an extra or renamed key and silently change what a third party re-derives. The
+ * vector's SHAPE is a hard invariant (the economy's `lamarckVector` may change a component's DEFAULT value,
+ * never the set of components), and the seed is normalised to uint32 exactly as `applyLamarckImprint` sees it.
+ */
+function imprintSnapshot(vec: GenomeImprint, rngSeed: number): { vector: GenomeImprint; rngSeed: number } {
+  return {
+    vector: {
+      weightGain: vec.weightGain,
+      threshGain: vec.threshGain,
+      tauGain: vec.tauGain,
+      weightJitter: vec.weightJitter,
+    },
+    rngSeed: rngSeed >>> 0,
+  };
+}
+
+/**
  * Apply a Lamarckian imprint to a child genome's 4 heritable scalars, ON TOP of the mutate/cross output.
  * For each field: multiplier = 1 + LAMARCK_MAX·signed + jitter, where `signed` is the parent-performance bias
  * clamped to [−1,1] and `jitter` is a small deterministic ±LAMARCK_JITTER draw from (rngSeed, fieldIndex). The
@@ -119,6 +137,17 @@ export interface LineageEntry {
    * pre-2b entries (genesis roots bred before the strategy layer existed) — those hashes stay valid.
    */
   strategyTreeHash?: string;
+  /**
+   * Phase 3 capability ③ (additive, #99 M8): the Lamarck imprint actually applied to this child — the
+   * parent-performance vector AND the seed its per-field jitter was drawn from. `rngSeed` alone is NOT
+   * enough to re-derive the genome, because the vector comes from `economy.lamarckVector(payerId, tick)`,
+   * a MUTABLE ledger-derived input: without it, `applyBreed(op, parents, rngSeed)` re-run by a third party
+   * yields a DIFFERENT genomeHash. Recording the pair makes the breed genuinely re-derivable rather than
+   * merely verifiable (`genomeHash(entry.genome)` was always recomputable from the stored body).
+   * Absent on pre-③ entries and whenever LAMARCK_ENABLED is off or the operator is not FlyWire-mode ⇒ those
+   * hashes stay valid, so `LINEAGE_SCHEMA_VERSION` remains 1 (an optional field is backward-compatible).
+   */
+  imprint?: { vector: GenomeImprint; rngSeed: number };
 }
 
 export interface BreedRequest {
@@ -271,6 +300,9 @@ export async function applyBreed(
     ts: Date.now(),
     commitTx: null,
     ...(childTreeHash ? { strategyTreeHash: childTreeHash } : {}),
+    // #99 M8: record the imprint INPUTS exactly when they shaped this child (same guard as L255 above), so
+    // the folded genomeHash is re-derivable from the entry alone. Absent otherwise ⇒ byte-identical to pre-M8.
+    ...(opts.imprint && flywire ? { imprint: imprintSnapshot(opts.imprint.vector, opts.imprint.rngSeed) } : {}),
   };
 }
 
