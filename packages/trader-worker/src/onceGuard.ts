@@ -6,9 +6,16 @@
  * (entity, target) pairs have already been processed. Because the draw is deterministic and id-only, the same
  * pair re-fires every cron, flooding the CAP with duplicates until no genuine emergent entity can be born.
  *
- * OnceGuard is the ONE fix for all three (and any future membrane, e.g. lexicon, that needs "process once"
+ * OnceGuard is the ONE fix for all three (and any future membrane that needs bounded "process once"
  * semantics). Each layer instantiates its OWN private guard with its OWN capacity bound — no shared state,
  * no cross-layer coupling.
+ *
+ * NOT FOR THE LEXICON (task #107): the ㉓ lexicon deliberately does NOT use OnceGuard. Its oldest-first
+ * eviction is exactly the wrong tool for a PERMANENT civilisation record — a full guard evicting the oldest
+ * key would let a long-dead word be re-coined with a fabricated history. The lexicon's once-semantics is
+ * structural instead: entries[kind] (a living row OR a never-deleted tombstone) persists forever, so its mere
+ * existence bars re-coinage with no cap and no eviction. Use OnceGuard only where a bounded, evicting memory
+ * is correct; use a persisted tombstone where the record must be permanent.
  *
  * DESIGN CONSTRAINTS (matching the membranes' five iron rules):
  *   • DETERMINISTIC: keys are opaque strings the caller composes (e.g. `${ruleId}:${flyId}`). The guard itself

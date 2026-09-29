@@ -1421,6 +1421,40 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .lx-row.lx-word { color: #5a4a33; }
 .lx-row.lx-dead { color: #6a5050; font-style: italic; }
 .lx-row.lx-none { color: var(--muted); font-style: italic; }
+/* task #108 — the COMPLETE · ACCURATE · PERMANENT word-hoard read-out (GET /lexicon). Sub-heads, the
+   permanence strapline, provenance meta, tombstones, the cron edges, the archive ledger and its controls. */
+.lx-row.lx-perm { color: var(--gold-deep); font-family: var(--display); font-style: italic; font-size: max(11px, var(--fs-floor, 0px)); letter-spacing: 0.01em; margin: 2px 0 3px; }
+.lx-row.lx-meta { color: var(--muted); font-size: max(9.5px, var(--fs-floor, 0px)); letter-spacing: 0.02em; }
+.lx-row.lx-warn { color: #9a3b2e; font-size: max(9.5px, var(--fs-floor, 0px)); }
+.lx-row.lx-disabled { color: var(--muted); font-style: italic; margin-top: 4px; }
+.lx-row.lx-loading { color: var(--muted); font-style: italic; }
+.lx-row.lx-dict-head, .lx-row.lx-edges-head, .lx-row.lx-arch-head {
+  color: var(--ink); font-family: var(--display); font-weight: 600; font-size: max(11px, var(--fs-floor, 0px));
+  letter-spacing: 0.04em; text-transform: uppercase; margin-top: 9px; padding-bottom: 3px; border-bottom: 1px solid var(--hair);
+}
+.lx-row.lx-grave {
+  color: #6a5f52; font-style: italic;
+  border-inline-start: 2px solid var(--vellum-3); padding-inline-start: 7px;
+  background: linear-gradient(90deg, rgba(26, 26, 24, 0.035), transparent 62%);
+}
+.lx-row.lx-edge { color: #5a4a33; }
+.lx-row.lx-edge-coin { color: var(--gold-deep); }
+.lx-row.lx-edge-spread { color: #3f5a4a; }
+.lx-row.lx-edge-dying { color: #6a5050; }
+.lx-row.lx-edge-none { color: var(--muted); font-style: italic; }
+.lx-row.lx-arch { color: var(--muted); font-size: max(10px, var(--fs-floor, 0px)); }
+.lx-row.lx-arch-coinage { border-inline-start: 2px solid rgba(176, 138, 54, 0.5); padding-inline-start: 6px; }
+.lx-row.lx-arch-spread { border-inline-start: 2px solid rgba(63, 90, 74, 0.45); padding-inline-start: 6px; }
+.lx-row.lx-arch-silence { border-inline-start: 2px solid rgba(106, 80, 80, 0.4); padding-inline-start: 6px; }
+.lx-row.lx-arch-empty { color: var(--muted); font-style: italic; }
+.lx-arch-controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 3px; }
+.lx-btn {
+  font-family: var(--mono); font-size: max(9.5px, var(--fs-floor, 0px)); letter-spacing: 0.03em;
+  color: var(--gold-deep); background: var(--vellum-2); border: 1px solid rgba(176, 138, 54, 0.4);
+  border-radius: 3px; padding: 3px 9px; cursor: pointer; transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.lx-btn:hover { background: var(--vellum-hi); color: var(--ink); border-color: var(--gold); }
+.lx-btn:active { transform: translateY(1px); }
 
 /* ㉔ the rumor mill (drawer volume): the mill's book — tales afoot, bent in the retelling, gone quiet */
 .chron-rumor { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); margin: 8px var(--pad) 0; padding: 10px 0 12px; }

@@ -1,7 +1,7 @@
 // sim.js — boids 力场 + 社交力场 + spawnFly + motes（任务8：邻居搜索已由 O(n²) 全扫描替换为 SpatialHash 空间哈希）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, FAP_SPEED, SOCIETY_ALLY_K, SOCIETY_ALLY_REST, SOCIETY_ANCHOR_K, SOCIETY_FEUD_K, SOCIETY_FEUD_RANGE, SOCIETY_PAD, SOCIETY_SLOT_R, SOCIETY_TERR_GAP, SOCIETY_TERR_K, TAU, clamp, lerp, mix, rgba, sim } from './shared.js?v=161';
-import { pointer } from './camera.js?v=161';
+import { state, FAP_SPEED, SOCIETY_ALLY_K, SOCIETY_ALLY_REST, SOCIETY_ANCHOR_K, SOCIETY_FEUD_K, SOCIETY_FEUD_RANGE, SOCIETY_PAD, SOCIETY_SLOT_R, SOCIETY_TERR_GAP, SOCIETY_TERR_K, TAU, clamp, lerp, mix, rgba, sim } from './shared.js?v=162';
+import { pointer } from './camera.js?v=162';
 
 // ================= flow field =================
 // A cheap curl-like field from summed sines; the whole swarm + the ambient motes

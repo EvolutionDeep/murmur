@@ -21,9 +21,9 @@
 //   · It owns no scene graph objects — no meshes, no lights, no helpers. The
 //     only DOM it makes is the touch joystick, and only on a touch device.
 // ============================================================================
-import { state, $ } from './shared.js?v=161';
-import { t as T } from './i18n.js?v=113';
-import { setCameraMode } from './camera.js?v=161';
+import { state, $ } from './shared.js?v=162';
+import { t as T } from './i18n.js?v=114';
+import { setCameraMode } from './camera.js?v=162';
 
 const DEG = Math.PI / 180;
 const EYE_H = 1.6;        // ground → the reader's eye, in world units (a curtain wall is ~7, so the keeps still loom)

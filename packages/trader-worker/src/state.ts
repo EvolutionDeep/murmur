@@ -71,7 +71,7 @@ import { BourseMeter, coinStimuli, sampleBourseActivity, type BourseSignals } fr
 import { CourtMembrane, type CourtFacts, type CourtSignals } from "./court.js";
 import { GamesMembrane, type GamesFacts, type GamesSignals } from "./games.js";
 import { GuildsMembrane, type GuildFacts, type GuildsSignals } from "./guilds.js";
-import { LexiconMembrane, type LexiconFacts, type LexiconSignals } from "./lexicon.js";
+import { LexiconMembrane, lexiconGrammarHash, LEX_SCHEMA_VERSION, type LexiconFacts, type LexiconSignals, type LexiconArchiveEvent } from "./lexicon.js";
 import { RumorMill, type RumorFacts, type RumorSignals } from "./rumor.js";
 import { NormsMembrane, type NormsFacts, type NormsSignals } from "./norms.js";
 import { ConventionsMembrane, type ConventionsFacts, type ConventionsSignals } from "./conventions.js";
@@ -661,6 +661,16 @@ export class FlyStateDO {
   /** Set once the DO hot ring has been folded into the permanent D1 archive this DO lifetime — a one-time
    *  backfill so poems composed BEFORE the archive shipped are never lost when they age out of the ring. */
   private d1PoemsBackfilled = false;
+  /** ㉓ Set once the D1 lexicon_events table (the word-hoard's permanent archive) has been ensured this DO lifetime. */
+  private d1LexiconReady = false;
+  /** ㉓ Set once the persisted dictionary has been folded into the permanent D1 lexicon archive this DO lifetime —
+   *  a one-time backfill so words coined BEFORE the archive shipped are never lost. Idempotent (INSERT OR IGNORE). */
+  private d1LexiconBackfilled = false;
+  /** ㉓ P0-4: count of D1 lexicon-archive write/read failures this DO lifetime — surfaced on /lexicon so a
+   *  silently-swallowed best-effort error becomes OBSERVABLE instead of quietly losing a coined word. */
+  private lexiconArchiveErrors = 0;
+  /** Cached lexiconGrammarHash() — a pure function of the source, computed once per DO lifetime. */
+  private lexiconGrammarHashCache: string | null = null;
   /** Cached sha256 of the historian's deterministic rule-set (a pure function of the source tables). */
   private chroniclerRulesHash: string | null = null;
   /** ⑦ EPOCHS — a governance-injected shock awaiting the next historian read (a passed miracle/cataclysm of
@@ -2326,6 +2336,126 @@ export class FlyStateDO {
     }
   }
 
+  // ─── ㉓ THE LEXICON'S PERMANENT ARCHIVE (task #107 — "record the invented words forever") ─────────────
+  //
+  // The lexicon blob under KEY_LEXICON is the desk's LIVE truth (tombstones included, survives eviction +
+  // reset). This D1 table is the OFF-DO PERMANENT layer: every COINAGE / SPREAD / SILENCE edge is appended
+  // as ONE immutable row, never updated, never deleted (INSERT OR IGNORE on a UNIQUE(kind,event,tick) guard
+  // makes a retried drain idempotent instead of overwriting history). Mirrors the poems archive范式.
+
+  /** The lexicon grammar digest — computed once per DO lifetime (a pure function of the source). */
+  private async getLexiconGrammarHash(): Promise<string> {
+    if (this.lexiconGrammarHashCache == null) this.lexiconGrammarHashCache = await lexiconGrammarHash();
+    return this.lexiconGrammarHashCache;
+  }
+
+  /** Lazy DDL for the lexicon's permanent event archive (mirrored in schema.sql; belt-and-braces like poems). */
+  private async ensureD1Lexicon(db: D1Database): Promise<void> {
+    if (this.d1LexiconReady) return;
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS lexicon_events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, ts INTEGER NOT NULL,
+         era INTEGER NOT NULL, era_name TEXT NOT NULL, event TEXT NOT NULL, kind TEXT NOT NULL,
+         word TEXT NOT NULL, uses INTEGER NOT NULL, lifetime_uses INTEGER NOT NULL, gap INTEGER NOT NULL,
+         coined_by TEXT, born INTEGER NOT NULL, grammar_hash TEXT NOT NULL,
+         UNIQUE (kind, event, tick) )`,
+    ).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_lexicon_events_id ON lexicon_events (id)`).run();
+    this.d1LexiconReady = true;
+  }
+
+  /**
+   * Append a cron's drained COINAGE/SPREAD/SILENCE edges to the permanent D1 archive. APPEND-ONLY: a row is
+   * never UPDATEd or DELETEd; INSERT OR IGNORE makes a duplicate (a retried cron) a no-op, never an
+   * overwrite. Best-effort but OBSERVABLE (P0-4): a D1 failure increments lexiconArchiveErrors + logs, so a
+   * silently-lost word surfaces on /lexicon instead of vanishing. PURE READ-OUT — no brain/wallet/ledger.
+   */
+  private async archiveLexiconEvents(events: LexiconArchiveEvent[]): Promise<void> {
+    const db = this.env.DB;
+    if (!db || !events.length) return;
+    try {
+      await this.ensureD1Lexicon(db);
+      const gh = await this.getLexiconGrammarHash();
+      const now = Date.now();   // archival wall-clock stamp only (NOT a decision path) — same as archivePoem
+      await db.batch(events.map((e) =>
+        db.prepare(
+          `INSERT OR IGNORE INTO lexicon_events
+             (tick, ts, era, era_name, event, kind, word, uses, lifetime_uses, gap, coined_by, born, grammar_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(e.tick, now, e.era, e.eraName, e.event, e.kind, e.word, e.uses, e.lifetimeUses,
+          e.gap, e.coinedBy, e.born, gh),
+      ));
+    } catch (e) {
+      this.lexiconArchiveErrors++;
+      console.warn("[DO] lexicon D1 archive failed (non-fatal, observable):", (e as Error).message);
+    }
+  }
+
+  /**
+   * One-time, best-effort backfill: fold every word the desk already holds (living + tombstoned) into the
+   * permanent D1 archive, so words coined BEFORE the archive shipped survive. Each word becomes its COINAGE
+   * row (at its born tick) and, if buried, its SILENCE row (at its death tick). Idempotent (INSERT OR IGNORE
+   * on UNIQUE(kind,event,tick)) and guarded, so it runs once per DO life; triggered from driveLexicon (the
+   * first cron) and getLexicon (a drawer open). PURE READ-OUT — touches no brain, genome or USDC.
+   */
+  private async backfillLexiconDictionary(lx: LexiconMembrane | null): Promise<void> {
+    if (this.d1LexiconBackfilled || !lx || !this.env.DB) return;
+    this.d1LexiconBackfilled = true;   // set first: even a partial backfill leaves new edges archiving normally
+    try {
+      const db = this.env.DB;
+      await this.ensureD1Lexicon(db);
+      const gh = await this.getLexiconGrammarHash();
+      const now = Date.now();
+      const rows = lx.dictionary();
+      if (!rows.length) return;
+      const stmt = () => db.prepare(
+        `INSERT OR IGNORE INTO lexicon_events
+           (tick, ts, era, era_name, event, kind, word, uses, lifetime_uses, gap, coined_by, born, grammar_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const batch = [];
+      for (const w of rows) {
+        batch.push(stmt().bind(w.coinageTick, now, 0, w.bornEra, "COINAGE", w.kind, w.word,
+          w.uses, w.lifetimeUses, 0, w.coinedBy, w.born, gh));
+        if (w.status === "dead" && w.deathTick != null) {
+          batch.push(stmt().bind(w.deathTick, now, 0, w.bornEra, "SILENCE", w.kind, w.word,
+            w.uses, w.lifetimeUses, 0, w.coinedBy, w.born, gh));
+        }
+      }
+      if (batch.length) await db.batch(batch);
+    } catch (e) {
+      this.lexiconArchiveErrors++;
+      console.warn("[DO] lexicon backfill failed (non-fatal, observable):", (e as Error).message);
+    }
+  }
+
+  /** Read a page of the permanent lexicon archive back from D1 (best-effort; empty when unbound/failed). */
+  private async readLexiconArchive(limit: number, before: number | null, order: "ASC" | "DESC"): Promise<{ rows: Record<string, unknown>[]; total: number }> {
+    const db = this.env.DB;
+    if (!db) return { rows: [], total: 0 };
+    try {
+      await this.ensureD1Lexicon(db);
+      let sql = `SELECT id, tick, ts, era, era_name, event, kind, word, uses, lifetime_uses, gap, coined_by, born, grammar_hash FROM lexicon_events`;
+      const args: (number | string)[] = [];
+      if (before != null) { sql += ` WHERE id < ?`; args.push(before); }
+      sql += ` ORDER BY id ${order} LIMIT ?`;
+      args.push(limit);
+      const { results } = await db.prepare(sql).bind(...args).all<Record<string, unknown>>();
+      const rows = (results ?? []).map((r) => ({
+        id: r.id, tick: r.tick, ts: r.ts, era: r.era, eraName: r.era_name, event: r.event,
+        kind: r.kind, word: r.word, uses: r.uses, lifetimeUses: r.lifetime_uses, gap: r.gap,
+        coinedBy: r.coined_by ?? null, born: r.born, grammarHash: r.grammar_hash,
+      }));
+      let total = rows.length;
+      try { const c = await db.prepare(`SELECT COUNT(*) AS n FROM lexicon_events`).first<{ n: number }>(); total = Number(c?.n) || rows.length; } catch { /* keep rows.length */ }
+      return { rows, total };
+    } catch (e) {
+      this.lexiconArchiveErrors++;
+      console.warn("[DO] lexicon archive read failed (non-fatal, observable):", (e as Error).message);
+      return { rows: [], total: 0 };
+    }
+  }
+
   /**
    * Run the historian once per cron. PURE READ-OUT: it observes the collective + ethogram + lifetime economy
    * totals and appends any detected history. It never touches a brain, drive, wallet or settlement — so the
@@ -2867,19 +2997,39 @@ export class FlyStateDO {
     try {
       const uses: Record<string, number> = {};
       const lastSeq: Record<string, number> = {};
+      // fresh = tellings NEW since the desk's last round (seq > watermark): the monotone lifetimeUses feed,
+      // so a word's honest "told N times" total never shrinks as old tellings age out of the hot roll (A-2).
+      const fresh: Record<string, number> = {};
+      // lastActor = the lead mouth of each kind's newest telling: recorded as coinedBy when a word is made (P2-2).
+      const lastActor: Record<string, string> = {};
+      const wm = lx.freshWatermark;
       let maxSeq = 0;
       for (const e of this.annals) {
         if (e.seq > maxSeq) maxSeq = e.seq;
         uses[e.kind] = (uses[e.kind] ?? 0) + 1;
-        lastSeq[e.kind] = e.seq;
+        if (e.seq > wm) fresh[e.kind] = (fresh[e.kind] ?? 0) + 1;
+        if (lastSeq[e.kind] === undefined || e.seq > lastSeq[e.kind]) {
+          lastSeq[e.kind] = e.seq;
+          const a = e.actors?.[0];
+          if (a != null) lastActor[e.kind] = String(a);
+        }
       }
+      const eraInfo = this.chronicler ? this.chronicler.eraInfo() : null;
       const facts: LexiconFacts = {
-        era: this.chronicler ? this.chronicler.eraInfo().era : 0,
+        era: eraInfo ? eraInfo.era : 0,
+        eraName: eraInfo ? eraInfo.eraName : "",
         uses,
         lastSeq,
         maxSeq,
+        fresh,
+        lastActor,
       };
       lx.round(tick, facts);
+      // PERMANENT LAYER (P0-1): drain this cron's COINAGE/SPREAD/SILENCE edges into the D1 append-only
+      // archive, then fold any pre-archive dictionary in once. Both best-effort + observable (P0-4).
+      const events = lx.drainArchive();
+      if (events.length) await this.archiveLexiconEvents(events);
+      await this.backfillLexiconDictionary(lx);
     } catch (e) {
       console.warn("[DO] lexicon drive failed (non-fatal):", (e as Error).message);
     }
@@ -3418,6 +3568,8 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/poem/verify") return await this.getPoemVerify(url);
       if (req.method === "GET" && path === "/poem/all") return await this.getPoemAll(url);
       if (req.method === "GET" && path === "/poem/archive") return await this.getPoemArchive(url);
+      // ㉓ THE LEXICON — its own permanent endpoint (full dictionary + historical coinage archive).
+      if (req.method === "GET" && path === "/lexicon") return await this.getLexicon(url);
       if (req.method === "GET" && path === "/stimuli") return await this.getStimuli();
       if (req.method === "GET" && path === "/snapshot") return await this.getSnapshot(url);
       if (req.method === "GET" && path.startsWith("/flies/")) return await this.getFly(path.split("/")[2]);
@@ -5767,6 +5919,52 @@ export class FlyStateDO {
     }
   }
 
+  /**
+   * ㉓ GET /lexicon — the word-hoard's OWN endpoint (task #107, P2-3). The lexicon was previously only
+   * folded into /population + /economy as a truncated read-out, so no API could return the FULL dictionary
+   * (living + tombstoned) or any historical coinage event. This serves the complete contract: every word
+   * (rolling uses + monotone lifetimeUses + born/bornEra + status + coinageTick + coinedBy + spreads +
+   * lastTold), the counts, this cron's edges, the permanent D1 archive page, the grammar hash and version.
+   * PURE READ-OUT — no brain/wallet/ledger touched. Switch-off ⇒ enabled:false + empty tables.
+   */
+  private async getLexicon(url: URL): Promise<Response> {
+    const lx = await this.ensureLexicon();
+    const enabled = this.cfg.lexicon.enabled;
+    const grammarHash = await this.getLexiconGrammarHash();
+    const order = url.searchParams.get("order") === "asc" ? "ASC" : "DESC";
+    const rawLimit = Number(url.searchParams.get("limit") ?? "200");
+    const limit = Math.min(1000, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 200));
+    const beforeRaw = url.searchParams.get("before");
+    const before = beforeRaw != null && Number.isFinite(Number(beforeRaw)) ? Number(beforeRaw) : null;
+    if (!lx) {
+      return json({
+        enabled, version: LEX_SCHEMA_VERSION, grammarHash,
+        counts: { coinages: 0, spreads: 0, deaths: 0 },
+        words: [], dead: [], edges: { coinage: null, spread: null, dying: null },
+        archive: [], archived: false, archiveCount: 0, archiveErrors: this.lexiconArchiveErrors,
+        queueDepth: 0, queued: 0,
+      });
+    }
+    lx.refreshPending();   // rebuild the standing read-out from restored state so it never lags a cron
+    const sig = lx.signals();
+    const words = lx.dictionary();
+    await this.backfillLexiconDictionary(lx);   // a drawer open folds pre-archive words in immediately (idempotent)
+    const { rows, total } = await this.readLexiconArchive(limit, before, order);
+    return json({
+      enabled, version: LEX_SCHEMA_VERSION, grammarHash,
+      counts: sig.counts,
+      words,
+      dead: sig.dead,
+      edges: { coinage: sig.coinage, spread: sig.spread, dying: sig.dying },
+      archive: rows,
+      archived: total > 0,
+      archiveCount: total,
+      archiveErrors: this.lexiconArchiveErrors,
+      queueDepth: lx.archiveQueueDepth(),
+      queued: lx.archiveQueuedCount(),
+    });
+  }
+
   private async getMarket() {
     const meter = await this.ensureMeter();
     const market = (await this.state.storage.get<MarketState>(KEY_MARKET)) ?? null;
@@ -6112,7 +6310,10 @@ export class FlyStateDO {
     this.court = null;     // ⑳ and the court: the docket and the outlaw roll are dust with everything else
     this.games = null;     // ㉑ and the games: the stadium and its standing mark are forgotten with everything else
     this.guilds = null;    // ㉒ and the guilds: every seal, pact and monopoly is unspoken with everything else
-    this.lexicon = null;   // ㉓ and the lexicon: every coined, spread and buried word is unremembered with everything else
+    // ㉓ THE LEXICON IS *NOT* RESET (task #107, P0-6). The word-hoard is civilisation's permanent record —
+    //     like the poca:* agency chain, it SURVIVES a reset instead of being unremembered. this.lexicon and
+    //     KEY_LEXICON are both kept, so every coined/spread/buried word (tombstones included) lives on and a
+    //     reset can never erase — or let a dead word be re-coined as — an invented word.
     this.rumor = null;     // ㉔ and the rumor mill: every tale afoot, bent or buried is unsaid with everything else
     this.treaty = null;    // ㉕ and the chancery: every seal set, ratified or broken is void with everything else
     this.works = null;     // ㉖ and the yard: every work raised, mended or lost to ruin is un-built with everything else
@@ -6142,7 +6343,8 @@ export class FlyStateDO {
     await this.state.storage.delete(KEY_COURT);
     await this.state.storage.delete(KEY_GAMES);
     await this.state.storage.delete(KEY_GUILDS);
-    await this.state.storage.delete(KEY_LEXICON);
+    // KEY_LEXICON is intentionally NOT swept (P0-6): the lexicon is a permanent civilisation record and
+    // survives a reset exactly like the poca:* keys. Its D1 lexicon_events archive is likewise never touched.
     await this.state.storage.delete(KEY_RUMOR);
     await this.state.storage.delete(KEY_TREATY);
     await this.state.storage.delete(KEY_WORKS);

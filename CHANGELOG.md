@@ -21,6 +21,32 @@ All notable changes to **murmur** are documented in this file. The format is bas
 
 ## [Unreleased]
 
+### Added — Lexicon word-hoard visualization (task #108, frontend)
+- **`drawers.js`** `renderLexSection` rewritten to consume the COMPLETE `GET /lexicon` contract (the word-hoard's
+  own endpoint), not the truncated read-out folded into `/economy`: the full permanent dictionary (every living
+  word + every tombstone — dead words are shown permanently in a graveyard style, never hidden), each word's
+  honest **monotone `lifetimeUses`** (never the shrinking rolling `uses`), `bornEra`, `coinedBy`, `spreads`,
+  `lastTold`; the `counts` overview; this cron's three lifecycle `edges` (coinage/spread/dying); and the
+  **permanent append-only D1 archive** with `?limit`/`?before`/`?order` pagination (load-older + asc/desc toggle).
+  The `grammarHash` / `archiveCount` / `archived` / `archiveErrors` / `queueDepth` meta is surfaced so a reader
+  can see the word-hoard is **complete · accurate · permanent**. `enabled:false` degrades to an honest empty
+  state, never an error. New `loadLexicon` fetch (20 s throttle) is force-pulled on volume open and kept fresh by
+  `polling.js` only while the lexicon volume is on stage.
+- **Fixed — A-2 (`i18n-ui.js`)**: the lexicon row rendered "told `{uses}` times" from the ROLLING window count,
+  which SHRINKS as the annals roll ages — so a word's "told N times" could go DOWN between polls (self-contradicting
+  a permanent record). All 7 languages now render from the **monotone `lifetimeUses`** (`{told}`) + `bornEra`
+  (`{bornEra}`), which never decreases.
+- **i18n**: 30 new lexicon keys × **all 7 languages** (en/zh/fr/es/ja/ko/ar), fully symmetric — dictionary/graveyard
+  rows, living/dead status, coiner, edges (coinage/spread/dying), archive events (COINAGE/SPREAD/SILENCE),
+  permanence/grammar-hash/archive-meta labels, disabled/loading/order/pagination controls.
+- **`styles.css`**: new `lx-*` classes (permanence line, meta, dictionary/edges/archive heads, tombstone gradient,
+  lifecycle-edge + event-type color marks, vellum pill buttons) using logical properties for RTL safety.
+- **`?v` cascade**: `main.js?v=162` / `styles.css?v=162` / `i18n.js?v=114` / `i18n-ui.js?v=107` (app-cascade
+  161→162, i18n chain 113→114 and 106→107) to break the 4-hour stale-cache window across the whole import cascade.
+- **Docs**: `API.md` documents the full `GET /lexicon` contract (query params + every `words`/`edges`/`archive`
+  field, `grammarHash`/`archiveCount` semantics); `README.md` adds the endpoint + a Word-hoard feature note;
+  `docs/POCA.md` documents `lexiconGrammarHash` as an independent anchor that does NOT perturb the PoCA chain.
+
 ### Added — Phase 7 evolution-engine visualizations (task 88, frontend)
 - **`evolution.js`** (new bare ESM module + command-rail drawer): the read-only **Evolution Engine** sheet —
   five tabs over the Phase-7 worker surface: the cross-generation **capability curve** (`GET /lineage/stats`

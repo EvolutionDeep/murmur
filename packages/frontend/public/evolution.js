@@ -17,9 +17,9 @@
 //   replay  — era-by-era economic replay digest (table + hash chain)
 //
 // No LLM. No writes to the worker. Pure read-out visualisation.
-import { state, $, API, clamp } from './shared.js?v=161';
-import { t as T, gl } from './i18n.js?v=113';
-import { getJSON } from './polling.js?v=161';
+import { state, $, API, clamp } from './shared.js?v=162';
+import { t as T, gl } from './i18n.js?v=114';
+import { getJSON } from './polling.js?v=162';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE

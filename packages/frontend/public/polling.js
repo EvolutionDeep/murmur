@@ -1,14 +1,14 @@
 // polling.js — 全部 pollXxx + getJSON + load* + offline 合成
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, API, FAP_ROLE, FETCH_TIMEOUT_MS, OFFLINE_BACKOFF_MS, clamp, readLineageHead } from './shared.js?v=161';
-import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLaureate, paintPredict, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderTechSection, renderTreatySection, renderWarSection, renderWorksSection, renderWorkshopSection, updateSinceLaunch, verifyBrain } from './drawers.js?v=161';
-import { applyEconAgents, applyEconomy, applySnapshot, applyState, applyTopology, setStatusKind, updateCronWatchdog } from './economy.js?v=161';
-import { spawnChronFx } from './render2d.js?v=161';
-import { evaluateCivStage } from './civstage.js?v=161';   // task 32: civStage 选择器（事件驱动，数据到达时评估）
+import { state, API, FAP_ROLE, FETCH_TIMEOUT_MS, OFFLINE_BACKOFF_MS, clamp, readLineageHead } from './shared.js?v=162';
+import { arenaReadUser, d0LineageAddr, mergeLaureateEntries, paintArena, paintLaureate, paintPredict, loadLexicon, renderApprenticeSection, renderArchiveSection, renderBourseSection, renderBrain, renderChron, renderChronVerdict, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderHistory, renderLexSection, renderLineage, renderMarketSection, renderProofs, renderReligionSection, renderRumorSection, renderTechSection, renderTreatySection, renderWarSection, renderWorksSection, renderWorkshopSection, updateSinceLaunch, verifyBrain } from './drawers.js?v=162';
+import { applyEconAgents, applyEconomy, applySnapshot, applyState, applyTopology, setStatusKind, updateCronWatchdog } from './economy.js?v=162';
+import { spawnChronFx } from './render2d.js?v=162';
+import { evaluateCivStage } from './civstage.js?v=162';   // task 32: civStage 选择器（事件驱动，数据到达时评估）
 // task 29 · Phase B: the lineage atlas is now ARRIVAL-DRIVEN instead of timer-driven. Each poll below raises
 // a dirty bit on the feed it just refreshed; lvData.lvPumpData drains them on the next atlas frame (and does
 // nothing at all while the atlas is hidden). lvState.js imports only shared.js, so this cannot close a cycle.
-import { lvMarkDirty, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT } from './lvState.js?v=161';
+import { lvMarkDirty, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT } from './lvState.js?v=162';
 
 // two-stage codex: "index" lists the volumes, "volume" shows one full-height page
 // offline: a purely client-side mirror of the agent economy so the piece still settles pre-deploy
@@ -273,6 +273,9 @@ export async function poll() {
     pollLaureate();  // throttled internally; keeps the Laureate drawer's head + collection fresh
     pollPredict();  // throttled internally; keeps an open prediction book tracking each cron
     pollArena();    // throttled internally; keeps an open arena book + your on-chain position fresh
+    // task #108: keep an OPEN lexicon volume honest — a throttled refetch of the complete permanent word-hoard
+    // (loadLexicon is internally rate-limited; the volume's own open handler already forces the first pull).
+    if (state.chronOpen && state.chronMode === "volume" && document.querySelector('#chron-tabs .chron-tab[data-vol="lexicon"].is-on')) loadLexicon(false);
   } catch (e) {
     if (!state.offline) { state.offline = true; setStatusKind("dreaming"); }
     state.offlineUntil = Date.now() + OFFLINE_BACKOFF_MS;  // stop probing; run local for a while

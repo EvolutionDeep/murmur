@@ -410,6 +410,50 @@ were produced by the deterministic chronicler, not an LLM.
 
 ---
 
+### lexicon — the word-hoard (complete · accurate · permanent)
+
+#### `GET /lexicon`
+The swarm's compiled **dictionary** — the words the telling made. The lexicon reads ONE fact the historian
+already keeps (the hot annals roll) and turns an often-told chronicle kind into a WORD ("feud", "golden age",
+"coin fever"). This is the word-hoard's OWN endpoint: unlike the truncated read-out folded into `/economy`, it
+returns the **COMPLETE** dictionary — every living word AND every tombstoned word, nothing forgotten — each
+word's honest **MONOTONE** `lifetimeUses` (never shrinks) alongside the ROLLING `uses`, who coined it
+(`coinedBy`), and a paginated page of the **PERMANENT** append-only D1 archive of every COINAGE / SPREAD /
+SILENCE event ever fired. **PURE READ-OUT**: no brain, wallet or ledger is touched, and `stateDigest` /
+`manifestHash` are unchanged. Switch-off (`LEX_ENABLED=false`) ⇒ `enabled:false` with empty `words` / `archive`.
+
+| query    | type    | required | meaning                                                    |
+| -------- | ------- | -------- | ---------------------------------------------------------- |
+| `limit`  | integer | no       | Max archive rows to return (clamped 1..1000, default 200). |
+| `before` | integer | no       | Archive pagination cursor: only rows with `id < before`.   |
+| `order`  | string  | no       | Archive sort by id: `asc` \| `desc` (default `desc`).      |
+
+Returns `{ enabled, version, grammarHash, counts, words[], dead[], edges, archive[], archived, archiveCount,
+archiveErrors, queueDepth, queued }`:
+
+- **`counts`:** `{ coinages, spreads, deaths }` — lifetime event tallies.
+- **`grammarHash`:** sha256 of the word-list + thresholds + version (the `lexiconGrammarHash`) — anchors WHICH
+  grammar produced this dictionary; `version` is the lexicon schema/grammar version. See `docs/POCA.md`.
+- each **word** is `{ word, kind, uses, lifetimeUses, born, bornEra, status, coinageTick, coinedBy, spreads,
+  lastTold, deathTick }` — `status` is `living` \| `dead`; `uses` is the ROLLING window count (can shrink as the
+  annals roll ages) while **`lifetimeUses` is the MONOTONE tellings-since-coinage** (the honest "told N times",
+  never shrinks); `coinedBy` is the lead fly id at coinage (or `null`); `spreads` is how many lifetime doublings
+  the word has rung; `lastTold` is the seq of its latest telling (0 = never); `deathTick` is the tick silence
+  tombstoned it (or `null` while living). A **dead** word is a tombstone — never deleted, never re-coined with a
+  fabricated birth. `dead[]` mirrors every `status===dead` word (the permanent graveyard).
+- **`edges`:** `{ coinage, spread, dying }` — this cron's three lifecycle edges (`{word,uses,era}` / `{word,uses}`
+  / `{word,gap}`), each `null` when nothing fired.
+- each **archive** row is `{ id, tick, ts, era, eraName, event, kind, word, uses, lifetimeUses, gap, coinedBy,
+  born, grammarHash }` — `event` is `COINAGE` \| `SPREAD` \| `SILENCE`; `id` is the append order (pagination
+  cursor); `ts` is unix ms; `gap` is the silence gap (SILENCE rows, else 0). The archive is append-only (never
+  UPDATEd/DELETEd) — the permanent record of every word ever made, spread or silenced.
+- **`archived`** is true once the D1 archive holds ≥1 row; **`archiveCount`** is the total rows across all pages;
+  **`archiveErrors`** counts D1 write/read failures this DO lifetime (non-zero ⇒ the best-effort layer dropped
+  something); **`queueDepth`** is events awaiting the next D1 drain; **`queued`** is total events queued since DO
+  construction (monotone).
+
+---
+
 ### governance — the token-gated community forum
 
 #### `GET /community`
