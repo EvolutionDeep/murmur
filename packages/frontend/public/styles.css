@@ -4421,6 +4421,9 @@ html[dir="rtl"] .pc-ep-ticks { margin-left: 0; margin-right: auto; }
   --rail-ic: 21px;
   --card-w: clamp(228px, 23vw, 292px);
   --drawer-w: min(380px, 92vw);
+  /* task 96: the rail owns the left edge, so the centring channel starts to its right;
+     without this --chan-c (and #era-hud riding on it) sits --rail-w/2 left of the true centre. */
+  --chan-l: calc(var(--rail-w) + var(--pad) + var(--col-l) + 12px);
 }
 .ra-ic { width: var(--rail-ic); height: var(--rail-ic); fill: none; stroke: currentColor;
   stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; display: block; }
@@ -5457,4 +5460,34 @@ body.lv-active #switch-to-atlas { display: none; }
     left: 50%; transform: translateX(-50%);
     padding: 11px 22px; font-size: 14px;
   }
+}
+
+/* ============================================================================
+   TASK 96 - SHORT-VIEWPORT RAIL COMPACTION (601-720px tall desktops)
+   ----------------------------------------------------------------------------
+   With names under the glyphs (task 93) the 11 buttons + separator stack grew to
+   633px, so any viewport between 601px (the phone cut-off that hides the rail)
+   and 688px clipped the tail of the rail with no scrollbar to hint at it. This
+   tier shrinks button height, gaps, padding and the label size so the whole
+   stack needs ~504px - inside the 545px available at the worst case (601px tall,
+   56px topbar). Placed LAST so it wins the cascade over the Direction A base
+   and the tablet tier above. Phones (<=600px tall / <=680px wide) keep hiding
+   the rail entirely - untouched.
+   ============================================================================ */
+@media (min-width: 681px) and (min-height: 601px) and (max-height: 720px) {
+  .command-rail {
+    --rail-ic: 18px;  /* glyphs shrink with the buttons (the var inherits into the rail only) */
+    gap: 3px;
+    padding: 10px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .rail-btn { height: 40px; gap: 2px; }
+  .rail-lb  { font-size: 8px; }
+  .rail-sep { margin: 4px 0; }
+}
+
+/* task 96: with the channel re-centred on the rail, the layer tray (left:50% of the viewport)
+   would sit --rail-w/2 left of it; re-anchor it to the channel on rail-visible regimes only
+   (phones and <=600px-tall viewports keep left:50% - the rail is hidden there). */
+@media (min-width: 681px) and (min-height: 601px) {
+  .layer-toggles { left: var(--chan-c); }
 }
