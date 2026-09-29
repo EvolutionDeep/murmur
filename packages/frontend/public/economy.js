@@ -1,18 +1,18 @@
 // economy.js — applyEconomy/applySnapshot/applyState/applyTopology + HUD 更新
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, nmCollectiveMean, shortHash, sim } from './shared.js?v=159';
-import { currentLang, gl, t as T } from './i18n.js?v=112';
-import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js?v=159';
-import { fillInspectorFromSim } from './inspector.js?v=159';
+import { state, $, ARC_EXPLORER, CRON_STALE_MS, MAX_EDGES, SEEN_CAP, atomicToUsdc, clamp, houseColor, houseOf, isRealAddr, isRealTxHash, nmCollectiveMean, shortHash, sim } from './shared.js?v=161';
+import { currentLang, gl, t as T } from './i18n.js?v=113';
+import { renderApprenticeSection, renderArchiveSection, renderCitiesSection, renderCommonsSection, renderCourtSection, renderCultureSection, renderDynastySection, renderGamesSection, renderGuardiansSection, renderGuildSection, renderLexSection, renderReligionSection, renderRumorSection, renderSocialSection, renderTechSection, renderTreatySection, renderWallets, renderWorksSection, renderWorkshopSection, sgMarkDirty, updateNetNote } from './drawers.js?v=161';
+import { fillInspectorFromSim } from './inspector.js?v=161';
 // task 29 · C5 — the lineage atlas used to rebuild its layout on a 45 s catch-all timer, so a birth or a
 // death took up to 45 s to appear. It is now arrival-driven: these two appliers are the moment membership and
 // balances actually change, so they raise the dirty bits and lvData.lvPumpData drains them on the next atlas
 // frame (floored at 12 s, and it only RE-BAKES the static layer when the structural signature moved).
 // lvState.js imports nothing but shared.js, so this cannot close an import cycle.
-import { lvMarkDirty, LV_DIRTY_LAYOUT, LV_DIRTY_SOCIAL, LV_DIRTY_FEED } from './lvState.js?v=159';
-import { synthAgents } from './polling.js?v=159';
-import { rebuildGraveField, rebuildSocieties, rebuildTerritoryPolities } from './render2d.js?v=159';
-import { spawnFly } from './sim.js?v=159';
+import { lvMarkDirty, LV_DIRTY_LAYOUT, LV_DIRTY_SOCIAL, LV_DIRTY_FEED } from './lvState.js?v=161';
+import { synthAgents } from './polling.js?v=161';
+import { rebuildGraveField, rebuildSocieties, rebuildTerritoryPolities } from './render2d.js?v=161';
+import { spawnFly } from './sim.js?v=161';
 
 // { fromId, toId, amount, good, valid, t0 }
 // The /population poll (every POLL_MS) is far faster than the on-chain tick (cron, ~60s), so the same

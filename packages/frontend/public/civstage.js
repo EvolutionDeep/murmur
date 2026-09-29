@@ -11,7 +11,7 @@
 //   state.chronMeta.generation  史官独立世代钟（快速、单调递增）
 //   sim.size                    活体种群数（前端物理本地积分，/population 不含 x/y）
 //   state.econXxx               已到达前端的膜层载荷（"已解锁膜层数"的确定性代理）
-import { state, sim, clamp } from './shared.js?v=159';
+import { state, sim, clamp } from './shared.js?v=161';
 
 // 膜层载荷键：任一非 null 即视为该膜层已在前端解锁（纯读出，与 worker 开关一致）
 const MEMBRANE_KEYS = [

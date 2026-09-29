@@ -187,12 +187,35 @@ where each **agent** is `{ id, address, balance, balanceUsdc, paid, earned, deal
 **`totals` (EconTotals):** `{ volumeAtomic, volumeUsdc, count, liveAgents, meanBalanceUsdc, gini,
 treasuryOutAtomic, richestId, poorestId }` — only mined, on-chain settlements count.
 
+When the emergent-institution membranes are switched on, the payload additionally carries their read-outs
+(each key is **absent** while its switch is off — the frontend institutions HUD degrades to an honest
+"dormant" hint, never to an error):
+
+- **`norms` (NormsSignals):** `{ minted, spread, mutated, died, norms[], counts, lineageDepth, mutationRate, compliance }` — each `NormView` is `{ id, norm, strength, depth, adherents, parentId, mutations }`.
+- **`conventions` (ConventionsSignals):** `{ crystallized, spread, inherited, breached, died, conventions[], counts, lineageDepth, breachRate, concordance }` — each `ConvView` is `{ id, conv, good, freq, priceLo, priceHi, strength, depth, parentId, adopters, breaches, inherited }`.
+- **`rules` (RulesSignals):** `{ minted, adopted, revoked, died, rules[], counts, avgModifier, bandHits }` — each `RuleView` is `{ id, rule, buyMod, cpMod, strength, depth, parentId, members, revokes, variants }`.
+
 #### `GET /leaderboard`
 Agents ranked by net PnL (`earned − paid`) in USDC, plus cumulative totals and the paid `/signal/pulse`
 revenue summary.
 
 Returns `{ enabled, mode, network, asset, registryAddress, rows[], totals, pulse }`; each row is
 `{ id, address, netUsdc, earnedUsdc, paidUsdc, balanceUsdc, deals, sales }`.
+
+#### `GET /replay/economy`
+The deterministic **era-by-era economy replay** archive (Phase 7, task 88 frontend consumer): each sealed era
+re-runs its recorded seed pulses through the economy sim and folds the outcome into a hash chain.
+
+| query   | type    | required | meaning                                  |
+| ------- | ------- | -------- | ---------------------------------------- |
+| `from`  | integer | no       | First era to return.                     |
+| `to`    | integer | no       | Last era to return.                      |
+| `limit` | integer | no       | Max eras returned (newest first).        |
+
+Returns `{ enabled, seed, fromEra, toEra, count, eras[], combinedHash, boundary }`; each era is
+`{ era, tick, blobHash, seedPulses, replayHash, tickCount, finalState }` with `finalState =
+{ tickIndex, volumeAtomic, volumeUsdc, count, settleOk, settleFail, gini, agents[] }`. When replay is
+disabled or unreachable the endpoint degrades to `{ enabled: false, eras: [], note }` — never an error page.
 
 ---
 
@@ -291,6 +314,16 @@ the ancestry is committed on Arc and agrees with the served `op`/`generation` (`
 
 Returns `{ genomeHash, pass, checks: { hashOk, specOk, chainOk, committed }, generation, op, spec, onchain }`.
 You can run the identical check offline from `GET /lineage/{hash}` alone — no murmur server in the trust path.
+
+#### `GET /lineage/stats`
+The **cross-generation capability rollup** (Phase 7 open-ended evolution, capability ④ — the frontend's
+capability curve + niche heatmap consume this): per-generation survival / PnL / settle / prediction /
+lifespan statistics, folded into per-generation bins split by the temperature band the generation lived in.
+
+Returns `{ enabled, mode, temperature, asOfTick, generations, agents, byGeneration[], bins[] }`;
+each **GenerationRollup** is `{ generation, agents, survivalRate, avgNetUsdcPer1kTick, settleSuccessRate,
+predictHitRate, avgLifespanTicks, bands }` and each **GenerationBin** adds `band: "COLD" | "CALM" | "HOT"`.
+When breeding is disabled: `{ enabled: false, … }` with empty arrays.
 
 ---
 

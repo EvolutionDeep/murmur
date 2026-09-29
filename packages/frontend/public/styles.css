@@ -4488,6 +4488,8 @@ body.laureate-open .rail-btn[data-act="laureate"],
 body.pulse-open    .rail-btn[data-act="pulse"],
 body.predict-open  .rail-btn[data-act="predict"],
 body.arena-open    .rail-btn[data-act="arena"],
+body.evo-open      .rail-btn[data-act="evo"],
+body.inst-open     .rail-btn[data-act="inst"],
 body.layers-pop    .rail-btn[data-act="layers"],
 body.walk-active   .rail-btn[data-act="walk"] {
   background-color: rgba(var(--gold-rgb), 0.18); color: var(--gold-deep);
@@ -4506,6 +4508,8 @@ body.laureate-open .rail-btn[data-act="laureate"]::before,
 body.pulse-open    .rail-btn[data-act="pulse"]::before,
 body.predict-open  .rail-btn[data-act="predict"]::before,
 body.arena-open    .rail-btn[data-act="arena"]::before,
+body.evo-open      .rail-btn[data-act="evo"]::before,
+body.inst-open     .rail-btn[data-act="inst"]::before,
 body.layers-pop    .rail-btn[data-act="layers"]::before,
 body.walk-active   .rail-btn[data-act="walk"]::before {
   content: ""; position: absolute; left: -6px; top: 9px; bottom: 9px; width: 3px;
@@ -5490,4 +5494,172 @@ body.lv-active #switch-to-atlas { display: none; }
    (phones and <=600px-tall viewports keep left:50% - the rail is hidden there). */
 @media (min-width: 681px) and (min-height: 601px) {
   .layer-toggles { left: var(--chan-c); }
+}
+
+/* ============================================================================
+   TASK 88 · OPEN-ENDED EVOLUTION ENGINE + EMERGENT INSTITUTIONS HUD
+   ----------------------------------------------------------------------------
+   Two new right-edge read-out drawers (evolution.js / institutionsHud.js) reusing
+   the shared .drawer chrome, plus the rail-height re-budget for the two new buttons
+   (13 + separator). Placed LAST so the rail tiers win the cascade over the
+   Direction A base and the task 96 compaction tier.
+   ============================================================================ */
+
+/* ---------- rail height re-budget (13 buttons + 1 separator) ----------
+   base tier (btn50/gap4/pad12+14/sep13) = 13×50 + 12×4 + 26 + 13 = 735px → needs ≥800px tall.
+   tier B (721–800px tall): btn46/gap3/pad11+12 = 661px ≤ 721−56 = 665px  ✓
+   tier A (601–720px tall): btn34/gap2/pad8+10/sep7 = 505px ≤ 601−56 = 545px ✓
+   (task 96's btn40 tier would need 589px > 545px at 13 buttons — this overrides it.)
+   Phones (≤680px wide / ≤600px tall) keep hiding the rail entirely — untouched. */
+@media (min-width: 681px) and (min-height: 601px) and (max-height: 720px) {
+  .command-rail {
+    --rail-ic: 15px;
+    gap: 2px;
+    padding: 8px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .rail-btn { height: 34px; gap: 1px; }
+  .rail-lb  { font-size: 7.5px; line-height: 1.1; }
+  .rail-sep { margin: 3px 0; height: 1px; }
+}
+@media (min-width: 1025px) and (min-height: 721px) and (max-height: 800px) {
+  .command-rail {
+    --rail-ic: 17px;
+    gap: 3px;
+    padding: 11px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .rail-btn { height: 46px; }
+  .rail-sep { margin: 5px 0; }
+}
+
+/* ---------- drawer shells (mirror the PoCA sheet) ---------- */
+.drawer.evo-drawer,
+.drawer.inst-drawer { width: clamp(320px, 38vw, 500px); }
+body.evo-open .evo-drawer,
+body.inst-open .inst-drawer { pointer-events: auto; }
+@media (max-width: 680px) {
+  .drawer.evo-drawer,
+  .drawer.inst-drawer { width: min(96vw, 500px); }
+}
+@media (max-width: 480px) {
+  /* compound selector (0,2,0) beats the full-bleed `.drawer` rule (0,1,0) by source order — same fix as PoCA */
+  .drawer.evo-drawer,
+  .drawer.inst-drawer { left: 0; right: 0; width: auto; max-width: none; }
+}
+
+/* ---------- shared tab bar (both drawers) ---------- */
+.evo-tabs {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px solid rgba(122, 96, 58, 0.22);
+}
+.evo-tab {
+  padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(122, 96, 58, 0.30); background: transparent;
+  font: 600 10.5px/1 var(--sans); letter-spacing: 0.04em; color: var(--gall-2);
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.evo-tab:hover { background-color: rgba(var(--gold-rgb), 0.14); }
+.evo-tab.is-on {
+  background: var(--gall); border-color: var(--gall); color: var(--vellum);
+}
+.evo-panel { display: block; }
+
+/* ---------- shared furniture: loading / empty / summary / legend ---------- */
+.evo-loading { font: 500 12px/1.5 var(--mono); color: var(--muted); font-style: italic; }
+.evo-empty {
+  margin: 14px 0; padding: 12px 14px; border-radius: 10px;
+  border: 1px dashed rgba(122, 96, 58, 0.40);
+  font: 500 11.5px/1.55 var(--sans); color: var(--muted);
+}
+.evo-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 10px; font: 500 10.5px/1.4 var(--sans); color: var(--gall-2); }
+.evo-summary b { font-family: var(--mono); font-weight: 700; }
+.evo-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 8px; font: 500 10px/1.3 var(--sans); color: var(--gall-2); }
+.evo-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+.evo-leg-item i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+
+/* ---------- SVG charts (capability curve + genome DAG) ---------- */
+.evo-chart { display: block; width: 100%; height: auto; margin: 4px 0; }
+.evo-genome { max-height: 400px; overflow: visible; }
+.evo-axis-lb { font: 500 7px var(--mono); fill: var(--muted); }
+.evo-node-lb { font: 600 7px var(--mono); fill: #fff; }
+
+/* ---------- tables (replay eras, playbook rings, institution rosters) ---------- */
+.evo-table { width: 100%; border-collapse: collapse; font: 500 10px/1.45 var(--mono); }
+.evo-table th {
+  text-align: left; padding: 5px 6px; color: var(--muted);
+  border-bottom: 1px solid rgba(122, 96, 58, 0.34);
+  font: 600 9px/1.3 var(--sans); letter-spacing: 0.05em; text-transform: lowercase;
+}
+.evo-table td { padding: 4px 6px; border-bottom: 1px solid rgba(122, 96, 58, 0.12); color: var(--gall-2); }
+.evo-table tr:hover td { background: rgba(var(--gold-rgb), 0.07); }
+.evo-pos { color: #2e7d32; font-weight: 700; }
+.evo-neg { color: #c62828; font-weight: 700; }
+
+/* ---------- niche heatmap (elites grid / bins fallback) ---------- */
+.evo-hm-wrap { overflow-x: auto; }
+.evo-hm { border-collapse: separate; border-spacing: 3px; font: 500 9px/1.2 var(--mono); }
+.evo-hm th { font: 600 8.5px/1.2 var(--sans); color: var(--muted); padding: 2px 4px; text-align: center; white-space: nowrap; }
+.evo-hm-cell {
+  min-width: 44px; height: 30px; text-align: center; border-radius: 5px;
+  color: var(--gall); font-weight: 700; cursor: default;
+}
+.evo-hm-empty { color: rgba(122, 96, 58, 0.45); background: rgba(122, 96, 58, 0.06); font-weight: 400; }
+
+/* ---------- hash furniture (replay chain) ---------- */
+.evo-hash-row { display: flex; align-items: baseline; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.evo-hash-lb { font: 600 9.5px/1.3 var(--sans); color: var(--muted); letter-spacing: 0.04em; }
+.evo-hash {
+  font: 500 9.5px/1.4 var(--mono); color: var(--gall-2);
+  word-break: break-all; background: rgba(122, 96, 58, 0.08);
+  padding: 3px 6px; border-radius: 5px;
+}
+.evo-hash-sm { font: 500 9.5px/1.4 var(--mono); color: var(--gall-2); cursor: help; }
+.evo-boundary { margin-top: 10px; font: 500 10px/1.5 var(--sans); color: var(--muted); }
+.evo-boundary em { font-family: var(--mono); font-style: normal; }
+.evo-more { margin-top: 8px; font: 500 10px/1.4 var(--sans); color: var(--muted); font-style: italic; }
+
+/* ---------- playbook memory rings (capability ①) ---------- */
+.evo-pb-list { display: flex; flex-direction: column; gap: 6px; }
+.evo-pb-fly { border: 1px solid rgba(122, 96, 58, 0.22); border-radius: 8px; padding: 6px 9px; background: rgba(255, 253, 246, 0.4); }
+.evo-pb-fly summary { cursor: pointer; font: 600 10.5px/1.4 var(--sans); color: var(--gall-2); }
+.evo-pb-fly[open] summary { margin-bottom: 6px; }
+.evo-pb-table { margin-top: 4px; }
+
+/* ---------- institutions HUD (capability ⑤) ---------- */
+.inst-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.inst-count {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid rgba(122, 96, 58, 0.28);
+  font: 500 9.5px/1 var(--sans); letter-spacing: 0.03em; color: var(--muted);
+}
+.inst-count b { font: 700 12px/1 var(--mono); color: var(--gall); }
+.inst-agg { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 10px; font: 500 10.5px/1.4 var(--sans); color: var(--gall-2); }
+.inst-agg b { font-family: var(--mono); }
+.inst-edges { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.inst-edge {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 9px; border-radius: 7px;
+  background: rgba(122, 96, 58, 0.07);
+  font: 500 10px/1.4 var(--mono); color: var(--gall-2);
+}
+.inst-edge b {
+  flex: none; min-width: 72px;
+  font: 600 9px/1.4 var(--sans); letter-spacing: 0.05em; color: var(--muted);
+}
+.inst-edge.is-quiet { opacity: 0.55; }
+.inst-str { display: inline-flex; align-items: center; gap: 6px; min-width: 74px; }
+/* the gauge: <i> is the track; its ::after fills to --pct (the 0..1 membrane strength) */
+.inst-str i {
+  flex: none; width: 44px; height: 4px; border-radius: 2px; position: relative;
+  background: rgba(122, 96, 58, 0.18); overflow: hidden; display: inline-block;
+}
+.inst-str i::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: var(--pct, 0%);
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold-lit));
+}
+.inst-str b { font: 600 9px/1 var(--mono); color: var(--gall-2); }
+.inst-table td.inst-cond {
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--sans); cursor: help;
 }

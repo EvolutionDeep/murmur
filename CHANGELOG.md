@@ -21,6 +21,32 @@ All notable changes to **murmur** are documented in this file. The format is bas
 
 ## [Unreleased]
 
+### Added — Phase 7 evolution-engine visualizations (task 88, frontend)
+- **`evolution.js`** (new bare ESM module + command-rail drawer): the read-only **Evolution Engine** sheet —
+  five tabs over the Phase-7 worker surface: the cross-generation **capability curve** (`GET /lineage/stats`
+  `byGeneration`, five normalized metrics), the **strategy-genome lineage DAG** (`GET /lineage` entries,
+  genesis/mutate/cross colored, parent→child edges), the **niche heatmap** (MAP-Elites archive when exposed,
+  otherwise the generation×temperature-band bins from `/lineage/stats`), the **era replay table**
+  (`GET /replay/economy`: seed, per-era volume/gini/replayHash, combined hash chain), and the **playbook
+  memory rings** (capability ① — ships in an honest dark state until the worker exposes the rings; the
+  consumer is already wired to `economy.playbook`).
+- **`institutionsHud.js`** (new bare ESM module + command-rail drawer): the **Emergent Institutions** HUD
+  (capability ⑤) — norms / conventions / rules membranes from `GET /economy`: lifecycle counters
+  (minted/spread/mutated/died · crystallized/inherited/breached/absorbed · adopted/revoked), aggregate
+  gauges (compliance / concordance / breach rate / avg modifier), this-cron lifecycle edges, and the
+  standing roster tables (condition text, strength gauge, depth, adherents/adopters/members). A membrane
+  switch being off means the key is absent → the tab degrades to a dormant hint, never an error.
+- **Wiring**: two rail buttons (`data-act="evo"/"inst"`, glyphs `#i-dna` / `#i-pillars`), two drawer shells
+  in `index.html`, `main.js` rail/Escape/`rerenderAll`/`window.__close*` integration, `_headers` no-cache
+  entries, 119 new i18n keys symmetric across all 7 languages, and a rail-height re-budget for 13 buttons
+  (new 601–720px and 721–800px compaction tiers). `main.js?v=161` / `styles.css?v=161` /
+  `i18n.js?v=113` / `i18n-ui.js?v=106`.
+- **Docs**: `API.md` documents `GET /replay/economy`, `GET /lineage/stats` and the `/economy` membrane keys;
+  `docs/ARCHITECTURE.md` + `docs/POCA.md` describe the new read-out drawer family.
+- Known worker-side follow-up (deliberately untouched here): `playbook` / `strategyTrees` / `elitesArchive`
+  exist in `economy.serialize()` but have no HTTP exposure — the Playbook and full 64-cell elites panels
+  light up automatically once a read-out key lands.
+
 ### Added — Proof of Continuous Agency (PoCA)
 - **`ContinuityRegistry.sol`** (Solidity ^0.8.24, `packages/trader-worker/contracts/`): pure commitment log —
   `openEpoch(codeCommitment, genesisHead)`, `sealEpoch(index, sealedHead, tickCount, merkleRoot)`,

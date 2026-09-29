@@ -8,7 +8,7 @@
   <title>murmur — a population of neural agents settling on arc</title>
   <meta name="description" content="murmur is a living population of fruit-fly nervous systems adrift on arc. it reads whole-chain activity, reduces it to a temperature, and the swarm reacts. each fly is an autonomous agent whose connectome — the species spec is committed on-chain at 30,800 neurons, each live brain grown from its own genome (~10,800 today) — decides what to buy and from whom, settling with its peers in real USDC on Arc mainnet over x402 — every payment a verifiable on-chain transaction. no LLM, just neurons paying each other for real." />
 
-  <link rel="stylesheet" href="./styles.css?v=160" />
+  <link rel="stylesheet" href="./styles.css?v=161" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><g fill='%231a1a18'><circle cx='12' cy='14' r='3.1'/><circle cx='20.5' cy='11.5' r='2.3'/><circle cx='17.5' cy='21' r='1.9'/></g></svg>" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -67,6 +67,10 @@
     <symbol id="i-pk5" viewBox="0 0 24 24"><path d="M12 2.6l2.7 6.7 6.7 2.7-6.7 2.7-2.7 6.7-2.7-6.7-6.7-2.7 6.7-2.7 2.7-6.7z"/></symbol>
     <symbol id="i-pk6" viewBox="0 0 24 24"><path d="M4 9.5L12 4l8 5.5M6 11v9M18 11v9M4 20h16M9.5 20v-5.5h5V20"/></symbol>
     <symbol id="i-pk7" viewBox="0 0 24 24"><path d="M8.5 4h7L19 7.5v12.5H5V4h3.5z"/><path d="M8.8 10.5l5 3-5 3v-6z"/></symbol>
+    <!-- task 88 · evolution engine: a DNA double helix (strategy genomes bred across generations) -->
+    <symbol id="i-dna" viewBox="0 0 24 24"><path d="M8 2.8c0 5 8 4.6 8 9.4s-8 4.4-8 9.4"/><path d="M16 2.8c0 5-8 4.6-8 9.4s8 4.4 8 9.4"/><path d="M9.3 6.3h5.4M9.3 17.9h5.4M10.6 9.5h2.8M10.6 14.8h2.8"/></symbol>
+    <!-- task 88 · emergent institutions: a colonnade (norms / conventions / rules standing together) -->
+    <symbol id="i-pillars" viewBox="0 0 24 24"><path d="M4.4 8.8L12 4.3l7.6 4.5"/><path d="M6.6 9.6v7.7M10.2 9.6v7.7M13.8 9.6v7.7M17.4 9.6v7.7"/><path d="M4.4 19.7h15.2"/></symbol>
   </svg>
 
   <!-- ============ task 65 · Direction A left command rail ============
@@ -89,6 +93,9 @@
     <button type="button" class="rail-btn" data-act="temple" data-i18n-title="temple.title" data-i18n-aria="temple.aria" title="the temple" aria-label="the temple"><svg class="ra-ic" aria-hidden="true"><use href="#i-temple"/></svg><span class="rail-lb" data-i18n="temple.btn">The Temple</span></button>
     <!-- task 50 · PoCA: the proof-of-continuity anchor read-out (mutually exclusive with the other drawers) -->
     <button type="button" class="rail-btn" data-act="poca" data-i18n-title="poca.title" data-i18n-aria="poca.aria" title="proof of continuity" aria-label="proof of continuity"><svg class="ra-ic" aria-hidden="true"><use href="#i-poca"/></svg><span class="rail-lb" data-i18n="rail.poca">Continuity</span></button>
+    <!-- task 88 · the open-ended evolution engine read-out + the emergent-institutions HUD (both mode-agnostic) -->
+    <button type="button" class="rail-btn" data-act="evo" data-i18n-title="evo.title" data-i18n-aria="evo.aria" title="evolution engine" aria-label="evolution engine"><svg class="ra-ic" aria-hidden="true"><use href="#i-dna"/></svg><span class="rail-lb" data-i18n="rail.evo">Evolution</span></button>
+    <button type="button" class="rail-btn" data-act="inst" data-i18n-title="inst.title" data-i18n-aria="inst.aria" title="emergent institutions" aria-label="emergent institutions"><svg class="ra-ic" aria-hidden="true"><use href="#i-pillars"/></svg><span class="rail-lb" data-i18n="rail.inst">Institutions</span></button>
     <span class="rail-sep" aria-hidden="true"></span>
     <!-- 3 · the 3D-mode switch first, then everything that only means something on the 3D canvas -->
     <button type="button" class="rail-btn is-off" data-act="mode3d" data-i18n-title="lv.switchTo3d" data-i18n-aria="lv.switchTo3d" title="3D swarm" aria-label="3D swarm" aria-pressed="false"><svg class="ra-ic" aria-hidden="true"><use href="#i-cube"/></svg><span class="rail-lb" data-i18n="rail.mode3d">3D mode</span></button>
@@ -703,6 +710,32 @@
   </aside>
 
   <!-- ============ ㉟ THE LAND (right drawer) — burn MURMUR to claim a pixel parcel ============ -->
+  <!-- ============ task 88 · Evolution Engine (right drawer) — the open-ended evolution read-out ============
+       Capability curve (/lineage/stats), genome lineage (/lineage), niche heatmap, era replay
+       (/replay/economy) and the playbook memory rings. Pure read-out: the body is rebuilt from the
+       state cache by paintEvolution() in evolution.js. -->
+  <aside class="drawer evo-drawer" id="evo-drawer" hidden data-i18n-aria="evo.aria" aria-label="Evolution Engine">
+    <div class="drawer-head">
+      <span class="drawer-title" data-i18n="evo.title">Evolution Engine</span>
+      <span class="drawer-sub" data-i18n="evo.sub">playbook · genomes · niches · capability</span>
+      <button class="drawer-close" id="evo-close" data-i18n-aria="evo.close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body" id="evo-body"></div>
+  </aside>
+
+  <!-- ============ task 88 · Emergent Institutions HUD (right drawer) — capability ⑤ ============
+       The three membrane read-outs (norms / conventions / rules) carried by /economy: counters,
+       lifecycle edges and the standing roster. Pure read-out: rebuilt from the state cache by
+       paintInstitutions() in institutionsHud.js. -->
+  <aside class="drawer inst-drawer" id="inst-drawer" hidden data-i18n-aria="inst.aria" aria-label="Emergent Institutions">
+    <div class="drawer-head">
+      <span class="drawer-title" data-i18n="inst.title">Emergent Institutions</span>
+      <span class="drawer-sub" data-i18n="inst.sub">self-minted norms · conventions · rules</span>
+      <button class="drawer-close" id="inst-close" data-i18n-aria="inst.close" aria-label="close">×</button>
+    </div>
+    <div class="drawer-body" id="inst-body"></div>
+  </aside>
+
   <aside class="drawer land-drawer" id="land-drawer" hidden data-i18n-aria="land.aria" aria-label="Land purchase">
     <div class="drawer-head">
       <span class="drawer-title" data-i18n="land.title">Land Purchase</span>
@@ -886,6 +919,6 @@
   <button type="button" class="canvas-switch" id="switch-to-atlas" data-i18n-aria="lv.switchToAtlas" data-i18n-title="lv.switchToAtlas" aria-label="lineage atlas" title="lineage atlas"><svg class="cs-ico" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="2.7"/><path d="M8 1.7v3.6M8 10.7v3.6M1.7 8h3.6M10.7 8h3.6"/></svg><span data-i18n="lv.switchToAtlas">atlas</span></button>
 
   <!-- task 5: entry point moved from app.js (monolith, kept as backup reference) to the split ESM tree -->
-  <script src="./main.js?v=159" type="module"></script>
+  <script src="./main.js?v=161" type="module"></script>
 </body>
 </html>

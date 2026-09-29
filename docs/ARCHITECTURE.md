@@ -110,8 +110,10 @@ Served by the DO (the Worker adds CORS and the `/health` index). All responses a
 | `GET` | `/state` | Tick, population size, config, counters |
 | `GET` | `/population` | Collective mood + per-fly drives + economy summary (the frontend feed) |
 | `GET` | `/market` | Latest Arc sample → temperature / regime / baselines |
-| `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals + facilitator mode |
+| `GET` | `/economy` | Agent wallets + x402 settlement ledger + totals + facilitator mode (+ the norms / conventions / rules membrane read-outs when switched on) |
 | `GET` | `/history` | D1 long-term archive: one row per cron + a since-launch summary (`limit` / `before` / `order`) |
+| `GET` | `/lineage/stats` | Cross-generation capability rollup + temperature-band bins (the evolution drawer's curve / heatmap source) |
+| `GET` | `/replay/economy` | Deterministic era-by-era economy replay archive (hash-chained; degrades to `{enabled:false}` when off) |
 | `GET` | `/snapshot?flyId=N` | One fly's full neural state (firing rates, spikes, neuron kinds) + its wallet |
 | `GET` | `/flies/:id` | One fly's drives, behaviour and vitals |
 | `GET` | `/stimuli` | Recent visitor-stimulus history |
@@ -131,6 +133,15 @@ lists every fly's on-chain address and balance and opens any one of them, and th
 each real transaction hash straight to the Arc explorer. The render loop is self-healing and adaptively sheds its
 heaviest layers under frame-budget pressure, and pointer input is click-storm throttled, so rapid interaction can
 never stall the tab. If the Worker is unreachable, an offline circuit-breaker runs the piece purely locally.
+
+The left command rail (task 65 / 93) carries two task-88 read-out drawers beside the PoCA anchor: the
+**Evolution Engine** drawer (`evolution.js` — capability curve from `/lineage/stats`, the genome-lineage DAG
+from `/lineage`, the niche heatmap, the era-replay table from `/replay/economy`, and the playbook memory
+rings once the worker exposes them) and the **Emergent Institutions** HUD (`institutionsHud.js` — the
+norms / conventions / rules membranes carried by `/economy`, with lifecycle counters, edges and rosters).
+Both follow the PoCA drawer discipline exactly: fetch-into-cache then paint, mutual exclusion through the
+`window.__close*` bridge, cache-only repaints on a language switch, and honest dormant/degraded states
+instead of errors. They never write to the worker.
 
 ---
 

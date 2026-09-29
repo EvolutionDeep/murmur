@@ -154,6 +154,14 @@
 /sim.js
   Cache-Control: no-cache, must-revalidate
 
+# task 88: the open-ended evolution engine drawer + the emergent-institutions HUD.
+# Both are bare ESM imports of main.js, stamped ?v= in lockstep by the bump script.
+/evolution.js
+  Cache-Control: no-cache, must-revalidate
+
+/institutionsHud.js
+  Cache-Control: no-cache, must-revalidate
+
 # NSFW filter model weights (self-hosted binary, loaded by landDrawer.js via nsfwjs).
 # The 2.6MB shard + 129KB manifest are immutable content — cache aggressively so the
 # lazy load on first upload is cheap for returning visitors. Rename the dir to bust.

@@ -567,6 +567,18 @@ The frontend exposes `window.__pocaVerify` (when the PoCA drawer is loaded), whi
 3. Cross-references `codeCommitment` against the served `commitmentInputs`.
 4. Reports a PASS/FAIL verdict per criterion.
 
+### The read-out drawer family (task 88)
+
+The PoCA drawer is the template for the frontend's read-out drawer family, and the two Phase-7 evolution
+drawers added by task 88 — the **Evolution Engine** (`evolution.js`, consuming `/lineage/stats`,
+`/lineage` and `/replay/economy`) and the **Emergent Institutions** HUD (`institutionsHud.js`, consuming
+the `norms` / `conventions` / `rules` membrane keys of `/economy`) — copy its discipline verbatim: a
+right-edge sheet on the command rail, mutual exclusion through the `window.__close*` bridge,
+fetch-into-cache-then-paint, cache-only repaints on a language switch, and honest dormant states instead
+of errors. They are pure consumers: the `stateDigest` / `cronDigest` contract is untouched, the epoch
+chain does not depend on them, and a worker-side switch being off (membrane key absent, replay disabled)
+degrades the UI — never the continuity anchor.
+
 ### Manual verification with `cast`
 
 ```bash
