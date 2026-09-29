@@ -486,6 +486,8 @@ export interface EconomyConfig {
   //     net, far less often, so real gas is amortised over more value instead of one tx per micropay. ---
   netMinBroadcastUsdc: number;     // min |net| per pair before it is broadcast (below ⇒ dust carries forward)
   netFlushTicks: number;           // force-flush any nonzero pending net at least every N sub-ticks (0 = never)
+  /** #98 Fix 2: max pairs to BROADCAST per cron flush (0 or absent = no cap, legacy). Remaining carry forward. */
+  netFlushBudgetPerCron?: number;
   // --- live-population GROWTH: a HATCHED offspring (id >= populationSize) opens its DISPLAY mirror at the
   //     REAL bootstrap its parent funded it with (hatchSeedUsdc), not the genesis initialBalance — otherwise
   //     the frontend would show a newborn as fake-rich (wrong wallet number AND wrong wealth-ramp size/colour).
@@ -1092,6 +1094,12 @@ export class AgentEconomy {
     // (no RPC spent); commitRoundReceipt re-anchors independently for a round-only cron.
     if (this.pendingNets.size > 0) await this.resyncChainHeadFromRegistry();
 
+    // #98 Fix 2: per-cron flush budget — cap the number of EXPENSIVE broadcast attempts so the cron
+    // wall-clock stays bounded even with a large pendingNets backlog. Cheap skips (zero-net, dust, backoff)
+    // do NOT consume budget. Remaining pairs carry forward deterministically (Map insertion order is stable).
+    const flushBudget = this.cfg.netFlushBudgetPerCron ?? 0;
+    let flushed = 0;
+
     for (const [key, pn] of Array.from(this.pendingNets.entries())) {
       const abs = pn.net < 0n ? -pn.net : pn.net;
       if (abs === 0n) {
@@ -1113,6 +1121,10 @@ export class AgentEconomy {
         const wait = Math.min(1 << bo.streak, 30);
         if (tickIndex - bo.lastFailTick < wait) continue;
       }
+
+      // #98 Fix 2: budget gate — only EXPENSIVE broadcast attempts consume budget.
+      if (flushBudget > 0 && flushed >= flushBudget) break;
+      flushed++;
 
       const debtorId = pn.net > 0n ? pn.lo : pn.hi;
       const creditorId = pn.net > 0n ? pn.hi : pn.lo;

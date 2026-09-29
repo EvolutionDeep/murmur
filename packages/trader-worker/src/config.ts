@@ -517,6 +517,8 @@ export interface RuntimeConfig {
     maxDealUsdc: number;
     netMinBroadcastUsdc: number;
     netFlushTicks: number;
+    /** #98 Fix 2: max pendingNets pairs to BROADCAST per cron flush (0 = no cap, legacy behaviour). */
+    netFlushBudgetPerCron: number;
     gasPriceGwei: number | null;
     usdcEip712Name: string;
     usdcEip712Version: string;
@@ -861,6 +863,18 @@ export interface RuntimeConfig {
     iouRateBand: [number, number];        // hard clamp on any legislated interest rate
   };
   
+  // #98 Cron infrastructure knobs (code-defaults only — no wrangler [vars] key needed).
+  cron: {
+    /** Economy blob bytes above which persist() shards the write (default 262144 = 256 KB). */
+    persistShardThreshold: number;
+    /** Max bytes per shard part (default 262144 = 256 KB). */
+    persistChunkSize: number;
+    /** Wall-clock ms above which cron() emits a warning (default 45000 = 45 s). */
+    wallClockWarnMs: number;
+    /** netPending count above which cron emits a backlog alert (default 500). */
+    netPendingAlertThreshold: number;
+  };
+
   // connectome sizing (ts-lif)
   brainOpts: {
     nSensory?: number;
@@ -1013,6 +1027,7 @@ export function loadConfig(env: Env): RuntimeConfig {
       maxDealUsdc: clamp(Number(env.ECONOMY_MAX_DEAL ?? "0.05"), 0, 100_000),
       netMinBroadcastUsdc: clamp(Number(env.ECONOMY_NET_MIN_BROADCAST ?? "0.004"), 0, 100_000),
       netFlushTicks: clampInt(Number(env.ECONOMY_NET_FLUSH_TICKS ?? "30"), 0, 100_000),
+      netFlushBudgetPerCron: 40,   // #98 Fix 2: code-default only, no env var
       gasPriceGwei: env.ECONOMY_GAS_PRICE_GWEI?.trim()
         ? clamp(Number(env.ECONOMY_GAS_PRICE_GWEI), 0.000001, 100_000)
         : null,
@@ -1440,6 +1455,13 @@ export function loadConfig(env: Env): RuntimeConfig {
         iouRateBand: band(env.LAW_IOU_RATE_BAND, [0, 0.05], 0, 0.2),
       };
     })(),
+
+    cron: {
+      persistShardThreshold: 262_144,   // 256 KB — #98 Fix 1
+      persistChunkSize: 262_144,        // 256 KB — #98 Fix 1
+      wallClockWarnMs: 45_000,          // 45 s  — #98 Fix 4
+      netPendingAlertThreshold: 500,    // #98 Fix 3
+    },
 
     brainOpts: {
       nSensory: posCount(env.BRAIN_N_SENSORY),

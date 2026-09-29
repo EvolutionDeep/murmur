@@ -134,6 +134,10 @@ const KEY_LAST_SNAPSHOT = "lastSnapshot:v1";
 const KEY_PREV_TEMP = "prevTemperature";
 const KEY_STIMULI = "stimuli";
 const KEY_ECONOMY = "economy:v1";
+/** #98 Fix 1: manifest key for the sharded economy blob (the commit-point for crash-safe multi-part writes). */
+const KEY_ECON_MANIFEST = "economy:v1:manifest";
+/** #98 Fix 1: prefix for shard part keys — full key is `${KEY_ECON_PART_PREFIX}${gen}:${index}`. */
+const KEY_ECON_PART_PREFIX = "economy:v1:part:";
 /** Culture membrane (adopted FAP creeds + TTLs) — its OWN key: culture is a read-out overlay, so a
  *  corrupt/absent blob only loses fashions, never ledger state. Bounded (≤64 records), DO-safe. */
 const KEY_CULTURE = "culture:v1";
@@ -353,6 +357,44 @@ export function landImageHeaders(): Record<string, string> {
   };
 }
 
+// ---------- #98 Fix 1: Sharded persist utilities (exported for unit testing) ----------
+
+/**
+ * FNV-1a 32-bit hash of a string — deterministic, fast, used to verify shard integrity.
+ * Matches the existing hash32 convention in the codebase (same prime/offset).
+ */
+export function blobFNV1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Split a blob string into chunks of at most `chunkSize` characters. */
+export function splitBlob(blob: string, chunkSize: number): string[] {
+  if (chunkSize <= 0) return [blob];
+  const parts: string[] = [];
+  for (let off = 0; off < blob.length; off += chunkSize) {
+    parts.push(blob.slice(off, off + chunkSize));
+  }
+  return parts;
+}
+
+/** Join shard parts back into the original blob string. */
+export function joinShards(parts: string[]): string {
+  return parts.join("");
+}
+
+/** The manifest shape stored at KEY_ECON_MANIFEST (the crash-safe commit point). */
+export interface EconShardManifest {
+  gen: number;          // alternating 0/1 generation (double-buffer)
+  partCount: number;    // number of part keys written
+  totalBytes: number;   // original blob.length (for truncation detection)
+  fnv: number;          // FNV-1a hash of the full blob (integrity check)
+}
+
 export class FlyStateDO {
   private state: DurableObjectState;
   private env: Env;
@@ -475,6 +517,8 @@ export class FlyStateDO {
   private cronStartedAt: number | null = null;
   /** Set once the D1 archival table has been ensured this DO lifetime (avoids re-running DDL per cron). */
   private d1SchemaReady = false;
+  /** #98 Fix 1: current economy shard generation (alternates 0/1). Null until first read/write this DO lifetime. */
+  private econPersistGen: number | null = null;
   /** The deterministic historian (era/record trackers) + its hot recent-chronicle buffer, lazily loaded. */
   private chronicler: Chronicler | null = null;
   private annals: ChronicleEntry[] = [];
@@ -565,6 +609,7 @@ export class FlyStateDO {
       maxDealUsdc: this.cfg.economy.maxDealUsdc,
       netMinBroadcastUsdc: this.cfg.economy.netMinBroadcastUsdc,
       netFlushTicks: this.cfg.economy.netFlushTicks,
+      netFlushBudgetPerCron: this.cfg.economy.netFlushBudgetPerCron,   // #98 Fix 2
       // A hatched offspring (id >= populationSize) opens its display mirror at its real parent-funded
       // bootstrap, not the genesis initialBalance, so the frontend shows a newborn's true (tiny) wallet.
       populationSize: this.cfg.populationSize,
@@ -631,9 +676,39 @@ export class FlyStateDO {
 
   private async ensureEconomy(): Promise<AgentEconomy> {
     if (this.economy) return this.economy;
-    const stored = await this.state.storage.get<string>(KEY_ECONOMY);
+    // #98 Fix 1: try the sharded manifest first (new format), then fall back to the legacy single key.
+    const stored = await this.readEconomyBlob();
     this.economy = this.makeEconomy(stored ?? undefined);
     return this.economy;
+  }
+
+  /**
+   * #98 Fix 1: read the economy blob from either the sharded format (manifest + parts) or the legacy
+   * single-key format. Crash-safe: if the manifest exists but parts are incomplete/corrupt (hash mismatch),
+   * falls back to the legacy key. If neither is available, returns null (fresh economy).
+   */
+  private async readEconomyBlob(): Promise<string | null> {
+    const manifest = await this.state.storage.get<EconShardManifest>(KEY_ECON_MANIFEST);
+    if (manifest && typeof manifest.gen === "number" && manifest.partCount > 0) {
+      try {
+        const keys = Array.from({ length: manifest.partCount }, (_, i) => `${KEY_ECON_PART_PREFIX}${manifest.gen}:${i}`);
+        const partsMap = await this.state.storage.get<string>(keys);
+        // Verify all parts are present and join
+        const joined = keys.map((k) => partsMap.get(k) ?? "").join("");
+        if (joined.length === manifest.totalBytes && blobFNV1a(joined) === manifest.fnv) {
+          this.econPersistGen = manifest.gen;
+          return joined;
+        }
+        // Hash/length mismatch: partial write or corruption — fall through to legacy
+        console.warn("[DO] #98 sharded economy blob integrity check failed; falling back to legacy key");
+      } catch (e) {
+        console.warn("[DO] #98 sharded economy read failed; falling back to legacy key:", (e as Error).message);
+      }
+    }
+    // Legacy single-key path (backward-compatible with pre-#98 blobs)
+    const legacy = await this.state.storage.get<string>(KEY_ECONOMY);
+    if (legacy) this.econPersistGen = null;   // legacy format active
+    return legacy ?? null;
   }
 
   /**
@@ -1692,7 +1767,46 @@ export class FlyStateDO {
     // internal batch logic across multiple shard DOs via RPC.
     const batch: Record<string, unknown> = {};
     if (this.meter) batch[KEY_METER] = this.meter.toJSON();
-    if (this.economy) batch[KEY_ECONOMY] = this.economy.serialize();
+
+    // #98 Fix 1: sharded economy persist — when the serialized blob exceeds the threshold, split it into
+    // bounded chunks written individually (each well under the DO per-value timeout), then commit via a
+    // manifest in the main batch. Crash-safe: if the batch fails, old data (legacy key or previous gen
+    // parts) remains valid. The read path (readEconomyBlob) always prefers a valid manifest over legacy.
+    let shardGcOldGen = -1;   // set >= 0 when we need to GC old-generation parts after the batch
+    let shardGcLegacy = false; // set true when we should best-effort delete the legacy single key
+    if (this.economy) {
+      const econBlob = this.economy.serialize();
+      const threshold = this.cfg.cron.persistShardThreshold;
+      if (econBlob.length > threshold) {
+        // LARGE BLOB: shard write path
+        const newGen = 1 - (this.econPersistGen ?? 0);   // alternate 0↔1 (double-buffer)
+        const chunkSize = this.cfg.cron.persistChunkSize;
+        const parts = splitBlob(econBlob, chunkSize);
+        // Write each part as a separate bounded put — no single value exceeds chunkSize bytes
+        for (let i = 0; i < parts.length; i++) {
+          await this.state.storage.put(`${KEY_ECON_PART_PREFIX}${newGen}:${i}`, parts[i]);
+        }
+        // The manifest in the batch is the COMMIT POINT
+        const manifest: EconShardManifest = {
+          gen: newGen,
+          partCount: parts.length,
+          totalBytes: econBlob.length,
+          fnv: blobFNV1a(econBlob),
+        };
+        batch[KEY_ECON_MANIFEST] = manifest;
+        this.econPersistGen = newGen;
+        shardGcOldGen = 1 - newGen;
+        shardGcLegacy = true;
+      } else {
+        // SMALL BLOB: legacy single-key path (today's exact behaviour)
+        batch[KEY_ECONOMY] = econBlob;
+        // Nullify the manifest so readEconomyBlob falls through to the legacy key
+        batch[KEY_ECON_MANIFEST] = { gen: 0, partCount: 0, totalBytes: 0, fnv: 0 } satisfies EconShardManifest;
+        if (this.econPersistGen != null) shardGcOldGen = this.econPersistGen;
+        this.econPersistGen = null;
+      }
+    }
+
     if (this.culture) batch[KEY_CULTURE] = this.culture.serialize();
     if (this.religion) batch[KEY_RELIGION] = this.religion.serialize();
     if (this.tech) batch[KEY_TECH] = this.tech.serialize();
@@ -1728,6 +1842,18 @@ export class FlyStateDO {
     }
     batch[KEY_LAST_CRON] = Date.now();
     await this.state.storage.put(batch);
+
+    // #98 Fix 1: best-effort GC of stale shard parts / legacy key AFTER the commit point succeeded.
+    // A failure here is harmless (orphans are ignored by the read path) and never blocks the cron.
+    if (shardGcOldGen >= 0) {
+      try {
+        const staleKeys: string[] = [];
+        // Delete old-generation parts (we don't know exact count; use a generous upper bound)
+        for (let i = 0; i < 64; i++) staleKeys.push(`${KEY_ECON_PART_PREFIX}${shardGcOldGen}:${i}`);
+        if (shardGcLegacy) staleKeys.push(KEY_ECONOMY);
+        await this.state.storage.delete(staleKeys);
+      } catch { /* best-effort */ }
+    }
   }
 
   // ---------- D1 long-term archival (one row per cron; best-effort, never blocks the tick) ----------
@@ -3215,6 +3341,16 @@ export class FlyStateDO {
         console.error("[DO] emergency clock persist also failed (next cron retries):", e2);
       }
     } finally {
+      // #98 Fix 4: cron wall-clock monitoring — measure elapsed time and warn if it exceeds the threshold.
+      // Observability only; does NOT change any decision behaviour.
+      if (this.cronStartedAt != null) {
+        const elapsed = Date.now() - this.cronStartedAt;
+        if (elapsed > this.cfg.cron.wallClockWarnMs) {
+          console.warn(
+            `[DO] CRON SLOW (#98): wall-clock ${elapsed}ms exceeded ${this.cfg.cron.wallClockWarnMs}ms threshold`,
+          );
+        }
+      }
       this.cronRunning = false;
       this.cronStartedAt = null;
       // P2 watchdog: arm the DO alarm 90s out. In the healthy path it just confirms the heartbeat; if the NEXT
@@ -3571,6 +3707,15 @@ export class FlyStateDO {
         }
       }
       this.lastEconomy = economy.snapshot();
+      // #98 Fix 3: backlog alerting — when netPending exceeds the configured threshold, emit a warning so the
+      // backlog is observable in Worker logs. Uses console.warn (the existing warning mechanism throughout
+      // state.ts) to stay WORKER-ONLY with no new chronicler kind or frontend dependency.
+      if (this.lastEconomy.totals.netPending > this.cfg.cron.netPendingAlertThreshold) {
+        console.warn(
+          `[DO] BACKLOG ALERT (#98): netPending=${this.lastEconomy.totals.netPending} exceeds threshold ` +
+            `${this.cfg.cron.netPendingAlertThreshold} — flush budget carry-forward active`,
+        );
+      }
     }
 
     // PREDICTION MARKET — commit the resolved round's receipt to the on-chain registry (sharing the SAME
