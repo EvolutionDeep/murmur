@@ -22,6 +22,7 @@ import type { LeaderRow } from "./economy.js";
 import type { LineageEntry } from "./breed.js";
 import { GENOME_BOUNDS, FLYWIRE_GENOME_BOUNDS, FLYWIRE_DEFAULTS, mutateGenome, mutateGenomeFlyWire, type Genome } from "@fly/fly-brain";
 import type { MutationPath } from "./temple.js";
+import type { ElitesArchive } from "./elites.js";
 
 /** One autonomous breeding decision the cron step should carry out (null = nothing worth breeding). */
 export interface EvolutionPlan {
@@ -63,13 +64,21 @@ export interface EvolutionLimits {
  *   1. Hard-stop at the per-cron and per-day ceilings (never overspend the budget).
  *   2. Keep only PROFITABLE agents (netUsdc > 0) that have a resolvable genome and are under their per-agent
  *      daily breeding budget — ranked fittest first. A losing or unknown fly is never a parent.
- *   3. With ≥2 fit parents, cross the top two with probability `crossBias` (sexual recombination of the two
+ *   3. ELITES (Phase 2b): when an archive is provided, the primary parent is selected via novelty pressure
+ *      (explore under-occupied behaviour cells) instead of pure PnL rank. The netUsdc > 0 hard gate STILL
+ *      binds — novelty never promotes a loss-maker. Without an archive, selection is pure-PnL (byte-identical
+ *      to the pre-elites build).
+ *   4. With ≥2 fit parents, cross the top two with probability `crossBias` (sexual recombination of the two
  *      best strategies); otherwise mutate the single fittest (clone-and-perturb the champion).
- *   4. The fittest eligible parent always PAYS (funds the fee from its own wallet) and is credited as breeder.
+ *   5. The selected parent always PAYS (funds the fee from its own wallet) and is credited as breeder.
  *
  * `genomeHashById` resolves a live agent id to the genome it actually runs (its genesis brain); ids with no
  * genome (null/"") are ineligible. `rng` supplies the cross/mutate draw; `rngSeed` is recorded on the plan so
  * the offspring is reproducible.
+ *
+ * PHASE 4 EXTENSION POINT: the `elites` parameter accepts any ElitesArchive; Phase 4 can replace the scalar
+ * fitness with multi-objective crowding distance or tournament selection inside the archive's ScoringFn
+ * without changing this function's signature or the hard gates below.
  */
 export function planEvolution(
   rows: LeaderRow[],
@@ -77,6 +86,7 @@ export function planEvolution(
   lim: EvolutionLimits,
   rng: () => number,
   rngSeed: number,
+  elites?: { archive: ElitesArchive; tickIndex: number; exploreRate: number } | null,
 ): EvolutionPlan | null {
   // 1) Hard budget gates first: never breed past the per-cron or per-day ceilings.
   if (lim.perCron <= 0 || lim.perCronUsed >= lim.perCron) return null;
@@ -99,11 +109,36 @@ export function planEvolution(
 
   if (eligible.length === 0) return null;
 
-  // 3) + 4) Choose the operator and the payer (always the fittest eligible parent).
-  const top = eligible[0];
+  // 3) ELITES novelty selection: when armed, pick the primary parent via the archive's behaviour-space
+  //    exploration instead of pure PnL rank. The netUsdc > 0 hard gate already filtered the pool above,
+  //    so novelty can NEVER promote a loss-maker. Without elites, `top` is simply eligible[0] (unchanged).
+  let top = eligible[0];
+  if (elites && elites.archive) {
+    const candidates = eligible.map((e) => ({
+      agentId: e.row.id,
+      fitness: e.row.netUsdc,
+      bins: [0, 0, 0] as [number, number, number], // bins are resolved inside selectParent via archive cells
+    }));
+    // Enrich bins from the archive's existing entries (the archive was updated this tick in step()).
+    for (const c of candidates) {
+      for (const [, entry] of elites.archive.entries()) {
+        if (entry.agentId === c.agentId) { c.bins = entry.bins; break; }
+      }
+    }
+    const selectedId = elites.archive.selectParent(
+      elites.tickIndex, 0, elites.exploreRate, candidates,
+    );
+    if (selectedId != null) {
+      const found = eligible.find((e) => e.row.id === selectedId);
+      if (found) top = found;
+    }
+  }
+
+  // 4) + 5) Choose the operator and the payer (always the selected parent).
   const doCross = eligible.length >= 2 && rng() < lim.crossBias;
   if (doCross) {
-    const second = eligible[1];
+    // Second parent: the best by PnL that isn't the primary (sexual recombination of two strategies).
+    const second = eligible.find((e) => e.row.id !== top.row.id) ?? eligible[1];
     return {
       op: "cross",
       parents: [top.hash, second.hash],

@@ -28,8 +28,12 @@ export const PROOF_VERSION = 1;
 /**
  * Bump whenever the neural-drive → economic-decision policy changes (pricing / counterparty pick /
  * good mapping). Mixed into every hash so a reader can tell which policy produced a given receipt.
+ * Phase 2b: rotated econ-v1 → econ-v2 (GP strategy trees now modulate decisions). Old econ-v1
+ * receipts remain VALID — verifiers pass the receipt's embedded `policy` field to recomputeDecisionHash.
  */
-export const POLICY_VERSION = "econ-v1";
+export const POLICY_VERSION = "econ-v2";
+/** All policy versions considered valid for receipt verification (backward compatibility). */
+export const VALID_POLICY_VERSIONS: ReadonlySet<string> = new Set(["econ-v1", "econ-v2"]);
 
 /** The frozen neural read-out of one side of a trade — the evidence that neurons, not a human, decided. */
 export interface NeuralEvidence {
@@ -161,11 +165,13 @@ export async function decisionHash(
 /**
  * Recompute a published constituent's decisionHash from the neural evidence carried INSIDE the receipt.
  * Self-contained: a third party needs only the receipt bytes, not our word, to confirm the digest.
+ * Phase 2b: accepts an optional `policy` override so old econ-v1 receipts can still be verified after
+ * the rotation to econ-v2. Defaults to the current POLICY_VERSION for new receipts.
  */
-export async function recomputeDecisionHash(c: NeuralConstituent): Promise<string> {
+export async function recomputeDecisionHash(c: NeuralConstituent, policy?: string): Promise<string> {
   return sha256Hex({
     v: PROOF_VERSION,
-    policy: POLICY_VERSION,
+    policy: policy ?? POLICY_VERSION,
     kind: "decision",
     tick: c.tick,
     good: c.good,

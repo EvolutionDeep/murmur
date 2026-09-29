@@ -222,6 +222,9 @@ export class PredictionMarket {
     momentum: number,
     tick: number,
     balanceOf: (id: number) => string,
+    /** Optional GP strategy tilt callback (Phase 2b). Returns an additive tilt [-0.5..+0.5] on the score.
+     *  Absent/null ⇒ 0 (inert, byte-for-byte the pre-strategy build). */
+    strategyTiltOf?: ((r: FlyReading, tick: number) => number) | null,
   ): OpenRound | null {
     if (!this.cfg.enabled || readings.length === 0) return null;
     this.roundCounter++;
@@ -233,7 +236,10 @@ export class PredictionMarket {
       if (r.rest > 0.6) continue;   // a resting fly barely participates (mirrors the trade layer)
       // Direction: the fly's intrinsic turn lean, tilted by how strongly the market is currently moving
       // (momentum) weighted by this fly's arousal — an aroused fly chases the trend harder.
-      const score = r.turnBias + 0.5 * momentum * (0.5 + clamp01(r.arousal));
+      // STRATEGY: when armed, the GP tree adds a bounded tilt [-0.5..+0.5] to the score. The existing
+      // hard caps (stake ≤ maxStakeUsdc, stake ≤ ¼ balance) STILL bind downstream — zero risk expansion.
+      const stratTilt = strategyTiltOf ? strategyTiltOf(r, tick) : 0;
+      const score = r.turnBias + 0.5 * momentum * (0.5 + clamp01(r.arousal)) + stratTilt;
       const side: PredictSide = score >= 0 ? "UP" : "DOWN";
       let stake = atomic(this.cfg.stakeUsdc * (0.4 + 0.6 * clamp01(r.arousal)));
       if (stake > maxAtomic) stake = maxAtomic;

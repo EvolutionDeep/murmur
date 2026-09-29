@@ -583,6 +583,14 @@ export class FlyStateDO {
         exileSeverity: this.cfg.territory.exileSeverity,
         powerPerZone: this.cfg.territory.powerPerZone,
       },
+      // PLAYBOOK (Phase 1, capability ①): consequence-driven long-term memory. OFF ⇒ every hook no-ops.
+      playbook: { enabled: this.cfg.playbook.enabled },
+      // STRATEGY (Phase 2b, capability ②): GP expression trees modulate decisions within existing caps.
+      // OFF ⇒ every strategy hook no-ops, the economy is byte-for-byte the Phase 1 build.
+      strategy: { enabled: this.cfg.strategy.enabled },
+      // ELITES (Phase 2b, capability ②): MAP-Elites novelty archive drives exploration in planEvolution.
+      // OFF ⇒ archive never updates, planEvolution uses pure-PnL selection byte-for-byte.
+      elites: { enabled: this.cfg.elites.enabled },
     };
   }
 
@@ -1260,7 +1268,11 @@ export class FlyStateDO {
     // calls rng() at most once (the cross/mutate decision), but the counter makes it safe for any call count.
     let rngCounter = 0;
     const deterministicRng = (): number => evoHash01(tickIndex, rngCounter++, ev.salt);
-    const plan = planEvolution(rows, genomeHashById, lim, deterministicRng, rngSeed);
+    // ELITES (Phase 2b): when armed, pass the archive for novelty-driven parent selection. The netUsdc > 0
+    // hard gate inside planEvolution still binds — novelty never promotes a loss-maker. OFF ⇒ null ⇒ pure-PnL.
+    const elitesArchive = economy.getElitesArchive();
+    const elitesArg = elitesArchive ? { archive: elitesArchive, tickIndex, exploreRate: 0.3 } : null;
+    const plan = planEvolution(rows, genomeHashById, lim, deterministicRng, rngSeed, elitesArg);
     if (!plan) return;                                                                  // nobody fit / budget hit
 
     // Compute + validate the offspring BEFORE spending. applyBreed is pure and refuses unknown parents and
@@ -3279,6 +3291,10 @@ export class FlyStateDO {
         prediction.openRound(
           snapshot.flies, temperature, pulse.momentum, swarm.getTickIndex(),
           (id) => economy.getAgent(id)?.balance ?? "0",
+          // STRATEGY (Phase 2b): pass the GP tilt callback when armed; null ⇒ inert (byte-for-byte pre-strategy).
+          this.cfg.strategy.enabled
+            ? (r, tick) => economy.strategyPredictTilt(r, tick)
+            : null,
         );
       } catch (e) {
         console.warn("[DO] predict open failed (non-fatal):", (e as Error).message);

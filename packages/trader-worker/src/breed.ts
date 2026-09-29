@@ -22,8 +22,12 @@ import {
   mutateGenome,
   mutateGenomeFlyWire,
   specFromGenome,
+  mutateTree,
+  crossoverTrees,
+  treeHash as gpTreeHash,
   type Genome,
   type ConnectomeStructuralSpec,
+  type StrategyTree,
 } from "@fly/fly-brain";
 import type { RuntimeConfig } from "./config.js";
 
@@ -34,7 +38,7 @@ export type BreedOp = "genesis" | "mutate" | "cross";
 
 /** One committed connectome individual + its ancestry. */
 export interface LineageEntry {
-  /** sha256(canonicalGenome(genome)), 64 lowercase hex (no 0x) — the on-chain identity. */
+  /** sha256(canonicalGenome(genome) [+ strategyTreeHash]), 64 lowercase hex (no 0x) — the on-chain identity. */
   genomeHash: string;
   /** The full genome body (served so anyone can rebuild + re-spec the brain offline). */
   genome: Genome;
@@ -51,6 +55,12 @@ export interface LineageEntry {
   ts: number;
   /** On-chain ConnectomeLineage commit tx, when anchored; null otherwise. */
   commitTx: string | null;
+  /**
+   * Phase 2b (additive): the GP strategy tree hash (32 hex) carried by this individual. Folded into
+   * genomeHash so the on-chain identity reflects BOTH connectome and strategy lineage. Absent on
+   * pre-2b entries (genesis roots bred before the strategy layer existed) — those hashes stay valid.
+   */
+  strategyTreeHash?: string;
 }
 
 export interface BreedRequest {
@@ -63,9 +73,17 @@ export interface BreedRequest {
   breeder?: string | null;
 }
 
-/** sha256 of the genome's canonical bytes (64 lowercase hex, no 0x). */
-export async function genomeHash(g: Genome): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalGenome(g));
+/**
+ * sha256 of the genome's canonical bytes (64 lowercase hex, no 0x).
+ * Phase 2b: when `strategyTreeHash` is provided, it is appended to the canonical genome string BEFORE
+ * hashing, so the on-chain identity reflects BOTH connectome and strategy lineage. The OUTPUT FORMAT
+ * is unchanged (bytes32 / 64 hex) — only the hash VALUE differs. Pre-2b entries (no treeHash) hash
+ * exactly as before, so old receipts/lineage remain valid (backward compatible).
+ */
+export async function genomeHash(g: Genome, strategyTreeHash?: string): Promise<string> {
+  const base = canonicalGenome(g);
+  const input = strategyTreeHash ? base + "|" + strategyTreeHash : base;
+  const bytes = new TextEncoder().encode(input);
   const dig = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(dig))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -99,20 +117,33 @@ export async function genesisLineage(cfg: RuntimeConfig): Promise<LineageEntry[]
  * When `opts.flywireTopology` is true, uses the FlyWire-mode operators (mutateGenomeFlyWire /
  * crossoverGenomeFlyWire) which mutate PARAMETERS (weightGain/threshGain/tauGain/weightJitter)
  * instead of layer sizes. Topology is fixed from the real FAFB 783 subgraph.
+ *
+ * Phase 2b: when `opts.parentTrees` is provided, the offspring inherits a MUTATED (or CROSSED) strategy
+ * tree alongside its genome. The tree's hash is folded into genomeHash (on-chain format unchanged, only
+ * the hash value differs) and recorded in `strategyTreeHash`. Without parentTrees, behaviour is identical
+ * to pre-2b (no tree inheritance, genomeHash = sha256(canonicalGenome) exactly as before).
  */
 export async function applyBreed(
   entries: LineageEntry[],
   req: BreedRequest,
-  opts: { flywireTopology?: boolean } = {},
+  opts: {
+    flywireTopology?: boolean;
+    /** Parent strategy trees keyed by genomeHash (Phase 2b). Absent ⇒ no tree inheritance. */
+    parentTrees?: Map<string, StrategyTree>;
+    /** Tick index for deterministic tree mutation seed (Phase 2b). */
+    tickIndex?: number;
+  } = {},
 ): Promise<LineageEntry> {
   const byHash = new Map(entries.map((e) => [e.genomeHash, e]));
   const rngSeed = (req.rngSeed ?? (Date.now() & 0xffffffff)) >>> 0;
   const flywire = opts.flywireTopology === true;
+  const tick = opts.tickIndex ?? 0;
 
   let child: Genome;
   let parents: string[];
   let generation: number;
   let op: BreedOp;
+  let childTreeHash: string | undefined;
 
   if (req.op === "mutate") {
     if (req.parents.length !== 1) throw new Error("mutate needs exactly 1 parent");
@@ -122,6 +153,12 @@ export async function applyBreed(
     parents = [p.genomeHash];
     generation = p.generation + 1;
     op = "mutate";
+    // Phase 2b: inherit + mutate the parent's strategy tree.
+    const pTree = opts.parentTrees?.get(p.genomeHash);
+    if (pTree) {
+      const mutated = mutateTree(pTree, rngSeed, tick);
+      childTreeHash = gpTreeHash(mutated);
+    }
   } else if (req.op === "cross") {
     if (req.parents.length !== 2) throw new Error("cross needs exactly 2 parents");
     const a = byHash.get(req.parents[0]);
@@ -133,11 +170,22 @@ export async function applyBreed(
     parents = [a.genomeHash, b.genomeHash];
     generation = Math.max(a.generation, b.generation) + 1;
     op = "cross";
+    // Phase 2b: crossover the parents' strategy trees (deterministic fallback to parent A on violation).
+    const aTree = opts.parentTrees?.get(a.genomeHash);
+    const bTree = opts.parentTrees?.get(b.genomeHash);
+    if (aTree && bTree) {
+      const crossed = crossoverTrees(aTree, bTree, rngSeed, tick);
+      childTreeHash = gpTreeHash(crossed);
+    } else if (aTree) {
+      const mutated = mutateTree(aTree, rngSeed, tick);
+      childTreeHash = gpTreeHash(mutated);
+    }
   } else {
     throw new Error(`unsupported op ${String(req.op)}`);
   }
 
-  const hash = await genomeHash(child);
+  // Phase 2b: fold the strategy tree hash into genomeHash (format unchanged: still bytes32 / 64 hex).
+  const hash = await genomeHash(child, childTreeHash);
   if (byHash.has(hash)) throw new Error("offspring genome already in lineage");
 
   return {
@@ -150,6 +198,7 @@ export async function applyBreed(
     rngSeed,
     ts: Date.now(),
     commitTx: null,
+    ...(childTreeHash ? { strategyTreeHash: childTreeHash } : {}),
   };
 }
 

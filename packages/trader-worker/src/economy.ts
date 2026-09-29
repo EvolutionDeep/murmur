@@ -56,6 +56,17 @@ import {
 } from "./x402.js";
 import { housePower, type WarHouse, type HouseFeud } from "./war.js";
 import type { Fap } from "@fly/fly-brain";
+import {
+  R6_SCALE,
+  evalStrategy,
+  generateTree,
+  treeHash,
+  serializeTree,
+  deserializeTree,
+  isLegalTree,
+  type StrategyTree,
+  type StrategyCtx,
+} from "@fly/fly-brain";
 import type { FlyReading, CollectiveState } from "./population.js";
 import type { PredictFlow } from "./prediction.js";
 import {
@@ -72,6 +83,7 @@ import {
 } from "./provenance.js";
 import type { ReceiptPinner } from "./ipfs.js";
 import { MarketBooks, type GoodBookView } from "./books.js";
+import { ElitesArchive, computeBins, type EliteEntry } from "./elites.js";
 
 /** The machine-to-machine data goods agents buy from one another. */
 export type GoodKind = "signal" | "momentum" | "attestation" | "prediction";
@@ -87,6 +99,9 @@ const GOOD_META: Record<GoodKind, { description: string; mimeType: string; price
   // priceMult is unused (the flow amount is fixed by the parimutuel resolution, not priced off a base).
   prediction: { description: "prediction-market resolution payout (parimutuel net)", mimeType: "application/json", priceMult: 1.0 },
 };
+
+/** Numeric index per good kind (for compact per-agent counters). */
+const GOOD_IDX: Record<GoodKind, number> = { signal: 0, momentum: 1, attestation: 2, prediction: 3 };
 
 /** Persistent per-agent wallet + lifetime counters. */
 export interface AgentState {
@@ -520,6 +535,19 @@ export interface EconomyConfig {
   playbook?: {
     enabled: boolean;
   };
+  // --- STRATEGY (Phase 2b capability ②: GP expression trees modulate economic decisions): OPTIONAL —
+  //     absent/false ⇒ every strategy hook no-ops, the economy is byte-for-byte the Phase 1 build.
+  //     Per-fly trees evaluate over EXISTING neural read-outs and tilt buyProbability / pickCounterparty /
+  //     dealAmount / prediction score WITHIN existing hard caps. NEVER touches connectome/genome/manifestHash. ---
+  strategy?: {
+    enabled: boolean;
+  };
+  // --- ELITES (Phase 2b capability ②: MAP-Elites novelty archive): OPTIONAL — absent/false ⇒ archive is
+  //     never updated, planEvolution uses pure-PnL selection byte-for-byte. When armed, a bounded 3-D
+  //     behavioural archive (4×4×4 = 64 cells) drives novelty exploration alongside PnL fitness. ---
+  elites?: {
+    enabled: boolean;
+  };
 }
 
 /**
@@ -698,6 +726,25 @@ export class AgentEconomy {
   /** Current tick's temperature bucket 0..3 (set at the top of step(); quantised for context hashing). */
   private pbTempBucket = 2;
 
+  /**
+   * STRATEGY (Phase 2b capability ②). Per-fly GP expression tree that modulates economic decisions.
+   * Persisted additively (an old payload has no `strategyTrees` key ⇒ trees are generated deterministically
+   * on first access). Economic layer ONLY — never touches the connectome (one-way law). Empty while OFF.
+   */
+  private strategyTrees = new Map<number, StrategyTree>();
+  /** Current tick's temperature (r6 integer) for strategy ctx building. Set once per step(). */
+  private stratTempR6 = 0;
+  /** Current tick index for strategy seed derivation. */
+  private stratTick = 0;
+
+  /**
+   * ELITES (Phase 2b capability ②). MAP-Elites novelty archive — a bounded 3-D behavioural grid (4×4×4 =
+   * 64 cells) that preserves diverse strategies. Persisted additively; empty while OFF.
+   */
+  private elitesArchive = new ElitesArchive();
+  /** Per-agent lifetime good-trade counts [signal, momentum, attestation, prediction] for entropy descriptor. */
+  private goodCounts = new Map<number, [number, number, number, number]>();
+
   /** ⑧ THE COMMONS: this era's legislated overrides of two institution knobs, applied fresh each cron by
    *  state.ts. null ⇒ base config (byte-for-byte the pre-law economy). Runtime-only, NEVER serialized —
    *  they are recomputed from the commons' own persisted decrees, so the economy payload stays untouched. */
@@ -806,6 +853,12 @@ export class AgentEconomy {
       this.pbRegime = collective.regime === "HOT" ? 2 : collective.regime === "COLD" ? 0 : 1;
       this.pbTempBucket = Math.min(3, Math.floor(T * 4));
     }
+    // STRATEGY context: cache the market temperature as r6 and the tick index for tree evaluation.
+    // Inert while the switch is off (stratTempR6/stratTick are never read).
+    if (this.strategyOn()) {
+      this.stratTempR6 = Math.trunc(T * R6_SCALE);
+      this.stratTick = tickIndex;
+    }
     const made: Settlement[] = [];
     // ORGANIC CONFLICT: buyers that held because their whole span was shunned, with the specific sellers
     // they refused (fed to the embargo mechanism). Collected only while the switch is on; empty otherwise.
@@ -892,6 +945,11 @@ export class AgentEconomy {
       }
     }
     if (this.recent.length > RECENT_CAP) this.recent.length = RECENT_CAP;
+    // ELITES: update the MAP-Elites archive with this tick's behaviour descriptors (additive, bounded).
+    // Only runs when the switch is ON; OFF ⇒ archive stays empty, byte-for-byte Phase 1 behaviour.
+    if (this.elitesOn() && cronBoundary) {
+      this.updateElitesArchive(readings, tickIndex);
+    }
     return made;
   }
 
@@ -1077,6 +1135,15 @@ export class AgentEconomy {
         creditor.earned = addAtomic(creditor.earned, amountStr);
         creditor.sales++;
         creditor.lastTick = tickIndex;
+        // ELITES: track per-agent good-trade counts for the entropy behaviour descriptor (additive, cheap).
+        if (this.elitesOn()) {
+          const gi = GOOD_IDX[good];
+          for (const aid of [debtor.id, creditor.id]) {
+            let gc = this.goodCounts.get(aid);
+            if (!gc) { gc = [0, 0, 0, 0]; this.goodCounts.set(aid, gc); }
+            gc[gi]++;
+          }
+        }
         this.recordSpend(debtor.id, amountStr);
         this.volumeAtomic = addAtomic(this.volumeAtomic, amountStr);
         this.count++;
@@ -1233,6 +1300,8 @@ export class AgentEconomy {
    * buy probability 0..1 from state + arousal + wingbeat + rest.
    * PROF: when a sticky profession is supplied (INSTITUTIONS ON), it tilts the result — a forager
    * chases signal, a brooder hoards its rest. null ⇒ the original formula, byte-for-byte (OFF path).
+   * STRATEGY: when armed, the GP tree's bounded tilt [0.5..1.5] modulates the base BEFORE the final
+   * clamp01 — so the output is STILL hard-capped to [0,1] (demand≤1 invariant preserved).
    */
   private buyProbability(r: FlyReading, T: number, role: Profession | null = null): number {
     const stateBase =
@@ -1242,8 +1311,11 @@ export class AgentEconomy {
     const arousal = 0.5 + 0.5 * clamp01(r.arousal);
     const wing = 0.85 + 0.3 * clamp01(r.wingbeat);
     const rest = 1 - 0.6 * clamp01(r.rest);
-    const base = stateBase * arousal * wing * rest * (0.6 + 0.4 * T);
-    return clamp01(role ? base * PROF_BUY[role] : base);
+    let base = stateBase * arousal * wing * rest * (0.6 + 0.4 * T);
+    if (role) base *= PROF_BUY[role];
+    // STRATEGY tilt: multiplicative [0.5..1.5], composed AFTER profession but BEFORE the hard clamp.
+    base *= this.strategyTilt(r, this.stratTick);
+    return clamp01(base);
   }
 
   /**
@@ -1280,7 +1352,11 @@ export class AgentEconomy {
     // pick inside the span, so a fresh swarm behaves neutrally until a past accumulates.
     // PLAYBOOK: when armed, modulates the social-weight amplitude by consequence confidence and
     // fires an ε-greedy exploration override with bounded probability (deterministic hash01).
+    // STRATEGY: when armed, the GP tree's bounded tilt [0.5..1.5] scales the social contribution
+    // COMPOUNDED with the playbook amplifier. Total weight stays ≥ 0.05 (existing floor) and the
+    // roulette is unchanged — no cap is bypassed, no new risk surface.
     const pbMod = this.playbookOn() ? this.playbookCounterpartyMod(r.id, tick) : null;
+    const stratTilt = this.strategyTilt(r, tick);  // 1.0 when OFF (inert)
     const picks: number[] = [];
     const weights: number[] = [];
     const shunned: number[] = [];
@@ -1293,7 +1369,8 @@ export class AgentEconomy {
       const rep = this.effectiveRep(cand.id, tick);
       // PLAYBOOK amplifier scales the social contribution [0.5..1.0]; ε-greedy zeroes it (uniform).
       const amp = pbMod ? (pbMod.explore ? 0 : pbMod.amplifier) : 1;
-      const w = Math.max(0.05, 1 + amp * (0.6 * bond + 0.4 * rep));
+      // STRATEGY tilt compounds with playbook: both are bounded [0.5..1.5]×[0.5..1.0] ⇒ max 0.75.
+      const w = Math.max(0.05, 1 + amp * stratTilt * (0.6 * bond + 0.4 * rep));
       picks.push(idx);
       weights.push(w);
       total += w;
@@ -1492,6 +1569,155 @@ export class AgentEconomy {
    */
   private playbookOn(): boolean {
     return !!this.cfg.playbook && this.cfg.playbook.enabled === true;
+  }
+
+  /**
+   * STRATEGY resolved: false/absent ⇒ every strategy hook no-ops, the economy is byte-for-byte the Phase 1
+   * build. Default OFF (ships dark); arms only on an explicit enabled:true.
+   */
+  private strategyOn(): boolean {
+    return !!this.cfg.strategy && this.cfg.strategy.enabled === true;
+  }
+
+  /** True when the MAP-Elites archive is armed (ELITES_ENABLED=true). OFF ⇒ archive never updates. */
+  private elitesOn(): boolean {
+    return !!this.cfg.elites && this.cfg.elites.enabled === true;
+  }
+
+  /**
+   * Update the MAP-Elites archive from this tick's readings + agent ledger. Called once per cron boundary.
+   * Each agent's behaviour descriptor bins are computed from (arousal, settle rate, good entropy) and the
+   * archive cell is contested: a higher-fitness (netUsdc) agent replaces the incumbent. Bounded: at most
+   * 64 cells × ~100B = 6.4KB. Deterministic: no Math.random, no Date.now in decisions.
+   */
+  private updateElitesArchive(readings: FlyReading[], tickIndex: number): void {
+    for (const r of readings) {
+      const idx = this.indexOfId.get(r.id);
+      if (idx == null) continue;
+      const agent = this.agents[idx];
+      const totalSettles = agent.deals + agent.sales;
+      const rateR6 = tickIndex > 0 ? Math.trunc((totalSettles / tickIndex) * 1_000_000) : 0;
+      const gc = this.goodCounts.get(r.id) ?? [0, 0, 0, 0];
+      const arousalR6 = Math.trunc(Math.max(0, Math.min(1, r.arousal)) * 1_000_000);
+      const bins = computeBins(arousalR6, totalSettles, Math.max(totalSettles, tickIndex), gc as [number, number, number, number]);
+      // Fitness = netUsdc (earned - paid) in atomic, converted to a float for comparison.
+      const netAtomic = BigInt(agent.earned) - BigInt(agent.paid);
+      const fitness = Number(netAtomic) / 1e6;
+      const th = this.strategyOn() ? (this.strategyTrees.get(r.id) ? treeHash(this.strategyTrees.get(r.id)!) : "") : "";
+      this.elitesArchive.insert({
+        agentId: r.id,
+        fitness,
+        treeHash: th,
+        tick: tickIndex,
+        bins,
+      });
+    }
+  }
+
+  /** Public accessor for the MAP-Elites archive (used by state.ts planEvolution wiring). */
+  getElitesArchive(): ElitesArchive | null {
+    return this.elitesOn() ? this.elitesArchive : null;
+  }
+
+  // ---------- STRATEGY: GP expression trees modulating economic decisions (Phase 2b, capability ②) ----------
+  // Per-fly strategy trees evaluate over EXISTING neural read-outs (arousal/wingbeat/rest/cohesion/turn/
+  // T/bond/rep/daHz/oaHz) and produce a bounded r6 tilt that is COMPOSED with (never replaces) the original
+  // formula, then re-clamped by the SAME hard caps. ECONOMIC LAYER ONLY — the one-way law holds: neurons →
+  // intent stays one-directional; the strategy never writes back into the connectome, never touches synWeight,
+  // never adds a sensory channel. Deterministic: all seeds use hash01/hash32 (FNV-1a); zero Math.random.
+
+  /** Salt for strategy tree generation seeds ("strat" in hex). */
+  private static readonly SALT_STRAT_GEN = 0x73747261;
+
+  /**
+   * Get (or lazily generate) a fly's strategy tree. Deterministic: the seed is derived from
+   * (tickIndex=0, agentId, SALT_STRAT_GEN) so the same fly always gets the same initial tree.
+   * Returns null if generation fails (extremely unlikely with 64 attempts).
+   */
+  private strategyTreeOf(id: number): StrategyTree | null {
+    let tree = this.strategyTrees.get(id);
+    if (tree) return tree;
+    // Deterministic seed from (0, id, salt) — stable across restarts for the same fly.
+    const seed = hash32(0, id, AgentEconomy.SALT_STRAT_GEN);
+    tree = generateTree(seed) ?? undefined;
+    if (tree) this.strategyTrees.set(id, tree);
+    return tree ?? null;
+  }
+
+  /**
+   * Build the StrategyCtx (terminal index → r6 integer) from a fly's live neural read-out + social memory.
+   * Terminal indices: 0=arousal, 1=wingbeat, 2=rest, 3=cohesion, 4=turn, 5=T, 6=bond, 7=rep, 8=daHz, 9=oaHz.
+   * All values are existing neural/social read-outs × R6_SCALE, Math.trunc()'d to r6 integers.
+   * NEVER adds a new sensory channel — manifestHash invariant holds.
+   */
+  private buildStrategyCtx(r: FlyReading, tick: number): StrategyCtx {
+    const ctx = new Map<number, number>();
+    // Neural read-outs (already 0..1 except turnBias which is -1..1)
+    ctx.set(0, Math.trunc(clamp01(r.arousal) * R6_SCALE));       // arousal
+    ctx.set(1, Math.trunc(clamp01(r.wingbeat) * R6_SCALE));      // wingbeat
+    ctx.set(2, Math.trunc(clamp01(r.rest) * R6_SCALE));          // rest
+    ctx.set(3, Math.trunc(clamp01(r.cohesion) * R6_SCALE));      // cohesion
+    ctx.set(4, Math.trunc(Math.max(-1, Math.min(1, r.turnBias)) * R6_SCALE)); // turn (signed)
+    ctx.set(5, this.stratTempR6);                                 // T (market temperature, already r6)
+    // Social memory read-outs (bond/rep are -1..1 / 0..1 respectively)
+    const mem = this.social.get(r.id);
+    const bond = mem ? AgentEconomy.clampSigned(mem.rep) : 0;    // use rep as proxy for aggregate bond
+    const rep = mem ? clamp01((mem.rep + 1) / 2) : 0.5;          // normalise rep to 0..1
+    ctx.set(6, Math.trunc(bond * R6_SCALE));                      // bond
+    ctx.set(7, Math.trunc(rep * R6_SCALE));                       // rep
+    // Neuromodulatory raw Hz (daHz/oaHz from the FlyReading's neuromod field)
+    const nm = r.neuromod;
+    ctx.set(8, Math.trunc(clamp01((nm?.daHz ?? 0) / 50) * R6_SCALE));  // daHz normalised to 0..1
+    ctx.set(9, Math.trunc(clamp01((nm?.oaHz ?? 0) / 50) * R6_SCALE));  // oaHz normalised to 0..1
+    return ctx;
+  }
+
+  /**
+   * Evaluate a fly's strategy tree and return the r6 output mapped to a bounded tilt factor [0.5..1.5].
+   * The raw evalStrategy output is in [-4.0, +4.0] r6; we map it to a multiplicative tilt centred on 1.0
+   * with ±0.5 range, so the strategy can nudge but NEVER override the original formula.
+   * Returns 1.0 (neutral) when strategy is OFF or the fly has no tree.
+   */
+  private strategyTilt(r: FlyReading, tick: number): number {
+    if (!this.strategyOn()) return 1.0;
+    const tree = this.strategyTreeOf(r.id);
+    if (!tree) return 1.0;
+    const ctx = this.buildStrategyCtx(r, tick);
+    const raw = evalStrategy(tree, ctx);  // r6 integer in [-4_000_000, +4_000_000]
+    // Map to [0.5, 1.5]: tilt = 1.0 + (raw / R6_SIGNED_MAX) * 0.5
+    const norm = raw / 4_000_000;          // -1..1
+    return 1.0 + norm * 0.5;               // 0.5..1.5
+  }
+
+  /**
+   * Evaluate a fly's strategy tree for the prediction market and return a bounded additive tilt [-0.5..+0.5].
+   * Used to modulate the prediction score (direction lean). Returns 0 (neutral) when OFF.
+   * PUBLIC: state.ts passes this as a callback to PredictionMarket.openRound().
+   */
+  strategyPredictTilt(r: FlyReading, tick: number): number {
+    if (!this.strategyOn()) return 0;
+    const tree = this.strategyTreeOf(r.id);
+    if (!tree) return 0;
+    const ctx = this.buildStrategyCtx(r, tick);
+    const raw = evalStrategy(tree, ctx);
+    // Map to [-0.5, +0.5] additive tilt on the prediction score
+    return (raw / 4_000_000) * 0.5;
+  }
+
+  /** Expose strategy trees for external consumers (elites archive, breed hash folding). */
+  getStrategyTree(id: number): StrategyTree | null {
+    if (!this.strategyOn()) return null;
+    return this.strategyTreeOf(id);
+  }
+
+  /** Expose all strategy tree hashes for the elites archive / lineage. */
+  strategyTreeHashes(): Map<number, string> {
+    const out = new Map<number, string>();
+    if (!this.strategyOn()) return out;
+    for (const [id, tree] of this.strategyTrees) {
+      out.set(id, treeHash(tree));
+    }
+    return out;
   }
 
   // ---------- PLAYBOOK: consequence-driven long-term memory (Phase 1, capability ①) ----------
@@ -2648,17 +2874,21 @@ export class AgentEconomy {
    * good mult — byte-for-byte, which is also the forever-fallback for the direct auctioneer path.
    * PROF: the trade also tilts the ticket — a trader's crossing is worth 5% more to the venue, a
    * brooder's pays 10% less. `role` is null unless INSTITUTIONS ON ⇒ OFF output unchanged.
+   * STRATEGY: when armed, the GP tree's bounded tilt [0.5..1.5] scales the price AFTER profession but
+   * BEFORE the min-1 floor. Downstream hard caps (maxDealUsdc, spend guards, netting splits) STILL bind
+   * — the strategy can never bypass them (defence in depth).
    */
   private dealAmount(r: FlyReading, T: number, good: GoodKind, role: Profession | null = null): string {
     const meta = GOOD_META[good];
     const tilt = role ? PROF_DEAL[role] : 1;
+    const stratTilt = this.strategyTilt(r, this.stratTick);  // 1.0 when OFF (inert)
     if (this.institutionsOn()) {
       const crossed = this.books.eatAsk(good);
-      if (crossed) return String(Math.max(1, Math.round(Number(crossed) * tilt)));
+      if (crossed) return String(Math.max(1, Math.round(Number(crossed) * tilt * stratTilt)));
     }
     const priceUsdc =
       this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
-    return String(Math.max(1, Math.round(priceUsdc * 1e6 * tilt)));
+    return String(Math.max(1, Math.round(priceUsdc * 1e6 * tilt * stratTilt)));
   }
 
   /** Run the full x402 flow between buyer and seller for one good; return the settlement record. */
@@ -3215,6 +3445,25 @@ export class AgentEconomy {
           .sort((x, y) => x[0] - y[0])
           .map(([id, ring]) => ({ id, e: ring.map((x) => [x.ctx, x.action, x.good, x.regime, x.outcome, x.valid, x.tick]) })),
       } : {}),
+      // STRATEGY (Phase 2b, capability ②). Additive exactly like `playbook` above — and WRITTEN ONLY WHEN
+      // THE SWITCH IS ON: an OFF serialize is byte-identical to the Phase 1 blob. An older payload has no
+      // `strategyTrees` key ⇒ trees are lazily generated on first access (deterministic from agentId).
+      // KEY_VERSION stays "economy:v1". Serialized as compact [kind,value][] pairs via serializeTree().
+      ...(this.strategyOn() ? {
+        strategyTrees: Array.from(this.strategyTrees.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, tree]) => ({ id, t: serializeTree(tree) })),
+      } : {}),
+      // ELITES (Phase 2b, capability ②). Additive exactly like `strategyTrees` above — WRITTEN ONLY WHEN
+      // THE SWITCH IS ON: an OFF serialize is byte-identical to the Phase 1 blob. An older payload has no
+      // `elitesArchive`/`goodCounts` keys ⇒ empty archive + empty counters (lazy re-convergence).
+      // KEY_VERSION stays "economy:v1". Archive is ≤64 cells × ~100B = 6.4KB; goodCounts is 4 ints/agent.
+      ...(this.elitesOn() ? {
+        elitesArchive: this.elitesArchive.serialize(),
+        goodCounts: Array.from(this.goodCounts.entries())
+          .sort((x, y) => x[0] - y[0])
+          .map(([id, gc]) => ({ id, g: gc })),
+      } : {}),
     });
   }
 
@@ -3466,6 +3715,37 @@ export class AgentEconomy {
           if (Number.isFinite(e.ctx) && Number.isFinite(e.outcome) && Number.isFinite(e.tick)) ring.push(e);
         }
         if (ring.length > 0) this.playbook.set(id, ring);
+      }
+    }
+    // Restore strategy trees (Phase 2b, additive). An older payload has no `strategyTrees` key ⇒ the Map
+    // stays empty and trees are lazily generated on first access (deterministic from agentId + SALT).
+    // Only restored when strategy is ON; OFF ⇒ empty Map, byte-identical behaviour to Phase 1.
+    this.strategyTrees = new Map();
+    if (this.strategyOn() && Array.isArray(p.strategyTrees)) {
+      for (const rec of p.strategyTrees) {
+        if (!rec || typeof rec !== "object") continue;
+        const id = Number(rec.id);
+        if (!Number.isFinite(id)) continue;
+        const tree = deserializeTree(rec.t);
+        if (tree && isLegalTree(tree)) this.strategyTrees.set(id, tree);
+      }
+    }
+    // Restore elites archive + goodCounts (Phase 2b, additive). An older payload has neither key ⇒ empty
+    // archive + empty counters (they re-converge from live data). Only restored when elites is ON.
+    this.elitesArchive = new ElitesArchive();
+    this.goodCounts = new Map();
+    if (this.elitesOn()) {
+      if (p.elitesArchive) this.elitesArchive = ElitesArchive.deserialize(p.elitesArchive);
+      if (Array.isArray(p.goodCounts)) {
+        for (const rec of p.goodCounts) {
+          if (!rec || typeof rec !== "object") continue;
+          const id = Number(rec.id);
+          if (!Number.isFinite(id)) continue;
+          const g = Array.isArray(rec.g) && rec.g.length === 4
+            ? [Number(rec.g[0]) || 0, Number(rec.g[1]) || 0, Number(rec.g[2]) || 0, Number(rec.g[3]) || 0] as [number, number, number, number]
+            : [0, 0, 0, 0] as [number, number, number, number];
+          this.goodCounts.set(id, g);
+        }
       }
     }
   }

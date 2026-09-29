@@ -261,6 +261,11 @@ export interface Env {
   //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
   PLAYBOOK_ENABLED?: string;            // "true"/"false" (default FALSE — ships dark; flip to "true" to arm consequence memory)
 
+  // --- Phase 2b: GP strategy genome + MAP-Elites novelty archive (capability ②) ---
+  //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
+  STRATEGY_ENABLED?: string;            // "true"/"false" (default FALSE — ships dark; GP trees modulate decisions within existing caps)
+  ELITES_ENABLED?: string;              // "true"/"false" (default FALSE — ships dark; MAP-Elites archive drives novelty selection in planEvolution)
+
   // --- ㉖ THE LEXICON: the words the telling makes — coinage, spread, silence (see src/lexicon.ts) ---
   //     NOTE: armed on CODE DEFAULTS — the 128 text-binding wall is spent (see wrangler.toml). The desk has
   //     no knobs (its thresholds are exported constants); only the master switch reads an env key.
@@ -716,6 +721,15 @@ export interface RuntimeConfig {
   };
   playbook: {
     enabled: boolean;         // ㉕ Phase 1 capability ①: consequence-driven long-term memory (default OFF — dark deploy)
+  };
+
+  // Phase 2b capability ②: GP strategy genome wired into real economic decisions + MAP-Elites archive.
+  // OFF ⇒ every strategy/elites hook no-ops, the economy is byte-for-byte the Phase 1 build.
+  strategy: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): GP trees modulate buyProbability/pickCounterparty/dealAmount/prediction
+  };
+  elites: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): MAP-Elites archive drives novelty selection in planEvolution
   };
   
   // ① NEURAL FEEDBACK BUS: the civilizational climate (eraInfo's phase / level / shock) fed back into the
@@ -1193,6 +1207,20 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     explicitly armed. Moves no money, touches no neuron; only reweights counterparty choice
       //     and good selection within existing caps. Set PLAYBOOK_ENABLED=true to arm.
       enabled: (env.PLAYBOOK_ENABLED ?? "false").toLowerCase() === "true",
+    },
+
+    strategy: {
+      // Phase 2b capability ②: GP strategy genome. Shipped DISABLED (dark deploy): default OFF so the
+      //     economy is byte-for-byte the Phase 1 build. When armed, per-fly expression trees modulate
+      //     buyProbability / pickCounterparty / dealAmount / prediction score WITHIN existing hard caps.
+      //     Never touches connectome/genome/manifestHash. Set STRATEGY_ENABLED=true to arm.
+      enabled: (env.STRATEGY_ENABLED ?? "false").toLowerCase() === "true",
+    },
+    elites: {
+      // Phase 2b capability ②: MAP-Elites novelty archive. Shipped DISABLED (dark deploy): default OFF
+      //     so planEvolution uses the pure-PnL selection byte-for-byte. When armed, a bounded behavioural
+      //     archive drives novelty exploration alongside PnL fitness. Set ELITES_ENABLED=true to arm.
+      enabled: (env.ELITES_ENABLED ?? "false").toLowerCase() === "true",
     },
 
     socialStimulus: {
