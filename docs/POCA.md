@@ -230,12 +230,23 @@ mirror. It is exposed in the `GET /poca` response:
 
 ```typescript
 interface PocoMirrorState {
-  aligned: boolean;        // true when local epochCount == on-chain epochCount (last check passed)
+  aligned: boolean;        // true when the current open epoch has been successfully mirrored (openTxHash present) AND no unresolved misalignment
   failures: number;        // cumulative mirror-call failures since worker start (monotonic; never reset on success)
   paused: boolean;         // true when an alignment check failed — mirror suspended; auto-cleared on the next successful alignment check (no operator intervention required)
   lastMirrorTs: number | null;  // Unix ms of the last successful on-chain mirror call (null if never)
 }
 ```
+
+**Self-healing semantics (task 66):**
+
+- **Missing-open retry**: every cron, `recheckAlignment` detects when the current open epoch has no
+  `openTxHash` and the on-chain `epochCount` matches the local index — it retries `mirrorOpen` inline
+  (serial queue). A transient RPC failure no longer leaves an epoch permanently un-mirrored.
+- **Seal enqueues open-first**: when `sealAndReopen` seals an epoch whose `openTxHash` is null, it
+  enqueues `openEpoch(sealed)` → `sealEpoch(sealed)` → `openEpoch(next)` in the serial queue, so the
+  chain catches up automatically from a "behind-1" state without operator intervention.
+- **Honest `aligned`**: the snapshot reports `aligned=false` whenever the open epoch lacks `openTxHash`,
+  giving frontends and verifiers the real mirror state rather than a stale optimistic flag.
 
 ---
 

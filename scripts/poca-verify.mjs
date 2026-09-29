@@ -329,6 +329,25 @@ async function runCriteriaSelfTest(machine = false) {
   const ccRecent = checkCodeIdentity(recentRot, [{ kind: 7, ts: 1_000_000_000 }], "cc");
   check("① unexplained rotation inside recent-100 ⇒ FAIL (horizon does not excuse it)", ccRecent.pass === false && ccRecent.skip === false && ccRecent.unexplained.length === 1);
 
+  // ① code identity — task 66 (rotation-in-progress: live ≠ newest sealed, but open epoch carries it)
+  const ccRotOk = checkCodeIdentity(
+    [{ index: 0, codeCommitment: "aa", openTs: 0, endTs: 1000 }],
+    [{ kind: 7, ts: 1000 }],
+    "bb",   // live commitment differs from the newest sealed epoch ("aa")
+    86_400_000, 100,
+    { index: 1, codeCommitment: "bb", openTs: 1000, codeChangeAdminTs: 1000 },  // open epoch carries live
+  );
+  check("① rotation-in-progress (open epoch + kind7) ⇒ PASS", ccRotOk.pass === true && ccRotOk.rotationInProgress === true);
+  // Negative: open epoch carries the live commitment but NO kind7 explanation ⇒ still FAIL.
+  const ccRotBad = checkCodeIdentity(
+    [{ index: 0, codeCommitment: "aa", openTs: 0, endTs: 1000 }],
+    [],     // no kind7 admin entries
+    "bb",
+    86_400_000, 100,
+    { index: 1, codeCommitment: "bb", openTs: 1000, codeChangeAdminTs: null },  // no attestation
+  );
+  check("① rotation-in-progress without kind7 ⇒ FAIL", ccRotBad.pass === false && ccRotBad.rotationInProgress === false);
+
   // ⑥ mirror freshness (review #6) — off-chain epochCount must not drift ahead of the on-chain mirror
   const mfOk = checkMirrorFreshness(10, 10, true);
   check("⑥ off==on epochCount ⇒ PASS", mfOk.pass === true && mfOk.delta === 0);
@@ -425,6 +444,7 @@ async function criterion1(args) {
   let epochsOff = [];
   let admin = [];
   let current = null;
+  let openEpoch = null;
   try {
     const ep = await getJson(`${args.api}/poca/epochs?limit=500`);
     // review #25: carry the worker-attested rotation timestamp (may be absent on an older worker ⇒ null).
@@ -437,16 +457,23 @@ async function criterion1(args) {
   try {
     const poca = await getJson(`${args.api}/poca`);
     current = poca.codeCommitment;
+    // task 66: fetch the OPEN epoch so the rotation-in-progress window can be checked.
+    if (poca.currentEpoch != null) {
+      try {
+        const oe = await getJson(`${args.api}/poca/epoch/${poca.currentEpoch}`);
+        openEpoch = { index: oe.index, codeCommitment: oe.codeCommitment, openTs: oe.openTs, codeChangeAdminTs: oe.codeChangeAdminTs ?? null };
+      } catch { /* tolerate — the pure core handles openEpoch=null gracefully */ }
+    }
   } catch (e) { ev.push(`could not read /poca: ${e.message}`); }
 
   if (epochsOff.length === 0 && current == null) {
     return { id: 1, name: "code-identity", status: "SKIP", evidence: [...ev, "no off-chain epochs or /poca snapshot reachable — nothing to audit"] };
   }
-  const r = checkCodeIdentity(epochsOff, admin, current);
+  const r = checkCodeIdentity(epochsOff, admin, current, 86_400_000, 100, openEpoch);
   // review #25: r.skip ⇒ every rotation is either attested or beyond the admin log horizon (neither provable
   // nor disprovable) — report SKIP, not FAIL. A hard unexplained rotation or a live/newest mismatch still FAILs.
   const status = (epochsOff.length === 0 || r.skip) ? "SKIP" : (r.pass ? "PASS" : "FAIL");
-  return { id: 1, name: "code-identity", status, evidence: [...ev, ...r.evidence], detail: { changePoints: r.changePoints, unexplained: r.unexplained, beyondHorizon: r.beyondHorizon, latestMatchesCurrent: r.latestMatchesCurrent } };
+  return { id: 1, name: "code-identity", status, evidence: [...ev, ...r.evidence], detail: { changePoints: r.changePoints, unexplained: r.unexplained, beyondHorizon: r.beyondHorizon, latestMatchesCurrent: r.latestMatchesCurrent, rotationInProgress: r.rotationInProgress } };
 }
 
 /** ② CHAIN INTEGRITY — on-chain epoch seal chain + isUnbroken + off-chain↔on-chain agreement. */

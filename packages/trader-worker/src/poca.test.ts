@@ -252,9 +252,12 @@ test("engine: ensureEpoch opens genesis epoch 0 with no admin discontinuity", as
   // The mirror starts healthy; assert only the STABLE fields — the detached open mirror may already have
   // mined (setting lastMirrorTs) by the time snapshot()'s awaits yield, so lastMirrorTs is timing-dependent.
   assert.equal(snap.mirror.paused, false);
-  assert.equal(snap.mirror.aligned, true);
+  // task 66 honest aligned: false until the detached mirrorOpen actually writes back openTxHash.
+  assert.equal(snap.mirror.aligned, false, "aligned=false before the mirror open lands");
   assert.equal(snap.mirror.failures, 0);
   await eng.flushMirrors();                    // the open mirror is detached — drain before asserting
+  const snapAfter = await eng.snapshot();
+  assert.equal(snapAfter.mirror.aligned, true, "aligned=true after the mirror open succeeds");
   assert.ok(chain.calls.some((c) => c.fn === "openEpoch"), "openEpoch mirrored on-chain");
   assert.equal(chain.chainCount, 1, "the on-chain counter advanced to 1");
 });
@@ -549,6 +552,164 @@ test("engine: a matching committer passes the boot-check and mirrors normally (i
   const snap = await eng.snapshot();
   assert.equal(snap.mirror.paused, false);
   assert.ok(chain.calls.some((c) => c.fn === "openEpoch"), "the open mirrored once the committer matched");
+});
+
+// ============================== self-healing mirror (missing-open retry) ==============================
+
+test("engine: a failed mirrorOpen is retried on the next cron via recheckAlignment self-heal", async () => {
+  const chain = new StubChain();
+  const eng = makeEngine({ chain });
+  // First cron: open epoch 0 but fail the mirror write.
+  chain.failWrites = true;
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.flushMirrors();
+  let snap = await eng.snapshot();
+  assert.equal(snap.mirror.aligned, false, "aligned=false while openTxHash is missing");
+  assert.ok(snap.mirror.failures >= 1, "a failure was counted");
+  assert.equal(snap.mirror.paused, false, "not paused — just a transient write failure");
+
+  // Second cron: writes succeed → recheckAlignment retries the open.
+  chain.failWrites = false;
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.flushMirrors();
+  snap = await eng.snapshot();
+  assert.equal(snap.mirror.aligned, true, "aligned recovers after the retry succeeds");
+  assert.ok(chain.calls.filter((c) => c.fn === "openEpoch").length >= 1, "openEpoch was retried");
+  assert.equal(chain.chainCount, 1, "the on-chain counter advanced");
+  // The epoch now carries an openTxHash.
+  const ep = await eng.getEpoch(0);
+  assert.ok(ep?.txHash, "openTxHash written back to the epoch record");
+});
+
+test("engine: sealAndReopen with a missing open enqueues open→seal→open and the chain catches up", async () => {
+  const store = new MemStore();
+  const chain = new StubChain();
+  const ccA = "aa".repeat(32);
+  const ccB = "bb".repeat(32);
+
+  // Phase 1: open epoch 0 successfully, then fail the mirror open for epoch 1.
+  const engA = makeEngine({ store, chain, codeCommitment: ccA, sealThreshold: 3 });
+  await engA.ensureEpoch({ genesisHead: "0xg" });
+  await engA.flushMirrors();
+  assert.equal(chain.chainCount, 1, "epoch 0 opened on-chain");
+
+  // Append 3 digests to trigger a threshold seal → opens epoch 1 locally.
+  for (let t = 0; t < 3; t++) await engA.appendDigest({ state: S(t), tickIndex: t, genesisHead: "0xg" });
+  // Fail the mirror for epoch 1's open + epoch 0's seal.
+  chain.failWrites = true;
+  await engA.flushMirrors();
+  // The seal and open both failed on-chain.
+  let snap = await engA.snapshot();
+  assert.equal(snap.currentEpoch, 1);
+  assert.equal(chain.chainCount, 1, "chain did not advance (writes failed)");
+
+  // Phase 2: a NEW build (ccB) boots, sees epoch 1 open with no openTxHash.
+  // sealAndReopen should enqueue open(e1) → seal(e1) → open(e2).
+  chain.failWrites = false;
+  // Manually fix chain state: epoch 0's seal needs to succeed for lastMirrorSealOk.
+  // Simulate: the seal for e0 failed, so lastMirrorSealOk=false. We need to reset it.
+  // Actually let's redo: fail only the open of e1, not the seal of e0.
+  // Reset and redo with a cleaner scenario.
+  const store2 = new MemStore();
+  const chain2 = new StubChain();
+  const eng2a = makeEngine({ store: store2, chain: chain2, codeCommitment: ccA, sealThreshold: 3 });
+  await eng2a.ensureEpoch({ genesisHead: "0xg" });
+  await eng2a.flushMirrors();
+  for (let t = 0; t < 3; t++) await eng2a.appendDigest({ state: S(t), tickIndex: t, genesisHead: "0xg" });
+  await eng2a.flushMirrors();
+  // epoch 0 sealed + epoch 1 opened on-chain successfully.
+  assert.equal(chain2.chainCount, 2, "epoch 0 opened + sealed, epoch 1 opened");
+
+  // Now simulate: epoch 1's openTxHash was lost (transient failure on writeback only).
+  const epochMeta = await store2.get<{ index: number; openTxHash?: string }>("poca:epoch");
+  assert.equal(epochMeta?.index, 1);
+  // Clear the openTxHash to simulate the gap.
+  delete epochMeta!.openTxHash;
+  await store2.put("poca:epoch", epochMeta);
+  // Roll back chain to simulate the open never landing.
+  chain2.chainCount = 1;
+
+  // Phase 3: code change triggers seal of epoch 1 → should self-heal.
+  const eng2b = makeEngine({ store: store2, chain: chain2, codeCommitment: ccB, sealThreshold: 3 });
+  await eng2b.ensureEpoch({ genesisHead: "0xg" });
+  await eng2b.flushMirrors();
+
+  // Chain should now be: open(e1) → seal(e1) → open(e2) → chainCount=3.
+  assert.equal(chain2.chainCount, 3, "chain caught up: open(e1)+seal(e1)+open(e2) = count 3");
+  snap = await eng2b.snapshot();
+  assert.equal(snap.currentEpoch, 2);
+  const sealed = (await eng2b.listEpochs(10)).find((e) => e.index === 1);
+  assert.ok(sealed, "epoch 1 is sealed");
+  assert.equal(sealed!.reason, "code-change");
+  assert.ok(sealed!.openTxHash, "openTxHash written back to the sealed record");
+  assert.ok(sealed!.txHash, "sealEpoch tx recorded");
+});
+
+test("engine: recovery from chain-behind-1 state — full self-heal to epochCount=3", async () => {
+  // Simulates the exact production scenario: chain has epochCount=1 (epoch 0 opened+sealed),
+  // local has epoch 1 open (no openTxHash). A code change triggers seal(e1)+open(e2).
+  // Expected queue: [open(e1), seal(e1), open(e2)] → chainCount=3, isUnbroken(0,2)=true.
+  const store = new MemStore();
+  const chain = new StubChain();
+  const ccA = "aa".repeat(32);
+  const ccB = "bb".repeat(32);
+
+  // Bootstrap: epoch 0 opened and sealed on-chain successfully.
+  chain.chainCount = 1;   // epoch 0 was opened
+  // Seed local state: epoch 0 sealed, epoch 1 open with no openTxHash.
+  await store.put("poca:epochs", [0]);
+  await store.put("poca:sealed:0", {
+    index: 0, openTs: 100, endTs: 200, tickCount: 3, merkleRoot: leaf(1), sealedHead: leaf(1),
+    genesisHead: "0xg", codeCommitment: ccA, reason: "threshold", codeChangeAdminTs: null,
+    openTxHash: "0xopen0", txHash: "0xseal0",
+  });
+  await store.put("poca:epoch", {
+    index: 1, openTs: 200, codeCommitment: ccA, genesisHead: "0xg",
+    lastTick: 5, digestCount: 6, codeChangeAdminTs: null, committerChecked: true,
+    // openTxHash deliberately missing — the mirror open failed
+  });
+  await store.put("poca:e1:digests", Array.from({ length: 6 }, (_, i) => leaf(i + 10)));
+  await store.put("poca:head", leaf(15));
+  await store.put("poca:mirror", {
+    aligned: true, failures: 1, paused: false,
+    lastMirrorTs: 150, lastMirrorSealOk: true, onChainCount: 1,
+  });
+
+  // A new build (ccB) boots → CODE_CHANGE → seal epoch 1, open epoch 2.
+  const eng = makeEngine({ store, chain, codeCommitment: ccB, sealThreshold: 1440 });
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.flushMirrors();
+
+  // Verify: chain caught up to epochCount=3.
+  assert.equal(chain.chainCount, 3, "open(e1)+seal(e1)+open(e2) → chainCount=3");
+  const snap = await eng.snapshot();
+  assert.equal(snap.currentEpoch, 2);
+  assert.equal(snap.epochCount, 3);
+  assert.equal(snap.mirror.aligned, true);
+
+  // Verify the sealed epoch 1 has both openTxHash and txHash.
+  const sealed1 = (await eng.listEpochs(10)).find((e) => e.index === 1);
+  assert.ok(sealed1?.openTxHash, "epoch 1 openTxHash written back");
+  assert.ok(sealed1?.txHash, "epoch 1 sealEpoch tx recorded");
+  assert.equal(sealed1?.reason, "code-change");
+
+  // Verify the chain call order: openEpoch, sealEpoch, openEpoch.
+  const writeCalls = chain.calls.filter((c) => c.fn === "openEpoch" || c.fn === "sealEpoch");
+  assert.ok(writeCalls.length >= 3, "at least 3 write calls");
+  assert.equal(writeCalls[0].fn, "openEpoch", "first: open epoch 1");
+  assert.equal(writeCalls[1].fn, "sealEpoch", "second: seal epoch 1");
+  assert.equal(writeCalls[2].fn, "openEpoch", "third: open epoch 2");
+});
+
+test("engine: aligned=false in snapshot while openTxHash is missing (honest semantics)", async () => {
+  const chain = new StubChain();
+  const eng = makeEngine({ chain });
+  chain.failWrites = true;
+  await eng.ensureEpoch({ genesisHead: "0xg" });
+  await eng.flushMirrors();
+  const snap = await eng.snapshot();
+  assert.equal(snap.mirror.aligned, false, "aligned=false when openTxHash is null");
+  assert.equal(snap.mirror.paused, false, "not paused — just un-mirrored");
 });
 
 // ============================== disabled (zero-address) mode ==============================

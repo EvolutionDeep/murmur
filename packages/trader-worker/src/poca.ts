@@ -714,6 +714,12 @@ export class PocoEngine {
       [digestsKey(epoch.index + 1)]: [] as string[],
     });
     if (this.enabled) {
+      // Self-heal: if the epoch being sealed was never opened on-chain (openTxHash missing), enqueue
+      // its open FIRST so the serial queue guarantees open→seal→open ordering. The on-chain contract
+      // requires epochCount to advance before a seal can reference it.
+      if (!epoch.openTxHash) {
+        this.enqueueMirror(() => this.mirrorOpen(epoch));
+      }
       this.enqueueMirror(() => this.mirrorSeal(sealed));
       this.enqueueMirror(() => this.mirrorOpen(nextMeta));
     }
@@ -786,16 +792,26 @@ export class PocoEngine {
     // open requires localIndex == chainCount AND (epoch 0 OR the previous epoch's on-chain seal succeeded).
     const sealOk = meta.index === 0 ? true : m.lastMirrorSealOk;
     if (meta.index !== chainCount || !sealOk) { await this.markMisaligned(meta.index, chainCount); return; }
-    const txHash = await this.safeChain(() => this.chain.openEpoch(this.codeCommitment, meta.genesisHead));
+    // Use the epoch's own codeCommitment (not the engine's current one) so self-heal re-opens of a
+    // sealed epoch carry the commitment that epoch was originally created under.
+    const txHash = await this.safeChain(() => this.chain.openEpoch(meta.codeCommitment, meta.genesisHead));
     if (txHash) {
       m.aligned = true;
       m.paused = false;
       m.lastMirrorTs = this.now();
       await this.saveMirror(m);
+      // Write openTxHash back to the epoch record — it may still be the open epoch, or it may have
+      // been sealed locally while the mirror was in-flight (self-heal open-before-seal path).
       const cur = await this.loadEpoch();
       if (cur && cur.index === meta.index && !cur.openTxHash) {
         cur.openTxHash = txHash;
         await this.store.put(KEY_EPOCH, cur);
+      } else {
+        const sealed = await this.store.get<PocoSealedEpoch>(sealedKey(meta.index));
+        if (sealed && !sealed.openTxHash) {
+          sealed.openTxHash = txHash;
+          await this.store.put(sealedKey(meta.index), sealed);
+        }
       }
     } else {
       m.failures += 1;
@@ -862,28 +878,53 @@ export class PocoEngine {
   }
 
   /**
-   * Detached per-cron re-check while the mirror is PAUSED: one eth_call to see whether the local open-epoch
-   * index has come back into alignment with the chain (e.g. a transient RPC failure cleared). Recovers
-   * paused ⇒ false ONLY when BOTH the index re-aligns AND the on-chain committer matches again — a pause
-   * raised by a committer mismatch (issue 18) must never be cleared by index alignment alone, or the mirror
-   * would resume writing under the wrong wallet. A no-op (no eth_call) while the mirror is healthy.
+   * Detached per-cron mirror health check + self-healing retry. Runs EVERY cron (not just while paused):
+   *
+   * 1. PAUSED recovery: one eth_call to see whether the local open-epoch index has come back into alignment
+   *    with the chain (e.g. a transient RPC failure cleared). Recovers paused ⇒ false ONLY when BOTH the
+   *    index re-aligns AND the on-chain committer matches again — a pause raised by a committer mismatch
+   *    (issue 18) must never be cleared by index alignment alone.
+   *
+   * 2. MISSING-OPEN self-heal: when the mirror is healthy (not paused) but the current open epoch has no
+   *    openTxHash AND the on-chain epochCount equals the local index (i.e. the chain is ready to accept this
+   *    open), retry mirrorOpen inline. This closes the gap where a transient RPC failure on the original open
+   *    left the epoch permanently un-mirrored with no retry path.
    */
   private async recheckAlignment(): Promise<void> {
     if (!this.enabled) return;
     const m = await this.loadMirror();
-    if (!m.paused) return;
     const chainCount = await this.readChainCount();
-    if (chainCount == null) return;
+    if (chainCount == null) { await this.saveMirror(m); return; }
     m.onChainCount = chainCount;
     const epoch = await this.loadEpoch();
-    const localIndex = epoch ? epoch.index : 0;
-    const indexOk = localIndex === chainCount;
-    const committerOk = await this.committerMatches();
-    if (indexOk && committerOk) {
-      m.paused = false;
-      m.aligned = true;
+    if (!epoch) { await this.saveMirror(m); return; }
+
+    // --- paused recovery ---
+    if (m.paused) {
+      const indexOk = epoch.index === chainCount;
+      const committerOk = await this.committerMatches();
+      if (indexOk && committerOk) {
+        m.paused = false;
+        m.aligned = true;
+      }
+      await this.saveMirror(m);
+      if (m.paused) return;   // still paused — do not attempt further mirror writes
     }
-    await this.saveMirror(m);
+
+    // --- self-heal: retry a missing open for the current epoch ---
+    if (!epoch.openTxHash && epoch.index === chainCount) {
+      await this.mirrorOpen(epoch);
+      return;   // mirrorOpen handles its own mirror-state persistence
+    }
+
+    // --- honest aligned flag: reflect the true open-tx state ---
+    const trulyAligned = !!epoch.openTxHash;
+    if (m.aligned !== trulyAligned) {
+      m.aligned = trulyAligned;
+      await this.saveMirror(m);
+    } else {
+      await this.saveMirror(m);
+    }
   }
 
   // ---------- admin recording ----------
@@ -1188,7 +1229,14 @@ export class PocoEngine {
       epochCount: closed.length + (epoch ? 1 : 0),
       adminCount: admin.length,
       continuity,
-      mirror: { aligned: m.aligned, failures: m.failures, paused: m.paused, lastMirrorTs: m.lastMirrorTs },
+      mirror: {
+        // Honest aligned: false when the open epoch has never been mirrored (openTxHash missing),
+        // so the frontend and verifiers see the real state rather than a stale "aligned=true".
+        aligned: this.enabled && epoch && !epoch.openTxHash ? false : m.aligned,
+        failures: m.failures,
+        paused: m.paused,
+        lastMirrorTs: m.lastMirrorTs,
+      },
     };
   }
 

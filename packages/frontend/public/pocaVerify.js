@@ -235,6 +235,11 @@ export function normAddr(a) {
  * /poca.codeCommitment MUST also equal the most recent epoch's commitment. An unexplained rotation is a
  * silent code swap — the exact thing PoCA exists to expose.
  *
+ * ROTATION-IN-PROGRESS (task 66): when the live commitment differs from the newest SEALED epoch but matches
+ * the currently OPEN epoch AND a kind=7 explanation exists (codeChangeAdminTs on the open epoch, or a kind7
+ * admin entry within the window), the criterion PASSes with a note rather than FAILing — the rotation is
+ * in-flight and the seal has not yet landed.
+ *
  * ADMIN LOG HORIZON (review #25): the admin log is capped (limit 500), so the kind=7 event for a genuinely
  * old rotation may have scrolled out of the visible window. When a rotation is unexplained AND its boundary
  * predates the oldest visible admin entry AND it sits OUTSIDE the most recent `recentWindow` epochs, it is
@@ -247,10 +252,11 @@ export function normAddr(a) {
  * @param currentCodeCommitment  the live /poca.codeCommitment (64-hex)
  * @param windowMs  tolerance for matching a change to an admin event (default: one epoch ≈ 24h)
  * @param recentWindow  epochs within this many of the newest index are held to strict attestation (default 100)
- * @returns { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, evidence }
+ * @param openEpoch  optional OPEN epoch: { index, codeCommitment, openTs, codeChangeAdminTs? } (task 66)
+ * @returns { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, rotationInProgress, evidence }
  *          pass⇒fully proven; skip⇒nothing hard-failed but ≥1 rotation is beyond the admin horizon; else FAIL.
  */
-export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs = 86_400_000, recentWindow = 100) {
+export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs = 86_400_000, recentWindow = 100, openEpoch = null) {
   const evidence = [];
   const asc = (epochs || []).slice().sort((a, b) => a.index - b.index);
   const codeChanges = (admin || []).filter((e) => Number(e.kind) === PocoAdminKind.CODE_CHANGE);
@@ -288,9 +294,25 @@ export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs
 
   // The live commitment must equal the newest epoch's commitment.
   const latest = asc.length > 0 ? asc[asc.length - 1] : null;
-  const latestMatchesCurrent = latest != null && currentCodeCommitment != null
+  let latestMatchesCurrent = latest != null && currentCodeCommitment != null
     ? normHex(latest.codeCommitment) === normHex(currentCodeCommitment)
     : null; // null ⇒ nothing to compare (no epochs yet)
+
+  // ROTATION-IN-PROGRESS (task 66): when the live commitment doesn't match the newest SEALED epoch,
+  // check if the OPEN epoch carries it with a kind7 explanation → PASS with a note, not FAIL.
+  let rotationInProgress = false;
+  if (latestMatchesCurrent === false && openEpoch && currentCodeCommitment) {
+    if (normHex(openEpoch.codeCommitment) === normHex(currentCodeCommitment)) {
+      // Check kind7 explanation: either the open epoch's own codeChangeAdminTs, or a kind7 admin
+      // entry within ±windowMs of the open epoch's openTs.
+      const hasAttestedTs = openEpoch.codeChangeAdminTs != null && Number.isFinite(Number(openEpoch.codeChangeAdminTs));
+      const hasAdminKind7 = openEpoch.openTs != null && codeChanges.some((e) => Math.abs(Number(e.ts) - Number(openEpoch.openTs)) <= windowMs);
+      if (hasAttestedTs || hasAdminKind7) {
+        rotationInProgress = true;
+        latestMatchesCurrent = true;   // treat as matching — the rotation is explained
+      }
+    }
+  }
 
   const hardFail = unexplained.length > 0 || latestMatchesCurrent === false;
   const skip = !hardFail && beyondHorizon.length > 0;
@@ -300,9 +322,10 @@ export function checkCodeIdentity(epochs, admin, currentCodeCommitment, windowMs
   if (beyondHorizon.length > 0) evidence.push(`${beyondHorizon.length} rotation(s) beyond admin log horizon (older than the oldest visible admin entry, outside the recent ${recentWindow}): ${beyondHorizon.map((u) => `${u.fromEpoch}→${u.toEpoch}`).join(", ")} — SKIP, not FAIL`);
   if (latestMatchesCurrent === false) evidence.push(`live codeCommitment ${currentCodeCommitment} ≠ newest epoch ${latest.codeCommitment}`);
   if (latestMatchesCurrent === null) evidence.push("no sealed epochs to compare the live codeCommitment against");
-  if (pass && latestMatchesCurrent === true) evidence.push("live codeCommitment matches the newest epoch; every rotation is admin-attested");
+  if (rotationInProgress) evidence.push(`rotation in progress — open epoch #${openEpoch.index} carries the live commitment (kind7 attested)`);
+  if (pass && latestMatchesCurrent === true && !rotationInProgress) evidence.push("live codeCommitment matches the newest epoch; every rotation is admin-attested");
 
-  return { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, evidence };
+  return { pass, skip, changePoints, unexplained, beyondHorizon, latestMatchesCurrent, rotationInProgress, evidence };
 }
 
 // ============================== criterion ② — chain integrity (pure) ==============================

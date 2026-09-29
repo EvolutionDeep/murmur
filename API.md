@@ -412,7 +412,7 @@ Returns:
   "adminCount": 2,                   // admin-discontinuity entries recorded
   "continuity": "unbroken",          // "unbroken" | "pending" | "disabled"
   "mirror": {                        // on-chain ContinuityRegistry mirror health
-    "aligned": true,                 // local epochCount == on-chain epochCount
+    "aligned": true,                 // true when the open epoch is successfully mirrored (openTxHash present); false while a mirror open is pending/retrying
     "failures": 0,                   // cumulative mirror-call failures since worker start (monotonic, never reset)
     "paused": false,                 // true ⇒ mirror suspended; auto-cleared on next successful alignment check
     "lastMirrorTs": 1727500060000    // Unix ms of last successful on-chain call (null if never)
