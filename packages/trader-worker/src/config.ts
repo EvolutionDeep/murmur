@@ -379,7 +379,7 @@ export interface Env {
   ESTATE_RELIEF_DAILY_BUDGET_USDC?: string;   // max USDC dripped from escrow per UTC day (a ceiling BELOW the spend caps)
   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON?: string; // estate→escrow sweeps attempted per cron (default 4, wall-clock bound)
   ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default FALSE — real USDC moves; set TRUE to revert the layer to DRY-RUN: signs + eth_calls, broadcasts nothing)
-  ESTATE_RELIEF_BACKFILL?: string;            // "true"/"false" (default FALSE — one-time RETROACTIVE sweep: on first armed cron, snapshot every CURRENTLY-orphaned id in this.dead into the queue. Guard-protected: a reclaimed (living) id is never swept. Latches once, never re-scans ⇒ no churn)
+  ESTATE_RELIEF_BACKFILL?: string;            // "true"/"false" (default TRUE — ARMED: one-time RETROACTIVE sweep of the CURRENTLY-orphaned this.dead set into the queue; latches once, never re-scans, guard-protected so a reclaimed/living id is never swept. dead=0 live ⇒ captures 0, an immediate no-op)
 
   // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
   //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
@@ -1507,7 +1507,7 @@ export function loadConfig(env: Env): RuntimeConfig {
         reliefChunkUsdc: chunk,
         reliefDailyBudgetUsdc: budget,
         maxSweepsPerCron: sweeps,
-        backfill: (env.ESTATE_RELIEF_BACKFILL ?? "false").toLowerCase() === "true",
+        backfill: (env.ESTATE_RELIEF_BACKFILL ?? "true").toLowerCase() === "true",
       };
     })(),
 
