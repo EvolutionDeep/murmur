@@ -70,6 +70,7 @@ function onchainCfg(over: Partial<EconomyConfig> = {}): EconomyConfig {
 
 const RELIEF = (over: Partial<NonNullable<EconomyConfig["estateRelief"]>> = {}) => ({
   enabled: true,
+  shadow: false,            // the real-path groups exercise MINED legs; a dedicated SHDW test covers the dry-run default
   reliefEveryNCrons: 1,
   reliefChunkUsdc: 100,
   reliefDailyBudgetUsdc: 1000,
@@ -130,7 +131,7 @@ function mockFac(opts: {
     async treasuryTransfer(a: { payerAddress: string; payeeAddress: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse> {
       opts.transferLog?.push({ payer: a.payerAddress, payee: a.payeeAddress, value: a.valueAtomic, shadow: a.shadow });
       if (opts.throws) throw new Error("relay blew up");
-      if (opts.shadow) return { success: true, network: a.network, txHash: "0x", simulated: false, shadow: true };
+      if (a.shadow || opts.shadow) return { success: true, network: a.network, txHash: "0x", simulated: false, shadow: true };
       if (opts.failTransfer) return { success: false, network: a.network, txHash: "", invalidReason: "mock-transfer-fail" };
       return { success: true, network: a.network, txHash: "0x" + "cd".repeat(32) };
     },
@@ -359,3 +360,39 @@ test("RW1: the escrow disbursement dequeues the scoreboard down (never below zer
   // escrowPoolAtomic was 0; a disbursement must never drive it negative (clamped).
   assert.equal((econ as any).escrowPoolAtomic, "0", "scoreboard clamps at zero, never negative");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// SHDW GROUP — the estate-SCOPED shadow (isolated dry-run, never touches the live economy)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+test("SHDW1: shadow:true ⇒ the sweep leg is DRY-RUNNED (signed + attempted) but moves nothing; queue preserved", async () => {
+  const deadAddr = AgentEconomy.addressOf(42, 3);
+  const stranded = usdcToAtomic(5);
+  // armedEcon default RELIEF has shadow:false; override to shadow:true (the CODE DEFAULT when enabled).
+  const { econ, transferLog } = armedEcon({ balances: (a) => a.toLowerCase() === deadAddr.toLowerCase() ? BigInt(stranded) : 0n }, { shadow: true });
+  await seedAgents(econ);
+  (econ as any).entomb(3, "old_age", 2);
+  const res = await econ.sweepEstatesToEscrow(3);
+  assert.equal(res.swept, 0, "a shadow sweep credits nothing (no money moved)");
+  assert.equal((econ as any).escrowPoolAtomic, "0", "escrow scoreboard stays empty under shadow");
+  assert.equal((econ as any).estateSweptCount, 0, "no lifetime sweep counted under shadow");
+  assert.equal(transferLog.length, 1, "the leg WAS attempted (proves key sign + escrow reach end-to-end)");
+  assert.equal(transferLog[0].shadow, true, "the leg was requested as shadow:true");
+  assert.equal((econ as any).pendingEstates.includes(3), true, "shadow keeps the estate queued for the real run");
+});
+
+test("SHDW2: shadow:true ⇒ a relief leg is dry-run (recipient mirror does NOT rise) and escrow board holds", async () => {
+  const { econ, transferLog } = armedEcon({ balances: (a) => a.toLowerCase() === ESCRW.toLowerCase() ? BigInt(usdcToAtomic(2)) : 0n }, { shadow: true, reliefChunkUsdc: 1 });
+  await seedAgents(econ);
+  const agents = (econ as any).agents as Array<{ id: number; address: string; balance: string }>;
+  const poorest = agents.reduce((x, y) => (BigInt(x.balance) <= BigInt(y.balance) ? x : y));
+  (poorest as any).balance = "1";
+  const before = poorest.balance;
+  const res = await econ.disburseRelief();
+  assert.equal(res.disbursed, 0, "a shadow relief leg pays nothing");
+  assert.equal(transferLog.length, 1, "the escrow→poor leg was attempted as a dry-run");
+  assert.equal(transferLog[0].shadow, true, "requested shadow:true");
+  assert.equal(poorest.balance, before, "recipient mirror is UNCHANGED under shadow (mirror ≤ chain never perturbed)");
+  assert.equal((econ as any).reliefPaidCount, 0, "no lifetime relief counted under shadow");
+});
+

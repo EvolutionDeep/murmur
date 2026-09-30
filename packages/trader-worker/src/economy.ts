@@ -485,6 +485,7 @@ export interface EconomySnapshot {
   estateRelief?: {
     escrowPoolAtomic: string; pendingEstates: number;
     sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
+    shadow: boolean;
   };
 }
 
@@ -635,6 +636,7 @@ export interface EconomyConfig {
   //     dropped from the queue, so a living fly's purse is NEVER swept. ---
   estateRelief?: {
     enabled: boolean;
+    shadow?: boolean;             // default TRUE (undefined ⇒ dry-run) — an enabled leg signs + eth_calls but never broadcasts; only an explicit false moves real USDC
     reliefEveryNCrons: number;    // 0 = never disburse (default-ish guard); N>0 ⇒ escrow→poor drip every Nth cron
     reliefChunkUsdc: number;      // max USDC per single escrow→poor transfer (further clamped by ECONOMY_MAX_DEAL)
     reliefDailyBudgetUsdc: number; // max USDC disbursed from escrow per UTC day (a ceiling BELOW the spend caps)
@@ -1635,6 +1637,7 @@ export class AgentEconomy {
       try {
         receipt = await transfer.call(this.facilitator, {
           payerAddress: addr, payeeAddress: escrow, valueAtomic: amountStr, network: this.cfg.network,
+          shadow: this.cfg.estateRelief?.shadow !== false,
         });
       } catch { this.dropEstate(id); continue; }
       if (receipt.shadow) {
@@ -1714,6 +1717,7 @@ export class AgentEconomy {
       try {
         receipt = await transfer.call(this.facilitator, {
           payerAddress: escrow, payeeAddress: agent.address, valueAtomic: amountStr, network: this.cfg.network,
+          shadow: this.cfg.estateRelief?.shadow !== false,
         });
       } catch { continue; }
       if (receipt.shadow) {
@@ -1749,6 +1753,7 @@ export class AgentEconomy {
   estateReliefReadout(): {
     escrowPoolAtomic: string; pendingEstates: number;
     sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
+    shadow: boolean;
   } | null {
     if (!this.cfg.estateRelief || this.cfg.estateRelief.enabled !== true) return null;
     return {
@@ -1759,6 +1764,7 @@ export class AgentEconomy {
       paidCount: this.reliefPaidCount,
       paidAtomic: this.reliefPaidAtomic,
       reliefTodayAtomic: this.reliefToday.atomic,
+      shadow: this.cfg.estateRelief.shadow !== false,
     };
   }
 

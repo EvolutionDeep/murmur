@@ -376,6 +376,7 @@ export interface Env {
   ESTATE_RELIEF_CHUNK_USDC?: string;          // max USDC per single escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
   ESTATE_RELIEF_DAILY_BUDGET_USDC?: string;   // max USDC dripped from escrow per UTC day (a ceiling BELOW the spend caps)
   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON?: string; // estate→escrow sweeps attempted per cron (default 4, wall-clock bound)
+  ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default TRUE — an enabled layer DRY-RUNS each leg: signs + eth_calls, broadcasts nothing; set FALSE to let real USDC move)
 
   // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
   //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
@@ -876,6 +877,7 @@ export interface RuntimeConfig {
   // bounded by the per-deal cap + a daily relief budget + cadence, under ECONOMY_REAL_SPEND + shadow mode.
   estateRelief: {
     enabled: boolean;            // master switch (default OFF — dark deploy)
+    shadow: boolean;             // default TRUE — an enabled layer dry-runs each leg (eth_call, no broadcast); FALSE = real USDC moves
     reliefEveryNCrons: number;   // 0 = never disburse (default); N>0 = escrow→poor drip every Nth cron
     reliefChunkUsdc: number;     // max USDC per escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
     reliefDailyBudgetUsdc: number; // max USDC dripped per UTC day (below the spend caps)
@@ -1492,6 +1494,7 @@ export function loadConfig(env: Env): RuntimeConfig {
       const sweeps = clamp(Math.floor(Number(env.ESTATE_RELIEF_MAX_SWEEPS_PER_CRON ?? "4") || 0), 0, 64);
       return {
         enabled: (env.ESTATE_RELIEF_ENABLED ?? "false").toLowerCase() === "true",
+        shadow: (env.ESTATE_RELIEF_SHADOW ?? "true").toLowerCase() !== "false",
         reliefEveryNCrons: everyN,
         reliefChunkUsdc: chunk,
         reliefDailyBudgetUsdc: budget,

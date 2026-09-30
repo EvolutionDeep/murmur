@@ -850,6 +850,7 @@ export class FlyStateDO {
       // economy's estateReliefOn(); disabled by default (dark) ⇒ entomb/flush/cron byte-for-byte today.
       estateRelief: {
         enabled: this.cfg.estateRelief.enabled,
+        shadow: this.cfg.estateRelief.shadow,
         reliefEveryNCrons: this.cfg.estateRelief.reliefEveryNCrons,
         reliefChunkUsdc: this.cfg.estateRelief.reliefChunkUsdc,
         reliefDailyBudgetUsdc: this.cfg.estateRelief.reliefDailyBudgetUsdc,

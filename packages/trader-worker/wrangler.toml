@@ -200,8 +200,12 @@ ECONOMY_NET_FLUSH_TICKS = "1440"             # TEMPORARY GAS EMERGENCY GATE (#13
 # ALL CODE-DEFAULTS ONLY (the 128 text-binding wall is spent). When absent ⇒ the master switch is OFF ⇒ entomb,
 # flush and the cron are byte-for-byte today's build (no queue, no sweep, no disbursement; escrow untouched).
 # To ARM (real on-chain money moves) an operator must, at minimum, ALSO leave ECONOMY_REAL_SPEND="true" and the
-# facilitator onchain; to dry-run first set ECONOMY_SHADOW="true" (each leg eth_calls, broadcasts nothing):
+# facilitator onchain. The layer has its OWN estate-scoped shadow (ESTATE_RELIEF_SHADOW, default "true") so a
+# PREVIEW never freezes the live economy: enabling the layer alone DRY-RUNS each leg (signs + eth_calls, moves
+# nothing) while normal settlement keeps broadcasting; only an explicit ESTATE_RELIEF_SHADOW="false" lets real
+# USDC move. (The global ECONOMY_SHADOW="true" also dry-runs these legs, but it halts ALL settlement — avoid it.)
 #   ESTATE_RELIEF_ENABLED = "false"              # master switch (default OFF / dark)
+#   ESTATE_RELIEF_SHADOW = "true"                # default TRUE ⇒ enabled = DRY-RUN only; "false" ⇒ real USDC moves
 #   ESTATE_RELIEF_EVERY_N_CRON = "0"             # 0 = never disburse; N>0 = escrow→poor drip every Nth cron
 #   ESTATE_RELIEF_CHUNK_USDC = "0.02"            # max USDC per escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
 #   ESTATE_RELIEF_DAILY_BUDGET_USDC = "1"        # max USDC dripped from escrow per UTC day (a ceiling BELOW the caps)
