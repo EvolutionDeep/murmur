@@ -9,7 +9,7 @@
 
 /** The git commit this build was generated from (“unknown” when git was unavailable at codegen time).
  *  Informational only — NOT folded into CODE_COMMITMENT (a source-neutral commit must not rotate it). */
-export const GIT_COMMIT = "04ef9a4da2c661007e5253b1c4b843aa3ba2b80a";
+export const GIT_COMMIT = "8bcd7b04bb592a922ae69a654e887094692c7e78";
 
 /** sha256(src tree hash + canonical knob defaults + FlyWire artifact hash) — the PoCA code identity (64 lowercase hex). */
 export const CODE_COMMITMENT = "1616fe508046b46fb5398b3b9ef709e0ecc89750ecd11da596536b729c2f3a19";

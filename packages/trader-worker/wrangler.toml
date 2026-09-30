@@ -133,7 +133,18 @@ ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per U
 # ECONOMY_MAX_DEAL split into chunks. The internal ledger/volume/caps move ONLY on a mined receipt,
 # so a failed flush never invents money. Inert in simulated mode.
 ECONOMY_NET_MIN_BROADCAST = "0.01"           # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (raised 0.004→0.01: ~5× base price so gas/face-value ratio stays favourable; commit c7b53f8)
-ECONOMY_NET_FLUSH_TICKS = "360"              # force-flush any nonzero pending net at least every N sub-ticks (360 = 60 crons ≈ 1 h; raised from 30 to batch small nets and cut receipt density; commit c7b53f8); 0 = never force
+ECONOMY_NET_FLUSH_TICKS = "1440"             # TEMPORARY GAS EMERGENCY GATE (#133, 2026-09-30): 360 → 1440. force-flush any nonzero pending net at least every N sub-ticks (1440 = 240 crons; raised from 360 = 60 crons, itself raised from 30 to batch small nets and cut receipt density, commit c7b53f8); 0 = never force
+#   WHY: the facilitator/gas wallet 0x2b9A3197ed35d56E2e1c2A01f4D649586821055c pays Arc gas out of the SAME
+#   balance that holds its operating USDC (native == the 0x3600..0000 ERC-20 balance to 12 decimals), so every
+#   dust flush burns runway directly. Stretching the forced-dust window ~2h → ~8h cuts on-chain settlement tx
+#   (and therefore gas) by roughly a third with NO code change. Nets at or above ECONOMY_NET_MIN_BROADCAST still
+#   flush every cron exactly as before — this only delays the DUST that was being force-broadcast on age.
+#   VAR-ONLY: wrangler.toml is outside the treeHash SRC_DIRS, so this rotates neither CODE_COMMITMENT nor the
+#   PoCA epoch (no kind-7); netFlushTicks is also not among the 22 flags in pocaKnobsHash(), so no kind-3 either.
+#   EXPECTED, ACCEPTED side effects while armed: netPending grows (dust lingers instead of broadcasting),
+#   dust provenance latency rises, mirrorDrift may widen (R5 Fix B resync absorbs it every 3rd cron).
+#   ROLLBACK (seconds): set back to "360" and re-run `npm run deploy:worker` from the repo root.
+#   REVERT TO 360 once Neil's Merkle batch receipts (-45% tx) land.
 
 # ===== R5 FIX A + FIX B (the settle-fail spiral) — SECRETS, deliberately NO var set here =====
 # Both switches are read from env in src/config.ts but intentionally NOT declared as [vars], because the 128
