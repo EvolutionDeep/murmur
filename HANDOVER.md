@@ -10,7 +10,8 @@
 | 仓库 HEAD | `71e2aa00de2fc76dc1c2643ebe7f090853a5a774`（`71e2aa0`） | `git rev-parse HEAD` |
 | ↳ 本文档自身 | 以 `docs: rolling session handover #141 …` 提交（仅改 `HANDOVER.md`）。**你看到 HEAD 比 `71e2aa0` 多一个 docs commit 属正常**，上表锚点是本文成文时的代码/生产状态 | 本行 |
 | 工作分支 | `fresh`（工作树**干净**，无未提交改动） | `git status --short` |
-| 分支对齐 | `fresh` == `main` == `new-origin/main` == `new-origin/fresh` 全在 `71e2aa0` | `git log --oneline -15` |
+| 分支对齐 | `fresh` == `new-origin/fresh` == `new-origin/main` == `new-origin/HEAD`（四方同 hash；本文档的 docs commit 会把这个 hash 再往前推一格，属正常） | `git rev-parse HEAD fresh new-origin/fresh new-origin/main` |
+| ⚠️ 本地 `main` | **陈旧，落后 `fresh` 231 个 commit**（停在 `b60172f`）。发布权威是**远端** `new-origin/main`；**不要 `git checkout main`**，否则会拿到很旧的代码 | `git rev-list --count main..fresh` |
 | 远端 | 仅 `new-origin` → `https://github.com/EvolutionDeep/murmur.git` | `git remote -v` |
 | Worker Version | `9c5af85c-3466-4196-9568-33fecee1ede5`（100%，2026-09-30T07:59:10Z，`triggered_by=deployment`） | `wrangler deployments list --json` |
 | CODE_COMMITMENT | `066121bc5bf09f123af45e9556aa07048afa32f6dd4c1cffda7f09dc22233f92` | `src/codeCommitment.ts` + 线上 `/poca` **双端一致** |
@@ -590,7 +591,7 @@ cast nonce 0x2b9A3197ed35d56E2e1c2A01f4D649586821055c --rpc-url <ARC_RPC>
 - **远端**：**仅** `new-origin` → `https://github.com/EvolutionDeep/murmur.git`（fetch + push）。旧仓已彻底断开。远端还有 `new-origin/HEAD -> new-origin/main` 与一个 dependabot 分支 `dependabot/npm_and_yarn/types/node-26.5.1`。
 - **分支**：
   - `fresh` ← **工作分支**（当前 checkout，HEAD `71e2aa0`，工作树干净）
-  - `main` ← 发布分支（也在 `71e2aa0`）
+  - `main` ← **本地陈旧分支**（停在 `b60172f`，落后 `fresh` **231 个 commit**）。**发布分支指的是远端 `new-origin/main`**，它由 `git push new-origin fresh:main` 直接更新，**从不需要本地 checkout `main`**；不要拿本地 `main` 做任何基准判断。
   - `merkle-batch-receipts` @ `df2e386`（在 `.worktrees/merkle-batch` 里 checkout，故 `git branch` 显示 `+`）
   - `feat/lexicon-permanence` @ `7cde7ba`（已合入 fresh，历史分支）
   - `hotfix/c2-x402`（历史分支）
@@ -607,7 +608,7 @@ git push new-origin fresh
 git push new-origin fresh:main
 ```
 
-三方对齐（`fresh` == `main` == `new-origin/*`）是常态，推完务必确认。
+三方对齐（`fresh` == `new-origin/fresh` == `new-origin/main`）是常态，推完务必确认（本地 `main` 陈旧，**不在对齐集合里**，见上）。推到 `main` 时远端会回 `Bypassed rule violations for refs/heads/main` + `2 of 2 required status checks are expected` —— 这是分支保护被管理员权限 bypass 的**正常提示**，不是失败；判据仍是 `EXIT=0` + 形如 `71e2aa0..0ae154d  fresh -> main` 的 ref 更新行。
 
 ---
 
