@@ -39,6 +39,8 @@
     "check:knobs": "node scripts/check-knob-defaults.mjs",
     "verify:poca": "node scripts/poca-verify.mjs",
     "verify:poca:selftest": "node scripts/poca-verify.mjs --selftest",
+    "verify:audit": "node scripts/audit-live.mjs",
+    "verify:audit:offline": "node scripts/audit-live.mjs --offline",
     "dev:worker": "npm run dev -w @fly/trader-worker",
     "deploy:worker": "node scripts/gen-codecommit.mjs && npm run deploy -w @fly/trader-worker",
     "deploy:frontend": "npm run deploy -w @fly/frontend",
