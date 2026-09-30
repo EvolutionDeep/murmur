@@ -99,6 +99,7 @@ import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./common
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { writeEconomySnapshot } from "./economyReplay.js";
+import { writeShadowRows } from "./shadowEvidence.js";
 import { generationReport, type GenAgentEntry, type GenLeaderRow, type GenPredictRow } from "./generationStats.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
 import {
@@ -647,6 +648,8 @@ export class FlyStateDO {
   private cronStartedAt: number | null = null;
   /** Set once the D1 archival table has been ensured this DO lifetime (avoids re-running DDL per cron). */
   private d1SchemaReady = false;
+  /** Shadow-compare (#87): in-memory cron counter for the everyNCrons modulo gate. Never persisted. */
+  private shadowCronCount = 0;
   /** #98 Fix 1: current economy shard generation (alternates 0/1). Null until first read/write this DO lifetime. */
   private econPersistGen: number | null = null;
   /** The deterministic historian (era/record trackers) + its hot recent-chronicle buffer, lazily loaded. */
@@ -3963,6 +3966,26 @@ export class FlyStateDO {
         econBudget -= made.length;   // every attempt counts against the cron budget (bounds real spend)
       }
     }
+    // ── SHADOW-COMPARE (#87 Phase 0): mirror the decision loop with evolution ON, record baseline-vs-evolved
+    // diffs to D1 (best-effort, off the cron await path). Gated: flag + cronIndex % N. Structurally unreachable
+    // from facilitator.settle — shadowStep NEVER touches real money, real fields or the DO blob.
+    if (economy && snapshot && economy.shadowCompareOn() && this.shadowCronCount % this.cfg.shadowCompare.everyNCrons === 0) {
+      try {
+        const shadowTick = snapshot.tickIndex ?? swarm.getTickIndex();
+        const shadowRows = economy.shadowStep(snapshot.flies, snapshot.collective, shadowTick, this.shadowCronCount);
+        if (shadowRows.length) {
+          const db = this.env.DB;
+          if (db) {
+            const capped = shadowRows.slice(0, this.cfg.shadowCompare.maxRowsPerCronToD1);
+            const p = writeShadowRows(db, capped).catch((e) => console.warn("[shadow] D1 write failed (non-fatal):", (e as Error).message));
+            try { this.state.waitUntil(p); } catch { void p; }
+          }
+        }
+      } catch (e) {
+        console.warn("[shadow] shadowStep failed (non-fatal):", (e as Error).message);
+      }
+    }
+    this.shadowCronCount++;
     if (economy) {
       // NETTING flush (onchain only; no-op in simulated mode): broadcast the accumulated bilateral nets
       // whose |net| cleared the min-broadcast threshold or aged past the forced-flush bound. Real txs
@@ -3978,6 +4001,12 @@ export class FlyStateDO {
       const flushed = await economy.flush(swarm.getTickIndex());
       cronSettlements.push(...flushed);
       deals += flushed.filter((s) => s.valid).length;
+      // Shadow-compare (#87): feed real flush outcomes into the shadow-only playbook ring (no real field touched).
+      if (economy.shadowCompareOn()) {
+        try { economy.shadowRecordOutcomes(flushed, swarm.getTickIndex()); } catch (e) {
+          console.warn("[shadow] shadowRecordOutcomes failed (non-fatal):", (e as Error).message);
+        }
+      }
       // Publish the whole cron's activity to the frontend as one batch (not just the last sub-tick's).
       economy.setLastTick(cronSettlements);
       // DYNASTY mortality sweep — ONCE per cron, ledger-side only (the swarm, shards and canvas never
@@ -6462,6 +6491,7 @@ export class FlyStateDO {
       conflictEnabled: c.conflict.enabled,
       territoryEnabled: c.territory.enabled,
       poetEnabled: c.poet.enabled,
+      shadowCompareEnabled: c.shadowCompare.enabled,
     });
   }
 

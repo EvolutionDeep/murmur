@@ -473,6 +473,8 @@ export interface EconomySnapshot {
   playbook?: Array<{ id: number; e: number[][] }>;
   /** MAP-Elites archive read-out (flag-guarded, absent when OFF → dark-deployment byte-equivalent). Shape matches evolution.js contract. */
   elitesArchive?: Array<{ c: number; a: number; f: number; h: string; t: number; b: [number, number, number] }>;
+  /** SHADOW-COMPARE aggregate (flag-guarded, absent when OFF → dark-deployment byte-equivalent). */
+  shadowCompare?: ShadowAggregate;
 }
 
 export interface EconomyConfig {
@@ -586,6 +588,18 @@ export interface EconomyConfig {
   lamarck?: {
     enabled: boolean;
   };
+  // --- SHADOW-COMPARE (task #87): OPTIONAL — absent/false ⇒ zero overhead, zero new keys in snapshot(),
+  //     serialize() byte-for-byte identical, no D1 writes. When armed, shadowStep() mirrors the decision
+  //     loop with evolution capabilities ON and records baseline-vs-evolved diffs. PURE READ-OUT: never
+  //     touches facilitator/queueNet/settle/flush/absorbFlows/payBreedingFee/payHatchFee, never writes any
+  //     real field (balance/paid/earned/deals/sales/volumeAtomic/count/settleOk|Fail/recent/pendingNets/
+  //     proofs/proofChainHead/spendGuard/social/grudges). Evidence lands in D1 ONLY, never in DO blob. ---
+  shadowCompare?: {
+    enabled: boolean;
+    everyNCrons: number;
+    maxDecisionsPerCron: number;
+    maxRowsPerCronToD1: number;
+  };
 }
 
 /**
@@ -603,6 +617,55 @@ export interface EconomyDeps {
    * byte-for-byte today's behaviour. See src/ipfs.ts — the trust root stays sha256(body)==the on-chain hash.
    */
   pinner?: ReceiptPinner;
+}
+
+// ---------- SHADOW-COMPARE types (task #87): decision evidence rows + bounded aggregate ----------
+
+/** One shadow-compare decision row: baseline vs evolved for a single agent in one sub-tick. */
+export interface ShadowDecision {
+  ts: number;
+  tick: number;
+  cron: number;
+  buyerId: number;
+  sellerIdBase: number;
+  sellerIdEvo: number;
+  goodBase: string;
+  goodEvo: string;
+  wantBase: number;
+  wantEvo: number;
+  amountBaseAtomic: string;
+  amountEvoAtomic: string;
+  amountEvoAfterCapAtomic: string;
+  capReason: string;
+  treeHash: string;
+  pbConfidence: number;
+  pbAmplifier: number;
+  pbExplore: boolean;
+  regime: string;
+  tempBucket: number;
+}
+
+/** Bounded per-cron aggregate counters for /economy.shadowCompare (flag-guarded). */
+export interface ShadowAggregate {
+  crons: number;
+  decisions: number;
+  baselineBuys: number;
+  evolvedBuys: number;
+  gateFlipsToBuy: number;
+  gateFlipsToHold: number;
+  goodSwitches: number;
+  sellerChanges: number;
+  amountDeltaSumAtomic: number;
+  amountDeltaMaxAtomic: number;
+  evolvedAmountSumAtomic: number;
+  baselineAmountSumAtomic: number;
+  cappedByMaxDeal: number;
+  cappedByDailyGlobal: number;
+  cappedByDailyAgent: number;
+  newEliteCells: number;
+  avgAmplifier: number;
+  exploreCount: number;
+  treeHashDistinct: number;
 }
 
 const KEY_VERSION = "economy:v1";
@@ -807,6 +870,22 @@ export class AgentEconomy {
   private elitesArchive = new ElitesArchive();
   /** Per-agent lifetime good-trade counts [signal, momentum, attestation, prediction] for entropy descriptor. */
   private goodCounts = new Map<number, [number, number, number, number]>();
+
+  /**
+   * SHADOW-COMPARE (task #87): twin fields for the evolution decision mirror. A pure RUNTIME field:
+   * NEVER persisted, NEVER folded into stateDigest, NEVER in serialize(). Evidence lands in D1 ONLY.
+   * shadowPlaybook: the shadow-only consequence ring fed by real flush outcomes (shadowRecordOutcomes).
+   * shadowAgg: bounded per-cron aggregate counters exposed at /economy.shadowCompare (flag-guarded).
+   */
+  private shadowPlaybook = new Map<number, PlaybookEntry[]>();
+  private shadowAgg: ShadowAggregate = {
+    crons: 0, decisions: 0, baselineBuys: 0, evolvedBuys: 0,
+    gateFlipsToBuy: 0, gateFlipsToHold: 0, goodSwitches: 0,
+    sellerChanges: 0, amountDeltaSumAtomic: 0, amountDeltaMaxAtomic: 0,
+    evolvedAmountSumAtomic: 0, baselineAmountSumAtomic: 0,
+    cappedByMaxDeal: 0, cappedByDailyGlobal: 0, cappedByDailyAgent: 0,
+    newEliteCells: 0, avgAmplifier: 0, exploreCount: 0, treeHashDistinct: 0,
+  };
 
   /** ⑧ THE COMMONS: this era's legislated overrides of two institution knobs, applied fresh each cron by
    *  state.ts. null ⇒ base config (byte-for-byte the pre-law economy). Runtime-only, NEVER serialized —
@@ -1684,6 +1763,11 @@ export class AgentEconomy {
     return !!this.cfg.elites && this.cfg.elites.enabled === true;
   }
 
+  /** True when shadow-compare is armed (ECONOMY_EVOLUTION_SHADOW="true"). OFF ⇒ zero overhead, zero keys. */
+  shadowCompareOn(): boolean {
+    return !!this.cfg.shadowCompare && this.cfg.shadowCompare.enabled === true;
+  }
+
   /**
    * CULTURAL resolved (Phase 3 capability ③): false/absent ⇒ noteHatch is byte-for-byte the Phase 2b path
    * (no parent memory is copied, an id-reuse slot keeps its residue exactly as before). Default OFF.
@@ -2059,6 +2143,393 @@ export class AgentEconomy {
     const exploreDraw = hash01(tick, id, PLAYBOOK_SALT_EPS);
     const explore = exploreDraw < PLAYBOOK_EPSILON;
     return { amplifier, explore };
+  }
+
+  // ---------- SHADOW-COMPARE (task #87): the evolution decision mirror ----------
+  // PURE READ-OUT: shadowStep mirrors step()'s decision loop with evolution capabilities ON and records
+  // baseline-vs-evolved diffs. STRUCTURAL SAFETY: this function body NEVER references this.facilitator,
+  // queueNet, settle, flush, absorbFlows, payBreedingFee, payHatchFee. It NEVER writes any real field
+  // (balance/paid/earned/deals/sales/volumeAtomic/count/settleOk|Fail/recent/pendingNets/proofs/
+  // proofChainHead/spendGuard/social/grudges). Evidence goes to D1 only via the caller (state.ts).
+
+  /**
+   * Mirror the decision loop for one sub-tick, computing BOTH the baseline (all evolution caps OFF) and
+   * evolved (strategy/playbook/elites ON) decisions side-by-side. Returns up to maxDecisions rows.
+   *
+   * STRUCTURAL UNREACHABILITY GUARANTEE: this function body does NOT reference this.facilitator, queueNet,
+   * settle, flush, absorbFlows, payBreedingFee, or payHatchFee — the 4 facilitator.settle() sites are
+   * structurally unreachable from here. It does NOT write any real field.
+   */
+  shadowStep(
+    readings: FlyReading[],
+    collective: CollectiveState,
+    tickIndex: number,
+    cronNum: number,
+  ): ShadowDecision[] {
+    if (!this.shadowCompareOn()) return [];
+    if (!this.cfg.enabled || readings.length < 2) return [];
+
+    const maxDecisions = this.cfg.shadowCompare!.maxDecisionsPerCron;
+    const n = readings.length;
+    const T = clamp01(collective.temperature);
+    const regime = collective.regime;
+    const tempBucket = Math.min(3, Math.floor(T * 4));
+    const demand = 0.3 + 0.7 * T;
+    const maxDealAtomic = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
+    const rows: ShadowDecision[] = [];
+    const ts = Date.now();
+
+    // Evolved context (mirrors step()'s setup but only for the shadow branch)
+    const evoStratTempR6 = Math.trunc(T * R6_SCALE);
+    const evoPbRegime = regime === "HOT" ? 2 : regime === "COLD" ? 0 : 1;
+
+    let ampSum = 0;
+    let ampCount = 0;
+    const treeHashes = new Set<string>();
+
+    for (let i = 0; i < n && rows.length < maxDecisions; i++) {
+      const r = readings[i];
+      if (this.dead.has(r.id)) continue;
+      const buyerIdx = this.indexOfId.get(r.id);
+      if (buyerIdx == null) continue;
+
+      // --- BASELINE: no strategy, no playbook, no rules, no elites ---
+      const wantBase = this.shadowBuyProbabilityBase(r, T);
+      const draw = hash01(tickIndex, r.id, 0x9e3779b9);
+      const baseBuys = draw <= wantBase * demand;
+
+      // --- EVOLVED: strategy tilt + playbook good override + playbook amplifier + rules tilt ---
+      const wantEvo = this.shadowBuyProbabilityEvo(r, T, tickIndex, evoStratTempR6);
+      const evoBuys = draw <= wantEvo * demand;
+
+      // Gate flips
+      if (!baseBuys && evoBuys) this.shadowAgg.gateFlipsToBuy++;
+      if (baseBuys && !evoBuys) this.shadowAgg.gateFlipsToHold++;
+      if (baseBuys) this.shadowAgg.baselineBuys++;
+      if (evoBuys) this.shadowAgg.evolvedBuys++;
+
+      // Even if neither buys, record the decision comparison (the want values ARE the evidence)
+      const goodBase = goodForState(r.state);
+      const goodEvo = this.shadowPlaybookGoodOverride(r.id, goodBase, tickIndex);
+      if (goodBase !== goodEvo) this.shadowAgg.goodSwitches++;
+
+      // Seller comparison (baseline = no playbook amp / no strategy tilt on cp)
+      const sellerBase = this.shadowPickCounterpartyBase(r, buyerIdx, i, n, tickIndex);
+      const pbMod = this.shadowPlaybookCounterpartyMod(r.id, tickIndex);
+      const sellerEvo = this.shadowPickCounterpartyEvo(r, buyerIdx, i, n, tickIndex, pbMod, evoStratTempR6);
+      if (sellerBase !== sellerEvo) this.shadowAgg.sellerChanges++;
+
+      // Amount comparison
+      const amountBase = this.shadowDealAmountBase(r, T, goodBase);
+      const amountEvo = this.shadowDealAmountEvo(r, T, goodEvo, tickIndex, evoStratTempR6);
+      const amountEvoBI = BigInt(amountEvo);
+      const capped = maxDealAtomic > 0n && amountEvoBI > maxDealAtomic;
+      const amountAfterCap = capped ? String(maxDealAtomic) : amountEvo;
+      const capReason = capped ? "max-deal" : "";
+      if (capped) this.shadowAgg.cappedByMaxDeal++;
+
+      const delta = Math.abs(Number(amountEvo) - Number(amountBase));
+      this.shadowAgg.amountDeltaSumAtomic += delta;
+      if (delta > this.shadowAgg.amountDeltaMaxAtomic) this.shadowAgg.amountDeltaMaxAtomic = delta;
+      this.shadowAgg.evolvedAmountSumAtomic += Number(amountEvo);
+      this.shadowAgg.baselineAmountSumAtomic += Number(amountBase);
+
+      // Strategy tree hash for distinctness tracking
+      const tree = this.strategyTreeOf(r.id);
+      const th = tree ? treeHash(tree) : "";
+      if (th) treeHashes.add(th);
+
+      // Amplifier tracking
+      ampSum += pbMod.amplifier;
+      ampCount++;
+      if (pbMod.explore) this.shadowAgg.exploreCount++;
+
+      rows.push({
+        ts, tick: tickIndex, cron: cronNum,
+        buyerId: r.id,
+        sellerIdBase: sellerBase >= 0 ? (this.agents[sellerBase]?.id ?? -1) : -1,
+        sellerIdEvo: sellerEvo >= 0 ? (this.agents[sellerEvo]?.id ?? -1) : -1,
+        goodBase, goodEvo,
+        wantBase, wantEvo,
+        amountBaseAtomic: amountBase,
+        amountEvoAtomic: amountEvo,
+        amountEvoAfterCapAtomic: amountAfterCap,
+        capReason,
+        treeHash: th,
+        pbConfidence: this.shadowPlaybookConfidence(r.id, tickIndex),
+        pbAmplifier: pbMod.amplifier,
+        pbExplore: pbMod.explore,
+        regime,
+        tempBucket,
+      });
+    }
+
+    // Update aggregates
+    this.shadowAgg.crons++;
+    this.shadowAgg.decisions += rows.length;
+    this.shadowAgg.avgAmplifier = ampCount > 0 ? ampSum / ampCount : 0;
+    this.shadowAgg.treeHashDistinct = treeHashes.size;
+
+    return rows;
+  }
+
+  /**
+   * Feed real flush outcomes into the shadow-only playbook ring so the amplifier channel lives.
+   * Called AFTER economy.flush() returns. Reads the flushed settlements (pure observation) and writes
+   * ONLY to this.shadowPlaybook — never to this.playbook (the real one).
+   * STRUCTURAL SAFETY: does NOT reference this.facilitator, queueNet, settle, flush, absorbFlows,
+   * payBreedingFee, payHatchFee. Does NOT write any real field.
+   */
+  shadowRecordOutcomes(flushed: Settlement[], tickIndex: number): void {
+    if (!this.shadowCompareOn()) return;
+    const regime = this.pbRegime;
+    const tempBucket = this.pbTempBucket;
+    for (const s of flushed) {
+      if (!s || s.fromId == null) continue;
+      const id = s.fromId;
+      const goodIdx = GOOD_KINDS.indexOf(s.good as GoodKind);
+      if (goodIdx < 0) continue;
+      const ctx = hash32(tickIndex, regime * 4 + tempBucket, id);
+      let ring = this.shadowPlaybook.get(id);
+      if (!ring) { ring = []; this.shadowPlaybook.set(id, ring); }
+      const entry: PlaybookEntry = {
+        ctx, action: 0, good: goodIdx, regime,
+        outcome: Number(s.amount || 0), valid: s.valid ? 1 : 0, tick: tickIndex,
+      };
+      if (ring.length >= PLAYBOOK_CAP) {
+        let oldest = 0;
+        for (let i = 1; i < ring.length; i++) { if (ring[i].tick < ring[oldest].tick) oldest = i; }
+        ring[oldest] = entry;
+      } else {
+        ring.push(entry);
+      }
+    }
+  }
+
+  // --- Shadow-internal pure helpers (NO side effects on real state) ---
+
+  /** Baseline buyProbability: no strategy tilt, no rules tilt (exactly the pre-evolution formula). */
+  private shadowBuyProbabilityBase(r: FlyReading, T: number): number {
+    const stateBase =
+      r.state === "AGITATE" ? 0.9 :
+      r.state === "EXPLORE" ? 0.7 :
+      r.state === "AGGREGATE" ? 0.5 : 0.12;
+    const arousal = 0.5 + 0.5 * clamp01(r.arousal);
+    const wing = 0.85 + 0.3 * clamp01(r.wingbeat);
+    const rest = 1 - 0.6 * clamp01(r.rest);
+    return clamp01(stateBase * arousal * wing * rest * (0.6 + 0.4 * T));
+  }
+
+  /** Evolved buyProbability: strategy tilt + rules tilt composed BEFORE clamp01 (mirrors buyProbability). */
+  private shadowBuyProbabilityEvo(r: FlyReading, T: number, tick: number, stratTempR6: number): number {
+    const stateBase =
+      r.state === "AGITATE" ? 0.9 :
+      r.state === "EXPLORE" ? 0.7 :
+      r.state === "AGGREGATE" ? 0.5 : 0.12;
+    const arousal = 0.5 + 0.5 * clamp01(r.arousal);
+    const wing = 0.85 + 0.3 * clamp01(r.wingbeat);
+    const rest = 1 - 0.6 * clamp01(r.rest);
+    let base = stateBase * arousal * wing * rest * (0.6 + 0.4 * T);
+    // Strategy tilt (reuses the same pure-function path as the real strategyTilt)
+    base *= this.shadowStrategyTilt(r, tick, stratTempR6);
+    // Rules tilt
+    base *= this.rulesTilt(r, "buy");
+    return clamp01(base);
+  }
+
+  /** Shadow strategy tilt: identical logic to strategyTilt() but uses an explicit tempR6 (no side effects). */
+  private shadowStrategyTilt(r: FlyReading, tick: number, stratTempR6: number): number {
+    if (!this.strategyOn()) return 1.0;
+    const tree = this.strategyTreeOf(r.id);
+    if (!tree) return 1.0;
+    // Build ctx inline (same terminals as buildStrategyCtx, no side effects)
+    const ctx = new Map<number, number>();
+    ctx.set(0, Math.trunc(clamp01(r.arousal) * R6_SCALE));
+    ctx.set(1, Math.trunc(clamp01(r.wingbeat) * R6_SCALE));
+    ctx.set(2, Math.trunc(clamp01(r.rest) * R6_SCALE));
+    ctx.set(3, Math.trunc(clamp01(r.cohesion) * R6_SCALE));
+    ctx.set(4, Math.trunc(Math.max(-1, Math.min(1, r.turnBias)) * R6_SCALE));
+    ctx.set(5, stratTempR6);
+    const mem = this.social.get(r.id);
+    const bond = mem ? AgentEconomy.clampSigned(mem.rep) : 0;
+    const rep = mem ? clamp01((mem.rep + 1) / 2) : 0.5;
+    ctx.set(6, Math.trunc(bond * R6_SCALE));
+    ctx.set(7, Math.trunc(rep * R6_SCALE));
+    const nm = r.neuromod;
+    ctx.set(8, Math.trunc(clamp01((nm?.daHz ?? 0) / 50) * R6_SCALE));
+    ctx.set(9, Math.trunc(clamp01((nm?.oaHz ?? 0) / 50) * R6_SCALE));
+    const raw = evalStrategy(tree, ctx);
+    const norm = raw / R6_SIGNED_MAX;
+    const tilt = 1.0 + norm * 0.5;
+    return tilt < 0.5 ? 0.5 : tilt > 1.5 ? 1.5 : tilt;
+  }
+
+  /** Shadow baseline counterparty pick: no playbook amplifier, no strategy tilt on cp. */
+  private shadowPickCounterpartyBase(r: FlyReading, buyerI: number, i: number, n: number, tick: number): number {
+    const others = n - 1;
+    if (others <= 0) return -1;
+    const coh = clamp01(r.cohesion);
+    const span = Math.max(1, Math.round(1 + (1 - coh) * (others - 1)));
+    const dir = r.turnBias >= 0 ? 1 : -1;
+    const pool: number[] = [];
+    const seen = new Set<number>([buyerI]);
+    for (let j = 0; j < Math.min(PICK_CANDIDATES, span); j++) {
+      const off = 1 + Math.floor(hash01(tick, r.id, (0x85ebca6b ^ Math.imul(j + 1, 0x9e3779b1)) >>> 0) * span);
+      let idx = (buyerI + dir * off) % n;
+      if (idx < 0) idx += n;
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      pool.push(idx);
+    }
+    if (pool.length === 0) return -1;
+    const picks: number[] = [];
+    const weights: number[] = [];
+    let total = 0;
+    for (const idx of pool) {
+      const cand = this.agents[idx];
+      if (!cand || this.dead.has(cand.id)) continue;
+      const bond = this.effectiveBond(r.id, cand.id, tick);
+      if (bond <= BOND_BLACKLIST) continue;
+      const rep = this.effectiveRep(cand.id, tick);
+      // Baseline: amp=1, stratTilt=1, cpRuleMod=1
+      const w = Math.max(0.05, 1 + 1 * (0.6 * bond + 0.4 * rep));
+      picks.push(idx);
+      weights.push(w);
+      total += w;
+    }
+    if (picks.length === 0) return -1;
+    let spin = hash01(tick, r.id, 0x2545f491) * total;
+    for (let k = 0; k < picks.length; k++) {
+      spin -= weights[k];
+      if (spin <= 0) return picks[k];
+    }
+    return picks[picks.length - 1];
+  }
+
+  /** Shadow evolved counterparty pick: playbook amplifier + strategy tilt + rules tilt on cp. */
+  private shadowPickCounterpartyEvo(
+    r: FlyReading, buyerI: number, i: number, n: number, tick: number,
+    pbMod: { amplifier: number; explore: boolean }, stratTempR6: number,
+  ): number {
+    const others = n - 1;
+    if (others <= 0) return -1;
+    const coh = clamp01(r.cohesion);
+    const span = Math.max(1, Math.round(1 + (1 - coh) * (others - 1)));
+    const dir = r.turnBias >= 0 ? 1 : -1;
+    const pool: number[] = [];
+    const seen = new Set<number>([buyerI]);
+    for (let j = 0; j < Math.min(PICK_CANDIDATES, span); j++) {
+      const off = 1 + Math.floor(hash01(tick, r.id, (0x85ebca6b ^ Math.imul(j + 1, 0x9e3779b1)) >>> 0) * span);
+      let idx = (buyerI + dir * off) % n;
+      if (idx < 0) idx += n;
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      pool.push(idx);
+    }
+    if (pool.length === 0) return -1;
+    const stratTilt = this.shadowStrategyTilt(r, tick, stratTempR6);
+    const cpRuleMod = this.rulesTilt(r, "cp");
+    const picks: number[] = [];
+    const weights: number[] = [];
+    let total = 0;
+    for (const idx of pool) {
+      const cand = this.agents[idx];
+      if (!cand || this.dead.has(cand.id)) continue;
+      const bond = this.effectiveBond(r.id, cand.id, tick);
+      if (bond <= BOND_BLACKLIST) continue;
+      const rep = this.effectiveRep(cand.id, tick);
+      const amp = pbMod.explore ? 0 : pbMod.amplifier;
+      const w = Math.max(0.05, 1 + amp * stratTilt * cpRuleMod * (0.6 * bond + 0.4 * rep));
+      picks.push(idx);
+      weights.push(w);
+      total += w;
+    }
+    if (picks.length === 0) return -1;
+    let spin = hash01(tick, r.id, 0x2545f491) * total;
+    for (let k = 0; k < picks.length; k++) {
+      spin -= weights[k];
+      if (spin <= 0) return picks[k];
+    }
+    return picks[picks.length - 1];
+  }
+
+  /** Shadow playbook good override: reads from shadowPlaybook (not the real playbook). */
+  private shadowPlaybookGoodOverride(id: number, baseGood: GoodKind, tick: number): GoodKind {
+    if (!this.playbookOn()) return baseGood;
+    const scores = this.shadowPlaybookGoodScores(id, tick);
+    const baseIdx = GOOD_KINDS.indexOf(baseGood);
+    if (baseIdx < 0) return baseGood;
+    const baseScore = scores[baseIdx];
+    let bestIdx = baseIdx;
+    let bestScore = baseScore;
+    for (let i = 0; i < 4; i++) {
+      if (scores[i] > bestScore) { bestScore = scores[i]; bestIdx = i; }
+    }
+    if (bestIdx === baseIdx) return baseGood;
+    const gap = Math.max(0, bestScore - baseScore);
+    const switchProb = Math.min(PLAYBOOK_GOOD_SWITCH_MAX, gap * PLAYBOOK_GOOD_SWITCH_MAX * 2);
+    const finalProb = Math.max(PLAYBOOK_EPSILON * 0.5, switchProb);
+    const draw = hash01(tick, id, PLAYBOOK_SALT_GOOD);
+    return draw < finalProb ? GOOD_KINDS[bestIdx] : baseGood;
+  }
+
+  /** Shadow playbook good scores from the SHADOW ring only. */
+  private shadowPlaybookGoodScores(id: number, tick: number): number[] {
+    const boughtS = [0, 0, 0, 0], boughtW = [0, 0, 0, 0];
+    const ring = this.shadowPlaybook.get(id);
+    if (!ring) return boughtS;
+    for (const e of ring) {
+      const age = Math.max(0, tick - e.tick);
+      const w = Math.pow(0.5, age / PLAYBOOK_HALF_LIFE);
+      if (e.action === 0) {
+        const norm = e.valid ? Math.max(-1, Math.min(1, Math.abs(e.outcome) / LAMARCK_PROFIT_SCALE)) : -1;
+        boughtS[e.good] += w * norm;
+        boughtW[e.good] += w;
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      boughtS[i] = boughtW[i] > 0 ? boughtS[i] / boughtW[i] : 0;
+    }
+    return boughtS;
+  }
+
+  /** Shadow playbook confidence from the SHADOW ring only (not the real playbook). */
+  private shadowPlaybookConfidence(id: number, tick: number): number {
+    const ring = this.shadowPlaybook.get(id);
+    if (!ring || ring.length === 0) return 0.5;
+    let wSum = 0, vSum = 0;
+    for (const e of ring) {
+      const age = Math.max(0, tick - e.tick);
+      const w = Math.pow(0.5, age / PLAYBOOK_HALF_LIFE);
+      wSum += w;
+      vSum += w * e.valid;
+    }
+    return wSum > 0 ? vSum / wSum : 0.5;
+  }
+
+  /** Shadow playbook counterparty mod from the SHADOW ring. */
+  private shadowPlaybookCounterpartyMod(id: number, tick: number): { amplifier: number; explore: boolean } {
+    if (!this.playbookOn()) return { amplifier: 1, explore: false };
+    const confidence = this.shadowPlaybookConfidence(id, tick);
+    const amplifier = 0.5 + 0.5 * clamp01(confidence);
+    const exploreDraw = hash01(tick, id, PLAYBOOK_SALT_EPS);
+    const explore = exploreDraw < PLAYBOOK_EPSILON;
+    return { amplifier, explore };
+  }
+
+  /** Shadow baseline deal amount: no strategy tilt (the original fixed formula). */
+  private shadowDealAmountBase(r: FlyReading, T: number, good: GoodKind): string {
+    const meta = GOOD_META[good];
+    const priceUsdc = this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
+    return String(Math.max(1, Math.round(priceUsdc * 1e6)));
+  }
+
+  /** Shadow evolved deal amount: strategy tilt applied (mirrors dealAmount with strategyTilt). */
+  private shadowDealAmountEvo(r: FlyReading, T: number, good: GoodKind, tick: number, stratTempR6: number): string {
+    const meta = GOOD_META[good];
+    const stratTilt = this.shadowStrategyTilt(r, tick, stratTempR6);
+    const priceUsdc = this.cfg.basePriceUsdc * (0.5 + T) * (0.6 + 0.6 * clamp01(r.arousal)) * meta.priceMult;
+    return String(Math.max(1, Math.round(priceUsdc * 1e6 * stratTilt)));
   }
 
   // ---------- ORGANIC CONFLICT (economic layer only; deterministic negative cross-house bonds) ----------
@@ -3745,6 +4216,9 @@ export class AgentEconomy {
       ...(this.elitesOn() ? {
         elitesArchive: this.elitesArchive.serialize(),
       } : {}),
+      // SHADOW-COMPARE /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
+      // Bounded aggregate counters — detail rows live in D1 only (GET /shadow), never in DO blob.
+      ...(this.shadowCompareOn() ? { shadowCompare: { ...this.shadowAgg } } : {}),
     };
   }
 

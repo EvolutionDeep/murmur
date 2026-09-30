@@ -208,3 +208,50 @@ CREATE TABLE IF NOT EXISTS lexicon_events (
   UNIQUE (kind, event, tick)                         -- append-only idempotence guard (a retry never overwrites)
 );
 CREATE INDEX IF NOT EXISTS idx_lexicon_events_id ON lexicon_events (id);
+
+-- ============================================================================================
+-- Shadow-compare (#87 Phase 0) — append-only evidence of the baseline-vs-evolved decision diffs.
+-- PURE READ-OUT: written best-effort from FlyStateDO.cronInner() via ctx.waitUntil (off the cron
+-- await path); changes no brain, wallet, digest, manifestHash or DO blob. Served at GET /shadow
+-- straight from D1 (never a DO round-trip). `CREATE TABLE IF NOT EXISTS` keeps this idempotent
+-- and is mirrored lazily in code (ensureShadowSchema) before the first insert.
+--   tick           — population tickIndex when the shadow ran
+--   cron           — in-memory shadowCronCount (monotone within a DO lifetime)
+--   buyer_id       — the fly whose drives produced this decision
+--   seller_id_base — counterparty chosen by the BASELINE path (no evolution)
+--   seller_id_evo  — counterparty chosen by the EVOLVED path (strategy+playbook+rules ON)
+--   good_base/evo  — the good each path would buy
+--   want_base/evo  — the drive strength each path sees (0..1)
+--   amount_*       — atomic USDC string: baseline, evolved (pre-cap), evolved (post-cap)
+--   cap_reason     — why the evolved amount was capped (empty if not capped)
+--   tree_hash      — deterministic hash of (tick, buyerId, cronNum) for replay-verification
+--   pb_*           — playbook state at decision time (confidence, amplifier, explore flag)
+--   regime         — market regime (HOT/CALM/COLD)
+--   temp_bucket    — temperature bucket 0..3
+-- ============================================================================================
+
+CREATE TABLE IF NOT EXISTS shadow_decisions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts              INTEGER NOT NULL,
+  tick            INTEGER NOT NULL,
+  cron            INTEGER NOT NULL,
+  buyer_id        INTEGER NOT NULL,
+  seller_id_base  INTEGER NOT NULL,
+  seller_id_evo   INTEGER NOT NULL,
+  good_base       TEXT    NOT NULL,
+  good_evo        TEXT    NOT NULL,
+  want_base       REAL    NOT NULL,
+  want_evo        REAL    NOT NULL,
+  amount_base     TEXT    NOT NULL,
+  amount_evo      TEXT    NOT NULL,
+  amount_evo_cap  TEXT    NOT NULL,
+  cap_reason      TEXT    NOT NULL DEFAULT '',
+  tree_hash       TEXT    NOT NULL DEFAULT '',
+  pb_confidence   REAL    NOT NULL DEFAULT 0.5,
+  pb_amplifier    REAL    NOT NULL DEFAULT 0.75,
+  pb_explore      INTEGER NOT NULL DEFAULT 0,
+  regime          TEXT    NOT NULL DEFAULT 'CALM',
+  temp_bucket     INTEGER NOT NULL DEFAULT 2
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_decisions_tick ON shadow_decisions (tick);
+CREATE INDEX IF NOT EXISTS idx_shadow_decisions_ts ON shadow_decisions (ts);

@@ -6,6 +6,7 @@ import { OPENAPI_SPEC } from "./openapi.js";
 import { handleCommunity } from "./community.js";
 import { serveHistory } from "./history.js";
 import { serveReplayEconomy } from "./economyReplay.js";
+import { serveShadow } from "./shadowEvidence.js";
 
 // FlyStateDO is the coordinator (public fetch + cron route here). FlyShardDO holds one slice of the
 // swarm and is reachable ONLY from the coordinator over the FLY_SHARD binding when SHARD_COUNT > 1
@@ -147,6 +148,16 @@ export default {
       const replayHeaders = new Headers(replayResp.headers);
       for (const [k, v] of Object.entries(corsHeaders(origin))) replayHeaders.set(k, v);
       return new Response(replayResp.body, { status: replayResp.status, headers: replayHeaders });
+    }
+
+    // Shadow-compare (#87 Phase 0) — served in the Worker straight from D1, never a DO round-trip.
+    // Same orthogonal-read pattern as /history and /replay/economy: it can't contend for the swarm DO's
+    // single-threaded input queue. Returns { enabled, rows, total } or 503 when D1 is unbound.
+    if (path === "/shadow" && request.method === "GET") {
+      const shadowResp = await serveShadow(env.DB, url);
+      const shadowHeaders = new Headers(shadowResp.headers);
+      for (const [k, v] of Object.entries(corsHeaders(origin))) shadowHeaders.set(k, v);
+      return new Response(shadowResp.body, { status: shadowResp.status, headers: shadowHeaders });
     }
 
     // Forward every other request to the DO (with the /v1 prefix already stripped)

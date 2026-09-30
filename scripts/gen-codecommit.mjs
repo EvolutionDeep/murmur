@@ -79,6 +79,7 @@ const KNOB_DEFAULTS = {
   CONFLICT_ENABLED: "false",
   TERRITORY_ENABLED: "false",
   POET_ENABLED: "false",
+  ECONOMY_EVOLUTION_SHADOW: "false",
 };
 
 /** sha256 of a string OR Buffer, as 64 lowercase hex chars. Review #23: hashing raw bytes (never a

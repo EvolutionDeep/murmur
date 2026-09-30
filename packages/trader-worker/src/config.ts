@@ -63,6 +63,7 @@ export interface Env {
   ECONOMY_FACILITATOR_PK?: string;      // SECRET (optional): a dedicated gas-wallet key; else derived from the mnemonic
   ECONOMY_REAL_SPEND?: string;          // kill switch: "false" halts ALL real settlement (default "true")
   ECONOMY_SHADOW?: string;              // "true" = sign + simulate each transfer but NEVER broadcast (default "false")
+  ECONOMY_EVOLUTION_SHADOW?: string;     // "true" = run shadow-compare (evolution decisions mirrored in parallel, never executed) (default "false") — SECRET: occupies one binding slot
   ECONOMY_DAILY_CAP?: string;           // global real-spend ceiling per UTC day, USDC (default 20; 0 = no cap)
   ECONOMY_PER_AGENT_DAILY_CAP?: string; // per-agent real-spend ceiling per UTC day, USDC (default 2; 0 = no cap)
   ECONOMY_MAX_DEAL?: string;            // facilitator hard per-deal ceiling, USDC (default 0.05)
@@ -809,6 +810,16 @@ export interface RuntimeConfig {
     enabled: boolean;         // master switch (default OFF — dark deploy): MAP-Elites archive drives novelty selection in planEvolution
   };
 
+  // Shadow-compare (task #87): mirrors the decision loop with evolution capabilities ON and records
+  // baseline-vs-evolved diffs to D1. PURE READ-OUT — never touches facilitator/settle/flush/real fields.
+  // OFF ⇒ zero overhead, zero new keys in /economy, byte-for-byte dark deploy.
+  shadowCompare: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): fail-closed `=== "true"`
+    everyNCrons: number;      // run shadow every N crons (default 1 = every cron; code-default only)
+    maxDecisionsPerCron: number; // max decision rows computed per cron (default 64; code-default only)
+    maxRowsPerCronToD1: number;  // max rows written to D1 per cron (default 32; code-default only)
+  };
+
   // Phase 3 capability ③: intergenerational knowledge transfer. Both default OFF (dark deploy) ⇒ a child
   // hatches blank exactly as in Phase 2b (byte-for-byte inert). OFF never touches social/playbook/genome.
   cultural: {
@@ -1357,6 +1368,16 @@ export function loadConfig(env: Env): RuntimeConfig {
       //     explicitly armed. Moves no money, touches no neuron; only reweights counterparty choice
       //     and good selection within existing caps. Set PLAYBOOK_ENABLED=true to arm.
       enabled: (env.PLAYBOOK_ENABLED ?? "false").toLowerCase() === "true",
+    },
+
+    // Shadow-compare (#87): the evolution decision mirror. Fail-closed: only an exact "true" arms it.
+    // The remaining knobs are code-defaults only (no env vars / no binding slots) — same pattern as
+    // netFlushBudgetPerCron (#98 Fix 2: "code-default only, no env var").
+    shadowCompare: {
+      enabled: (env.ECONOMY_EVOLUTION_SHADOW ?? "false").toLowerCase() === "true",
+      everyNCrons: 1,
+      maxDecisionsPerCron: 64,
+      maxRowsPerCronToD1: 32,
     },
 
     strategy: {
