@@ -18,6 +18,8 @@ import type { FlyReading, CollectiveState } from "./population.js";
 import type { Facilitator, VerifyResponse, SettleResponse } from "./x402.js";
 import { usdcToAtomic } from "./x402.js";
 import { OPENAPI_SPEC } from "./openapi.js";
+import { FlyStateDO } from "./state.js";
+import type { Env } from "./config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -720,4 +722,142 @@ test("openapi schema-vs-snapshot: shadowCompare actual keys and types match the 
 
   // 5. Sanity: the aggregate has exactly 19 fields (pins the contract)
   assert.equal(actualKeys.length, 19, `ShadowAggregate must have exactly 19 fields (got ${actualKeys.length}: ${actualKeys.join(", ")})`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// F GROUP: REAL WIRING PATH — economyCfg() → AgentEconomy (closes the #116 blind spot).
+//
+// The A–E suite above injects `shadowCompare` straight into a hand-written cfg() object, so it never
+// exercises state.ts's economyCfg() — the method that ACTUALLY builds the AgentEconomy config in
+// production. When economyCfg() dropped the shadowCompare pass-through, every A–E test still passed
+// while the live economy stayed inert (shadowCompareOn() === !!undefined === false → shadowStep returned
+// [], /economy never carried the key, D1 never got a row). These tests derive the config the SAME way
+// production does — new FlyStateDO(env).economyCfg() — so a missing pass-through can never hide again.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A throwaway TEST-ONLY seed. loadConfig performs NO BIP-39 validation and this suite NEVER calls
+ * buildOnchainDeps() — no HD derivation, no viem client, no network, no real key. The mock facilitator is
+ * injected as the dep instead. This is NOT the production ECONOMY_MNEMONIC secret; it exists solely so the
+ * DO's real economyCfg() reports onchainWired()===true and emits facilitatorMode:"onchain" for the
+ * money-safety arms (F3/F4), which need a live settle path to prove shadow never touches it.
+ */
+const TEST_SEED = "test test test test test test test test test test test junk";
+
+/** Derive the AgentEconomy config through the REAL production path: loadConfig(env) → FlyStateDO.economyCfg(). */
+function realEconomyCfg(envOver: Record<string, string> = {}): EconomyConfig {
+  const env = {
+    CHAIN_ID: "5042", RPC_URL: "https://rpc.test", FLY_STATE: {} as any,
+    ...envOver,
+  } as unknown as Env;
+  const dobj = new FlyStateDO({ storage: {} } as any, env);
+  // economyCfg() is private (compile-time only); reach it exactly as makeEconomy() does in production.
+  return (dobj as any).economyCfg();
+}
+
+/** Env that arms the real onchain settle path (a mock facilitator is injected separately as the dep). */
+const MONEY_ENV = {
+  ECONOMY_FACILITATOR: "onchain",
+  ECONOMY_MNEMONIC: TEST_SEED,
+  ECONOMY_REAL_SPEND: "true",
+  ECONOMY_INITIAL_BALANCE: "100",
+  ECONOMY_MAX_DEAL: "100",
+  ECONOMY_NET_MIN_BROADCAST: "0.001",
+  ECONOMY_NET_FLUSH_TICKS: "1",
+};
+
+test("F1 (real wiring): ECONOMY_EVOLUTION_SHADOW=true ⇒ economyCfg()→AgentEconomy arms shadowCompareOn() and shadowStep emits rows", async () => {
+  const cfgOn = realEconomyCfg({ ECONOMY_EVOLUTION_SHADOW: "true" });
+  // The wiring itself must carry the field — this is EXACTLY what the #115 build dropped.
+  assert.ok(cfgOn.shadowCompare, "economyCfg() must transmit a shadowCompare object (the #115 wiring gap)");
+  assert.equal(cfgOn.shadowCompare!.enabled, true, "economyCfg().shadowCompare.enabled reflects ECONOMY_EVOLUTION_SHADOW=true");
+
+  const econ = new AgentEconomy(cfgOn);
+  assert.equal(econ.shadowCompareOn(), true, "shadowCompareOn()===true through the real wiring path");
+
+  const pop = population("AGITATE", 12);
+  for (let t = 1; t <= 5; t++) await econ.step(pop, collective(0.85), t);
+  let rows = 0;
+  for (let t = 6; t <= 15; t++) rows += econ.shadowStep(pop, collective(0.85), t, t).length;
+  assert.ok(rows > 0, `shadowStep must emit rows when armed via the real path (got ${rows})`);
+  assert.ok(econ.snapshot().shadowCompare, "snapshot().shadowCompare key present when armed via the real path");
+});
+
+test("F2 (real wiring): ECONOMY_EVOLUTION_SHADOW=false/absent ⇒ economyCfg()→AgentEconomy keeps shadowCompareOn()===false and shadowStep returns []", () => {
+  for (const envOver of [{ ECONOMY_EVOLUTION_SHADOW: "false" }, {}]) {
+    const cfgOff = realEconomyCfg(envOver);
+    assert.ok(cfgOff.shadowCompare, "economyCfg() always transmits the shadowCompare object (the enabled flag lives inside)");
+    assert.equal(cfgOff.shadowCompare!.enabled, false, `shadowCompare.enabled false for env ${JSON.stringify(envOver)}`);
+    const econ = new AgentEconomy(cfgOff);
+    assert.equal(econ.shadowCompareOn(), false, `shadowCompareOn()===false for env ${JSON.stringify(envOver)}`);
+    assert.deepEqual(econ.shadowStep(population("AGITATE", 8), collective(0.85), 1, 1), [], "shadowStep returns [] when disarmed");
+    assert.ok(!("shadowCompare" in econ.snapshot()), "snapshot() carries NO shadowCompare key when disarmed (byte-for-byte dark)");
+  }
+  // Fail-closed: only the exact string "true" (case-insensitive) arms it.
+  assert.equal(realEconomyCfg({ ECONOMY_EVOLUTION_SHADOW: "1" }).shadowCompare!.enabled, false, "'1' does NOT arm (fail-closed === 'true')");
+  assert.equal(realEconomyCfg({ ECONOMY_EVOLUTION_SHADOW: "yes" }).shadowCompare!.enabled, false, "'yes' does NOT arm");
+  assert.equal(realEconomyCfg({ ECONOMY_EVOLUTION_SHADOW: "TRUE" }).shadowCompare!.enabled, true, "case-insensitive 'TRUE' arms");
+});
+
+test("F3 (real wiring, A2 zero-increment): shadow ON vs OFF through economyCfg() leaves every real money field + the mock settle count identical", async () => {
+  const N = 10;
+  const pop = population("AGITATE", 12);
+
+  const countOff = { n: 0 };
+  const cfgOff = realEconomyCfg({ ...MONEY_ENV, ECONOMY_EVOLUTION_SHADOW: "false" });
+  assert.equal(cfgOff.facilitatorMode, "onchain", "sanity: the real path emits onchain when wired");
+  const econOff = new AgentEconomy(cfgOff, undefined, { facilitator: mockFacilitator({ settleCount: countOff }) });
+  for (let t = 1; t <= N; t++) {
+    await econOff.step(pop, collective(0.85), t, undefined, true);
+    await econOff.flush(t);
+  }
+
+  const countOn = { n: 0 };
+  const cfgOn = realEconomyCfg({ ...MONEY_ENV, ECONOMY_EVOLUTION_SHADOW: "true" });
+  assert.equal(cfgOn.facilitatorMode, "onchain", "sanity: the real path emits onchain when wired");
+  const econOn = new AgentEconomy(cfgOn, undefined, { facilitator: mockFacilitator({ settleCount: countOn }) });
+  for (let t = 1; t <= N; t++) {
+    await econOn.step(pop, collective(0.85), t, undefined, true);
+    econOn.shadowStep(pop, collective(0.85), t, t);            // the shadow cron runs alongside the real one…
+    const flushed = await econOn.flush(t);
+    econOn.shadowRecordOutcomes(flushed, t);
+  }
+
+  const snapOn = econOn.snapshot();
+  const snapOff = econOff.snapshot();
+  // Every real money field, item by item (the exact set the task pins).
+  assert.equal(snapOn.totals.volumeAtomic, snapOff.totals.volumeAtomic, "volumeAtomic identical");
+  assert.equal(snapOn.totals.count, snapOff.totals.count, "count identical");
+  assert.equal(snapOn.totals.settleOk, snapOff.totals.settleOk, "settleOk identical");
+  assert.equal(snapOn.totals.settleFail, snapOff.totals.settleFail, "settleFail identical");
+  assert.deepEqual((econOn as any).spendGuard, (econOff as any).spendGuard, "spendGuard identical");
+  assert.equal((econOn as any).pendingNets.size, (econOff as any).pendingNets.size, "pendingNets.size identical");
+  assert.equal(econOn.proofsSnapshot().chainHead, econOff.proofsSnapshot().chainHead, "proofChainHead identical");
+  // The mock settle call count — shadow adds zero real broadcasts.
+  assert.equal(countOn.n, countOff.n, `mock settle call count identical (ON=${countOn.n}, OFF=${countOff.n})`);
+  assert.ok(countOn.n > 0, `sanity: real settles actually fired through the mock facilitator (got ${countOn.n})`);
+});
+
+test("F4 (real wiring, A1 unreachability): a poisonous facilitator (settle throws) is never reached by the shadow cron built from economyCfg()", async () => {
+  const settleCount = { n: 0 };
+  const fac = mockFacilitator({ throwOnSettle: true, settleCount });
+  const cfgOn = realEconomyCfg({ ...MONEY_ENV, ECONOMY_EVOLUTION_SHADOW: "true" });
+  const econ = new AgentEconomy(cfgOn, undefined, { facilitator: fac });
+  assert.equal(econ.shadowCompareOn(), true, "shadow armed through the real onchain path");
+
+  const pop = population("AGITATE", 12);
+  let shadowRows = 0;
+  for (let t = 1; t <= 10; t++) {
+    // The real-money cron may reach settle and throw — expected; shadow runs on a separate, unreachable path.
+    try { await econ.step(pop, collective(0.85), t, undefined, true); } catch { /* expected: the real settle throws */ }
+    try { await econ.flush(t); } catch { /* expected: the real broadcast throws */ }
+    // The shadow cron must NEVER throw and NEVER touch the facilitator.
+    const before = settleCount.n;
+    const rows = econ.shadowStep(pop, collective(0.85), t, t);
+    econ.shadowRecordOutcomes([], t);
+    assert.ok(Array.isArray(rows), "shadowStep returns an array even against a poisonous facilitator");
+    assert.equal(settleCount.n, before, "shadowStep/shadowRecordOutcomes never call facilitator.settle");
+    shadowRows += rows.length;
+  }
+  assert.ok(shadowRows > 0, `the shadow cron stayed live and emitted rows throughout (got ${shadowRows})`);
 });

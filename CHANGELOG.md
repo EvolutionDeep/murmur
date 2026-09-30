@@ -21,6 +21,57 @@ All notable changes to **murmur** are documented in this file. The format is bas
 
 ## [Unreleased]
 
+### Fixed — shadow-compare wiring gap: `economyCfg()` never passed `shadowCompare` through (task #118, #87)
+- **Root cause (latent since the #116 gate)**: `FlyStateDO.economyCfg()` built the `EconomyConfig` handed to
+  `new AgentEconomy(...)` but omitted the `shadowCompare` block, so `AgentEconomy.shadowCompareOn()` evaluated
+  `!!undefined && …` → permanently `false`. Flipping the `ECONOMY_EVOLUTION_SHADOW` secret therefore armed
+  nothing: `shadowStep()` returned `[]` on its first line and `GET /economy` never carried a `shadowCompare`
+  key. The DO's own `this.cfg.shadowCompare` *was* live — which is exactly why `pocaKnobsHash()` still saw the
+  flip and logged a `kind=3 PARAM_OVERRIDE` — so the two config objects had silently diverged. The gate could
+  not catch it: every shadow test injected the config directly (`cfg({ shadowCompare: SHADOW_ON })`),
+  bypassing the `economyCfg()` → `AgentEconomy` wiring path that production actually takes.
+- **Fix (`state.ts`, purely additive +11/-0)**: `economyCfg()` now passes the whole block through (`enabled` /
+  `everyNCrons` / `maxDecisionsPerCron` / `maxRowsPerCronToD1`), so the SAME object `pocaKnobsHash()`
+  snapshots is the one the economy sees. No other config field was touched; `serialize()` stays byte-identical
+  with the switch OFF.
+- **Regression guard (`shadowCompare.test.ts`, +140)**: F1–F4 exercise the REAL wiring path
+  (`economyCfg()` → `AgentEconomy`) rather than an injected config, so a dropped pass-through can never ship
+  dark again. Gate: **1147 pass / 0 fail** + `typecheck` ×3 green, A2 zero-increment on every real field, A1
+  (`facilitator` / `settle` / `flush` / `absorbFlows` / `payBreedingFee` / `payHatchFee`) structurally
+  unreachable from `shadowStep`, E16 identity, deterministic double-run byte-for-byte.
+- **Deployed + sealed on-chain**: `CODE_COMMITMENT` rotated `75a7a554…` → `3c605f6d…` (treeHash `cc2f509e…` →
+  `1231694e…`; artifactHash `dc84edfc…`, fileCount 142 and knobCount 22 unchanged), sealing PoCA **epoch 6**
+  (58 ticks, merkleRoot `a4407cb4…`, `prevEpochSeal` = epoch 5's `dcc71479…`) and opening **epoch 7** pinned to
+  the new commitment. One `kind=7 CODE_CHANGE`, `epochCount` **7→8**, on-chain `isUnbroken(0,6)=true`,
+  continuity `unbroken`, mirror aligned, committer unchanged.
+
+### Added — shadow-compare Phase 1 live: the evolution decision mirror is recording (still zero real money)
+- `ECONOMY_EVOLUTION_SHADOW=true` is now effective. Every cron mirrors the decision loop (64 decisions/cron)
+  and appends up to **32 rows/cron** to the append-only D1 `shadow_decisions` table (`GET /shadow`), while
+  `GET /economy` exposes the full **19-field** `shadowCompare` aggregate. The D1 write rides `ctx.waitUntil`,
+  off the cron await path — measured cron cadence did **not** degrade (epoch 6 ≈ 91 s/digest, 58 ticks over
+  5296 s, with the mirror inert vs epoch 7 ≈ 78 s/digest, 39 digests over 3060 s, with it live).
+- **Real money is untouched**: the mirror is a pure read-out and every divergence counter it publishes is a
+  *proposal*, never a mutation. `volumeUsdc` / `count` / `settleOk` / `settleFail` / `successRate` /
+  `netPending` continue on their pre-existing trajectory, and no cap, kill switch or netting knob was changed
+  (`ECONOMY_SHADOW` stays `"false"`, i.e. settlement behaviour is byte-for-byte what it was).
+- **Read-out semantics worth knowing**: the `shadowCompare` aggregate and the `cron` column are **per-DO-
+  instance in-memory** counters — they reset whenever Cloudflare evicts the Durable Object between crons
+  (observed roughly every ~10 min at production cadence). The **durable, monotonic** evidence is the D1 table,
+  where `tick` is the reliable global key; no duplicate `(tick, buyer_id)` row was observed. The shadow-only
+  playbook ring is in-memory for the same reason — it must never enter the DO blob. `shadow_decisions` has no
+  retention policy yet (~1.5 k rows/h ⇒ ~36 k rows/day), so a bounded GC is a follow-up, not part of #118.
+- **Current divergence is zero by construction, not by failure**: every modulator the mirror composes
+  (`strategyTilt`, the playbook good-override + counterparty amplifier, `rulesTilt`, MAP-Elites novelty)
+  short-circuits to the identity while `STRATEGY_ENABLED` / `PLAYBOOK_ENABLED` / `RULES_ENABLED` /
+  `ELITES_ENABLED` remain dark (all default `false`, none set in `wrangler.toml`). Observed:
+  `avgAmplifier=1`, `exploreCount=0`, `gateFlipsToBuy=gateFlipsToHold=goodSwitches=sellerChanges=0`,
+  `amountDeltaSumAtomic=0`, `evolvedAmountSumAtomic == baselineAmountSumAtomic`, all caps 0. The channel is
+  armed and recording; it starts producing a non-trivial counterfactual from the moment a capability is armed.
+  Evidence it is genuinely alive: `treeHashDistinct=64` (the GP substrate is being observed), the recorded
+  regime / temperature bucket / good kind vary with the swarm, and the shadow playbook confidence moved off
+  its `0.5` cold start (rows carrying `0` and `1`) within a single instance lifetime.
+
 ### Added — Lexicon word-hoard visualization (task #108, frontend)
 - **`drawers.js`** `renderLexSection` rewritten to consume the COMPLETE `GET /lexicon` contract (the word-hoard's
   own endpoint), not the truncated read-out folded into `/economy`: the full permanent dictionary (every living

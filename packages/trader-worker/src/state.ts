@@ -814,6 +814,17 @@ export class FlyStateDO {
       // LAMARCK (Phase 3, capability ③): genome imprinting at breed. OFF ⇒ lamarckVector returns null and the
       // child genome is exactly the mutate/cross output, byte-for-byte Phase 2b.
       lamarck: { enabled: this.cfg.lamarck.enabled },
+      // SHADOW-COMPARE (#87): the evolution decision mirror. Absent/false ⇒ shadowStep returns [], snapshot()
+      // carries no shadowCompare key, serialize() is byte-for-byte unchanged and no D1 rows are written. PURE
+      // READ-OUT — it never touches facilitator/settle/flush or any real field. This is the ONE wiring that
+      // arms economy.shadowCompareOn(): the DO's own this.cfg.shadowCompare is read here and passed through,
+      // so the SAME object the pocoKnobsHash snapshots is the one the AgentEconomy sees.
+      shadowCompare: {
+        enabled: this.cfg.shadowCompare.enabled,
+        everyNCrons: this.cfg.shadowCompare.everyNCrons,
+        maxDecisionsPerCron: this.cfg.shadowCompare.maxDecisionsPerCron,
+        maxRowsPerCronToD1: this.cfg.shadowCompare.maxRowsPerCronToD1,
+      },
     };
   }
 
