@@ -6,8 +6,8 @@
 //   lvProvenanceRows builds an innerHTML string for ONE focused node on selection / on a language switch —
 //   never per frame. lvEvidencePanelHTML builds the C22 trade-evidence panel on click — never per frame.
 //   No shadowBlur, no backdrop-filter, no synchronous chain reads in the paint path.
-import { LV } from './lvState.js?v=162';
-import { state, shortHash, isRealTxHash, ARC_EXPLORER, clamp } from './shared.js?v=162';
+import { LV } from './lvState.js?v=163';
+import { state, shortHash, isRealTxHash, ARC_EXPLORER, clamp } from './shared.js?v=163';
 import { t as T } from './i18n.js?v=114';
 
 /**

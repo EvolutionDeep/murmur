@@ -770,6 +770,11 @@ const TERR_TRIBUTE_PCT = 0.5;             // fraction of the toll tributed to th
 const TERR_EXILE_SEVERITY = 0.5;          // extra toll multiplier on a landless (conquered) buyer, bounded
 const TERR_POWER_PER_ZONE = 0;            // war power per controlled zone (0 ⇒ off; winnerOf lock-step unchanged)
 
+/** §10.9: consecutive verify-fail threshold after which a pending net is EXPIRED (removed from
+ *  pendingNets, debt forgiven).  Prevents 12 fixed dust-balance debtors from consuming flush budget
+ *  indefinitely.  In-memory only; resets on DO eviction (same as pairBackoff). */
+const VERIFY_FAIL_EXPIRE_THRESHOLD = 20;
+
 export class AgentEconomy {
   private cfg: EconomyConfig;
   private facilitator: Facilitator;
@@ -799,6 +804,10 @@ export class AgentEconomy {
   /** Per-pair consecutive-failure streak for exponential backoff (in-memory only, resets on DO eviction).
    *  Key = pendingNets pair key ("lo>hi"), value = { streak, lastFailTick }. */
   private pairBackoff = new Map<string, { streak: number; lastFailTick: number }>();
+  /** §10.9: per-pair consecutive verify-fail counter.  When it reaches VERIFY_FAIL_EXPIRE_THRESHOLD the
+   *  pending net is expired (removed from pendingNets, debt forgiven) to stop consuming flush budget.
+   *  In-memory only; resets on DO eviction.  A successful settle clears the counter. */
+  private verifyFailStreak = new Map<string, number>();
   private treasuryOutAtomic = "0";
   /**
    * #123 COMMONS POOL (additive scoreboard): accumulates dead-house estate capital + reform levy deductions.
@@ -1377,6 +1386,18 @@ export class AgentEconomy {
           this.playbookRecord(debtor.id, 0, good, 0, 0, tickIndex);
           const prev = this.pairBackoff.get(key);
           this.pairBackoff.set(key, { streak: (prev?.streak ?? 0) + 1, lastFailTick: tickIndex });
+          // §10.9: track consecutive verify-fails per pair.  After enough, the net is EXPIRED — removed
+          // from pendingNets so it never consumes flush budget again.  The debt is forgiven (the debtor
+          // has a real dust balance that can never pay; keeping the net only hurts the success rate and
+          // the debtor's reputation score without any chance of recovery).
+          const vfStreak = (this.verifyFailStreak.get(key) ?? 0) + 1;
+          this.verifyFailStreak.set(key, vfStreak);
+          if (vfStreak >= VERIFY_FAIL_EXPIRE_THRESHOLD) {
+            this.pendingNets.delete(key);
+            this.verifyFailStreak.delete(key);
+            this.pairBackoff.delete(key);
+            out.push({ ...base, txHash: "0x", valid: false, reason: `verify-failed-expired (${vfStreak} consecutive)` }); break;
+          }
           out.push({ ...base, txHash: "0x", valid: false, reason: verified.invalidReason ?? "verify-failed" }); break;
         }
         const settleT0 = Date.now();
@@ -1394,6 +1415,8 @@ export class AgentEconomy {
         }
         // Mined: commit this chunk on the internal ledger, meter the daily caps, count real volume.
         remaining -= value;   // H7: decrement ONLY on success — a failed break preserves remaining for carry-forward.
+        // §10.9: a successful settle clears the consecutive verify-fail counter for this pair.
+        this.verifyFailStreak.delete(key);
         debtor.balance = subAtomic(debtor.balance, amountStr);
         debtor.paid = addAtomic(debtor.paid, amountStr);
         debtor.deals++;

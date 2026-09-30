@@ -1,9 +1,9 @@
 // camera.js — cam 状态 + zoomAt/clampCam/resetView + pointer/touch + resize
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, canvas, clamp, graveField, paletteAt, rgb, sim } from './shared.js?v=162';
-import { deselect, select } from './inspector.js?v=162';
-import { hideEpitaph, rebuildGraveField, showEpitaph } from './render2d.js?v=162';
-import { initMotes } from './sim.js?v=162';
+import { state, $, canvas, clamp, graveField, paletteAt, rgb, sim } from './shared.js?v=163';
+import { deselect, select } from './inspector.js?v=163';
+import { hideEpitaph, rebuildGraveField, showEpitaph } from './render2d.js?v=163';
+import { initMotes } from './sim.js?v=163';
 
 // ================= camera mode (task 48) =================
 // The single authority that decides which driver owns the 3D camera each frame:

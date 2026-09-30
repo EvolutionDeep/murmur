@@ -52,6 +52,10 @@ const {
 // keccak256 prefixes (foundry `cast sig` / `cast sig-event`), frozen here so the CLI needs NO ABI encoder and NO
 // keccak (Node's built-in crypto has sha3-256 but not Ethereum's keccak256). Same pattern as frontend/shared.js.
 const DEFAULT_RPC = "https://rpc.mainnet.arc.io";
+// #134 fix: prefer the paid Alchemy RPC when available (via env) to avoid public-RPC rate-limits
+// that caused false FAILs in eth_getLogs scans.  Falls back to the public Arc endpoint.
+const ALCHEMY_RPC = process.env.ALCHEMY_ARC_RPC_URL || process.argv.find((_, i, a) => a[i - 1] === "--alchemy-rpc") || null;
+const EFFECTIVE_RPC = ALCHEMY_RPC || DEFAULT_RPC;
 const DEFAULT_API = "https://api.muros.live";
 const EXPECTED_CHAIN_ID = 5042; // Arc mainnet
 const ARC_USDC = "0x3600000000000000000000000000000000000000"; // the Arc USDC FiatTokenV2 precompile
@@ -173,7 +177,7 @@ async function getJson(url, { timeoutMs = 20000 } = {}) {
 // ------------------------------ CLI arg parsing ------------------------------
 function parseArgs(argv) {
   const a = {
-    registry: null, registryFrom: null, api: DEFAULT_API, rpc: DEFAULT_RPC,
+    registry: null, registryFrom: null, api: DEFAULT_API, rpc: EFFECTIVE_RPC,
     epochs: null, sample: 3, gapHours: 36, cadenceHours: 24, facilitator: null,
     json: false, selftest: false, logChunk: 10000, maxTxs: 300, quiet: false,
     fromBlock: null, lookbackDays: 3, pacing: 2000,
@@ -217,7 +221,7 @@ function helpText() {
     "  --registry 0x…             ContinuityRegistry address (else resolved from --registry-from or {api}/poca)",
     "  --registry-from <env|url>  resolve the registry address from an ENV VAR NAME or an HTTP(S) URL",
     "  --api <base>               murmur public API base (default https://api.muros.live)",
-    "  --rpc <url>                Arc JSON-RPC (default https://rpc.mainnet.arc.io)",
+    "  --rpc <url>                Arc JSON-RPC (default: ALCHEMY_ARC_RPC_URL env if set, else https://rpc.mainnet.arc.io)",
     "  --epochs from,to           epoch index range to verify (default: all sealed epochs)",
     "  --sample N                 cron digests to sample per epoch for criterion ④ (default 3)",
     "  --gap-hours H              criterion ③ hole threshold in hours (default 36)",
@@ -544,23 +548,39 @@ async function criterion1(args) {
 async function criterion2(args, ctx) {
   const ev = [];
   if (!ctx.onchain) return { id: 2, name: "chain-integrity", status: "SKIP", evidence: ["on-chain registry disabled / no epochs — chain integrity is off-chain-only here"] };
-  const { registry, from, to } = ctx;
-  // (a) recompute the seal chain locally from epochs(i).
-  const chain = checkChainIntegrity(ctx.chainEpochs);
+  const { registry, from } = ctx;
+  // #134 fix: exclude the CURRENT OPEN epoch (index == epochCount-1) from the seal-chain check.
+  // An open epoch has sealedHead == 0 by definition — it is NOT a broken chain, it is simply unsealed.
+  // The contract's isUnbroken(from,to) also reverts on an unsealed epoch, so we scope to sealed-only.
+  const sealedTo = Math.max(from, ctx.to);   // ctx.to was already clamped to count-1 by main()
+  const hasOpenEpoch = ctx.epochCount > 0 && sealedTo >= ctx.epochCount - 1;
+  const chainCheckTo = hasOpenEpoch ? sealedTo - 1 : sealedTo;
+  if (hasOpenEpoch) ev.push(`epoch ${ctx.epochCount - 1} is currently OPEN (unsealed) — excluded from seal-chain check`);
+
+  // (a) recompute the seal chain locally from sealed epochs only.
+  const sealedChainEpochs = ctx.chainEpochs.filter((e) => e.index <= chainCheckTo);
+  const chain = checkChainIntegrity(sealedChainEpochs);
   ev.push(...chain.evidence);
-  // (b) cross-check the contract's own isUnbroken(from,to) view.
+  // (b) cross-check the contract's own isUnbroken(from, sealedTo) view — scoped to sealed epochs.
   let isUnbroken = null;
-  try {
-    const data = SEL.isUnbroken + encUint(from) + encUint(to);
-    isUnbroken = wBool(words(await ethCall(args.rpc, registry, data))[0]);
-    ev.push(`isUnbroken(${from},${to}) = ${isUnbroken}`);
-  } catch (e) { ev.push(`isUnbroken(${from},${to}) call failed: ${e.message}`); }
-  // (c) off-chain /poca/epochs sealedHead + merkleRoot must equal the on-chain record.
-  const agree = checkOffchainOnchainAgreement(ctx.epochsOff, ctx.chainEpochs);
+  if (sealedChainEpochs.length > 0) {
+    try {
+      const data = SEL.isUnbroken + encUint(from) + encUint(chainCheckTo);
+      isUnbroken = wBool(words(await ethCall(args.rpc, registry, data))[0]);
+      ev.push(`isUnbroken(${from},${chainCheckTo}) = ${isUnbroken}`);
+    } catch (e) { ev.push(`isUnbroken(${from},${chainCheckTo}) call failed: ${e.message}`); }
+  } else {
+    ev.push("no sealed epochs to check isUnbroken against");
+  }
+  // (c) off-chain /poca/epochs sealedHead + merkleRoot must equal the on-chain record (sealed epochs only).
+  const agree = checkOffchainOnchainAgreement(
+    ctx.epochsOff.filter((e) => e.index <= chainCheckTo),
+    sealedChainEpochs,
+  );
   ev.push(...agree.evidence);
 
   const pass = chain.pass && agree.pass && isUnbroken !== false;
-  return { id: 2, name: "chain-integrity", status: pass ? "PASS" : "FAIL", evidence: ev, detail: { breaks: chain.breaks, mismatches: agree.mismatches, isUnbroken } };
+  return { id: 2, name: "chain-integrity", status: pass ? "PASS" : "FAIL", evidence: ev, detail: { breaks: chain.breaks, mismatches: agree.mismatches, isUnbroken, openEpochExcluded: hasOpenEpoch } };
 }
 
 /** ③ TIME DENSITY — gaps between consecutive on-chain EpochSealed block timestamps vs the declared cadence. */

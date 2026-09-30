@@ -1,11 +1,11 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=162';
+import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=163';
 import { ct, currentLang, gl, t as T } from './i18n.js?v=114';
-import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=162';
-import { select } from './inspector.js?v=162';
-import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=162';
-import { closeLand } from './landDrawer.js?v=162';
+import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=163';
+import { select } from './inspector.js?v=163';
+import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=163';
+import { closeLand } from './landDrawer.js?v=163';
 
 // ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
 export const PROF_ICON = { forager: "❍", mooder: "❂", trader: "⇅", brooder: "❄" };

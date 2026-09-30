@@ -130,7 +130,9 @@ contract WarCoffer {
     /// @notice Back a house's on-chain vault with real USDC, up to the coffer's hard `maxEscrow` cap.
     ///         The resolver (Worker treasury wallet) must `approve` the coffer first; this pulls the
     ///         exact amount in and credits the house. Money only ENTERS here — declare/resolve/levy move
-    ///         it internally and never withdraw to any address except a house vault.
+    ///         it internally.  This is a ONE-WAY sink: there is NO withdrawal function — funds deposited
+    ///         here are permanently locked up to `maxEscrow` and can only move via declare/resolve/levy
+    ///         internal bookkeeping.  No address (including a house vault) can ever extract them.
     function deposit(uint256 houseId, uint256 amount) external onlyResolver {
         if (amount == 0) revert ZeroStake();
         if (totalEscrow + amount > maxEscrow) revert EscrowCap();

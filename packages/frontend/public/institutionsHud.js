@@ -13,9 +13,9 @@
 // Lifecycle mirrors the PoCA drawer: open/close/toggle + render (fetch → cache → paint).
 // paintInstitutions() rebuilds from the cache alone, so rerenderAll() calls it on a
 // language switch with no refetch. No LLM. No writes to the worker.
-import { state, $ } from './shared.js?v=162';
+import { state, $ } from './shared.js?v=163';
 import { t as T, gl } from './i18n.js?v=114';
-import { getJSON } from './polling.js?v=162';
+import { getJSON } from './polling.js?v=163';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE

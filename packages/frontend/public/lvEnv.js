@@ -10,12 +10,12 @@
 //   lvEnvNodeOverlay is called AFTER the live-node loop (forwarded from lvNeuralFrame). It draws per-node
 //   arcs (C19) + anchor ticks (C21) + optional PnL body recolour (C18). Gated by tier.
 //   No shadowBlur, no backdrop-filter, no .filter =.
-import { LV, LVQ, LV_HUD, nodeR, nodeById } from './lvState.js?v=162';
+import { LV, LVQ, LV_HUD, nodeR, nodeById } from './lvState.js?v=163';
 import {
   state, clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI, GOOD_COL,
-} from './shared.js?v=162';
-import { ribbonSeries } from './render2d.js?v=162';
-import { getJSON } from './polling.js?v=162';
+} from './shared.js?v=163';
+import { ribbonSeries } from './render2d.js?v=163';
+import { getJSON } from './polling.js?v=163';
 
 // ================= C14: market temperature environment field =================
 // The regime (HOT/CALM/COLD) drives a full-canvas ambient wash baked into an offscreen. Re-bakes ONLY when

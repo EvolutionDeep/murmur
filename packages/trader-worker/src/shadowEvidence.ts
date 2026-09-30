@@ -10,6 +10,36 @@
 
 import type { ShadowDecision } from "./economy.js";
 
+// ─── Retention ─────────────────────────────────────────────────────────────────────────────────────────
+// #125: shadow_decisions is append-only (~42.7k rows/day at production volume).  Keep the most recent
+// SHADOW_RETENTION_ROWS rows (default 500k ≈ ~12 days at current volume).  Older rows are GC'd best-effort
+// from the cron path (gcShadowDecisions).  D1 DELETE with a sub-select is bounded by the inner LIMIT.
+export const SHADOW_RETENTION_ROWS = 500_000;
+
+/**
+ * Delete the oldest rows beyond the retention cap.  Best-effort — the caller (cron) should wrap in
+ * try/catch so a D1 hiccup never blocks the tick.  Safe to call every cron: when the table is under
+ * the cap the inner SELECT returns zero ids and the DELETE is a no-op.
+ */
+export async function gcShadowDecisions(db: D1Database, retentionRows: number = SHADOW_RETENTION_ROWS): Promise<number> {
+  // Find the id threshold: the row at position (total - retentionRows) from the top.
+  // Rows with id < threshold are deleted.  The two-step approach (SELECT then DELETE) avoids a
+  // correlated sub-query that D1's SQLite may struggle with at scale.
+  const countRes = await db.prepare("SELECT COUNT(*) AS n FROM shadow_decisions").all();
+  const total = Number((countRes.results ?? [])[0]?.n ?? 0);
+  if (total <= retentionRows) return 0;
+  const deleteCount = total - retentionRows;
+  // Find the highest id to delete: the (deleteCount)-th row from the oldest end.
+  const thresholdRes = await db
+    .prepare("SELECT id FROM shadow_decisions ORDER BY id ASC LIMIT 1 OFFSET ?")
+    .bind(deleteCount - 1)
+    .all();
+  const thresholdId = Number((thresholdRes.results ?? [])[0]?.id ?? 0);
+  if (thresholdId <= 0) return 0;
+  await db.prepare("DELETE FROM shadow_decisions WHERE id < ?").bind(thresholdId).run();
+  return deleteCount;
+}
+
 // ─── DDL ────────────────────────────────────────────────────────────────────────────────────────────────
 
 export const SHADOW_DECISIONS_DDL = `CREATE TABLE IF NOT EXISTS shadow_decisions (

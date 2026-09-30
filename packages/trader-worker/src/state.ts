@@ -99,7 +99,7 @@ import { CommonsAssembly, type CommonsSeat, type CommonsReadout } from "./common
 import { PinataPinner } from "./ipfs.js";
 import { PredictionMarket, type PredictConfig, type PredictFlow, type ResolvedRound } from "./prediction.js";
 import { writeEconomySnapshot } from "./economyReplay.js";
-import { writeShadowRows } from "./shadowEvidence.js";
+import { writeShadowRows, gcShadowDecisions } from "./shadowEvidence.js";
 import { generationReport, type GenAgentEntry, type GenLeaderRow, type GenPredictRow } from "./generationStats.js";
 import { arenaRoundPlan, cursorAfterOpen, tempToR6 } from "./arena.js";
 import {
@@ -4034,6 +4034,10 @@ export class FlyStateDO {
             const capped = shadowRows.slice(0, this.cfg.shadowCompare.maxRowsPerCronToD1);
             const p = writeShadowRows(db, capped).catch((e) => console.warn("[shadow] D1 write failed (non-fatal):", (e as Error).message));
             try { this.state.waitUntil(p); } catch { void p; }
+            // #125: bounded GC — delete oldest rows beyond the retention cap, best-effort.
+            // Runs at most once per cron; a D1 hiccup here never blocks the tick.
+            const gcP = gcShadowDecisions(db).catch((e) => console.warn("[shadow] GC failed (non-fatal):", (e as Error).message));
+            try { this.state.waitUntil(gcP); } catch { void gcP; }
           }
         }
       } catch (e) {

@@ -48,10 +48,10 @@ export const POLL_MS = 12000;
                         // locally between polls (updateSim interpolates off the last snapshot), so 12s is still
                         // 5× the cron cadence — imperceptible visually while halving the coordinator DO's read
                         // queue, the real lever behind the cron-starvation freeze (see worker swarm.ts A1 note).
-export const FETCH_TIMEOUT_MS = 3500;
-// abort a hung request well before the browser would
-export const OFFLINE_BACKOFF_MS = 20000;
-// circuit-breaker window: run local-only, no probing
+export const FETCH_TIMEOUT_MS = 8000;
+// abort a hung request — generous enough for a slow backend beat, well before the browser gives up
+export const OFFLINE_BACKOFF_MS = 6000;
+// circuit-breaker window: run local-only, no probing (shorter = faster recovery once the backend returns)
 export const TAU = Math.PI * 2;
 export const $ = (id) => document.getElementById(id);
 // ---------- small math / colour helpers ----------
