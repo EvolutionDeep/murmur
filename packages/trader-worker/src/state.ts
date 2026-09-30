@@ -825,6 +825,27 @@ export class FlyStateDO {
         maxDecisionsPerCron: this.cfg.shadowCompare.maxDecisionsPerCron,
         maxRowsPerCronToD1: this.cfg.shadowCompare.maxRowsPerCronToD1,
       },
+      // #123 EQUITY TILT: market-side wealth redistribution via cp-weight. OFF/strength=0 ⇒ multiplier ≡ 1.0,
+      // pickCounterparty byte-for-byte unchanged. This is the ONE wiring that arms economy.equityTiltOn().
+      equityTilt: {
+        enabled: this.cfg.equityTilt.enabled,
+        band: this.cfg.equityTilt.band,
+        strength: this.cfg.equityTilt.strength,
+      },
+      // #123 DEAD HOUSE SWEEP: route zero-living-member house estates to commons pool. OFF ⇒ entomb unchanged.
+      deadHouseSweep: {
+        enabled: this.cfg.deadHouseSweep.enabled,
+      },
+      // R5 FIX A (#126): on-chain balance gate in the trade planner. This is the ONE wiring that arms
+      // economy.balanceGateOn(); OFF ⇒ queueNet byte-for-byte today (no on-chain read, no declined pair).
+      onchainBalanceGate: {
+        enabled: this.cfg.onchainBalanceGate.enabled,
+      },
+      // R5 FIX B (#126): periodic mirror re-align to on-chain truth. This is the ONE wiring that arms the
+      // resync cadence; everyNCrons=0 ⇒ disabled/never (mirror byte-for-byte today).
+      mirrorResync: {
+        everyNCrons: this.cfg.mirrorResync.everyNCrons,
+      },
     };
   }
 
@@ -1123,7 +1144,8 @@ export class FlyStateDO {
     if (!this.cfg.reform.enabled) return null;
     if (this.reformLayer) return this.reformLayer;
     const stored = await this.state.storage.get<string>(KEY_REFORM);
-    this.reformLayer = stored ? ReformLayer.deserialize(stored) : new ReformLayer({ enabled: true });
+    const rcfg = { enabled: true, v2Enabled: this.cfg.reform.v2Enabled };
+    this.reformLayer = stored ? ReformLayer.deserialize(stored, rcfg) : new ReformLayer(rcfg);
     return this.reformLayer;
   }
 
@@ -2054,10 +2076,18 @@ export class FlyStateDO {
         `CREATE TABLE IF NOT EXISTS ticks (
            tick INTEGER PRIMARY KEY, ts INTEGER NOT NULL, temperature REAL NOT NULL, regime TEXT NOT NULL,
            size INTEGER, deals INTEGER, settlements INTEGER, volume_usdc REAL, gini REAL,
-           top_state TEXT, top_states TEXT )`,
+           top_state TEXT, top_states TEXT,
+           net_pending INTEGER, net_pending_trades INTEGER, mirror_drift_atomic_sum TEXT )`,
       )
       .run();
     await db.prepare(`CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (ts)`).run();
+    // R5 Fix F (#126) ADDITIVE migration: /history gains netPending + netPendingTrades + mirrorDriftAtomicSum.
+    // SQLite has no "ADD COLUMN IF NOT EXISTS", so each ALTER is attempted and a duplicate-column error is
+    // swallowed (the chronicle-table precedent): a fresh table already has them via the CREATE above and skips
+    // through, an already-live table gains them in place. NEVER rewrites or drops an existing column.
+    for (const col of [`net_pending INTEGER`, `net_pending_trades INTEGER`, `mirror_drift_atomic_sum TEXT`]) {
+      try { await db.prepare(`ALTER TABLE ticks ADD COLUMN ${col}`).run(); } catch { /* already present */ }
+    }
     this.d1SchemaReady = true;
   }
 
@@ -2091,8 +2121,9 @@ export class FlyStateDO {
       await db
         .prepare(
           `INSERT OR REPLACE INTO ticks
-             (tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states,
+              net_pending, net_pending_trades, mirror_drift_atomic_sum)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           tick,
@@ -2106,6 +2137,11 @@ export class FlyStateDO {
           totals?.gini ?? null,
           topState,
           states ? JSON.stringify(states) : null,
+          // R5 Fix F (#126) additive columns: live netting backlog gauge + the lifetime mirror-drift telemetry.
+          // null when totals is absent (economy off / pre-first-tick) — additive, old rows simply read null.
+          totals?.netPending ?? null,
+          totals?.netPendingTrades ?? null,
+          totals?.mirrorDriftAtomicSum ?? null,
         )
         .run();
       // Fold this just-written row into the running /history summary — incremental, so the endpoint never
@@ -3340,6 +3376,14 @@ export class FlyStateDO {
         economy: { creditIouRecords: () => ious },
       });
       this.reformEvents = result.events;
+      // #123 REFORM V2: wire levyDeductions into the economy's commons pool scoreboard (downward-deduct
+      // from the rich agents' display mirrors — safe per criterion-B, same invariant as titheHouse).
+      // OFF ⇒ levyDeductions are discarded exactly as before (byte-for-byte unchanged).
+      if (this.cfg.reform.v2Enabled && result.levyDeductions.length > 0 && this.economy) {
+        for (const ld of result.levyDeductions) {
+          this.economy.levyToCommons(ld.address, ld.amount);
+        }
+      }
       if (result.events.length) {
         const ro = reform.readout();
         console.log(
@@ -5706,7 +5750,7 @@ export class FlyStateDO {
     const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get("limit") ?? "500") || 500));
     const order = url.searchParams.get("order") === "asc" ? "ASC" : "DESC";
     const beforeRaw = url.searchParams.get("before");
-    const COLS = `tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states`;
+    const COLS = `tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states, net_pending, net_pending_trades, mirror_drift_atomic_sum`;
     try {
       await this.ensureD1Schema(db);
       const hasBefore = beforeRaw != null && Number.isFinite(Number(beforeRaw));
@@ -6656,6 +6700,10 @@ function parseHistoryRow(r: any) {
     gini: r?.gini ?? null,
     topState: r?.top_state ?? null,
         topStates,
+    // R5 Fix F (#126) additive columns — null on rows archived before the migration (graceful, additive-only).
+    netPending: r?.net_pending ?? null,
+    netPendingTrades: r?.net_pending_trades ?? null,
+    mirrorDriftAtomicSum: r?.mirror_drift_atomic_sum ?? null,
   };
 }
 

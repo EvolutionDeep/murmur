@@ -436,6 +436,7 @@ export interface EconomyTotals {
   meanBalanceUsdc: number;
   gini: number;           // 0 = equal wealth, →1 = concentrated (emergent from neural diversity)
   treasuryOutAtomic: string; // simulated liquidity injected to keep agents solvent
+  commonsPoolAtomic: string; // #123: dead-house sweeps + reform levy deductions (additive scoreboard, never spent)
   richestId: number | null;
   poorestId: number | null;
   // LATENCY (additive, observe-only): submit→finality ms of successful on-chain settles, timed at the
@@ -448,6 +449,11 @@ export interface EconomyTotals {
   // NET-PENDING (additive, live gauge — derived from the persisted pendingNets accumulator, never stored):
   netPending: number;         // pair-nets currently folded and awaiting broadcast
   netPendingTrades: number;   // gross trades folded into those pending nets
+  // R5 FIX B (additive, observe-only): lifetime Σ|internal-mirror − on-chain| atomic delta absorbed by the
+  // periodic mirror re-align. Stays "0" while ECONOMY_MIRROR_RESYNC_EVERY_N_CRON=0 (disabled), so an OFF build
+  // is byte-for-byte today's. Pure telemetry — NEVER folded into the PoCA stateDigest `econ` field (which
+  // stays {volumeAtomic,count}), never feeds back into balances, caps or the broadcast path.
+  mirrorDriftAtomicSum: string;
 }
 
 export interface EconomySnapshot {
@@ -599,6 +605,36 @@ export interface EconomyConfig {
     everyNCrons: number;
     maxDecisionsPerCron: number;
     maxRowsPerCronToD1: number;
+  };
+  // --- #123 EQUITY TILT: market-side wealth redistribution via counterparty weight. OPTIONAL — absent/false ⇒
+  //     equityTilt multiplier ≡ 1.0 (multiplicative identity), pickCounterparty byte-for-byte unchanged.
+  //     Only tilts cp-weight; NEVER touches buyProbability, deal amount, caps, or any settlement. ---
+  equityTilt?: {
+    enabled: boolean;
+    band: [number, number];   // [floor, ceil] hard clamp (defense-in-depth, mirrors RULE_FLOOR/RULE_CEIL)
+    strength: number;         // tilt amplitude 0..1 (0 ⇒ identity)
+  };
+  // --- #123 DEAD HOUSE SWEEP: route estates of zero-living-member houses to the commons pool scoreboard.
+  //     OPTIONAL — absent/false ⇒ entomb branch ② byte-for-byte unchanged (all estates → house.treasury). ---
+  deadHouseSweep?: {
+    enabled: boolean;
+  };
+  // --- R5 FIX A (ONCHAIN BALANCE GATE): OPTIONAL — absent/false ⇒ queueNet never consults on-chain balances,
+  //     byte-for-byte today (every neuron-picked trade is folded into pendingNets). When armed, each cron opens
+  //     with ONE batched multicall balanceOf over live agents (see x402 readBalances); the trade planner then
+  //     REFUSES to queue a pair whose debtor cannot cover the deal on-chain, so doomed 100%-settle-fail pairs stop
+  //     accumulating in netPending. On-chain reads are authoritative external inputs (same class as settle()'s
+  //     balanceOf), never a determinism input. NEVER touches balances, caps, the stateDigest, or real money. ---
+  onchainBalanceGate?: {
+    enabled: boolean;
+  };
+  // --- R5 FIX B (MIRROR RE-ALIGN): OPTIONAL — absent / everyNCrons<=0 ⇒ the display mirror is never overwritten,
+  //     byte-for-byte today. When armed, every Nth cron overwrites each live agent's DISPLAY mirror with its real
+  //     on-chain balanceOf (re-using Fix A's multicall cache), recording the pre-resync drift as telemetry. SAFETY:
+  //     the mirror is only ever set EQUAL to on-chain (or, elsewhere, adjusted DOWNWARD) — NEVER inflated above it.
+  //     Ineffective alone; MUST be paired with Fix A. Pure ledger-mirror write: no real money, no caps, no digest. ---
+  mirrorResync?: {
+    everyNCrons: number;   // 0 = disabled/never (code-default); N>0 ⇒ re-align every Nth cron
   };
 }
 
@@ -764,6 +800,29 @@ export class AgentEconomy {
    *  Key = pendingNets pair key ("lo>hi"), value = { streak, lastFailTick }. */
   private pairBackoff = new Map<string, { streak: number; lastFailTick: number }>();
   private treasuryOutAtomic = "0";
+  /**
+   * #123 COMMONS POOL (additive scoreboard): accumulates dead-house estate capital + reform levy deductions.
+   * Purely internal bookkeeping — NEVER added to any individual agent mirror (avoids criterion-B: mirror > chain
+   * ⇒ settle failure). Offsets future downward extractions (tithe / breeding fee). Persisted additively; an older
+   * payload has no `commonsPoolAtomic` ⇒ "0" (nothing ever swept). KEY_VERSION stays "economy:v1".
+   */
+  private commonsPoolAtomic = "0";
+  /** #123 equity-tilt rank cache: recomputed once per tick, cleared on step() entry. Runtime-only, never persisted. */
+  private eqRankTick = -1;
+  private eqRanks: Float64Array | null = null;
+  /**
+   * R5 FIX A/B: per-cron cache of authoritative on-chain ERC-20 balances (key = LOWERCASED address → atomic USDC),
+   * filled by ONE batched multicall (x402 readBalances) at the cron boundary and valid for that cron only. Runtime-
+   * only, NEVER persisted, NEVER in serialize(), NEVER folded into the stateDigest. `null` ⇒ cold cache (switches
+   * off, simulator, or the multicall failed) — every consumer FAILS OPEN on null so the build degrades to today's.
+   */
+  private onchainBalances: Map<string, bigint> | null = null;
+  /** R5 FIX B: count of onchain cron boundaries seen (runtime-only, never persisted). Drives the resync cadence. */
+  private econCronCount = 0;
+  /** R5 FIX B telemetry: lifetime Σ|mirror − onchain| atomic absorbed by re-aligns (persisted only when Fix B is on). */
+  private mirrorDriftAtomicSum = "0";
+  /** R5 FIX B telemetry: the most recent cron's absorbed |mirror − onchain| delta (runtime-only, snapshot read-out). */
+  private mirrorDriftAtomicLast = "0";
   /**
    * WAR mirror (additive): cumulative EXTRA on-chain USDC levied as tax into the coffer's commons purse,
    * bumped only after a MINED levyTax. A ledger-side MIRROR of the contract, never a spendable balance — the
@@ -985,6 +1044,28 @@ export class AgentEconomy {
     if (onchain) this.rollSpendDay(Date.now());
 
     this.ensureAgents(readings);
+    // ── R5 FIX A/B: ONCE per cron (onchain only), refresh the shared on-chain balance cache and, on the resync
+    // cadence, re-align the display mirror to it. BOTH switches default OFF ⇒ this whole block is skipped, no RPC
+    // is spent and no balance is touched, so the build is byte-for-byte today's. Fix A (planner gate) and Fix B
+    // (mirror re-align) SHARE the one batched multicall below — never a per-agent RPC. The cache is valid for this
+    // cron only, matching settle()'s authoritative balanceOf to within ≤1 cron.
+    if (onchain && cronBoundary) {
+      const gate = this.balanceGateOn();
+      const resyncN = this.mirrorResyncEveryN();   // 0 ⇒ Fix B disabled
+      if (gate || resyncN > 0) {
+        this.econCronCount++;
+        const resyncDue = resyncN > 0 && this.econCronCount % resyncN === 0;
+        // RPC-frugal: the gate needs fresh balances EVERY cron; a B-only arm multicalls ONLY on a resync cron.
+        if (gate || resyncDue) {
+          await this.refreshOnchainBalances();
+          if (resyncDue) this.mirrorResyncToChain();
+        } else {
+          this.onchainBalances = null;             // B-only, non-resync cron: no cache needed this cron
+        }
+      } else {
+        this.onchainBalances = null;               // both OFF: no cache, gate inert (byte-for-byte today)
+      }
+    }
     const readingById = new Map<number, FlyReading>();
     for (const r of readings) readingById.set(r.id, r);
     const n = readings.length;
@@ -1121,6 +1202,19 @@ export class AgentEconomy {
       this.dealAmount(r, T, good, this.institutionsOn() ? this.profs.get(buyer.id)?.role ?? null : null),
       buyer.id, seller.id,
     );
+    // ── R5 FIX A: on-chain solvency gate. When armed, refuse to fold a pair whose DEBTOR (the buyer) cannot cover
+    // this deal with its REAL on-chain balance — that pair would otherwise 100% settle-fail at flush and climb
+    // netPending forever (the R5 root cause). Inert when ECONOMY_ONCHAIN_BALANCE_GATE is off OR the per-cron cache
+    // is cold: onchainSolvent() then fails OPEN and the trade is queued exactly as today (byte-for-byte). The
+    // returned record is a declined placeholder (valid=false, reason "onchain-insolvent") so the tape still shows
+    // the attempt without queueing un-settleable value. Touches no balance, no cap, no net.
+    if (this.balanceGateOn() && !this.onchainSolvent(buyer.id, amount)) {
+      return {
+        tick, ts: Date.now(), good, resource: `${good}:${seller.id}`,
+        fromId: buyer.id, toId: seller.id, from: buyer.address, to: seller.address,
+        amount, txHash: "0x", valid: false, reason: "onchain-insolvent", simulated: false,
+      };
+    }
     const lo = Math.min(buyer.id, seller.id);
     const hi = Math.max(buyer.id, seller.id);
     const key = `${lo}>${hi}`;
@@ -1524,6 +1618,8 @@ export class AgentEconomy {
     const pbMod = this.playbookOn() ? this.playbookCounterpartyMod(r.id, tick) : null;
     const stratTilt = this.strategyTilt(r, tick);  // 1.0 when OFF (inert)
     const cpRuleMod = this.rulesTilt(r, "cp");     // ㉝ band-clamped [0.5..2.0], 1.0 when OFF/absent (inert)
+    // #123 EQUITY TILT: per-candidate wealth-rank tilt. null when OFF ⇒ eqTilt ≡ 1.0 in the loop below.
+    const eqRanks = this.balanceRanksForTick(tick);
     const picks: number[] = [];
     const weights: number[] = [];
     const shunned: number[] = [];
@@ -1538,9 +1634,11 @@ export class AgentEconomy {
       const amp = pbMod ? (pbMod.explore ? 0 : pbMod.amplifier) : 1;
       // L3 fix: STRATEGY tilt compounds with playbook: amp∈[0,1], stratTilt∈[0.5,1.5] ⇒ product ∈ [0, 1.5].
       // ㉝ RULES tilt compounds too, bounded [0.5..2.0]. Combined range: [0.25, 1.5]×[0.5,2.0] ⇒ [0.125, 3.0].
+      // #123 EQUITY TILT compounds as well, bounded [0.5..2.0]. Combined: [0.0625, 6.0] theoretical max.
       //    The Math.max(0.05,…) floor is what guarantees total > 0 (⇒ no division by zero) and the band keeps
-      //    cpRuleMod finite (⇒ no NaN), so the deterministic roulette is unchanged and no cap is bypassed.
-      const w = Math.max(0.05, 1 + amp * stratTilt * cpRuleMod * (0.6 * bond + 0.4 * rep));
+      //    every modifier finite (⇒ no NaN), so the deterministic roulette is unchanged and no cap is bypassed.
+      const eqTilt = eqRanks ? this.equityTiltMult(eqRanks[idx], tick, cand.id) : 1.0;
+      const w = Math.max(0.05, 1 + amp * stratTilt * cpRuleMod * eqTilt * (0.6 * bond + 0.4 * rep));
       picks.push(idx);
       weights.push(w);
       total += w;
@@ -1768,6 +1866,102 @@ export class AgentEconomy {
     return !!this.cfg.shadowCompare && this.cfg.shadowCompare.enabled === true;
   }
 
+  /** #123: True when equity-tilt is armed AND strength > 0. OFF/strength=0 ⇒ multiplier ≡ 1.0 (identity). */
+  private equityTiltOn(): boolean {
+    return !!this.cfg.equityTilt && this.cfg.equityTilt.enabled === true && this.cfg.equityTilt.strength > 0;
+  }
+
+  /** #123: True when dead-house sweep is armed. OFF ⇒ entomb branch ② byte-for-byte unchanged. */
+  private deadHouseSweepOn(): boolean {
+    return !!this.cfg.deadHouseSweep && this.cfg.deadHouseSweep.enabled === true;
+  }
+
+  /**
+   * R5 FIX A: True when the on-chain balance gate is armed (ECONOMY_ONCHAIN_BALANCE_GATE=true). OFF ⇒ queueNet
+   * never consults on-chain balances and folds every neuron-picked trade exactly as today (byte-for-byte).
+   */
+  balanceGateOn(): boolean {
+    return !!this.cfg.onchainBalanceGate && this.cfg.onchainBalanceGate.enabled === true;
+  }
+
+  /**
+   * R5 FIX B: mirror re-align cadence in crons. 0 ⇒ disabled/never (code-default, ECONOMY_MIRROR_RESYNC_EVERY_N_CRON=0).
+   * Negative / non-finite / fractional inputs are clamped to a safe integer ≥ 0, so a bad var can never arm a
+   * sub-cron or divide-by-zero resync.
+   */
+  mirrorResyncEveryN(): number {
+    const n = this.cfg.mirrorResync?.everyNCrons ?? 0;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  /**
+   * R5 FIX A/B: populate `onchainBalances` with ONE batched multicall of balanceOf over every LIVE agent's real
+   * address. On-chain reads are authoritative external inputs (the same class as settle()'s pre-signing balanceOf
+   * and the market temperature) — NOT a determinism input, NOT an RNG. FAIL-OPEN on every degenerate path: a
+   * facilitator without readBalances (the keyless simulator), an empty live set, or an errored/empty multicall all
+   * leave the cache `null`, so the gate blocks nobody and the resync skips — degrading to today's exact behaviour.
+   * One RPC per cron regardless of population (bounded wall-clock; mirrors the #98 anti-stall discipline).
+   */
+  private async refreshOnchainBalances(): Promise<void> {
+    this.onchainBalances = null;
+    const readBalances = this.facilitator.readBalances;
+    if (typeof readBalances !== "function") return;   // simulator / unwired facilitator ⇒ no cache (fail-open)
+    const addrs: string[] = [];
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;              // a buried wallet keeps its ledger but never trades
+      addrs.push(a.address);
+    }
+    if (addrs.length === 0) return;
+    try {
+      const m = await readBalances.call(this.facilitator, addrs);
+      this.onchainBalances = m && m.size > 0 ? m : null;
+    } catch {
+      this.onchainBalances = null;                    // never let a balance read wedge the cron
+    }
+  }
+
+  /**
+   * R5 FIX A: can agent `id` cover `amount` (atomic string) with its REAL on-chain balance, per this cron's cache?
+   * FAIL-OPEN by design: gate off, cold cache, unknown id, or an address absent from the multicall ⇒ `true` (we
+   * never block a trade on a number we don't actually have — that would be worse than today). Only a confident
+   * on-chain `bal < amount` returns false, which is exactly the pair that would 100% settle-fail at flush time.
+   */
+  private onchainSolvent(id: number, amount: string): boolean {
+    if (!this.balanceGateOn()) return true;
+    const cache = this.onchainBalances;
+    if (!cache) return true;                          // cold cache ⇒ fail-open (queue as today)
+    const idx = this.indexOfId.get(id);
+    if (idx == null) return true;
+    const bal = cache.get(this.agents[idx].address.toLowerCase());
+    if (bal == null) return true;                     // not in the multicall ⇒ fail-open
+    return bal >= BigInt(amount);
+  }
+
+  /**
+   * R5 FIX B: overwrite every LIVE agent's DISPLAY mirror with its real on-chain balance from this cron's cache —
+   * the honest target state settle()'s balanceOf gate already enforces. SAFETY (criterion B): the mirror is only
+   * ever set EQUAL to on-chain here (elsewhere it is only adjusted DOWNWARD via tithe/entomb) — it is NEVER inflated
+   * above on-chain, because mirror>chain is precisely what produces the 100%-settle-fail loop this fixes. Records the
+   * pre-resync |mirror − onchain| delta into mirrorDriftAtomicSum (lifetime) + mirrorDriftAtomicLast (this cron) so
+   * the decoupling is observable. Cold cache / a missing leg ⇒ that agent is SKIPPED (never guessed). Pure ledger
+   * mirror write: touches NO real money, NO caps, NO stateDigest field, NO pendingNets.
+   */
+  private mirrorResyncToChain(): void {
+    const cache = this.onchainBalances;
+    if (!cache) return;                               // nothing authoritative to align to ⇒ skip entirely
+    let drift = 0n;
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      const bal = cache.get(a.address.toLowerCase());
+      if (bal == null) continue;                      // not in the multicall ⇒ leave the mirror untouched
+      const mirror = BigInt(a.balance);
+      drift += mirror > bal ? mirror - bal : bal - mirror;
+      a.balance = bal.toString();                     // set EQUAL to on-chain (never above it)
+    }
+    this.mirrorDriftAtomicLast = drift.toString();
+    this.mirrorDriftAtomicSum = addAtomic(this.mirrorDriftAtomicSum, drift.toString());
+  }
+
   /**
    * CULTURAL resolved (Phase 3 capability ③): false/absent ⇒ noteHatch is byte-for-byte the Phase 2b path
    * (no parent memory is copied, an id-reuse slot keeps its residue exactly as before). Default OFF.
@@ -1953,6 +2147,59 @@ export class AgentEconomy {
     // so the result is ALWAYS inside [0.5, 2.0] regardless of what cfgLo/cfgHi contain.
     const lo = Math.min(AgentEconomy.RULE_CEIL, Math.max(AgentEconomy.RULE_FLOOR, Number.isFinite(cfgLo) ? cfgLo : AgentEconomy.RULE_FLOOR));
     const hi = Math.max(AgentEconomy.RULE_FLOOR, Math.min(AgentEconomy.RULE_CEIL, Number.isFinite(cfgHi) ? cfgHi : AgentEconomy.RULE_CEIL));
+    const l = Math.min(lo, hi), h = Math.max(lo, hi);
+    return raw < l ? l : raw > h ? h : raw;
+  }
+
+  // ---------- #123 EQUITY TILT (market-side wealth redistribution via cp-weight) ----------
+
+  /**
+   * Compute the balance percentile rank of every living agent for the given tick. Cached per tick so repeated
+   * pickCounterparty calls within the same sub-tick reuse the same snapshot. Rank ∈ [0,1]: 0 = poorest, 1 = richest.
+   * Deterministic: sorted by (balance ASC, agent-array-index ASC) — no RNG, no clock.
+   */
+  private balanceRanksForTick(tick: number): Float64Array | null {
+    if (!this.equityTiltOn()) return null;
+    if (this.eqRankTick === tick && this.eqRanks) return this.eqRanks;
+    const living: { idx: number; bal: bigint }[] = [];
+    for (let i = 0; i < this.agents.length; i++) {
+      if (!this.dead.has(this.agents[i].id)) living.push({ idx: i, bal: BigInt(this.agents[i].balance) });
+    }
+    // Sort ascending by balance; ties broken by array index (deterministic, stable).
+    living.sort((a, b) => (a.bal < b.bal ? -1 : a.bal > b.bal ? 1 : a.idx - b.idx));
+    const ranks = new Float64Array(this.agents.length);
+    const n = living.length;
+    for (let r = 0; r < n; r++) {
+      ranks[living[r].idx] = n > 1 ? r / (n - 1) : 0.5;
+    }
+    this.eqRankTick = tick;
+    this.eqRanks = ranks;
+    return ranks;
+  }
+
+  /**
+   * The equity-tilt multiplier for a CANDIDATE SELLER at the given balance rank. Direction:
+   *   high rank (rich) → LOW tilt → less likely to be picked as seller → less income
+   *   low rank (poor)  → HIGH tilt → more likely to be picked as seller → more income
+   * Formula: raw = 1 + strength × (1 − 2×rank), so rank=0 → 1+s, rank=1 → 1−s, rank=0.5 → 1.0.
+   * A tiny deterministic hash01 jitter (±1% of strength) breaks exact ties without RNG.
+   * Band-clamped into [band[0], band[1]] (defense-in-depth, mirrors the rulesTilt pattern).
+   * Returns 1.0 when OFF or strength=0 (multiplicative identity).
+   */
+  private equityTiltMult(rank: number, tick: number, candId: number): number {
+    const cfg = this.cfg.equityTilt;
+    if (!cfg || !cfg.enabled || cfg.strength <= 0) return 1.0;
+    const s = cfg.strength;
+    // Deterministic tie-break jitter: FNV-1a hash01, scaled to ±1% of strength.
+    const jitter = (hash01(tick, candId, 0xE9171145) - 0.5) * 0.02 * s;
+    const raw = 1 + s * (1 - 2 * rank) + jitter;
+    if (!Number.isFinite(raw)) return 1.0;
+    // Band-clamp: both edges forced into the hard constitutional envelope [RULE_FLOOR, RULE_CEIL] first,
+    // then the configured band is applied (same defense-in-depth as rulesTilt).
+    const cfgLo = Number.isFinite(cfg.band[0]) ? cfg.band[0] : AgentEconomy.RULE_FLOOR;
+    const cfgHi = Number.isFinite(cfg.band[1]) ? cfg.band[1] : AgentEconomy.RULE_CEIL;
+    const lo = Math.min(AgentEconomy.RULE_CEIL, Math.max(AgentEconomy.RULE_FLOOR, cfgLo));
+    const hi = Math.max(AgentEconomy.RULE_FLOOR, Math.min(AgentEconomy.RULE_CEIL, cfgHi));
     const l = Math.min(lo, hi), h = Math.max(lo, hi);
     return raw < l ? l : raw > h ? h : raw;
   }
@@ -3503,6 +3750,31 @@ export class AgentEconomy {
   }
 
   /**
+   * #123 REFORM LEVY → COMMONS: deduct a bounded amount from an agent's DISPLAY mirror (downward only = safe,
+   * same invariant as titheHouse) and credit the commons pool scoreboard. Called by state.ts driveReform when
+   * REFORM_V2_ENABLED is on. NEVER adds to any individual mirror (criterion-B: mirror > chain ⇒ settle failure).
+   * The commons pool accumulates and offsets future downward extractions (tithe / breeding fee). No-op when the
+   * agent is absent, dead, or cannot cover the levy (skips, never partially takes — titheHouse precedent).
+   */
+  levyToCommons(agentAddress: string, amountUsdc: number): void {
+    if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) return;
+    const atomic = usdcToAtomic(amountUsdc);
+    if (atomic === "0") return;
+    // Find the agent by address (linear scan is fine: population ≤ 36, called ≤ topN per jubilee).
+    let idx = -1;
+    for (let i = 0; i < this.agents.length; i++) {
+      if (this.agents[i].address === agentAddress) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    const a = this.agents[idx];
+    if (this.dead.has(a.id)) return;
+    // Guard: never manufacture penury — skip if the mirror cannot cover the levy (titheHouse precedent).
+    if (!gteAtomic(a.balance, atomic)) return;
+    a.balance = subAtomic(a.balance, atomic);
+    this.commonsPoolAtomic = addAtomic(this.commonsPoolAtomic, atomic);
+  }
+
+  /**
    * Mortality sweep — call ONCE per cron (not per sub-tick): the economy's slow heartbeat. Up to one
    * penury death + one old-age burial per cron (史诗节奏, not a cull), plus a PLAGUE under extreme
    * collective heat: a deterministic 6% draw that culs the oldest share of the living at once. Every
@@ -3548,6 +3820,20 @@ export class AgentEconomy {
   }
 
   /**
+   * #123: True when the house still has at least one LIVING member (not in this.dead, present in the agent
+   * array). Used by the dead-house sweep to decide whether an estate should go to the treasury (living house)
+   * or the commons pool (dead house). Deterministic: iterates the bounded members roster, no RNG/clock.
+   */
+  private houseHasLivingMembers(houseId: number): boolean {
+    const h = this.houses.get(houseId);
+    if (!h) return false;
+    for (const mid of h.members) {
+      if (!this.dead.has(mid) && this.indexOfId.has(mid)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Bury one wallet: mark the ledger closed, settle the estate down the inheritance chain
    * LIVING CHILDREN (even split) → HOUSE TREASURY → PAUPER'S DOLE to the poorest living fly, and press
    * the epitaph record. Dust that cannot split (estate < children) is entombed with the dead — never
@@ -3576,8 +3862,21 @@ export class AgentEconomy {
       }
     }
     // ② No child heirs: the house treasury inherits (the name outlives the fly).
+    // #123 DEAD HOUSE SWEEP: when the house has ZERO living members after this burial, route the estate
+    // (plus the existing treasury) to the commons pool scoreboard — unlocking dead capital. This is the
+    // FIRST .treasury subAtomic in the codebase (all prior uses are addAtomic only). Conservative: never
+    // adds to any individual agent mirror (avoids criterion-B: mirror > chain ⇒ settle failure).
     if (heirIds.length === 0 && house && estate > 0n) {
-      house.treasury = addAtomic(house.treasury, estate.toString());
+      if (this.deadHouseSweepOn() && !this.houseHasLivingMembers(house.id)) {
+        // Dead house: estate → commons pool, then sweep the accumulated treasury too.
+        this.commonsPoolAtomic = addAtomic(this.commonsPoolAtomic, estate.toString());
+        if (house.treasury !== "0") {
+          this.commonsPoolAtomic = addAtomic(this.commonsPoolAtomic, house.treasury);
+          house.treasury = "0";  // first subAtomic on .treasury — full sweep to commons
+        }
+      } else {
+        house.treasury = addAtomic(house.treasury, estate.toString());
+      }
       rest = 0n;
     }
     // ③ No house either: a pauper's dole — the poorest living fly takes the estate off the books.
@@ -4196,6 +4495,7 @@ export class AgentEconomy {
         meanBalanceUsdc: meanUsdc,
         gini: giniAtomic(this.agents.map((a) => a.balance)),
         treasuryOutAtomic: this.treasuryOutAtomic,
+        commonsPoolAtomic: this.commonsPoolAtomic,   // #123: dead-house sweeps + levy deductions
         richestId, poorestId,
         settleMsAvg: this.settleMsN > 0 ? Math.round(this.settleMsSum / this.settleMsN) : null,
         settleMsMax: this.settleMsMax,
@@ -4203,6 +4503,9 @@ export class AgentEconomy {
         settleMsN: this.settleMsN,
         netPending: this.pendingNets.size,
         netPendingTrades,
+        // R5 FIX B telemetry (observe-only): lifetime Σ|mirror − onchain| absorbed by re-aligns. "0" while Fix B is
+        // off. NOT part of the PoCA stateDigest `econ` field (which stays {volumeAtomic,count}) — pure read-out.
+        mirrorDriftAtomicSum: this.mirrorDriftAtomicSum,
       },
       // PLAYBOOK /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
       // Shape matches evolution.js contract: [{id, e: [[ctx,action,good,regime,outcome,valid,tick],…]}]
@@ -4277,6 +4580,7 @@ export class AgentEconomy {
       settleMsMax: this.settleMsMax,
       settleMsLast: this.settleMsLast,
       treasuryOutAtomic: this.treasuryOutAtomic,
+      commonsPoolAtomic: this.commonsPoolAtomic,   // #123 additive scoreboard
       warTaxAtomic: this.warTaxAtomic,
       recent: this.recent,
       agents: this.agents,
@@ -4362,6 +4666,10 @@ export class AgentEconomy {
           .sort((x, y) => x[0] - y[0])
           .map(([id, gc]) => ({ id, g: gc })),
       } : {}),
+      // R5 FIX B telemetry. Additive exactly like the switch-guarded blocks above — WRITTEN ONLY WHEN Fix B is
+      // armed, so an OFF serialize is byte-for-byte today's blob. An older payload has no `mirrorDriftAtomicSum`
+      // ⇒ applySerialized defaults it to "0". KEY_VERSION stays "economy:v1" (never bumped).
+      ...(this.mirrorResyncEveryN() > 0 ? { mirrorDriftAtomicSum: this.mirrorDriftAtomicSum } : {}),
     });
   }
 
@@ -4379,8 +4687,12 @@ export class AgentEconomy {
     this.settleMsMax = Number(p.settleMsMax ?? 0);
     this.settleMsLast = Number(p.settleMsLast ?? 0);
     this.treasuryOutAtomic = String(p.treasuryOutAtomic ?? "0");
+    // #123 commons pool: an older payload has no commonsPoolAtomic ⇒ "0" (nothing ever swept), KEY_VERSION stays v1.
+    this.commonsPoolAtomic = /^\d+$/.test(String(p.commonsPoolAtomic ?? "")) ? String(p.commonsPoolAtomic) : "0";
     // WAR mirror: an older payload has no warTaxAtomic ⇒ "0" (no tax ever levied), KEY_VERSION stays v1.
     this.warTaxAtomic = /^\d+$/.test(String(p.warTaxAtomic ?? "")) ? String(p.warTaxAtomic) : "0";
+    // R5 FIX B telemetry: an older payload (or a Fix-B-off blob) has no mirrorDriftAtomicSum ⇒ "0". KEY_VERSION stays v1.
+    this.mirrorDriftAtomicSum = /^\d+$/.test(String(p.mirrorDriftAtomicSum ?? "")) ? String(p.mirrorDriftAtomicSum) : "0";
     this.recent = Array.isArray(p.recent) ? p.recent : [];
     this.agents = Array.isArray(p.agents) ? p.agents : [];
     this.indexOfId = new Map();

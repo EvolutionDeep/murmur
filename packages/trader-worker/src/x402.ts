@@ -83,6 +83,16 @@ export const ARC_USDC_SIMULATED = "0x0000000000000000000000000000000000000000";
  */
 export const ARC_USDC = "0x3600000000000000000000000000000000000000";
 
+/**
+ * Canonical Multicall3 deployment (same address on every EVM chain, deployed by the deterministic
+ * create2 factory). Arc's defineChain() does NOT register contracts.multicall3 (see chain.ts), so the
+ * viem `multicall` action needs this passed EXPLICITLY. Used ONLY by the R5 Fix-A batched balanceOf
+ * read (readBalances) — one RPC per cron instead of one per live agent. If Multicall3 is somehow not
+ * present on the target chain the call throws, readBalances fails OPEN (empty map), and the Fix-A gate
+ * blocks nobody — byte-for-byte today's behaviour. Read-only: no signing, no value, no state write.
+ */
+export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
+
 /** The network tag carried in every payload. Mirrors how x402 names networks ("base", "solana", …). */
 export function arcNetworkTag(isTestnet: boolean): string {
   return isTestnet ? "arc-testnet" : "arc";
@@ -522,6 +532,15 @@ export interface Facilitator {
   authorizationProofOf?(txHash: string): Promise<AuthorizationProof | null>;
   /** Seller-funded refund leg (onchain only; inert unless explicitly called — PULSE_REFUNDS). */
   refundBuyer?(a: { to: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse>;
+  /**
+   * R5 Fix A/B: batched authoritative on-chain ERC-20 balanceOf read for a set of addresses, in ONE
+   * multicall RPC. Returns a Map keyed by LOWERCASED address → atomic USDC balance. On-chain reads are
+   * permitted authoritative external inputs (the SAME class as the settle-time balanceOf and the market
+   * temperature) — never a determinism input. Fail-OPEN: any RPC/multicall error resolves to an EMPTY
+   * map so the caller's gate/resync degrades to today's behaviour instead of blocking everyone.
+   * Absent on the keyless simulator (no real chain to read).
+   */
+  readBalances?(addresses: string[]): Promise<Map<string, bigint>>;
 }
 
 // ============================== small helpers ==============================
@@ -1418,6 +1437,55 @@ export class OnChainFacilitator implements Facilitator {
       trackedNonces: this.settledNonces.size,
       bootTs: this.bootTs,
     };
+  }
+
+  /**
+   * R5 Fix A/B: ONE batched multicall of ERC-20 balanceOf over a set of addresses — the per-cron
+   * authoritative on-chain balance snapshot the trade-planner gate (Fix A) and the mirror re-align
+   * (Fix B) both read from, so neither does a per-agent RPC. Read-only, no signing, no value moved.
+   *
+   * Fail-OPEN by construction: an empty/degenerate input, or ANY multicall/RPC error (e.g. Multicall3
+   * not deployed on the chain), resolves to an EMPTY map. Callers treat a cache miss as "don't block /
+   * don't resync", which degrades to today's exact behaviour rather than freezing every agent. Addresses
+   * are lowercased + de-duplicated so the returned map keys are canonical regardless of caller casing.
+   */
+  async readBalances(addresses: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>();
+    if (!addresses || addresses.length === 0) return out;
+    // Canonicalise: lowercase + de-dupe, preserving first-seen order (deterministic, cheap).
+    const uniq: string[] = [];
+    const seen = new Set<string>();
+    for (const a of addresses) {
+      if (typeof a !== "string" || a.length === 0) continue;
+      const k = a.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(k);
+    }
+    if (uniq.length === 0) return out;
+    try {
+      const results = await this.o.publicClient.multicall({
+        multicallAddress: MULTICALL3_ADDRESS as Address,
+        allowFailure: true,
+        contracts: uniq.map((addr) => ({
+          address: this.o.asset as Address,
+          abi: erc20Abi,
+          functionName: "balanceOf" as const,
+          args: [addr as Address] as const,
+        })),
+      });
+      for (let i = 0; i < uniq.length; i++) {
+        const r = results[i];
+        // allowFailure ⇒ each entry is { status, result }. Only a successful bigint read is trusted; a
+        // failed leg is simply omitted (that address becomes a cache miss ⇒ fail-open at the caller).
+        if (r && r.status === "success" && typeof r.result === "bigint") out.set(uniq[i], r.result);
+      }
+    } catch {
+      // Multicall3 absent / RPC degraded / reverted: return whatever legs (if any) we already have —
+      // an empty map on a hard throw. NEVER let a balance read wedge the cron (mirrors #98 stall guard).
+      return out;
+    }
+    return out;
   }
 
   /**

@@ -80,6 +80,16 @@ const KNOB_DEFAULTS = {
   TERRITORY_ENABLED: "false",
   POET_ENABLED: "false",
   ECONOMY_EVOLUTION_SHADOW: "false",
+  EQUITY_TILT_ENABLED: "false",
+  EQUITY_TILT_BAND: "0.5,2.0",
+  EQUITY_TILT_STRENGTH: "0",
+  DEAD_HOUSE_SWEEP_ENABLED: "false",
+  REFORM_V2_ENABLED: "false",
+  // R5 Fix A/B (#126): on-chain balance gate + periodic mirror re-align. Code-defaults only (the 128 text-binding
+  // wall is spent, so these are NOT added to wrangler.toml [vars]). Both OFF ⇒ the planner/flush path is
+  // byte-for-byte today (dark-deploy safe). MUST match config.ts loadConfig defaults exactly.
+  ECONOMY_ONCHAIN_BALANCE_GATE: "false",
+  ECONOMY_MIRROR_RESYNC_EVERY_N_CRON: "0",
 };
 
 /** sha256 of a string OR Buffer, as 64 lowercase hex chars. Review #23: hashing raw bytes (never a

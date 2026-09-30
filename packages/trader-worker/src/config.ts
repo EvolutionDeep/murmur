@@ -353,6 +353,30 @@ export interface Env {
   //     ESTATE_LEVIED/JUBILEE_PROCLAIMED/CATALYST_SURGE kinds can never speak (byte-for-byte rollback).
   REFORM_ENABLED?: string;              // "true"/"false" (default FALSE — grey-release; flip on by hand)
 
+  // --- #123 EQUITY TILT: market-side wealth redistribution via counterparty weight (see economy.ts pickCounterparty).
+  //     NOTE: armed on CODE DEFAULTS only — the 128 text-binding wall is spent (see wrangler.toml).
+  //     OFF ⇒ equityTilt multiplier ≡ 1.0 (multiplicative identity), byte-for-byte unchanged.
+  EQUITY_TILT_ENABLED?: string;          // "true"/"false" (default FALSE — ships dark)
+  EQUITY_TILT_BAND?: string;             // "lo,hi" clamp band (default "0.5,2.0" — mirrors RULE_FLOOR/RULE_CEIL)
+  EQUITY_TILT_STRENGTH?: string;         // 0..1 tilt amplitude (default "0" ⇒ identity even when enabled)
+
+  // --- #123 DEAD HOUSE SWEEP: route estates of houses with zero living members to the commons pool scoreboard
+  //     instead of the house treasury (unlocks ~83 USDC of dead capital). NOTE: code-defaults only.
+  //     OFF ⇒ entomb branch ② is byte-for-byte unchanged (all estates go to house.treasury as before).
+  DEAD_HOUSE_SWEEP_ENABLED?: string;     // "true"/"false" (default FALSE — ships dark)
+
+  // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
+  //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
+  //     OFF ⇒ reform.step() uses the old (broken) Gini-reset re-arm and levyDeductions are discarded.
+  REFORM_V2_ENABLED?: string;            // "true"/"false" (default FALSE — ships dark)
+
+  // --- R5 FIX A/B (#126): heal the internal-mirror ↔ on-chain USDC decoupling that makes chain-drained agents
+  //     100% settle-fail and netPending climb monotonically. NOTE: armed on CODE DEFAULTS only — the 128 text-
+  //     binding wall is spent (see wrangler.toml), so these read env keys but are NOT added to [vars]. Both default
+  //     OFF ⇒ the planner/flush path is byte-for-byte today (dark-deploy safe).
+  ECONOMY_ONCHAIN_BALANCE_GATE?: string;      // "true"/"false" (default FALSE — Fix A: refuse to queue a pair whose debtor is on-chain-insolvent)
+  ECONOMY_MIRROR_RESYNC_EVERY_N_CRON?: string; // integer N (default "0" = disabled — Fix B: overwrite mirror=onchain every Nth cron; NEVER inflates above chain)
+
   // --- ㉙ TEMPLE: burn-to-influence — a holder sends MURMUR to 0x…dEaD, submits the tx hash, and the Worker
   //     (keyless, read-only, zero gas) re-reads the burn on-chain and queues the requested intervention (see
   //     src/temple.ts). NOTE: armed on CODE DEFAULTS — the tier ladder (TIER_MINIMUMS), the queue/per-cron
@@ -790,6 +814,7 @@ export interface RuntimeConfig {
   };
   reform: {
     enabled: boolean;         // ㉘ the reform lines are constants (ESTATE_BRACKETS etc.) — no knobs by design
+    v2Enabled: boolean;       // #123: jubilee cooldown re-arm + levy→commons wiring (default OFF — dark deploy)
   };
   temple: {
     enabled: boolean;         // ㉙ the tier ladder + caps are constants (TIER_MINIMUMS etc.) — no knobs by design
@@ -818,6 +843,34 @@ export interface RuntimeConfig {
     everyNCrons: number;      // run shadow every N crons (default 1 = every cron; code-default only)
     maxDecisionsPerCron: number; // max decision rows computed per cron (default 64; code-default only)
     maxRowsPerCronToD1: number;  // max rows written to D1 per cron (default 32; code-default only)
+  };
+
+  // #123 EQUITY TILT: market-side wealth redistribution via counterparty weight tilt. OFF ⇒ equityTilt ≡ 1.0
+  // (multiplicative identity), byte-for-byte unchanged. Only tilts cp-weight, NEVER buyProbability.
+  equityTilt: {
+    enabled: boolean;         // master switch (default OFF — dark deploy)
+    band: [number, number];   // [floor, ceil] hard clamp (default [0.5, 2.0], mirrors RULE_FLOOR/RULE_CEIL)
+    strength: number;         // tilt amplitude 0..1 (default 0 ⇒ identity even when enabled)
+  };
+
+  // #123 DEAD HOUSE SWEEP: route estates of zero-living-member houses to the commons pool scoreboard instead
+  // of the house treasury. OFF ⇒ entomb branch ② byte-for-byte unchanged.
+  deadHouseSweep: {
+    enabled: boolean;         // master switch (default OFF — dark deploy)
+  };
+
+  // R5 FIX A (#126): on-chain balance gate in the trade planner. OFF ⇒ queueNet byte-for-byte today (every
+  // neuron-picked trade is folded into pendingNets). ON ⇒ each cron reads live balances via ONE multicall and
+  // refuses to queue a pair whose debtor cannot cover it on-chain. Read-only, no money, no caps, no digest.
+  onchainBalanceGate: {
+    enabled: boolean;         // master switch (default OFF — dark deploy): fail-closed `=== "true"`
+  };
+
+  // R5 FIX B (#126): periodic mirror re-align to on-chain truth. everyNCrons=0 ⇒ disabled/never (byte-for-byte
+  // today). N>0 ⇒ every Nth cron overwrites each live agent's DISPLAY mirror with its real on-chain balance
+  // (re-using Fix A's multicall cache), recording the drift. Mirror is only ever set EQUAL to chain, never above.
+  mirrorResync: {
+    everyNCrons: number;      // 0 = disabled (default); N>0 = re-align every Nth cron (code-default clampInt)
   };
 
   // Phase 3 capability ③: intergenerational knowledge transfer. Both default OFF (dark deploy) ⇒ a child
@@ -1348,6 +1401,9 @@ export function loadConfig(env: Env): RuntimeConfig {
       // ㉘ Shipped DISABLED (grey-release): the default is "false", so an unset REFORM_ENABLED leaves the
       //     reform layer inert and the chronicle byte-for-byte the pre-Reform build. Flip on by hand.
       enabled: (env.REFORM_ENABLED ?? "false").toLowerCase() !== "false",
+      // #123 Reform V2: jubilee cooldown re-arm (deadlock fix) + levy deductions → commons pool scoreboard.
+      //     Shipped DISABLED (dark deploy): OFF ⇒ old behaviour byte-for-byte (broken re-arm + discarded levies).
+      v2Enabled: (env.REFORM_V2_ENABLED ?? "false").toLowerCase() === "true",
     },
     temple: {
       // ㉙ Shipped ENABLED (the ㉔-㉗ default-ON 口径): the default is "true", so an unset TEMPLE_ENABLED opens
@@ -1378,6 +1434,37 @@ export function loadConfig(env: Env): RuntimeConfig {
       everyNCrons: 1,
       maxDecisionsPerCron: 64,
       maxRowsPerCronToD1: 32,
+    },
+
+    // #123 Equity tilt: market-side counterparty weight redistribution. Fail-closed: only "true" arms it.
+    // strength=0 ⇒ multiplier ≡ 1.0 even when enabled (multiplicative identity, zero behavioural change).
+    equityTilt: (() => {
+      const raw = (env.EQUITY_TILT_BAND ?? "0.5,2.0").split(",");
+      const lo = clamp(Number(raw[0]) || 0.5, 0.01, 2.0);
+      const hi = clamp(Number(raw[1]) || 2.0, lo, 10.0);
+      return {
+        enabled: (env.EQUITY_TILT_ENABLED ?? "false").toLowerCase() === "true",
+        band: [lo, hi] as [number, number],
+        strength: clamp(Number(env.EQUITY_TILT_STRENGTH ?? "0") || 0, 0, 1),
+      };
+    })(),
+
+    // #123 Dead-house sweep: route zero-living-member house estates to commons pool. Fail-closed.
+    deadHouseSweep: {
+      enabled: (env.DEAD_HOUSE_SWEEP_ENABLED ?? "false").toLowerCase() === "true",
+    },
+
+    // R5 Fix A (#126): on-chain balance gate in the trade planner. Fail-closed: only an exact "true" arms it.
+    // OFF (default) ⇒ queueNet never reads on-chain balances and is byte-for-byte today's planner.
+    onchainBalanceGate: {
+      enabled: (env.ECONOMY_ONCHAIN_BALANCE_GATE ?? "false").toLowerCase() === "true",
+    },
+
+    // R5 Fix B (#126): periodic mirror re-align to on-chain truth. Code-default only (no binding slot).
+    // 0 (default) ⇒ disabled/never. N>0 ⇒ re-align every Nth cron. Parsed fail-safe: a NaN/negative/huge var
+    // clamps to a safe integer in [0, 1e6], so a bad value can never arm a sub-cron or divide-by-zero resync.
+    mirrorResync: {
+      everyNCrons: clamp(Math.floor(Number(env.ECONOMY_MIRROR_RESYNC_EVERY_N_CRON ?? "0") || 0), 0, 1_000_000),
     },
 
     strategy: {

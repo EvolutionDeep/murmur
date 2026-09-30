@@ -34,10 +34,14 @@ function parseHistoryRow(r: any) {
     gini: r?.gini ?? null,
     topState: r?.top_state ?? null,
     topStates,
+    // R5 Fix F (#126) additive columns — null on rows archived before the migration (graceful, additive-only).
+    netPending: r?.net_pending ?? null,
+    netPendingTrades: r?.net_pending_trades ?? null,
+    mirrorDriftAtomicSum: r?.mirror_drift_atomic_sum ?? null,
   };
 }
 
-const COLS = `tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states`;
+const COLS = `tick, ts, temperature, regime, size, deals, settlements, volume_usdc, gini, top_state, top_states, net_pending, net_pending_trades, mirror_drift_atomic_sum`;
 
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -67,10 +71,18 @@ export async function serveHistory(db: D1Database | undefined, url: URL): Promis
         `CREATE TABLE IF NOT EXISTS ticks (
            tick INTEGER PRIMARY KEY, ts INTEGER NOT NULL, temperature REAL NOT NULL, regime TEXT NOT NULL,
            size INTEGER, deals INTEGER, settlements INTEGER, volume_usdc REAL, gini REAL,
-           top_state TEXT, top_states TEXT )`,
+           top_state TEXT, top_states TEXT,
+           net_pending INTEGER, net_pending_trades INTEGER, mirror_drift_atomic_sum TEXT )`,
       )
       .run();
     await db.prepare(`CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (ts)`).run();
+    // R5 Fix F (#126) ADDITIVE migration — identical to the DO's ensureD1Schema (keep the two in lockstep):
+    // a live `ticks` table provisioned before these columns gains them in place; a fresh one already has them
+    // via the CREATE above. SQLite has no "ADD COLUMN IF NOT EXISTS", so a duplicate-column error is swallowed.
+    // NEVER rewrites or drops an existing column.
+    for (const col of [`net_pending INTEGER`, `net_pending_trades INTEGER`, `mirror_drift_atomic_sum TEXT`]) {
+      try { await db.prepare(`ALTER TABLE ticks ADD COLUMN ${col}`).run(); } catch { /* already present */ }
+    }
 
     const hasBefore = beforeRaw != null && Number.isFinite(Number(beforeRaw));
     const page = hasBefore

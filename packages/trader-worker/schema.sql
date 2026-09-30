@@ -17,7 +17,14 @@ CREATE TABLE IF NOT EXISTS ticks (
   volume_usdc REAL,                       -- lifetime cumulative settled volume (USDC)
   gini        REAL,                       -- wealth concentration 0..1 (emergent from neural diversity)
   top_state   TEXT,                       -- dominant behavioural state this tick
-  top_states  TEXT                        -- JSON of the full behavioural-state histogram
+  top_states  TEXT,                       -- JSON of the full behavioural-state histogram
+  -- R5 Fix F (#126) ADDITIVE columns (observability debt): the live netting backlog gauge + the lifetime
+  -- mirror-drift telemetry. Additive-only — never rewrites/drops an existing column. Already-live tables
+  -- gain these in place via the idempotent ALTER migration in state.ts#ensureD1Schema / history.ts (SQLite
+  -- has no ADD COLUMN IF NOT EXISTS, so a duplicate-column error is swallowed there). Old rows read NULL.
+  net_pending            INTEGER,         -- pair-nets folded and awaiting broadcast at this cron (totals.netPending)
+  net_pending_trades     INTEGER,         -- gross trades folded into those pending nets (totals.netPendingTrades)
+  mirror_drift_atomic_sum TEXT            -- lifetime Σ|internal-mirror − on-chain| atomic (totals.mirrorDriftAtomicSum; "0"/NULL while Fix B off)
 );
 
 -- Time-range scans for the frontend history curve and research export.

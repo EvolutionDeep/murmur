@@ -178,6 +178,9 @@ export interface ReformSerialized {
 
 export interface ReformConfig {
   enabled: boolean;
+  /** #123: when true, the jubilee stabilizer re-arms on cooldown expiry instead of requiring Gini ≤ RESET
+   *  (fixes the permanent deadlock: the jubilee is pure read-out and never actually lowers Gini). */
+  v2Enabled: boolean;
 }
 
 // ─── pure helpers ───────────────────────────────────────────────────────────────────────────────────────
@@ -287,6 +290,15 @@ export class ReformLayer {
       // Equal enough to deserve a reset: re-arm and clear the run.
       this.giniSustainCount = 0;
       this.jubileeArmed = true;
+    } else if (this.cfg.v2Enabled && !this.jubileeArmed && this.lastJubileeTick != null) {
+      // #123 V2 FIX: re-arm on cooldown expiry instead of requiring Gini ≤ RESET (which never happens
+      // because the jubilee is pure read-out and doesn't actually move money). After re-arm the sustain
+      // counter restarts from zero, so JUBILEE_SUSTAIN_CRONS more crons of crisis are needed before firing.
+      const cdTicks = JUBILEE_COOLDOWN_CRONS * ticksPerCron;
+      if (tickIndex - this.lastJubileeTick > cdTicks) {
+        this.jubileeArmed = true;
+        this.giniSustainCount = 0;
+      }
     } else if (gini > GINI_JUBILEE_THRESHOLD) {
       // In crisis: count the sustained run ONLY while armed (a spent stabilizer must re-arm first).
       if (this.jubileeArmed) this.giniSustainCount++;
@@ -373,8 +385,8 @@ export class ReformLayer {
    * ledger). Numeric fields are coerced with an explicit finiteness check — NEVER `Number(v) || d`, which
    * would silently drop a legitimate 0 (the house-id-0 pitfall this codebase has already paid for once).
    */
-  static deserialize(json: string): ReformLayer {
-    const layer = new ReformLayer({ enabled: true });
+  static deserialize(json: string, cfg?: ReformConfig): ReformLayer {
+    const layer = new ReformLayer(cfg ?? { enabled: true, v2Enabled: false });
     if (typeof json !== "string" || !json) return layer;
     try {
       const p = JSON.parse(json);
