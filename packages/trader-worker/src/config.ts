@@ -379,6 +379,7 @@ export interface Env {
   ESTATE_RELIEF_DAILY_BUDGET_USDC?: string;   // max USDC dripped from escrow per UTC day (a ceiling BELOW the spend caps)
   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON?: string; // estate→escrow sweeps attempted per cron (default 4, wall-clock bound)
   ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default FALSE — real USDC moves; set TRUE to revert the layer to DRY-RUN: signs + eth_calls, broadcasts nothing)
+  ESTATE_RELIEF_BACKFILL?: string;            // "true"/"false" (default FALSE — one-time RETROACTIVE sweep: on first armed cron, snapshot every CURRENTLY-orphaned id in this.dead into the queue. Guard-protected: a reclaimed (living) id is never swept. Latches once, never re-scans ⇒ no churn)
 
   // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
   //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
@@ -884,6 +885,7 @@ export interface RuntimeConfig {
     reliefChunkUsdc: number;     // max USDC per escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
     reliefDailyBudgetUsdc: number; // max USDC dripped per UTC day (below the spend caps)
     maxSweepsPerCron: number;    // estate→escrow sweeps per cron (wall-clock bound)
+    backfill: boolean;           // default FALSE — one-time retroactive sweep of the CURRENTLY-orphaned this.dead set into the queue (guard-protected, latches once)
   };
 
   // R5 FIX A (#126): on-chain balance gate in the trade planner. OFF ⇒ queueNet byte-for-byte today (every
@@ -1505,6 +1507,7 @@ export function loadConfig(env: Env): RuntimeConfig {
         reliefChunkUsdc: chunk,
         reliefDailyBudgetUsdc: budget,
         maxSweepsPerCron: sweeps,
+        backfill: (env.ESTATE_RELIEF_BACKFILL ?? "false").toLowerCase() === "true",
       };
     })(),
 

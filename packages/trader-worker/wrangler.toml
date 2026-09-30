@@ -210,6 +210,12 @@ ECONOMY_NET_FLUSH_TICKS = "1440"             # TEMPORARY GAS EMERGENCY GATE (#13
 #   ESTATE_RELIEF_CHUNK_USDC = "0.02"            # max USDC per escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
 #   ESTATE_RELIEF_DAILY_BUDGET_USDC = "1"        # max USDC dripped from escrow per UTC day (a ceiling BELOW the caps)
 #   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON = "4"      # estate→escrow sweeps attempted per cron (wall-clock bound)
+#   ESTATE_RELIEF_BACKFILL = "false"             # default FALSE. TRUE = a ONE-TIME RETROACTIVE pass: on the first
+#     armed cron it snapshots every CURRENTLY-orphaned id in this.dead (buried, not yet reclaimed) into a bounded
+#     backlog and feeds the queue so the sweep recovers the pre-arming orphans too. It LATCHES after that single
+#     snapshot (estateBackfillRan, persisted) so it never re-scans ⇒ no churn; forward entomb already enqueues every
+#     FUTURE death. Guard-protected: a reclaimed (living) id is dropped by the id-reuse guard, so a reborn fly's
+#     inherited purse is NEVER swept. With dead=0 at arming it captures 0 and is an immediate no-op.
 # These read env in config.ts but are NOT live [vars] (binding wall full) — arm them as SECRETS for seconds-level
 # rollback exactly like the R5 knobs above, or by freeing a slot. Read-out: GET /economy carries an `estateRelief`
 # block (escrow scoreboard + queue depth + lifetime sweep/relief counters) ONLY when the layer is enabled ⇒ an

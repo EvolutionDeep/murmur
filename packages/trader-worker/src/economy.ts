@@ -486,6 +486,7 @@ export interface EconomySnapshot {
     escrowPoolAtomic: string; pendingEstates: number;
     sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
     shadow: boolean;
+    backfillRan: boolean; backfillRemaining: number;
   };
 }
 
@@ -641,6 +642,7 @@ export interface EconomyConfig {
     reliefChunkUsdc: number;      // max USDC per single escrow→poor transfer (further clamped by ECONOMY_MAX_DEAL)
     reliefDailyBudgetUsdc: number; // max USDC disbursed from escrow per UTC day (a ceiling BELOW the spend caps)
     maxSweepsPerCron: number;     // estate→escrow sweeps attempted per cron (wall-clock guard, like flush budget)
+    backfill?: boolean;           // default FALSE (undefined ⇒ inert) — one-time retroactive sweep of the CURRENTLY-orphaned this.dead set into the queue; latches once, guard-protected (a reclaimed id is never swept)
   };
   // --- R5 FIX A (ONCHAIN BALANCE GATE): OPTIONAL — absent/false ⇒ queueNet never consults on-chain balances,
   //     byte-for-byte today (every neuron-picked trade is folded into pendingNets). When armed, each cron opens
@@ -864,6 +866,14 @@ export class AgentEconomy {
    * swept). Persisted only while armed; an older/absent payload ⇒ empty queue (nothing pending).
    */
   private pendingEstates: number[] = [];
+  /**
+   * #143 BACKFILL: the one-time RETROACTIVE backlog — ids of CURRENTLY-orphaned (this.dead) wallets snapshotted
+   * when the backfill knob is first armed, fed into pendingEstates as the queue drains (bounded by ESTATE_QUEUE_CAP).
+   * Written to serialize() ONLY when the layer is armed. The id-reuse guard in the sweep still drops a reclaimed
+   * (living) id, so this can NEVER sweep a reborn fly's purse. Empty unless backfill runs. */
+  private estateBackfill: number[] = [];
+  /** #143 BACKFILL: one-time latch — true once the this.dead snapshot has been captured (never re-scans ⇒ no churn). */
+  private estateBackfillRan = false;
   /** #143: escrow→poor disbursements metered per UTC day (a ceiling BELOW the real-spend caps). Runtime counter. */
   private reliefToday: { day: string; atomic: string } = { day: "", atomic: "0" };
   /** #143: onchain cron boundaries seen by the relief executor (runtime-only, drives the relief cadence modulo). */
@@ -1666,6 +1676,36 @@ export class AgentEconomy {
   }
 
   /**
+   * #143 RETROACTIVE BACKFILL (cron, before the estate sweep). A ONE-TIME pass that recovers the orphaned wallets
+   * that died BEFORE the layer was armed: on the first armed cron it snapshots every id CURRENTLY in this.dead
+   * (a genuine orphan — buried, not yet reclaimed) into a bounded backlog, then feeds pendingEstates as the queue
+   * drains so the EXISTING sweep executor re-checks each tombstone, reads the LIVE on-chain balance and sweeps a
+   * per-deal-capped chunk into escrow. It LATCHES after the single snapshot (estateBackfillRan) so it never
+   * re-scans this.dead ⇒ no churn; forward entomb already enqueues every FUTURE death, so backfill only closes the
+   * historical gap. Fully guard-protected: a reclaimed (living) id is dropped by the sweep's id-reuse guard, so a
+   * reborn fly's inherited purse is NEVER swept. Inert unless estateReliefOn() AND the backfill knob is armed ⇒
+   * an OFF/disabled build is byte-for-byte today. Returns {captured, remaining} for the cron log.
+   */
+  runEstateBackfill(): { captured: number; remaining: number } {
+    if (!this.estateReliefOn()) return { captured: 0, remaining: this.estateBackfill.length };   // OFF/sim/unwired ⇒ no-op
+    if (this.cfg.estateRelief?.backfill !== true) {                                               // knob OFF (default) ⇒ inert
+      return { captured: 0, remaining: this.estateBackfill.length };
+    }
+    let captured = 0;
+    if (!this.estateBackfillRan) {                                   // ONE-TIME snapshot of the orphan set
+      this.estateBackfillRan = true;
+      this.estateBackfill = [...this.dead].filter((id) => !this.pendingEstates.includes(id));
+      captured = this.estateBackfill.length;
+      console.log(`[DO] estate-relief backfill: latched, ${captured} currently-orphaned wallet(s) queued`);
+    }
+    while (this.estateBackfill.length > 0 && this.pendingEstates.length < ESTATE_QUEUE_CAP) {
+      const id = this.estateBackfill.shift() as number;
+      if (!this.pendingEstates.includes(id)) this.pendingEstates.push(id);   // dedup; sweep guard drops a reclaimed id
+    }
+    return { captured, remaining: this.estateBackfill.length };
+  }
+
+  /**
    * #143 escrow→poor relief executor (cron, serialized after the estate sweep). Gated by a cadence modulo
    * (reliefEveryNCrons) and a daily budget BELOW the spend caps. Reads the escrow purse's LIVE on-chain balance,
    * then drips per-deal-capped chunks to the poorest living wallets via treasuryTransfer legs signed by the
@@ -1754,6 +1794,7 @@ export class AgentEconomy {
     escrowPoolAtomic: string; pendingEstates: number;
     sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
     shadow: boolean;
+    backfillRan: boolean; backfillRemaining: number;
   } | null {
     if (!this.cfg.estateRelief || this.cfg.estateRelief.enabled !== true) return null;
     return {
@@ -1765,6 +1806,8 @@ export class AgentEconomy {
       paidAtomic: this.reliefPaidAtomic,
       reliefTodayAtomic: this.reliefToday.atomic,
       shadow: this.cfg.estateRelief.shadow !== false,
+      backfillRan: this.estateBackfillRan,
+      backfillRemaining: this.estateBackfill.length,
     };
   }
 
@@ -5003,6 +5046,8 @@ export class AgentEconomy {
       ...(this.cfg.estateRelief?.enabled ? {
         escrowPoolAtomic: this.escrowPoolAtomic,
         pendingEstates: this.pendingEstates,
+        estateBackfill: this.estateBackfill,
+        estateBackfillRan: this.estateBackfillRan,
         estateSweptCount: this.estateSweptCount,
         estateSweptAtomic: this.estateSweptAtomic,
         reliefPaidCount: this.reliefPaidCount,
@@ -5042,6 +5087,13 @@ export class AgentEconomy {
     this.pendingEstates = Array.isArray(p.pendingEstates)
       ? p.pendingEstates.filter((x: unknown) => Number.isInteger(x)).slice(-ESTATE_QUEUE_CAP)
       : [];
+    // #143 BACKFILL: an older/absent payload ⇒ empty backlog + un-latched (nothing to recover). The backlog is a
+    // one-time snapshot fed into the queue; clamp to clean integers, and the latch survives a DO eviction so the
+    // retroactive pass never re-scans this.dead.
+    this.estateBackfill = Array.isArray(p.estateBackfill)
+      ? p.estateBackfill.filter((x: unknown) => Number.isInteger(x))
+      : [];
+    this.estateBackfillRan = p.estateBackfillRan === true;
     this.reliefToday = p.reliefToday && typeof p.reliefToday.day === "string" && /^\d+$/.test(String(p.reliefToday.atomic ?? ""))
       ? { day: p.reliefToday.day, atomic: String(p.reliefToday.atomic) }
       : { day: "", atomic: "0" };

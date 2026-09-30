@@ -396,3 +396,73 @@ test("SHDW2: shadow:true ⇒ a relief leg is dry-run (recipient mirror does NOT 
   assert.equal((econ as any).reliefPaidCount, 0, "no lifetime relief counted under shadow");
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// BF GROUP — the one-time RETROACTIVE backfill (recovers pre-arming orphans in this.dead; guard-protected, latches once)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+test("BF1: backfill knob OFF (default) ⇒ runEstateBackfill is a no-op even with orphans sitting in this.dead", () => {
+  const { econ } = armedEcon({ balances: () => 0n });        // RELIEF default: backfill absent
+  (econ as any).dead.add(3); (econ as any).dead.add(4);
+  const res = econ.runEstateBackfill();
+  assert.deepEqual(res, { captured: 0, remaining: 0 }, "disabled ⇒ captures nothing, backlog empty");
+  assert.equal((econ as any).estateBackfillRan, false, "not latched while the knob is off");
+  assert.equal((econ as any).pendingEstates.length, 0, "nothing enqueued (byte-for-byte inert)");
+});
+
+test("BF2: backfill ON ⇒ the first call latches a ONE-TIME snapshot of this.dead into the queue (deduped), the second never re-scans", () => {
+  const { econ } = armedEcon({ balances: () => 0n }, { backfill: true });
+  (econ as any).dead.add(3); (econ as any).dead.add(4); (econ as any).dead.add(5);
+  (econ as any).pendingEstates.push(5);                       // id 5 already forward-queued ⇒ must not duplicate
+  const r1 = econ.runEstateBackfill();
+  assert.equal(r1.captured, 2, "captures the two orphans not already queued (3,4)");
+  assert.equal((econ as any).estateBackfillRan, true, "latched after a single snapshot");
+  for (const id of [3, 4, 5]) assert.equal((econ as any).pendingEstates.includes(id), true, `orphan #${id} is enqueued`);
+  assert.equal((econ as any).pendingEstates.filter((x: number) => x === 5).length, 1, "no duplicate enqueue of an already-queued id");
+  const r2 = econ.runEstateBackfill();
+  assert.equal(r2.captured, 0, "latched ⇒ never re-scans this.dead");
+});
+
+test("BF3: churn immunity — an already-drained orphan STILL in this.dead is not re-enqueued on a later call", () => {
+  const { econ } = armedEcon({ balances: () => 0n }, { backfill: true });
+  (econ as any).dead.add(3);
+  econ.runEstateBackfill();                                   // captures + enqueues 3
+  (econ as any).pendingEstates.length = 0;                    // simulate the sweep retiring it
+  const r = econ.runEstateBackfill();                         // latched ⇒ no re-capture
+  assert.equal(r.captured, 0, "no re-scan after the latch");
+  assert.equal((econ as any).pendingEstates.includes(3), false, "a drained orphan is never re-fed (latch prevents churn)");
+});
+
+test("BF4: a backfilled id whose slot is reclaimed is DROPPED by the sweep guard, never swept (a reborn fly's purse is safe)", async () => {
+  const deadAddr = AgentEconomy.addressOf(42, 7);
+  const { econ, transferLog } = armedEcon({ balances: (a) => a.toLowerCase() === deadAddr.toLowerCase() ? BigInt(usdcToAtomic(3)) : 0n }, { backfill: true });
+  await seedAgents(econ);
+  (econ as any).dead.add(7);
+  econ.runEstateBackfill();
+  assert.equal((econ as any).pendingEstates.includes(7), true, "backfill enqueued the orphan");
+  econ.reopenSlot(7, 6);                                       // a new hatch reclaims id 7 → the tombstone lifts
+  const res = await econ.sweepEstatesToEscrow(3);
+  assert.equal(res.swept, 0, "a reclaimed purse is NEVER swept");
+  assert.equal(transferLog.length, 0, "no transfer is signed against a reclaimed purse");
+  assert.equal((econ as any).pendingEstates.includes(7), false, "the backfilled entry is dropped by the guard");
+});
+
+test("BF5: backfill ON with an empty this.dead ⇒ latches immediately and captures 0 (the live dead=0 posture = a no-op)", () => {
+  const { econ } = armedEcon({ balances: () => 0n }, { backfill: true });
+  const r = econ.runEstateBackfill();
+  assert.deepEqual(r, { captured: 0, remaining: 0 }, "nothing to recover");
+  assert.equal((econ as any).estateBackfillRan, true, "latched even with zero orphans ⇒ the retroactive pass is spent forever");
+});
+
+test("BF6: the backfill latch + queue survive a serialize→restore round-trip (a DO eviction does not re-run or lose it)", () => {
+  const { econ } = armedEcon({ balances: () => 0n }, { backfill: true });
+  (econ as any).dead.add(3); (econ as any).dead.add(4);
+  econ.runEstateBackfill();                                    // latches + enqueues 3,4
+  const blob = econ.serialize();
+  const econ2 = new AgentEconomy(onchainCfg({ estateRelief: RELIEF({ backfill: true }) }), blob, { facilitator: mockFac(), escrowAddress: ESCRW });
+  assert.equal((econ2 as any).estateBackfillRan, true, "the latch persists across eviction ⇒ no re-scan");
+  assert.equal((econ2 as any).pendingEstates.includes(3) && (econ2 as any).pendingEstates.includes(4), true, "the queued orphans persist");
+  const r = econ2.runEstateBackfill();
+  assert.equal(r.captured, 0, "restored + latched ⇒ the retroactive pass never re-captures");
+});
+
+

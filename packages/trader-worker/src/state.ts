@@ -855,6 +855,7 @@ export class FlyStateDO {
         reliefChunkUsdc: this.cfg.estateRelief.reliefChunkUsdc,
         reliefDailyBudgetUsdc: this.cfg.estateRelief.reliefDailyBudgetUsdc,
         maxSweepsPerCron: this.cfg.estateRelief.maxSweepsPerCron,
+        backfill: this.cfg.estateRelief.backfill,
       },
     };
   }
@@ -4131,6 +4132,8 @@ export class FlyStateDO {
       // are byte-for-byte no-ops unless estateReliefOn() (flag + onchain + wired escrow) AND ECONOMY_REAL_SPEND.
       // Best-effort: any throw here must never wedge the cron — the queue/escrow carry forward to the next beat.
       try {
+        const bf = economy.runEstateBackfill();
+        if (bf.captured > 0 || bf.remaining > 0) console.log(`[DO] estate-relief backfill: captured ${bf.captured}, ${bf.remaining} still queued for recovery`);
         const swept = await economy.sweepEstatesToEscrow(swarm.getTickIndex());
         if (swept.swept > 0) console.log(`[DO] estate-relief: swept ${swept.swept} estate(s) (${swept.sweptAtomic} atomic) → escrow`);
         const given = await economy.disburseRelief();
