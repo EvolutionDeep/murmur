@@ -45,7 +45,14 @@ REGIME_COLD = "0.33"                          # temperature ≤ this ⇒ COLD
 
 # ===== Fly population =====
 POPULATION_SIZE = "24"                        # number of flies in the swarm (1–256)
-POPULATION_SEED_BASE = "42"                   # base seed; fly i uses seed = base + i*7919
+# POPULATION_SEED_BASE = "42"   # EVICTED for the R5 Fix-A/B binding slots (ECONOMY_ONCHAIN_BALANCE_GATE +
+#                               # ECONOMY_MIRROR_RESYNC_EVERY_N_CRON, both set as SECRETS for second-level
+#                               # rollback) — the code default in config.ts is also "42", so the resolved
+#                               # config is byte-identical: ZERO behavioural change, manifestHash unchanged.
+#                               # A genesis provenance constant, never a live tunable (re-seeding would be a
+#                               # different swarm), so it is the cheapest var on the wall to retire.
+#                               # Precedent: CIRCLE_MAX_TIMEOUT_SECONDS → REFORM_ENABLED,
+#                               #            CIRCLE_FACILITATOR_URL → FLYWIRE_TOPOLOGY + NEUROMOD_GATING.
 TICKS_PER_CRON = "6"                          # simulation sub-ticks per cron
 SIM_STEPS_PER_TICK = "500"                    # total LIF integration steps per cron, split across sub-ticks
 # Swarm sharding (see swarm.ts / shard.ts). "1" = the original single-DO swarm — every brain in FlyStateDO,
@@ -127,6 +134,36 @@ ECONOMY_PER_AGENT_DAILY_CAP = "10"          # per-agent real-spend ceiling per U
 # so a failed flush never invents money. Inert in simulated mode.
 ECONOMY_NET_MIN_BROADCAST = "0.01"           # min |net| (USDC) before a pair is broadcast; below ⇒ dust carries forward (raised 0.004→0.01: ~5× base price so gas/face-value ratio stays favourable; commit c7b53f8)
 ECONOMY_NET_FLUSH_TICKS = "360"              # force-flush any nonzero pending net at least every N sub-ticks (360 = 60 crons ≈ 1 h; raised from 30 to batch small nets and cut receipt density; commit c7b53f8); 0 = never force
+
+# ===== R5 FIX A + FIX B (the settle-fail spiral) — SECRETS, deliberately NO var set here =====
+# Both switches are read from env in src/config.ts but intentionally NOT declared as [vars], because the 128
+# text-binding wall is spent. They live as SECRETS instead, which buys SECOND-LEVEL rollback (no code change,
+# no redeploy of the artifact — `wrangler secret put` alone re-rolls the version). Two slots were freed for
+# them by retiring POPULATION_SEED_BASE (the fly-population block below) and BOURSE_TITHE_MILESTONE_MURMUR
+# (the bourse block), both zero-behaviour evictions (var value == the one and only code default in config.ts).
+# Semantics + rollback for both are documented in the "R5 FIX A + FIX B" block in the netting section.
+#   ECONOMY_ONCHAIN_BALANCE_GATE      — FIX A. "true" makes queueNet consult a per-cron Multicall3 balanceOf
+#                                       cache BEFORE folding a buyer into pendingNets; an on-chain-insolvent
+#                                       debtor is declined (valid:false, reason:"onchain-insolvent") instead of
+#                                       being re-queued forever and burning a settle attempt every flush.
+#                                       Fail-open on EVERY branch (off / simulator / cold cache / unknown id /
+#                                       address absent from the multicall / RPC throw ⇒ treated as solvent),
+#                                       so a gate fault can never stall settlement. Spends nothing: read-only.
+#   ECONOMY_MIRROR_RESYNC_EVERY_N_CRON — FIX B. Integer N; every Nth cron each live agent's DISPLAY mirror is
+#                                       overwritten with its real on-chain balanceOf and |mirror − onchain| is
+#                                       accumulated into totals.mirrorDriftAtomicSum (lifetime) and
+#                                       totals.mirrorDriftAtomicLast (this cron). "0" = disabled.
+#                                       INVARIANT: the mirror is only ever set EQUAL to chain or adjusted
+#                                       DOWNWARD, never raised — mirror > chain is exactly what made every
+#                                       flush attempt fail. Spends nothing: read-only.
+#                                       NOTE: the cron counter is in-memory (not persisted), so a DO eviction
+#                                       restarts it; keep N small enough that a resync lands within one
+#                                       instance's lifetime.
+# ARM:   wrangler secret put ECONOMY_ONCHAIN_BALANCE_GATE   (value: true)
+#        wrangler secret put ECONOMY_MIRROR_RESYNC_EVERY_N_CRON (value: 6)
+# ROLLBACK (seconds, no deploy of code): put "false" / "0" respectively. Absent ⇒ code defaults OFF ⇒
+# byte-for-byte the pre-R5 behaviour. A secret put records a PoCA kind-3 PARAM_OVERRIDE, NOT a kind-7
+# CODE_CHANGE, so flipping these seals no epoch and does not rotate CODE_COMMITMENT.
 
 # ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
 # Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.
@@ -403,7 +440,11 @@ BOURSE_TOKEN = "0x8faae5592b9acc27a79fca745c6b872adf514a5d"   # the MURMUR CA on
 BOURSE_TAX_WALLET = "0xc38e7c9e5cb1b59a53e892b938a7d79f0b741cb3" # the argus tax wallet (tithe flow sink)
 BOURSE_WHALE_MURMUR = "1000000"                # a single main leg ≥ this many whole MURMUR is a whale stir (~p99 of the live tape)
 BOURSE_LOOKBACK = "1200"                       # max blocks one sample may span (~10 min at 0.51 s/block); also the cold-start window
-BOURSE_TITHE_MILESTONE_MURMUR = "5000000"      # cumulative tithe crossing every this-many MURMUR speaks a TITHE line
+# BOURSE_TITHE_MILESTONE_MURMUR = "5000000"  # EVICTED for the R5 Fix-A/B binding slots — the code default in
+#                                            # config.ts is also "5000000", so the resolved config is
+#                                            # byte-identical: ZERO behavioural change. Pure narration cadence on
+#                                            # the READ-ONLY bourse tape (no money, no connectome, no genome,
+#                                            # chroniclerRulesHash unchanged).
 TOKEN_STIMULUS_ENABLED = "true"                # ⑲ feeling switch — ARMED: the coin climate now reaches the connectome through the SAME four visitor channels (food/threat/light/dark, the ① bus precedent), under the TOKEN_STIMULUS_MAX ceiling; NO new sensory channel (manifestHash never rotates), no genome touched, no money moved (set "false" for a one-deploy byte-for-byte rollback)
 TOKEN_STIMULUS_MAX = "0.35"                    # hard master ceiling on any one felt coin channel, 0..1 (0 ⇒ nothing felt)
 
