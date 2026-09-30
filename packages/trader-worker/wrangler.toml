@@ -150,20 +150,32 @@ ECONOMY_NET_FLUSH_TICKS = "360"              # force-flush any nonzero pending n
 #                                       address absent from the multicall / RPC throw ⇒ treated as solvent),
 #                                       so a gate fault can never stall settlement. Spends nothing: read-only.
 #   ECONOMY_MIRROR_RESYNC_EVERY_N_CRON — FIX B. Integer N; every Nth cron each live agent's DISPLAY mirror is
-#                                       overwritten with its real on-chain balanceOf and |mirror − onchain| is
-#                                       accumulated into totals.mirrorDriftAtomicSum (lifetime) and
-#                                       totals.mirrorDriftAtomicLast (this cron). "0" = disabled.
-#                                       INVARIANT: the mirror is only ever set EQUAL to chain or adjusted
-#                                       DOWNWARD, never raised — mirror > chain is exactly what made every
-#                                       flush attempt fail. Spends nothing: read-only.
+#                                       overwritten with its real on-chain balanceOf and Σ|mirror − onchain| is
+#                                       accumulated into totals.mirrorDriftAtomicSum (lifetime, served by
+#                                       /economy and persisted by serialize() ONLY while N>0). "0" = disabled.
+#                                       The per-cron delta mirrorDriftAtomicLast is a private runtime field and
+#                                       is NOT exposed on any endpoint (tests reach it via `as any`).
+#                                       INVARIANT (measured live at the R5 arm, 2026-09-30): the mirror is set
+#                                       EQUAL to chain, which may move it UP or DOWN — at the arm 64/100 agents
+#                                       were mirror < chain and were raised, 36/100 were mirror > chain and were
+#                                       lowered. What matters is the post-state mirror == chain, so mirror > chain
+#                                       (the state that made every flush attempt fail) can no longer persist.
+#                                       Spends nothing: read-only.
 #                                       NOTE: the cron counter is in-memory (not persisted), so a DO eviction
 #                                       restarts it; keep N small enough that a resync lands within one
 #                                       instance's lifetime.
-# ARM:   wrangler secret put ECONOMY_ONCHAIN_BALANCE_GATE   (value: true)
-#        wrangler secret put ECONOMY_MIRROR_RESYNC_EVERY_N_CRON (value: 6)
-# ROLLBACK (seconds, no deploy of code): put "false" / "0" respectively. Absent ⇒ code defaults OFF ⇒
-# byte-for-byte the pre-R5 behaviour. A secret put records a PoCA kind-3 PARAM_OVERRIDE, NOT a kind-7
-# CODE_CHANGE, so flipping these seals no epoch and does not rotate CODE_COMMITMENT.
+# ARMED 2026-09-30 as: ECONOMY_ONCHAIN_BALANCE_GATE="true", ECONOMY_MIRROR_RESYNC_EVERY_N_CRON="3".
+#   N=3 (not 6) because the counter is in-memory and observed instance lifetimes are short (as few as 2 crons),
+#   so a larger N risks the resync NEVER firing — a silent failure that would leave the mirror dishonest while
+#   looking armed. The gate already does one Multicall3 every cron and the resync reuses that same cache, so
+#   N=1/3/6 cost the same RPC; smaller N only makes mirrorDriftAtomicSum accumulate more slowly.
+# ROLLBACK (seconds, no code change, no artifact redeploy): put "false" / "0" respectively. Absent ⇒ code
+# defaults OFF ⇒ byte-for-byte the pre-R5 behaviour. Each switch rolls back independently.
+# PoCA NOTE (measured, corrects an earlier claim here): a secret put on EITHER of these records NO PoCA admin
+# event at all — not kind-3 and not kind-7. pocaKnobsHash() in src/state.ts hashes only the 22 non-secret layer
+# flags (flywireTopology, neuromodGating, economyEnabled, economyRealSpend, … shadowCompareEnabled); neither
+# onchainBalanceGate nor mirrorResync is in that set, by design ("Non-secret flags ONLY"). The secret put only
+# rolls a new version with Source: "Secret Change"; CODE_COMMITMENT and the epoch are untouched.
 
 # ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
 # Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.
