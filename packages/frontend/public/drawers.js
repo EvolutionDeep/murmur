@@ -1,11 +1,11 @@
 // drawers.js — 全部抽屉 open/close/render（chron 19卷册、wallets、arena 等；inspector 除外）
 // 由 app.js 机械拆分（任务5），行为与原文件一致；原文件保留为 app.js 备份参考。
-import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=163';
-import { ct, currentLang, gl, t as T } from './i18n.js?v=114';
-import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=163';
-import { select } from './inspector.js?v=163';
-import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=163';
-import { closeLand } from './landDrawer.js?v=163';
+import { state, $, API, ARC_EXPLORER, CHRON_, TAU, arcRpc, arenaClock, atomicToUsdc, clamp, houseOf, isRealAddr, isRealTxHash, isZeroBytes32, lrNum, paletteAt, params, readLineageOnchain, readManifestOnchain, readRegistryOnchain, rgba, sha256HexClient, sha256HexText, shortHash } from './shared.js?v=164';
+import { ct, currentLang, gl, t as T } from './i18n.js?v=115';
+import { applyEconAgents, keeperIds, netting, prophetIds, rosterSource } from './economy.js?v=164';
+import { select } from './inspector.js?v=164';
+import { getJSON, loadBrain, loadLaureateArchive, loadLineage, pollArena, pollChron, pollHistory, pollLaureate, pollProofs } from './polling.js?v=164';
+import { closeLand } from './landDrawer.js?v=164';
 
 // ⑥ Professions a fly settles into (specialisation, economic side only) — one glyph each for the wallet row.
 export const PROF_ICON = { forager: "❍", mooder: "❂", trader: "⇅", brooder: "❄" };
@@ -1041,6 +1041,36 @@ export function renderWorksSection() {
 // end to end — a wardship re-writes no inheritance; the honesty note lives in the head title. {end} is a
 // membrane enum (fledged/honored/lost) and stays English raw, the project's standing convention. The whole
 // volume (tab included) hides while /economy ships no guardians key.
+// SYSTEM ONE (Jev) read-out chip. A pure DISPLAY of the worker's transient side-plane decision that rides
+// ONLY on the standalone /economy body (never on /population, never persisted, never a determinism/money
+// input). Absent while the rail is dark (JEV_ENABLED=false / no key) ⇒ state.econJev is undefined ⇒ the host
+// stays hidden, so today's build is byte-for-byte what every viewer already gets. The choice fields are
+// whitelisted server-side (posture ∈ dormant/steady/fevered, drawer ∈ JEV_DRAWERS), so the label keys below
+// always resolve.
+export function renderJevSection() {
+  const host = $("jev-readout");
+  const body = $("jev-body");
+  if (!host || !body) return;
+  const j = state.econJev;
+  if (!j) { host.hidden = true; return; }
+  host.hidden = false;
+  body.textContent = "";
+  const confTitle = (c) => Number.isFinite(c) ? T("jev.conf", { pct: Math.round(clamp(c, 0, 1) * 100) }) : "";
+  const row = (cls, label, value, title) => {
+    const d = document.createElement("div"); d.className = "jev-row " + cls;
+    const l = document.createElement("span"); l.className = "jev-k"; l.textContent = label;
+    const v = document.createElement("span"); v.className = "jev-v"; v.textContent = value;
+    d.append(l, v); if (title) d.title = title; body.appendChild(d);
+  };
+  if (j.posture) row("jev-posture", T("jev.postureLabel"), T("jev.posture." + j.posture.choice), confTitle(j.posture.confidence));
+  if (j.drawer) row("jev-drawer", T("jev.drawerLabel"), T("jev.drawer." + j.drawer.choice), confTitle(j.drawer.confidence));
+  if (Number.isFinite(j.urgent)) row("jev-urgent", T("jev.pressureLabel"), Math.round(clamp(j.urgent, 0, 1) * 100) + "%");
+  if (j.mood && Number.isFinite(j.mood.score)) row("jev-mood", T("jev.arousalLabel"), j.mood.score.toFixed(2), confTitle(j.mood.confidence));
+  if (Number.isFinite(j.consistent)) row("jev-consistent", T("jev.consistentLabel"), Math.round(clamp(j.consistent, 0, 1) * 100) + "%");
+  const foot = document.createElement("div"); foot.className = "jev-foot";
+  foot.textContent = String(j.model || "jev");
+  body.appendChild(foot);
+}
 export function renderGuardiansSection() {
   const host = $("chron-guardians");
   const body = $("wd-body");
@@ -1296,6 +1326,7 @@ export function openWallets() {
   if (e.treaty) { state.econTreaty = e.treaty; renderTreatySection(); }
   if (e.works) { state.econWorks = e.works; renderWorksSection(); }
   if (e.guardians) { state.econGuardians = e.guardians; renderGuardiansSection(); }
+  if (e.jev) { state.econJev = e.jev; renderJevSection(); }
   }).catch(() => {});
 }
 export function closeWallets() {

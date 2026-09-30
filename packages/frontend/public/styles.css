@@ -1515,6 +1515,16 @@ body.wallets-open .panel-pop { opacity: 0.1; pointer-events: none; }
 .wmk-row.up .wmk-chg { color: #3f5a3a; }
 .wmk-row.down .wmk-chg { color: #9c3b2e; }
 .wmk-foot { margin-top: 6px; font-family: var(--mono); font-size: max(9.5px, var(--fs-floor, 0px)); color: var(--muted); line-height: 1.5; }
+/* SYSTEM ONE (Jev) read-out chip: a quiet, non-money side-plane card between the tape and the roster. */
+.jev-readout { flex: none; border-bottom: 1px solid var(--hair); margin: 0 var(--pad) 8px; padding: 8px 0 10px; }
+.jev-title { font-family: var(--display); font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.jev-title em { font-style: normal; font-family: var(--mono); font-weight: 400; font-size: max(8.5px, var(--fs-floor, 0px)); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.jev-body { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.jev-row { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: max(10.5px, var(--fs-floor, 0px)); font-variant-numeric: tabular-nums; }
+.jev-k { text-transform: uppercase; letter-spacing: 0.06em; font-size: max(9px, var(--fs-floor, 0px)); color: var(--muted); width: 96px; flex: none; }
+.jev-v { color: var(--ink); }
+.jev-drawer .jev-v { font-weight: 600; }
+.jev-foot { margin-top: 6px; font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px)); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); opacity: 0.72; }
 .wmk-run { color: #9c3b2e; border: 1px solid rgba(156, 59, 46, 0.5); border-radius: 2px; padding: 0 5px; letter-spacing: 0.06em; text-transform: uppercase; font-size: max(8.5px, var(--fs-floor, 0px)); }
 .wr-prof { font-family: var(--mono); font-size: max(8.5px, var(--fs-floor, 0px)); letter-spacing: 0.05em; padding: 1px 4px; border: 1px solid var(--hair); border-radius: 2px; color: #5a4a33; white-space: nowrap; }
 .wr-prof.trader { color: #8a6d1f; border-color: rgba(138, 109, 31, 0.4); }

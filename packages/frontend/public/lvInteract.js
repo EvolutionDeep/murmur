@@ -22,12 +22,12 @@ import {
   cam, camClamp, camToWorld, camLod, LV,
   lvFilter, lvParseQuery, lvFilterRecompute, lvNodeVisible,
   lvTouchNote, lvNarrow,
-} from './lvState.js?v=163';
-import { clamp, $, houseOf } from './shared.js?v=163';
-import { t as T } from './i18n.js?v=114';
+} from './lvState.js?v=164';
+import { clamp, $, houseOf } from './shared.js?v=164';
+import { t as T } from './i18n.js?v=115';
 // task 33 · C25 — the replay clock. lvTimeReplay never imports this module, so core → lvInteract →
 // lvTimeReplay → lvState stays a one-way chain (no cycle).
-import { lvReplayAdvance } from './lvTimeReplay.js?v=163';
+import { lvReplayAdvance } from './lvTimeReplay.js?v=164';
 
 // ================= tuning constants =================
 const DRAG_THRESHOLD = 4;      // css px of travel before a press becomes a pan (below it, it's a tap)

@@ -4,8 +4,8 @@
 // Raycast hover highlights; click opens the land purchase drawer.
 // Performance target: <2ms per frame (instanced geometry, no per-frame allocation).
 
-import { state, API, shortHash } from './shared.js?v=163';
-import { t as T } from './i18n.js?v=114';
+import { state, API, shortHash } from './shared.js?v=164';
+import { t as T } from './i18n.js?v=115';
 import * as THREE from 'three';
 
 // ---- constants ----

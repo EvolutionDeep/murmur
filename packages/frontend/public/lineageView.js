@@ -66,40 +66,40 @@ import {
   clamp, mix, rgb, rgba, paletteAt, TAU, INK, GILT, GILT_HI,
   GOLD_THREAD, CRACK_RED, readLineageOnchain, shortHash, isRealAddr, isRealTxHash,
   ARC_EXPLORER, fnv1a, fapColor,
-} from './shared.js?v=163';
-import { t as T, gl } from './i18n.js?v=114';
-import { getJSON } from './polling.js?v=163';
-import { derivePseudoSpikes } from './inspector.js?v=163';
-import { closeActiveDrawer } from './drawers.js?v=163';
+} from './shared.js?v=164';
+import { t as T, gl } from './i18n.js?v=115';
+import { getJSON } from './polling.js?v=164';
+import { derivePseudoSpikes } from './inspector.js?v=164';
+import { closeActiveDrawer } from './drawers.js?v=164';
 import {
   LV, LVQ, cam, camApply, camIdentity, camToWorld, camLod, camKScale, lvUpdateQuality, lvForceRebuild, lvMarkDirty,
   isZeroHash, nodeR, ringRadius, fanOffset, nodeById, loadGH, loadSocial, lvNodeAlpha, lvFilter,
   LINEAGE_POLL_MS, FOCUS_INTERVAL_MS, FOCUS_DEBOUNCE_MS, lvHitPad, LAYERS,
   EMIT_TAU_MS, EDGE_TTL_MS, LV_DIRTY_FEED, LV_DIRTY_SOCIAL, LV_DIRTY_LAYOUT,
   LV_LAYOUT, LV_HUD, lvHudMeasure, lvRelayoutAll, lvHudObserve,
-} from './lvState.js?v=163';
+} from './lvState.js?v=164';
 import {
   pollLineageView, lvPumpData, lvPrime, checkStamp, adoptRosterLineage,
-} from './lvData.js?v=163';
+} from './lvData.js?v=164';
 import {
   lvNeuralFrame, lvNeuralPanelRows, lvGeneticsPanelHTML, lvHasRealSpikes,
   lvTraceStart, lvTraceClear, c8Stop, c13Diff, c13SnapshotPositions,
-} from './lvNeural.js?v=163';
-import { lvGeneticsPass, lvNodeShape, lvCrossEdges } from './lvGenetics.js?v=163';
-import { lvEnvFrame, lvEnvRegimeBucket, lvEnvCyclePnl, lvEnvPnlMode } from './lvEnv.js?v=163';
-import { lvProvenanceRows, lvEvidencePanelHTML, lvProvFetchStatus } from './lvProvenance.js?v=163';
+} from './lvNeural.js?v=164';
+import { lvGeneticsPass, lvNodeShape, lvCrossEdges } from './lvGenetics.js?v=164';
+import { lvEnvFrame, lvEnvRegimeBucket, lvEnvCyclePnl, lvEnvPnlMode } from './lvEnv.js?v=164';
+import { lvProvenanceRows, lvEvidencePanelHTML, lvProvFetchStatus } from './lvProvenance.js?v=164';
 import {
   lvInteractFrame, lvInteractBind, lvTradeHitScreen,
   lvBindSearchFilter, lvSearchRelocalise, lvToggleFilters, lvPopulateHouses,
   lvBindMobile, lvMobileSync, lvMobileRelocalise, lvPanelSegment, lvLegendSync,
-} from './lvInteract.js?v=163';
+} from './lvInteract.js?v=164';
 // task 33 · C25 — the time-replay seam. All lv* modules carry ?v= (task 75).
 // lvTimeReplay only ever imports lvState.js / shared.js / i18n.js / polling.js, never this file, so the edge
 // core → lvTimeReplay stays one-way and the module tree stays acyclic.
 import {
   lvReplayOn, lvReplayScrubbing, lvReplayEntryBorn, lvReplayTimeBucket,
   lvReplayToggle, lvReplayStop, lvReplayBind, lvReplayRelocalise, lvReplayPerf,
-} from './lvTimeReplay.js?v=163';
+} from './lvTimeReplay.js?v=164';
 
 // ================= canvas sizing =================
 function sizeCanvas() {
@@ -1194,7 +1194,7 @@ async function refreshProvBar() {
   const addr = (lin && lin.lineageAddress) || (state.lvLineage && state.lvLineage.lineageAddress) || '';
   if (addr) {
     try {
-      const { readLineageHead } = await import('./shared.js?v=163');
+      const { readLineageHead } = await import('./shared.js?v=164');
       const head = await readLineageHead(addr);
       if (head) set('lv-pb-commits', `${T('lv.provCommits')}: ${head.commitCount}`);
     } catch { /* best-effort */ }
