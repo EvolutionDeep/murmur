@@ -111,6 +111,20 @@ export interface Env {
   //     NEVER set as a wrangler var in prod until the operator shadow-proves the rail (POST /pulse/refund-shadow).
   PULSE_REFUNDS?: string;               // "true" to arm the refund rail (anything else, incl. absent ⇒ off)
 
+  // --- System One (Jev) read-out side-plane (DARK DEPLOY: default OFF; a pure read, never money/determinism) ---
+  //     Jev (TypeSafe) turns the tick's read-out into typed probabilistic decisions (posture/mood/urgency/
+  //     consistency/which-drawer). It is a SIDE-PLANE: its answer NEVER enters the connectome, genome,
+  //     manifestHash, PoCA stateDigest, any balance/cap, or the settlement/estate/refund paths. When the switch
+  //     is off OR no key is present, the client is inert, issues no request, and /economy ships NO jev key ⇒
+  //     byte-for-byte today's build. ARMING THE LIVE CALL needs BOTH JEV_ENABLED="true" AND a JEV_API_KEY; the
+  //     128-binding wall is currently full, so the operator must first evict a low-priority var before adding
+  //     JEV_API_KEY/JEV_ENABLED as wrangler vars (code-defaults keep the off-state correct meanwhile; see memory).
+  JEV_ENABLED?: string;                 // default FALSE (absent ⇒ inert). "true" arms the side-plane ONLY if a key is also present.
+  JEV_API_KEY?: string;                 // SECRET (optional): Bearer token for api.typesafe.ai. Absent ⇒ no request even when enabled.
+  JEV_BASE_URL?: string;                // default https://api.typesafe.ai (the /v1/systemone path is appended in code).
+  JEV_MODEL?: string;                   // default jev-latest.
+  JEV_TIMEOUT_MS?: string;              // hard wall-clock budget per call (default 900); expiry ⇒ degrade to null.
+
   // --- On-chain prediction market: agents stake real USDC on the NEXT tick's temperature direction ---
   //     Resolved by the freshly-sampled Arc temperature; payouts are parimutuel and settle through the
   //     SAME netting + EIP-3009 + registry rails as neural trades (no separate money path). ALL of it is
@@ -888,6 +902,17 @@ export interface RuntimeConfig {
     backfill: boolean;           // default FALSE — one-time retroactive sweep of the CURRENTLY-orphaned this.dead set into the queue (guard-protected, latches once)
   };
 
+  // System One (Jev) read-out side-plane (see Env.JEV_*). OFF by default (dark deploy) ⇒ inert, no request,
+  // no jev key on /economy. A PURE read: NEVER a determinism/money input (no connectome/stateDigest/caps).
+  // `live` is only true when enabled AND a non-empty apiKey resolved — a half-configured arm can never fire.
+  jev: {
+    enabled: boolean;            // master switch (default OFF)
+    apiKey: string | null;       // Bearer token (null ⇒ inert even when enabled)
+    baseUrl: string;             // default https://api.typesafe.ai
+    model: string;               // default jev-latest
+    timeoutMs: number;           // per-call wall-clock budget (default 900ms)
+  };
+
   // R5 FIX A (#126): on-chain balance gate in the trade planner. OFF ⇒ queueNet byte-for-byte today (every
   // neuron-picked trade is folded into pendingNets). ON ⇒ each cron reads live balances via ONE multicall and
   // refuses to queue a pair whose debtor cannot cover it on-chain. Read-only, no money, no caps, no digest.
@@ -1510,6 +1535,18 @@ export function loadConfig(env: Env): RuntimeConfig {
         backfill: (env.ESTATE_RELIEF_BACKFILL ?? "true").toLowerCase() === "true",
       };
     })(),
+
+    // System One (Jev) read-out side-plane. DARK: fail-closed `=== "true"`, and the client only ever fires
+    // when BOTH enabled AND a resolved apiKey are present (jevIsLive gate). Absent vars ⇒ inert ⇒ no request,
+    // no /economy jev key ⇒ byte-for-byte today's build. baseUrl/model/timeout are code-defaults (binding wall
+    // is full, so the operator adds JEV_ENABLED/JEV_API_KEY only after evicting a low-priority var).
+    jev: {
+      enabled: (env.JEV_ENABLED ?? "false").toLowerCase() === "true",
+      apiKey: (env.JEV_API_KEY ?? "").trim() || null,
+      baseUrl: (env.JEV_BASE_URL ?? "").trim() || "https://api.typesafe.ai",
+      model: (env.JEV_MODEL ?? "").trim() || "jev-latest",
+      timeoutMs: clamp(Math.floor(Number(env.JEV_TIMEOUT_MS ?? "900") || 900), 100, 15_000),
+    },
 
     // R5 Fix A (#126): on-chain balance gate in the trade planner. Fail-closed: only an exact "true" arms it.
     // OFF (default) ⇒ queueNet never reads on-chain balances and is byte-for-byte today's planner.

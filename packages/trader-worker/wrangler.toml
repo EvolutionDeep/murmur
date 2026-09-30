@@ -223,6 +223,23 @@ ECONOMY_NET_FLUSH_TICKS = "1440"             # TEMPORARY GAS EMERGENCY GATE (#13
 # arming it rolls a version but never rotates CODE_COMMITMENT by itself — the sweeps/reliefs rotate the state
 # DIGEST only when they actually move a real balance (and none do while dark).
 
+# ===== System One (Jev) read-out SIDE-PLANE (DARK DEPLOY — intentionally NO var set here) =====
+# A TypeSafe "Jev" side-plane that reads THIS tick's market/swarm/chronicle read-out and asks for typed
+# probabilistic decisions (posture / mood / urgency / chronicle-consistency / which-drawer). It is a PURE READ:
+# its answer NEVER enters the connectome, genome, manifestHash, PoCA stateDigest, any balance/cap, or the
+# settlement/estate/refund money paths. In src/jev.ts + state.ts runJevInsight (cron step 9).
+# READS env in config.ts but is NOT live [vars] (the 128 text-binding wall is spent) — and the LIVE call needs
+# BOTH JEV_ENABLED="true" AND a JEV_API_KEY. To ARM: (1) free a low-priority var slot, (2) set the key as a
+# SECRET (`wrangler secret put JEV_API_KEY`) + JEV_ENABLED="true", redeploy. Absent ⇒ jevIsLive()=false ⇒ the
+# client issues ZERO requests and GET /economy ships NO `jev` key and the paid Arc Pulse ships NO `systemOne`
+# facet ⇒ byte-for-byte today's build. NOTE: jev is NOT in pocaKnobsHash() (a non-money read layer) and is a
+# TRANSIENT field — never persisted, never in economy.serialize()/stateDigest — so it cannot rotate anything.
+#   JEV_ENABLED = "false"             # master switch (default OFF / dark); only live together with a key
+#   JEV_API_KEY = <secret>            # Bearer token for api.typesafe.ai (arm via `wrangler secret put`)
+#   JEV_BASE_URL = "https://api.typesafe.ai"   # code-default; the /v1/systemone path is appended in code
+#   JEV_MODEL = "jev-latest"          # code-default model alias
+#   JEV_TIMEOUT_MS = "900"            # per-call wall-clock budget; expiry ⇒ degrade to null (never hang the cron)
+
 # ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
 # Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.
 # When set, each mined net is committed on-chain right after its EIP-3009 transfer, so the receipt

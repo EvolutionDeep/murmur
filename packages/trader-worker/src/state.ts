@@ -31,6 +31,8 @@ import type { StimulusEvent } from "@fly/fly-brain";
 import { genomeWithinBudget, hatchBudgetFromGenesis } from "@fly/fly-brain";
 import type { Env, RuntimeConfig } from "./config.js";
 import { loadConfig, shardSlice, fliesPerShard } from "./config.js";
+// System One (Jev) read-out side-plane — PURE READ, never a determinism/money input (see jev.ts header).
+import { JevClient, jevIsLive, buildJevRequest, interpretJev, type JevInsight } from "./jev.js";
 import { netReceiptHash, sha256Hex } from "./provenance.js";
 import { assembleManifest, assembleManifestFlyWire, manifestHash, replayVerifyManifest, type BrainManifest } from "./manifest.js";
 import { loadSubgraph } from "./flywire-loader.js";
@@ -640,6 +642,10 @@ export class FlyStateDO {
   private eraSnapTemps: number[] = [];
   /** Previous tick's temperature, used for the pulse's momentum facet; null until loaded. */
   private prevTemperature: number | null = null;
+  /** System One (Jev): the last cron's typed read-out side-plane decision. TRANSIENT ONLY — never persisted,
+   *  never in economy.serialize()/stateDigest/manifestHash, never a money/determinism input. null ⇒ the
+   *  side-plane is off/inert/failed, so /economy ships NO jev key (byte-for-byte today's build). */
+  private jevInsight: JevInsight | null = null;
   private pendingStimuli: StimulusEvent[] = [];
   /** Reentrancy guard so overlapping crons never drive the population concurrently. */
   private cronRunning = false;
@@ -4321,6 +4327,11 @@ export class FlyStateDO {
     //     POET_ENABLED=false; best-effort — a throw can never block the live tick.
     await this.drivePoet(swarm.getTickIndex(), snapshot, temperature, regime);
 
+    // 9) SYSTEM ONE (Jev) side-plane — LAST, after every read-out membrane and the historian have settled, so
+    //    the chronicle headline it reads is THIS tick's freshest line. Pure read-out, best-effort, INERT unless
+    //    armed; a throw can only null this.jevInsight. It feeds nothing back into economy/brains/money.
+    await this.runJevInsight(market, snapshot);
+
     console.log(
       `[DO] cron tick#${swarm.getTickIndex()} T=${temperature.toFixed(3)} ${regime} ` +
         `size=${snapshot?.collective.size ?? 0} subTicks=${subTicks} deals=${deals}`,
@@ -4758,7 +4769,10 @@ export class FlyStateDO {
     const norms = await this.normsReadout();
     const conventions = await this.conventionsReadout();
     const rules = await this.rulesReadout();
-    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms && !conventions && !rules) {
+    // SYSTEM ONE (Jev) side-plane: the last cron's typed read-out decision (transient, never persisted/hashed).
+    // Off/inert/failed ⇒ this.jevInsight is null ⇒ NO jev key ⇒ byte-for-byte today's /economy.
+    const jev = this.jevInsight;
+    if (!culture && !religion && !commons && !tech && !cities && !apprentice && !archive && !workshop && !court && !games && !guilds && !lexicon && !rumor && !treaty && !works && !guardians && !reform && !temple && !land && !norms && !conventions && !rules && !jev) {
       return json(facilitator ? { ...snap, facilitator } : snap);
     }
     return json({
@@ -4781,6 +4795,7 @@ export class FlyStateDO {
       ...(norms ? { norms } : null),
       ...(conventions ? { conventions } : null),
       ...(rules ? { rules } : null),
+      ...(jev ? { jev } : null),
       ...(facilitator ? { facilitator } : null),
     });
   }
@@ -5315,6 +5330,65 @@ export class FlyStateDO {
   // ---------- paid data product: the x402 "Arc Pulse" signal (HTTP 402) ----------
 
   /**
+   * 9) SYSTEM ONE (Jev) side-plane — ONE batched, best-effort call per cron that reads THIS tick's
+   *    market temperature / regime / swarm summary / latest chronicle line and asks Jev for typed
+   *    probabilistic decisions (posture / mood / urgency / chronicle-consistency / which-drawer). The
+   *    answer is stored TRANSIENTLY and only ever decorates a read-out.
+   *
+   *    IRON GUARDRAILS (why this can exist next to real money without risk):
+   *      * INERT unless jevIsLive (JEV_ENABLED="true" AND a key): otherwise this.jevInsight is null and
+   *        /economy ships NO jev key ⇒ byte-for-byte today's build. It issues ZERO requests when off.
+   *      * NEVER a feedback input: this value is read by getEconomy/buildPulseSignal ONLY. It never
+   *        reaches economy.step, the connectome, a wallet, a cap, pendingNets, serialize(), or the PoCA
+   *        stateDigest. The flies already decided this tick; Jev merely narrates the result.
+   *      * NEVER blocks the tick: every path is fail-open (client.evaluate returns null on timeout/error/
+   *        non-2xx), and this whole call is wrapped so a throw can only null the read-out.
+   */
+  private async runJevInsight(market: MarketState | null, snapshot: PopulationSnapshot | null): Promise<void> {
+    // Off / half-configured ⇒ null and no request. Fail-closed on the gate, exactly like the other dark rails.
+    if (!jevIsLive(this.cfg.jev)) {
+      this.jevInsight = null;
+      return;
+    }
+    try {
+      const prevTemp = await this.ensurePrevTemperature();
+      const temperature = market?.temperature ?? prevTemp;
+      const pulse = market ? derivePulse(market, prevTemp) : null;
+      const collective = snapshot?.collective ?? null;
+      let topDrive: string | null = null;
+      if (collective?.states) {
+        let best = -1;
+        for (const [k, v] of Object.entries(collective.states)) if (v > best) { best = v; topDrive = k; }
+      }
+      const last = this.annals.length ? this.annals[this.annals.length - 1] : null;
+      const headline = last ? `${String(last.kind)}: ${String(last.text ?? "")}` : null;
+      const summary = {
+        temperature: typeof temperature === "number" ? temperature : null,
+        regime: market?.regime ?? null,
+        momentum: pulse?.momentum ?? null,
+        turbulence: pulse?.turbulence ?? null,
+        swarmSize: collective?.size ?? null,
+        topDrive,
+        chronicleHeadline: headline,
+      };
+      const client = new JevClient({ ...this.cfg.jev });
+      const req = buildJevRequest(summary);
+      const resp = await client.evaluate(req.state, req.questions);
+      this.jevInsight = resp ? interpretJev(req, resp, Date.now()) : null;
+      if (this.jevInsight) {
+        console.log(
+          `[DO] system-one(jev): posture=${this.jevInsight.posture?.choice ?? "-"} ` +
+            `mood=${this.jevInsight.mood?.score?.toFixed(2) ?? "-"} urgent=${this.jevInsight.urgent?.toFixed(2) ?? "-"} ` +
+            `consistent=${this.jevInsight.consistent?.toFixed(2) ?? "-"} drawer=${this.jevInsight.drawer?.choice ?? "-"}`,
+        );
+      }
+    } catch (e) {
+      this.jevInsight = null; // a side-plane failure can only drop the read-out, never wedge the cron
+      console.warn("[DO] system-one(jev) insight failed (non-fatal, read-out omitted):", (e as Error).message);
+    }
+  }
+
+  /**
    * Assemble the machine-readable signal sold over x402: the Arc-activity-derived market temperature +
    * its facets (momentum/turbulence/density/richness), the raw activity vs baseline, the swarm's live
    * positioning, and a plain-language read. This is the PREMIUM product — the free /market endpoint only
@@ -5365,6 +5439,10 @@ export class FlyStateDO {
         : null,
       tickIndex: swarm.getTickIndex(),
       read: pulseRead(regime, pulse.momentum, temperature),
+      // SYSTEM ONE (Jev): this cron's cached typed judgment rides along as an extra, clearly-labelled facet.
+      // It is a READ-OUT only — never a settlement input, never re-derived here, never in the paid path's money
+      // logic. Off/inert ⇒ this.jevInsight is null ⇒ the key is ABSENT ⇒ the sold signal is byte-for-byte today's.
+      ...(this.jevInsight ? { systemOne: this.jevInsight } : null),
     };
   }
 
