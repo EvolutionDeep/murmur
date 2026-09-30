@@ -4863,13 +4863,35 @@ body.layers-pop .layer-toggles {
 /* ---- the canvas swap + a clean stage (hide the 3D-only ambient chrome) ---- */
 body.lv-active #field { display: none; }
 body.lv-active #lineage-field { display: block; }
-body.lv-active .panel-pop, body.lv-active .panel-temp, body.lv-active .panel-econ,
+body.lv-active .panel-temp,
 body.lv-active .layer-toggles, body.lv-active .zoom-controls, body.lv-active .hint-select,
 body.lv-active #era-hud, body.lv-active #land-leaderboard, body.lv-active #walk-hud,
 body.lv-active #walk-cross, body.lv-active .temple-btn, body.lv-active .walk-btn,
 body.lv-active .canary-btn, body.lv-active .chron-btn, body.lv-active #inspector,
 body.lv-active #epitaph {
   display: none !important;
+}
+/* ---- task 137: keep .panel-econ and .panel-pop visible in the atlas (home) view ----
+   The two compact cards carry live data from the same polling pipeline that feeds the 3D
+   mode — they are simply repositioned to clear the atlas toolbar / provenance bar stack.
+   Desktop: both are position:fixed corner leaves; push top below toolbar+prov-bar (~90px).
+   Mobile: panel-econ is position:relative in the body flow (margin-top drives clearance);
+           panel-pop is a fixed chip (top drives clearance). */
+@media (min-width: 681px) and (min-height: 601px) {
+  body.lv-active .panel-econ {
+    top: calc(var(--topbar-total) + 90px);
+    max-height: calc(100vh - var(--topbar-total) - 180px);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  body.lv-active .panel-pop {
+    top: calc(var(--topbar-total) + 90px);
+    max-height: calc(100vh - var(--topbar-total) - 180px);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+}
+@media (max-width: 680px), (max-height: 600px) {
+  body.lv-active .panel-econ { margin-top: clamp(172px, 30vh, 300px); }
+  body.lv-active .panel-pop { top: calc(env(safe-area-inset-top, 0px) + 168px); }
 }
 /* the canvas-mode rail buttons read as "on stage" exactly like the drawer toggles do
    (task 93: home = the atlas owns the stage, mode3d = the WebGL swarm owns it) */
