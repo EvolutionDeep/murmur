@@ -68,7 +68,7 @@ export interface Env {
   ECONOMY_PER_AGENT_DAILY_CAP?: string; // per-agent real-spend ceiling per UTC day, USDC (default 2; 0 = no cap)
   ECONOMY_MAX_DEAL?: string;            // facilitator hard per-deal ceiling, USDC (default 0.05)
   ECONOMY_NET_MIN_BROADCAST?: string;   // netting: min net USDC per pair before it is broadcast (dust carries; default 0.01)
-  ECONOMY_NET_FLUSH_TICKS?: string;     // netting: force-flush any nonzero pending net at least every N sub-ticks (default 360)
+  ECONOMY_NET_FLUSH_TICKS?: string;     // netting: force-flush any nonzero pending net at least every N sub-ticks (default 1440)
   ECONOMY_GAS_PRICE_GWEI?: string;      // pin the relay gas price in gwei (default: let viem estimate; Arc launched ~20)
   ECONOMY_USDC_EIP712_NAME?: string;    // EIP-712 domain name override (default "USDC" = the Arc precompile's name())
   ECONOMY_USDC_EIP712_VERSION?: string; // EIP-712 domain version override (default "2" = the precompile's version())
@@ -1090,12 +1090,16 @@ export function loadConfig(env: Env): RuntimeConfig {
       perAgentDailyCapUsdc: clamp(Number(env.ECONOMY_PER_AGENT_DAILY_CAP ?? "2"), 0, 1_000_000),
       maxDealUsdc: clamp(Number(env.ECONOMY_MAX_DEAL ?? "0.05"), 0, 100_000),
       // #99 M9: code-defaults synced to the LIVE wrangler [vars] values (ECONOMY_NET_MIN_BROADCAST="0.01",
-      // ECONOMY_NET_FLUSH_TICKS="360", wrangler.toml L128-129, raised from 0.004/30 by c7b53f8 and last
+      // ECONOMY_NET_FLUSH_TICKS="1440", wrangler.toml L128-129, raised from 0.004/30 by c7b53f8 and last
       // written by e7a1a86 — both pre-batch). A fallback that disagrees with production is a trap: any
       // deploy that loses the [vars] block, and every local/test run, would silently trade on 12× tighter
       // dust and 12× more frequent force-flushes than mainnet does. wrangler.toml itself is UNTOUCHED.
+      // #133: ECONOMY_NET_FLUSH_TICKS went 360→1440 as the emergency gas valve (−50% real spend/day), and the
+      // wrangler edit shipped WITHOUT this fallback — exactly the trap above, and exactly what the M9 drift
+      // guard exists to catch (cron99.test.ts:614). Synced here so a lost [vars] block can never silently
+      // 4× the force-flush rate and burn the facilitator dry. Live behaviour is unchanged (the [vars] wins).
       netMinBroadcastUsdc: clamp(Number(env.ECONOMY_NET_MIN_BROADCAST ?? "0.01"), 0, 100_000),
-      netFlushTicks: clampInt(Number(env.ECONOMY_NET_FLUSH_TICKS ?? "360"), 0, 100_000),
+      netFlushTicks: clampInt(Number(env.ECONOMY_NET_FLUSH_TICKS ?? "1440"), 0, 100_000),
       netFlushBudgetPerCron: 40,   // #98 Fix 2: code-default only, no env var
       gasPriceGwei: env.ECONOMY_GAS_PRICE_GWEI?.trim()
         ? clamp(Number(env.ECONOMY_GAS_PRICE_GWEI), 0.000001, 100_000)

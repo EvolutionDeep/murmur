@@ -581,10 +581,14 @@ test("M8: the recorded vector's SHAPE is locked to the 4 heritable fields (extra
 
 // ═══════════════════════════════════════════════════════ M9 — code-defaults equal the live wrangler [vars]
 
-test("M9: the code-defaults are the production values 0.01 / 360 when no env var is set", () => {
+test("M9: the code-defaults are the production values 0.01 / 1440 when no env var is set", () => {
   const cfg = loadConfig({ CHAIN_ID: "5042", RPC_URL: "https://rpc.test", FLY_STATE: {} as any } as unknown as Env);
   assert.equal(cfg.economy.netMinBroadcastUsdc, 0.01, "was 0.004 — drifted from wrangler.toml L128");
-  assert.equal(cfg.economy.netFlushTicks, 360, "was 30 — drifted from wrangler.toml L129");
+  // #133: ECONOMY_NET_FLUSH_TICKS went 360→1440 as the emergency gas valve (−50% real spend/day). That edit
+  // touched wrangler.toml only, so BOTH this literal and the config.ts fallback went stale — the drift guard
+  // below caught it, which is exactly its job. Stays a literal here on purpose: the guard re-derives its
+  // expectation from wrangler.toml, so if these two ever disagree again the guard fails first and names the file.
+  assert.equal(cfg.economy.netFlushTicks, 1440, "was 30 — drifted from wrangler.toml L129");
   // #98's knobs are untouched by M9.
   assert.equal(cfg.economy.netFlushBudgetPerCron, 40);
   assert.equal(cfg.cron.persistChunkSize, 262_144);

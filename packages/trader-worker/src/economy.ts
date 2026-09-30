@@ -1280,6 +1280,19 @@ export class AgentEconomy {
     // do NOT consume budget. Remaining pairs carry forward deterministically (Map insertion order is stable).
     const flushBudget = this.cfg.netFlushBudgetPerCron ?? 0;
     let flushed = 0;
+    // Task #135 Fix 2c': a WALL-CLOCK ceiling alongside the count budget. Each broadcast chunk costs a verify
+    // read + a settle tx + a registry commit + an IPFS pin ≈ 2-10s, so the 40-chunk count budget ALONE could
+    // out-run the cron's 90s abort even with perfectly healthy RPCs — and an aborted cron blocks the DO's
+    // single-threaded input queue for the full 90s, which is exactly what took every DO-backed endpoint (and
+    // therefore the frontend) offline. 45s leaves the rest of the beat (market sample, the Fix A multicall, the
+    // neural step, shard fan-out, D1 archive) its headroom under the 90s scheduled() signal.
+    //
+    // SAFE — this DEFERS debt, it never forgives it: the H7 carry-forward below only decrements `remaining` on a
+    // SUCCESSFUL chunk, and any pair still holding `remaining > 0n` is KEPT in pendingNets (deleted only when it
+    // reaches exactly zero). A wall-clock break therefore leaves the pair queued for the next cron, byte-for-byte
+    // as the count-budget break already does. A time bound is also strictly better than tightening the count:
+    // when RPCs are fast the full 40 chunks still run, so backlog drain rate is unchanged on healthy beats.
+    const flushDeadline = Date.now() + 45_000;
 
     for (const [key, pn] of Array.from(this.pendingNets.entries())) {
       const abs = pn.net < 0n ? -pn.net : pn.net;
@@ -1305,7 +1318,8 @@ export class AgentEconomy {
 
       // #98 Fix 2 + M5 fix: budget gate at PAIR level (at least one pair is always attempted).
       // The CHUNK-level gate is inside the while loop below so the budget counts real broadcasts, not pairs.
-      if (flushBudget > 0 && flushed >= flushBudget) break;
+      // Task #135 Fix 2c': the same gate on wall-clock (see flushDeadline above — carry-forward is safe).
+      if ((flushBudget > 0 && flushed >= flushBudget) || Date.now() > flushDeadline) break;
 
       const debtorId = pn.net > 0n ? pn.lo : pn.hi;
       const creditorId = pn.net > 0n ? pn.hi : pn.lo;
@@ -1317,7 +1331,8 @@ export class AgentEconomy {
       let chunk = 0;
       while (remaining > 0n) {
         // M5 fix: budget counted at CHUNK granularity (each chunk = one real broadcast attempt).
-        if (flushBudget > 0 && flushed >= flushBudget) break;
+        // Task #135 Fix 2c': + wall-clock ceiling, so one slow broadcast chain can't out-run the cron.
+        if ((flushBudget > 0 && flushed >= flushBudget) || Date.now() > flushDeadline) break;
         flushed++;
         const value = maxDeal > 0n && remaining > maxDeal ? maxDeal : remaining;
         const amountStr = String(value);

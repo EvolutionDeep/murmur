@@ -77,13 +77,26 @@ export function chainOf(cfg: RuntimeConfig): Chain {
   return CHAIN_BY_ID[cfg.chainId] ?? (cfg.isTestnet ? arcTestnet : arcMainnet);
 }
 
-function rotatingTransport(transports: Transport[]): Transport {
+/**
+ * Round-robin each request through the configured pool, then fail over through every other endpoint.
+ *
+ * `preferFirst` pins the start index to 0 instead of rotating (Task #135 Fix 2b). The pool's [0] is the PAID,
+ * low-latency Alchemy Arc endpoint whenever ALCHEMY_ARC_RPC_URL is set, and the public endpoints behind it are
+ * a failover, not peers. Rotating treated all 5 as peers, so only 20% of calls ever reached the paid URL — and
+ * because each endpoint carries a 6s timeout with retryCount:0 and failures fall through IN ORDER, a single
+ * logical RPC could cost up to 5×6s = 30s whenever it started on a slow public node. That is how the cron blew
+ * its 90s abort budget (measured: 3 of 11 beats at 89998ms), which blocked the DO's single-threaded input queue
+ * for 90s and took every DO-backed endpoint offline for the frontend. Pinning first caps a healthy call at one
+ * Alchemy round-trip; the public pool still provides the FULL failover sweep when Alchemy itself errors or
+ * times out, so resilience is unchanged. Only the happy-path latency changes.
+ */
+function rotatingTransport(transports: Transport[], preferFirst: boolean): Transport {
   return ({ chain, pollingInterval, retryCount, timeout, ...rest }) => {
     const clients = transports.map((transport) =>
       transport({ chain, pollingInterval, retryCount: 0, timeout, ...rest }),
     );
     const request: EIP1193RequestFn = async (args) => {
-      const start = nextRpcStart++ % clients.length;
+      const start = preferFirst ? 0 : nextRpcStart++ % clients.length;
       let lastError: unknown;
 
       for (let offset = 0; offset < clients.length; offset++) {
@@ -108,11 +121,15 @@ function rotatingTransport(transports: Transport[]): Transport {
   };
 }
 
-/** Rotate each request through the configured pool, then fail over through every other endpoint. */
+/**
+ * Prefer the private (paid) endpoint when configured, else rotate the public pool; either way fail over
+ * through every remaining endpoint.
+ */
 function buildTransport(cfg: RuntimeConfig, timeout: number): Transport {
   const publicPool = cfg.isTestnet ? RPC_FALLBACKS_TESTNET : RPC_FALLBACKS_MAINNET;
+  const hasPrivate = !cfg.isTestnet && !!cfg.alchemyArcRpcUrl;
   const urls = [
-    ...(cfg.isTestnet || !cfg.alchemyArcRpcUrl ? [] : [cfg.alchemyArcRpcUrl]),
+    ...(hasPrivate ? [cfg.alchemyArcRpcUrl as string] : []),
     cfg.rpcUrl,
     ...publicPool,
   ].filter((url, index, all) => !!url && all.indexOf(url) === index);
@@ -125,7 +142,8 @@ function buildTransport(cfg: RuntimeConfig, timeout: number): Transport {
     }),
   );
 
-  return transports.length === 1 ? transports[0] : rotatingTransport(transports);
+  // Task #135 Fix 2b: strict Alchemy-first whenever the private URL is configured (it is urls[0] by construction).
+  return transports.length === 1 ? transports[0] : rotatingTransport(transports, hasPrivate);
 }
 
 let _publicCache: { key: string; client: PublicClient } | null = null;
