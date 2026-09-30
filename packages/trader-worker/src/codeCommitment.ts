@@ -9,15 +9,15 @@
 
 /** The git commit this build was generated from (“unknown” when git was unavailable at codegen time).
  *  Informational only — NOT folded into CODE_COMMITMENT (a source-neutral commit must not rotate it). */
-export const GIT_COMMIT = "27f257072a8c6d997330f5d79a32547e7e4ef6f8";
+export const GIT_COMMIT = "dde222ae325509608834e1cf10cd81a8adaabf87";
 
 /** sha256(src tree hash + canonical knob defaults + FlyWire artifact hash) — the PoCA code identity (64 lowercase hex). */
-export const CODE_COMMITMENT = "cb47acb38a8d31f7871b734b364d0d1f6abf1c583832e4a932cec3b11f644cd7";
+export const CODE_COMMITMENT = "104a2291604b099d5229905354c4b37734a28b8cd72fdbb7280365786a373151";
 
 /** A non-secret summary of what fed CODE_COMMITMENT, for the /poca read-out + offline recompute. */
 export const CODE_COMMITMENT_INPUTS = {
-  "treeHash": "ad7af86d1803d4e8a2c2c1463bb88b6b882042a9cfc85aa190b65908b8dfc3f6",
-  "fileCount": 144,
+  "treeHash": "ba78f80c4b14018568cfc0a02e76bdb39384cf8e3c80c774a7c8f5a0aac527ea",
+  "fileCount": 145,
   "knobCount": 29,
   "artifactHash": "dc84edfc2cd6cc6a0fcba671e2bd265423cfd7905e5d0e19bd183925c4377544"
 } as const;

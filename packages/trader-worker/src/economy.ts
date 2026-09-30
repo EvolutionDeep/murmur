@@ -481,6 +481,11 @@ export interface EconomySnapshot {
   elitesArchive?: Array<{ c: number; a: number; f: number; h: string; t: number; b: [number, number, number] }>;
   /** SHADOW-COMPARE aggregate (flag-guarded, absent when OFF → dark-deployment byte-equivalent). */
   shadowCompare?: ShadowAggregate;
+  /** #143 ESTATE-RELIEF read-out (flag-guarded, absent when OFF → dark-deployment byte-equivalent). */
+  estateRelief?: {
+    escrowPoolAtomic: string; pendingEstates: number;
+    sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
+  };
 }
 
 export interface EconomyConfig {
@@ -619,6 +624,22 @@ export interface EconomyConfig {
   deadHouseSweep?: {
     enabled: boolean;
   };
+  // --- #143 ESTATE RELIEF (ONCHAIN): stop a dead house's real USDC from sleeping forever. When armed AND the
+  //     facilitator is onchain AND escrowAddress is wired, each burial enqueues the orphaned wallet for an
+  //     ON-CHAIN sweep: dead purse → reserved escrow, then every Nth cron escrow drips to the POOREST living
+  //     wallets. Money moves only on a mined EIP-3009 receipt (a treasuryTransfer leg, no neural provenance),
+  //     bounded by the per-deal cap + a daily relief budget, under the ECONOMY_REAL_SPEND kill switch and
+  //     shadow mode. OPTIONAL — absent/false ⇒ entomb, flush and the cron are byte-for-byte today's build
+  //     (no queue, no sweep, no disbursement; the commons scoreboard keeps its #123 accumulate-only behaviour).
+  //     The id-reuse misfire guard re-checks the tombstone at sweep time: a slot reclaimed by a new hatch is
+  //     dropped from the queue, so a living fly's purse is NEVER swept. ---
+  estateRelief?: {
+    enabled: boolean;
+    reliefEveryNCrons: number;    // 0 = never disburse (default-ish guard); N>0 ⇒ escrow→poor drip every Nth cron
+    reliefChunkUsdc: number;      // max USDC per single escrow→poor transfer (further clamped by ECONOMY_MAX_DEAL)
+    reliefDailyBudgetUsdc: number; // max USDC disbursed from escrow per UTC day (a ceiling BELOW the spend caps)
+    maxSweepsPerCron: number;     // estate→escrow sweeps attempted per cron (wall-clock guard, like flush budget)
+  };
   // --- R5 FIX A (ONCHAIN BALANCE GATE): OPTIONAL — absent/false ⇒ queueNet never consults on-chain balances,
   //     byte-for-byte today (every neuron-picked trade is folded into pendingNets). When armed, each cron opens
   //     with ONE batched multicall balanceOf over live agents (see x402 readBalances); the trade planner then
@@ -653,6 +674,11 @@ export interface EconomyDeps {
    * byte-for-byte today's behaviour. See src/ipfs.ts — the trust root stays sha256(body)==the on-chain hash.
    */
   pinner?: ReceiptPinner;
+  /**
+   * #143 ESTATE-RELIEF escrow purse address (a reserved HD index disjoint from every agent + the facilitator).
+   * Absent ⇒ the onchain estate sweep has nowhere to gather funds and stays inert (simulated / unwired default).
+   */
+  escrowAddress?: string;
 }
 
 // ---------- SHADOW-COMPARE types (task #87): decision evidence rows + bounded aggregate ----------
@@ -752,6 +778,8 @@ const HOUSE_CAP = 16;                   // simultaneous houses at most (older ho
 const HOUSE_MEMBERS_CAP = 200;           // roster cap per house (a house is bounded memory, not a nation)
 const HOUSE_TITHE = 0.02;                // 2% of a member's settled income flows to the common treasury
 const GRAVE_CAP = 24;                    // epitaph ring size (newest first)
+const ESTATE_QUEUE_CAP = 64;             // #143: orphaned wallets awaiting an on-chain estate→escrow sweep (bounded FIFO)
+const RELIEE_LIMIT_PER_CRON = 4;         // #143: poorest living wallets a single relief drip pass may feed (bounded)
 const CHILD_CAP = 24;                    // children remembered per fly for inheritance (oldest 24 by hatch order)
 const OLD_AGE_DEFAULT = 150000;          // sub-ticks ≈ 5.8 days at ~1/s before the eldest may be buried
 const PENURY_GRACE_DEFAULT = 20000;      // silence on an empty wallet before penury claims it (~1.9h)
@@ -816,6 +844,33 @@ export class AgentEconomy {
    * payload has no `commonsPoolAtomic` ⇒ "0" (nothing ever swept). KEY_VERSION stays "economy:v1".
    */
   private commonsPoolAtomic = "0";
+  /**
+   * #143 ESTATE RELIEF (onchain, dark). The reserved escrow purse address injected by state.ts (a high HD
+   * index disjoint from every agent + the facilitator). Absent ⇒ the onchain sweep has nowhere to gather and
+   * stays inert even if armed. NEVER a live fly; never id-recycled.
+   */
+  private escrowAddress?: string;
+  /**
+   * #143: scoreboard of real USDC physically gathered into the escrow purse, net of disbursements. Additive
+   * on IN (escrow→estate) and SUBtractive on relief (escrow→poor) — the FIRST true outflow of the commons.
+   * Written to serialize() ONLY when the layer is armed ⇒ an OFF serialize is byte-for-byte today's blob.
+   */
+  private escrowPoolAtomic = "0";
+  /**
+   * #143: ids of buried wallets awaiting their estate→escrow on-chain sweep (bounded FIFO, dedup by id).
+   * The sweep re-checks the tombstone at execution, so a slot reclaimed by a new hatch is dropped (never
+   * swept). Persisted only while armed; an older/absent payload ⇒ empty queue (nothing pending).
+   */
+  private pendingEstates: number[] = [];
+  /** #143: escrow→poor disbursements metered per UTC day (a ceiling BELOW the real-spend caps). Runtime counter. */
+  private reliefToday: { day: string; atomic: string } = { day: "", atomic: "0" };
+  /** #143: onchain cron boundaries seen by the relief executor (runtime-only, drives the relief cadence modulo). */
+  private reliefCronCount = 0;
+  /** #143: lifetime counters exposed at /economy (observe-only; never hashed, never in stateDigest). */
+  private estateSweptCount = 0;
+  private estateSweptAtomic = "0";
+  private reliefPaidCount = 0;
+  private reliefPaidAtomic = "0";
   /** #123 equity-tilt rank cache: recomputed once per tick, cleared on step() entry. Runtime-only, never persisted. */
   private eqRankTick = -1;
   private eqRanks: Float64Array | null = null;
@@ -968,6 +1023,7 @@ export class AgentEconomy {
     this.facilitator = deps?.facilitator ?? makeFacilitator(cfg.facilitatorMode);
     this.addressOf = deps?.addressOf ?? ((id) => AgentEconomy.addressOf(cfg.seedBase, id));
     this.pinner = deps?.pinner;
+    this.escrowAddress = deps?.escrowAddress;
     if (restored) {
       try { this.applySerialized(restored); } catch { this.agents = []; }
     }
@@ -1504,6 +1560,208 @@ export class AgentEconomy {
     return out;
   }
 
+  // ---------- #143 ESTATE RELIEF (ONCHAIN, dark) — orphaned dead-wallet USDC → escrow → the poorest living ----------
+  //
+  // A dead house's treasury and the #123 commons pool are SCOREBOARD numbers; the REAL USDC of a buried fly
+  // physically stays in its HD wallet, which neither settlement nor Fix B ever touches (both skip the dead).
+  // These two executors are the honest unlock: they move REAL on-chain USDC — first sweeping an orphaned purse
+  // into a reserved escrow, then dripping escrow to the poorest LIVING wallets. Both run in the cron's SERIALIZED
+  // money lane (immediately after flush), share the facilitator wallet, and commit NO neural receipt (a treasury
+  // move, not a settlement), so they never collide with the settlement nonce / proof-chain. Every leg is bounded
+  // by the per-deal cap and moves money only on a MINED receipt. The whole layer is inert unless estateReliefOn().
+
+  /** #143: drop an id from the pending-estate queue (swept, reclaimed, or un-sweepable). */
+  private dropEstate(id: number): void {
+    const i = this.pendingEstates.indexOf(id);
+    if (i >= 0) this.pendingEstates.splice(i, 1);
+  }
+
+  /** #143: roll the relief daily-budget counter when the UTC day changes (mirrors rollSpendDay's day key). */
+  private rollReliefDay(nowMs: number): void {
+    const key = AgentEconomy.dayKey(nowMs);
+    if (key !== this.reliefToday.day) this.reliefToday = { day: key, atomic: "0" };
+  }
+
+  /** #143: the `n` poorest LIVING wallets by mirror balance (ascending, id-tie-broken; dead excluded). */
+  private poorestLiving(n: number): AgentState[] {
+    const living: AgentState[] = [];
+    for (const a of this.agents) {
+      if (this.dead.has(a.id)) continue;
+      living.push(a);
+    }
+    living.sort((x, y) => {
+      const d = BigInt(x.balance) - BigInt(y.balance);
+      return d < 0n ? -1 : d > 0n ? 1 : x.id - y.id;
+    });
+    return living.slice(0, Math.max(0, n));
+  }
+
+  /**
+   * #143 estate→escrow executor (cron, serialized after flush). For up to `maxSweepsPerCron` queued orphaned
+   * wallets: re-check the tombstone (id-reuse misfire guard — a reclaimed slot is dropped, never swept), read the
+   * wallet's LIVE on-chain balance (fail-open: an RPC error just defers to next cron), and sweep one per-deal-
+   * capped chunk into escrow via a treasuryTransfer leg signed by the dead wallet's own HD key. Mined ⇒ escrow
+   * scoreboard rises, the id dequeues. shadow/dust/no-balance ⇒ no money moves. Returns lifetime sweep counters.
+   */
+  async sweepEstatesToEscrow(tickIndex: number): Promise<{ swept: number; sweptAtomic: string }> {
+    const res = { swept: 0, sweptAtomic: "0" };
+    if (!this.estateReliefOn()) return res;                 // OFF / simulator / unwired escrow ⇒ byte-for-byte no-op
+    if (!this.cfg.realSpendEnabled) return res;             // kill switch: never broadcast
+    if (this.pendingEstates.length === 0) return res;
+    const transfer = this.facilitator.treasuryTransfer;
+    const readBalances = this.facilitator.readBalances;
+    if (typeof transfer !== "function" || typeof readBalances !== "function") return res;
+    this.rollSpendDay(Date.now());
+
+    const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
+    const cap = Math.max(1, Math.floor(this.cfg.estateRelief?.maxSweepsPerCron ?? 4));
+    const queue = this.pendingEstates.slice(0, cap);
+    const escrow = this.escrowAddress as string;
+    const addrs = queue.map((id) => this.addressOf(id)).filter((x) => !!x);
+    let bals: Map<string, bigint>;
+    try { bals = await readBalances.call(this.facilitator, addrs); }
+    catch { return res; }                                    // RPC error ⇒ fail-open, retry next cron
+    const deadline = Date.now() + 15_000;                    // well inside the cron abort budget; defer the rest
+    for (const id of queue) {
+      // ID-REUSE MISFIRE GUARD: the tombstone must still be present, else the purse belongs to a reborn fly.
+      if (!this.dead.has(id)) { this.dropEstate(id); continue; }
+      if (Date.now() > deadline) break;                      // leave the remaining ids queued for the next cron
+      const addr = this.addressOf(id);
+      const bal = bals.get(addr.toLowerCase()) ?? 0n;
+      if (bal <= 0n) { this.dropEstate(id); continue; }      // truly empty ⇒ nothing sleeping, dequeue
+      const value = maxDeal > 0n && bal > maxDeal ? maxDeal : bal;
+      const amountStr = value.toString();
+      let receipt;
+      try {
+        receipt = await transfer.call(this.facilitator, {
+          payerAddress: addr, payeeAddress: escrow, valueAtomic: amountStr, network: this.cfg.network,
+        });
+      } catch { this.dropEstate(id); continue; }
+      if (receipt.shadow) {
+        // Shadow proved the leg end-to-end but moved nothing — keep it queued for the real run, stop the lane.
+        console.log(`[DO] estate-relief shadow: sweep #${id} ${amountStr} atomic → escrow (dry-run)`);
+        break;
+      }
+      if (!receipt.success) {
+        // A durable failure (no signer / under-cap race / revert): dequeue so the queue cannot wedge. The on-chain
+        // read is authoritative, so a transient 0-balance simply re-enqueues on that fly's next burial.
+        console.warn(`[DO] estate-relief sweep #${id} failed: ${receipt.invalidReason ?? "unknown"} (dequeued)`);
+        this.dropEstate(id);
+        continue;
+      }
+      // Mined: the orphaned USDC now lives in escrow. Rise the scoreboard, retire the queue entry, count it.
+      this.dropEstate(id);
+      this.escrowPoolAtomic = addAtomic(this.escrowPoolAtomic, amountStr);
+      this.estateSweptAtomic = addAtomic(this.estateSweptAtomic, amountStr);
+      this.estateSweptCount++;
+      res.swept++;
+      res.sweptAtomic = addAtomic(res.sweptAtomic, amountStr);
+      console.log(`[DO] estate-relief: swept #${id} ${amountStr} atomic → escrow tx=${receipt.txHash.slice(0, 10)}`);
+    }
+    void tickIndex;
+    return res;
+  }
+
+  /**
+   * #143 escrow→poor relief executor (cron, serialized after the estate sweep). Gated by a cadence modulo
+   * (reliefEveryNCrons) and a daily budget BELOW the spend caps. Reads the escrow purse's LIVE on-chain balance,
+   * then drips per-deal-capped chunks to the poorest living wallets via treasuryTransfer legs signed by the
+   * escrow key. Mined ⇒ the recipient's mirror rises by exactly the real inflow (mirror ≤ chain still holds —
+   * Fix B re-aligns to the higher on-chain value, never an invented one), the escrow scoreboard falls (the FIRST
+   * true outflow of the commons). Returns lifetime disbursement counters.
+   */
+  async disburseRelief(): Promise<{ disbursed: number; disbursedAtomic: string }> {
+    const res = { disbursed: 0, disbursedAtomic: "0" };
+    if (!this.estateReliefOn()) return res;
+    if (!this.cfg.realSpendEnabled) return res;
+    const er = this.cfg.estateRelief;
+    if (!er || er.reliefEveryNCrons <= 0) return res;
+    const transfer = this.facilitator.treasuryTransfer;
+    const readBalances = this.facilitator.readBalances;
+    if (typeof transfer !== "function" || typeof readBalances !== "function") return res;
+    // Cadence: one relief pass every reliefEveryNCrons onchain crons (self-counted, runtime-only).
+    this.reliefCronCount++;
+    if (this.reliefCronCount % er.reliefEveryNCrons !== 0) return res;
+    this.rollReliefDay(Date.now());
+    const budget = BigInt(usdcToAtomic(er.reliefDailyBudgetUsdc));
+    if (budget > 0n && BigInt(this.reliefToday.atomic) >= budget) return res;   // today's relief budget spent
+
+    const escrow = this.escrowAddress as string;
+    let escrowBal = 0n;
+    try {
+      const m = await readBalances.call(this.facilitator, [escrow]);
+      escrowBal = m.get(escrow.toLowerCase()) ?? 0n;
+    } catch { return res; }                                    // RPC error ⇒ fail-open, retry next relief cron
+    if (escrowBal <= 0n) return res;                           // nothing gathered yet ⇒ nothing to give
+
+    const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
+    const chunk = BigInt(usdcToAtomic(er.reliefChunkUsdc));
+    const poor = this.poorestLiving(RELIEE_LIMIT_PER_CRON);
+    const deadline = Date.now() + 15_000;
+    for (const agent of poor) {
+      if (Date.now() > deadline) break;
+      if (agent.address.toLowerCase() === escrow.toLowerCase()) continue;
+      let value = chunk > 0n && escrowBal > chunk ? chunk : escrowBal;
+      if (maxDeal > 0n && value > maxDeal) value = maxDeal;
+      if (budget > 0n) {
+        const room = budget - BigInt(this.reliefToday.atomic);
+        if (room <= 0n) break;
+        if (value > room) value = room;
+      }
+      if (value <= 0n) break;
+      const amountStr = value.toString();
+      let receipt;
+      try {
+        receipt = await transfer.call(this.facilitator, {
+          payerAddress: escrow, payeeAddress: agent.address, valueAtomic: amountStr, network: this.cfg.network,
+        });
+      } catch { continue; }
+      if (receipt.shadow) {
+        console.log(`[DO] estate-relief shadow: escrow → #${agent.id} ${amountStr} atomic (dry-run)`);
+        break;
+      }
+      if (!receipt.success) {
+        console.warn(`[DO] estate-relief disburse → #${agent.id} failed: ${receipt.invalidReason ?? "unknown"}`);
+        continue;
+      }
+      // Mined: a real USDC inflow lands in the poorest wallet. Mirror rises by exactly that; escrow falls.
+      agent.balance = addAtomic(agent.balance, amountStr);
+      this.reliefToday.atomic = addAtomic(this.reliefToday.atomic, amountStr);
+      // The escrow SCOREBOARD falls by the disbursed amount, clamped at zero (the live on-chain escrow read is
+      // the real authority; this board is an observability mirror and can never render a negative balance).
+      this.escrowPoolAtomic = (BigInt(this.escrowPoolAtomic) - BigInt(amountStr) > 0n)
+        ? subAtomic(this.escrowPoolAtomic, amountStr) : "0";
+      this.reliefPaidAtomic = addAtomic(this.reliefPaidAtomic, amountStr);
+      this.reliefPaidCount++;
+      res.disbursed++;
+      res.disbursedAtomic = addAtomic(res.disbursedAtomic, amountStr);
+      escrowBal -= value;
+      console.log(`[DO] estate-relief: escrow → poorest #${agent.id} ${amountStr} atomic tx=${receipt.txHash.slice(0, 10)}`);
+      if (escrowBal <= 0n) break;
+    }
+    return res;
+  }
+
+  /**
+   * Fold this cron's estate-relief activity into the read-out. Returns null while the layer is OFF so the caller
+   * (and snapshot()) omit the block entirely — byte-for-byte today's payload when dark.
+   */
+  estateReliefReadout(): {
+    escrowPoolAtomic: string; pendingEstates: number;
+    sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
+  } | null {
+    if (!this.cfg.estateRelief || this.cfg.estateRelief.enabled !== true) return null;
+    return {
+      escrowPoolAtomic: this.escrowPoolAtomic,
+      pendingEstates: this.pendingEstates.length,
+      sweptCount: this.estateSweptCount,
+      sweptAtomic: this.estateSweptAtomic,
+      paidCount: this.reliefPaidCount,
+      paidAtomic: this.reliefPaidAtomic,
+      reliefTodayAtomic: this.reliefToday.atomic,
+    };
+  }
+
   /**
    * Fold a resolved prediction round's bilateral net flows into the economy so they settle through the
    * EXACT same rails as neural trades — there is NO separate money path for predictions. ONCHAIN: each
@@ -1912,6 +2170,18 @@ export class AgentEconomy {
   /** #123: True when dead-house sweep is armed. OFF ⇒ entomb branch ② byte-for-byte unchanged. */
   private deadHouseSweepOn(): boolean {
     return !!this.cfg.deadHouseSweep && this.cfg.deadHouseSweep.enabled === true;
+  }
+
+  /**
+   * #143: True when the ONCHAIN estate-relief layer is armed. Requires the flag AND a live onchain
+   * facilitator AND a wired escrow purse. OFF (default) ⇒ entomb queues nothing, the cron sweep/relief
+   * executors no-op, and serialize() omits every #143 field — byte-for-byte today's build.
+   */
+  private estateReliefOn(): boolean {
+    return !!this.cfg.estateRelief
+      && this.cfg.estateRelief.enabled === true
+      && this.facilitator.mode === "onchain"
+      && !!this.escrowAddress;
   }
 
   /**
@@ -3942,6 +4212,14 @@ export class AgentEconomy {
       house: kin?.house ?? null,
     };
     if (a) a.balance = "0";
+    // #143 ONCHAIN estate relief (dark): enqueue this orphaned wallet so a later cron sweeps its REAL
+    // on-chain USDC into the escrow purse. Only when the layer is armed (estateReliefOn gates on flag +
+    // onchain + escrow). The mirror was just zeroed above; the physical purse is drained on-chain by the
+    // sweep, which re-checks the tombstone so a reclaimed slot is never touched. OFF ⇒ byte-for-byte today.
+    if (this.estateReliefOn() && estate > 0n && !this.pendingEstates.includes(id)) {
+      this.pendingEstates.push(id);
+      if (this.pendingEstates.length > ESTATE_QUEUE_CAP) this.pendingEstates.shift();
+    }
     this.graves.unshift(grave);
     if (this.graves.length > GRAVE_CAP) this.graves.length = GRAVE_CAP;
     return grave;
@@ -4560,6 +4838,10 @@ export class AgentEconomy {
       // SHADOW-COMPARE /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
       // Bounded aggregate counters — detail rows live in D1 only (GET /shadow), never in DO blob.
       ...(this.shadowCompareOn() ? { shadowCompare: { ...this.shadowAgg } } : {}),
+      // #143 ESTATE-RELIEF /economy exposure (flag-guarded: absent when OFF → dark-deployment byte-equivalent).
+      // Observe-only: escrow scoreboard + queue depth + lifetime sweep/relief counters. Never hashed, never in
+      // the PoCA stateDigest; the money itself lives on-chain, these are just its read-out.
+      ...(this.estateReliefReadout() ? { estateRelief: this.estateReliefReadout()! } : {}),
     };
   }
 
@@ -4708,6 +4990,19 @@ export class AgentEconomy {
       // armed, so an OFF serialize is byte-for-byte today's blob. An older payload has no `mirrorDriftAtomicSum`
       // ⇒ applySerialized defaults it to "0". KEY_VERSION stays "economy:v1" (never bumped).
       ...(this.mirrorResyncEveryN() > 0 ? { mirrorDriftAtomicSum: this.mirrorDriftAtomicSum } : {}),
+      // #143 ESTATE RELIEF. Written ONLY when the layer is armed ⇒ an OFF serialize is byte-for-byte today's blob.
+      // An older payload has none of these ⇒ applySerialized defaults (escrow "0", empty queue/counters). Survives
+      // a DO eviction so an in-flight estate queue and the daily relief budget are not silently reset. KEY_VERSION
+      // stays "economy:v1".
+      ...(this.cfg.estateRelief?.enabled ? {
+        escrowPoolAtomic: this.escrowPoolAtomic,
+        pendingEstates: this.pendingEstates,
+        estateSweptCount: this.estateSweptCount,
+        estateSweptAtomic: this.estateSweptAtomic,
+        reliefPaidCount: this.reliefPaidCount,
+        reliefPaidAtomic: this.reliefPaidAtomic,
+        reliefToday: this.reliefToday,
+      } : {}),
     });
   }
 
@@ -4731,6 +5026,19 @@ export class AgentEconomy {
     this.warTaxAtomic = /^\d+$/.test(String(p.warTaxAtomic ?? "")) ? String(p.warTaxAtomic) : "0";
     // R5 FIX B telemetry: an older payload (or a Fix-B-off blob) has no mirrorDriftAtomicSum ⇒ "0". KEY_VERSION stays v1.
     this.mirrorDriftAtomicSum = /^\d+$/.test(String(p.mirrorDriftAtomicSum ?? "")) ? String(p.mirrorDriftAtomicSum) : "0";
+    // #143 ESTATE RELIEF: an older/absent payload (or a dark blob) has none of these ⇒ the safe zero defaults.
+    // KEY_VERSION stays v1 (never discarded). The queue is re-clamped to its cap and to a clean integer set.
+    this.escrowPoolAtomic = /^\d+$/.test(String(p.escrowPoolAtomic ?? "")) ? String(p.escrowPoolAtomic) : "0";
+    this.estateSweptAtomic = /^\d+$/.test(String(p.estateSweptAtomic ?? "")) ? String(p.estateSweptAtomic) : "0";
+    this.reliefPaidAtomic = /^\d+$/.test(String(p.reliefPaidAtomic ?? "")) ? String(p.reliefPaidAtomic) : "0";
+    this.estateSweptCount = Number.isInteger(p.estateSweptCount) && p.estateSweptCount >= 0 ? p.estateSweptCount : 0;
+    this.reliefPaidCount = Number.isInteger(p.reliefPaidCount) && p.reliefPaidCount >= 0 ? p.reliefPaidCount : 0;
+    this.pendingEstates = Array.isArray(p.pendingEstates)
+      ? p.pendingEstates.filter((x: unknown) => Number.isInteger(x)).slice(-ESTATE_QUEUE_CAP)
+      : [];
+    this.reliefToday = p.reliefToday && typeof p.reliefToday.day === "string" && /^\d+$/.test(String(p.reliefToday.atomic ?? ""))
+      ? { day: p.reliefToday.day, atomic: String(p.reliefToday.atomic) }
+      : { day: "", atomic: "0" };
     this.recent = Array.isArray(p.recent) ? p.recent : [];
     this.agents = Array.isArray(p.agents) ? p.agents : [];
     this.indexOfId = new Map();

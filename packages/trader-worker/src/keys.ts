@@ -18,6 +18,15 @@ import type { Address, LocalAccount } from "viem";
 /** BIP-44 accountIndex reserved for the gas-paying facilitator — kept far from the agent range. */
 const FACILITATOR_ACCOUNT_INDEX = 2_000_000;
 
+/**
+ * BIP-44 accountIndex reserved for the ESTATE-RELIEF escrow purse (#143). A dedicated high index,
+ * disjoint from BOTH the recyclable agent range [0, maxLivePopulation) AND the facilitator index, so
+ * no id-reuse (live-retirement) hatch can ever re-derive this wallet and no settlement lane touches
+ * it. Holds the on-chain USDC gathered from orphaned dead-agent wallets before it is dripped out to
+ * the poorest living wallets. Derived from the same seed — its key exists only in Worker memory.
+ */
+const ESCROW_ACCOUNT_INDEX = 2_000_001;
+
 /** A derived signing account (viem's HD account satisfies LocalAccount structurally). */
 export type DerivedAccount = ReturnType<typeof mnemonicToAccount>;
 
@@ -28,6 +37,12 @@ export interface AgentKeys {
   /** The gas-paying facilitator account (submits transferWithAuthorization on-chain). */
   facilitator(): LocalAccount;
   facilitatorAddress(): Address;
+  /**
+   * The #143 estate-relief escrow account + address (reserved index, disjoint from agents + facilitator).
+   * Absent when only a facilitatorPk (no mnemonic) was supplied — then there is no derived escrow.
+   */
+  escrow?(): LocalAccount;
+  escrowAddress?(): Address;
   count: number;
 }
 
@@ -54,6 +69,8 @@ export function deriveAgentKeys(mnemonic: string, count: number, facilitatorPk?:
     address: (id) => at(id).address,
     facilitator: () => fac,
     facilitatorAddress: () => fac.address,
+    escrow: () => at(ESCROW_ACCOUNT_INDEX),
+    escrowAddress: () => at(ESCROW_ACCOUNT_INDEX).address,
     count,
   };
 }

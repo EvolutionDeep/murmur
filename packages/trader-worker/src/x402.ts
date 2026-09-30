@@ -533,6 +533,16 @@ export interface Facilitator {
   /** Seller-funded refund leg (onchain only; inert unless explicitly called — PULSE_REFUNDS). */
   refundBuyer?(a: { to: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse>;
   /**
+   * #143 ESTATE-RELIEF treasury leg (onchain only; inert unless explicitly called — ESTATE_RELIEF defaults OFF).
+   * A gasless EIP-3009 transfer FROM any wallet whose HD key the Worker already derives (a dead-agent purse, or
+   * the reserved escrow purse) TO any payee, relayed by the gas wallet. Unlike settle() it commits NO neural
+   * receipt (no registry/hash-chain provenance) — the nonce is random, exactly like a refund. The payer's LIVE
+   * on-chain balance is re-read before signing and the per-deal cap is enforced, so it can never invent money.
+   */
+  treasuryTransfer?(a: {
+    payerAddress: string; payeeAddress: string; valueAtomic: string; network: string; shadow?: boolean;
+  }): Promise<SettleResponse>;
+  /**
    * R5 Fix A/B: batched authoritative on-chain ERC-20 balanceOf read for a set of addresses, in ONE
    * multicall RPC. Returns a Map keyed by LOWERCASED address → atomic USDC balance. On-chain reads are
    * permitted authoritative external inputs (the SAME class as the settle-time balanceOf and the market
@@ -1581,6 +1591,78 @@ export class OnChainFacilitator implements Facilitator {
       return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
     } catch (err) {
       return fail(`refund error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * #143 ESTATE-RELIEF treasury leg. Generalises refundBuyer: instead of always signing as the facilitator's
+   * OWN purse, it signs as ANY derived HD account resolved by address (a dead-agent wallet being swept into
+   * escrow, or the escrow purse disbursing to a poor living wallet). The Worker derives every agent + the
+   * escrow from the one seed, so `buyerAccount(payer)` resolves their key; a random nonce means no neural
+   * provenance (this is a treasury move, not a settlement). The payer's LIVE on-chain balance is re-read and
+   * the per-deal hard cap enforced before signing, so an orphaned purse can never be over-drawn and no money
+   * is ever minted. shadow:true (or global shadowOnly) eth_calls the EXACT relay and broadcasts nothing.
+   */
+  async treasuryTransfer(a: {
+    payerAddress: string; payeeAddress: string; valueAtomic: string; network: string; shadow?: boolean;
+  }): Promise<SettleResponse> {
+    const net = a.network;
+    const fail = (invalidReason: string): SettleResponse =>
+      ({ success: false, network: net, txHash: "0x", invalidReason });
+    try {
+      const from = a.payerAddress as Address;
+      const to = a.payeeAddress as Address;
+      if (from.toLowerCase() === to.toLowerCase()) return fail("treasury payer equals payee");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(from)) return fail("treasury payer not an address");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(to)) return fail("treasury payee not an address");
+      if (!/^\d+$/.test(a.valueAtomic) || BigInt(a.valueAtomic) <= 0n) return fail("treasury value must be a positive integer");
+      const value = BigInt(a.valueAtomic);
+
+      // Per-deal hard cap — defense-in-depth (a relief chunk never exceeds a normal settlement leg).
+      if (this.o.maxAmountAtomic != null && !lteAtomic(a.valueAtomic, this.o.maxAmountAtomic)) {
+        return fail(`value ${a.valueAtomic} exceeds facilitator per-deal cap ${this.o.maxAmountAtomic}`);
+      }
+
+      // The payer MUST map to a derived signing key we hold, else we cannot produce a real authorization.
+      const payer = this.o.buyerAccount(from);
+      if (!payer) return fail(`no signer for treasury payer ${from}`);
+
+      // Authoritative live on-chain balance: the payer purse must actually hold the USDC right now.
+      const bal = await this.o.publicClient.readContract({
+        address: this.o.asset, abi: erc20Abi, functionName: "balanceOf", args: [from],
+      });
+      if (bal < value) return fail(`treasury payer insufficient on-chain USDC: have ${bal}, need ${value}`);
+
+      const { validAfter, validBefore, nonce } = makeRefundAuth({
+        from, to, value, nowSec: Math.floor(Date.now() / 1000),
+      });
+      const signature = await payer.signTypedData({
+        domain: this.eip3009Domain(),
+        types: EIP3009_TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: { from, to, value, validAfter, validBefore, nonce },
+      });
+      const { r, s, v } = parseSignature(signature);
+      const args: [Address, Address, bigint, bigint, bigint, Hex, number, Hex, Hex] =
+        [from, to, value, validAfter, validBefore, nonce, Number(v), r, s];
+
+      if (a.shadow || this.o.shadowOnly) {
+        const data = encodeFunctionData({ abi: fiatTokenV2Abi, functionName: "transferWithAuthorization", args });
+        await this.o.publicClient.call({ account: this.o.wallet.account.address, to: this.o.asset, data });
+        return { success: true, network: net, txHash: "0x", simulated: false, shadow: true };
+      }
+      const hash = await this.o.wallet.writeContract({
+        address: this.o.asset, abi: fiatTokenV2Abi, functionName: "transferWithAuthorization", args,
+        ...(this.o.gasPrice != null ? { gasPrice: this.o.gasPrice } : {}),
+      });
+      const receipt = await this.o.publicClient.waitForTransactionReceipt({
+        hash, confirmations: this.o.confirmations ?? 1, timeout: RECEIPT_TIMEOUT_MS,
+      });
+      const ok = receipt.status === "success";
+      if (ok) this.st.gasWeiTotal += receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n);
+      return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
+    } catch (err) {
+      return fail(`treasury transfer error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

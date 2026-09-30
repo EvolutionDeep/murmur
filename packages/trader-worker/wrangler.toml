@@ -188,6 +188,31 @@ ECONOMY_NET_FLUSH_TICKS = "1440"             # TEMPORARY GAS EMERGENCY GATE (#13
 # onchainBalanceGate nor mirrorResync is in that set, by design ("Non-secret flags ONLY"). The secret put only
 # rolls a new version with Source: "Secret Change"; CODE_COMMITMENT and the epoch are untouched.
 
+# ===== #143 ESTATE RELIEF (ONCHAIN, SHIPPED DARK — clears a dead house's real USDC from sleeping) =====
+# A buried fly's REAL USDC stays in its orphaned HD wallet: settlement and the R5 mirror resync both SKIP the
+# dead, and the #123 commons pool / house treasury are SCOREBOARD numbers only (never spent), so that capital
+# simply sleeps. This layer unlocks it honestly — dead purse → a RESERVED escrow purse (its own HD index,
+# disjoint from every recyclable agent id and the facilitator), then the escrow drips to the POOREST LIVING
+# wallets on a cadence. Every leg is a gasless EIP-3009 transferWithAuthorization signed by the payer's own key
+# and relayed by the facilitator, moves money ONLY on a mined receipt, is capped by ECONOMY_MAX_DEAL + a daily
+# relief budget, and runs in the SAME serialized money lane as flush (never parallel → no nonce/proof-chain
+# collision). The estate→escrow sweep re-checks the tombstone, so a slot reclaimed by a new hatch is NEVER swept.
+# ALL CODE-DEFAULTS ONLY (the 128 text-binding wall is spent). When absent ⇒ the master switch is OFF ⇒ entomb,
+# flush and the cron are byte-for-byte today's build (no queue, no sweep, no disbursement; escrow untouched).
+# To ARM (real on-chain money moves) an operator must, at minimum, ALSO leave ECONOMY_REAL_SPEND="true" and the
+# facilitator onchain; to dry-run first set ECONOMY_SHADOW="true" (each leg eth_calls, broadcasts nothing):
+#   ESTATE_RELIEF_ENABLED = "false"              # master switch (default OFF / dark)
+#   ESTATE_RELIEF_EVERY_N_CRON = "0"             # 0 = never disburse; N>0 = escrow→poor drip every Nth cron
+#   ESTATE_RELIEF_CHUNK_USDC = "0.02"            # max USDC per escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
+#   ESTATE_RELIEF_DAILY_BUDGET_USDC = "1"        # max USDC dripped from escrow per UTC day (a ceiling BELOW the caps)
+#   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON = "4"      # estate→escrow sweeps attempted per cron (wall-clock bound)
+# These read env in config.ts but are NOT live [vars] (binding wall full) — arm them as SECRETS for seconds-level
+# rollback exactly like the R5 knobs above, or by freeing a slot. Read-out: GET /economy carries an `estateRelief`
+# block (escrow scoreboard + queue depth + lifetime sweep/relief counters) ONLY when the layer is enabled ⇒ an
+# off payload is byte-identical. PoCA NOTE: estateRelief is NOT in pocaKnobsHash() (a non-money read layer), so
+# arming it rolls a version but never rotates CODE_COMMITMENT by itself — the sweeps/reliefs rotate the state
+# DIGEST only when they actually move a real balance (and none do while dark).
+
 # ===== Neural-receipt REGISTRY (ONCHAIN ONLY — trustless chain head) =====
 # Deploy contracts/NeuralReceiptRegistry.sol (see contracts/README.md), then set this to its address.
 # When set, each mined net is committed on-chain right after its EIP-3009 transfer, so the receipt

@@ -846,6 +846,15 @@ export class FlyStateDO {
       mirrorResync: {
         everyNCrons: this.cfg.mirrorResync.everyNCrons,
       },
+      // #143 ESTATE RELIEF: dead-wallet USDC → escrow → the poorest living. This is the ONE wiring that arms the
+      // economy's estateReliefOn(); disabled by default (dark) ⇒ entomb/flush/cron byte-for-byte today.
+      estateRelief: {
+        enabled: this.cfg.estateRelief.enabled,
+        reliefEveryNCrons: this.cfg.estateRelief.reliefEveryNCrons,
+        reliefChunkUsdc: this.cfg.estateRelief.reliefChunkUsdc,
+        reliefDailyBudgetUsdc: this.cfg.estateRelief.reliefDailyBudgetUsdc,
+        maxSweepsPerCron: this.cfg.estateRelief.maxSweepsPerCron,
+      },
     };
   }
 
@@ -1828,6 +1837,14 @@ export class FlyStateDO {
       byAddress.set(keys.address(id).toLowerCase(), keys.account(id));
     }
 
+    // #143 ESTATE-RELIEF escrow: register the reserved escrow purse (a high accountIndex disjoint from the
+    // recyclable agent range AND the facilitator) in the SAME reverse map, so buyerAccount(escrowAddress)
+    // resolves its key and treasuryTransfer can sign the escrow→poor disbursement leg. Its address is handed
+    // to the economy so it knows where to sweep orphaned dead-agent USDC. Never a live fly, never id-recycled.
+    const escrowAccount = keys.escrow?.();
+    const escrowAddr = keys.escrowAddress?.();
+    if (escrowAccount && escrowAddr) byAddress.set(escrowAddr.toLowerCase(), escrowAccount);
+
     // Optional Circle Facilitator Service backend: when ECONOMY_CIRCLE_FACILITATOR is "external"/"all",
     // hand the per-deal USDC broadcast to Circle's hosted relayer (which screens both parties and pays the
     // settlement gas) instead of this wallet. The CAIP-2 network Circle routes by is derived from chainId,
@@ -1900,7 +1917,7 @@ export class FlyStateDO {
       );
     }
 
-    return { facilitator, addressOf: (id) => keys.address(id), pinner };
+    return { facilitator, addressOf: (id) => keys.address(id), pinner, escrowAddress: escrowAddr };
   }
 
   private async ensurePrevTemperature(): Promise<number> {
@@ -4106,6 +4123,19 @@ export class FlyStateDO {
             console.warn(`[DO] live-retire reconcile #${id} failed (roster may retry next cron):`, (e as Error).message);
           }
         }
+      }
+      // #143 ESTATE RELIEF (ONCHAIN, dark): serialized in the SAME money lane as flush (no parallel broadcast,
+      // shares the facilitator wallet nonce), so it never collides with the settlement/registry proof-chain.
+      // estate→escrow sweep of orphaned dead wallets first, then a cadence-gated escrow→poor relief drip. Both
+      // are byte-for-byte no-ops unless estateReliefOn() (flag + onchain + wired escrow) AND ECONOMY_REAL_SPEND.
+      // Best-effort: any throw here must never wedge the cron — the queue/escrow carry forward to the next beat.
+      try {
+        const swept = await economy.sweepEstatesToEscrow(swarm.getTickIndex());
+        if (swept.swept > 0) console.log(`[DO] estate-relief: swept ${swept.swept} estate(s) (${swept.sweptAtomic} atomic) → escrow`);
+        const given = await economy.disburseRelief();
+        if (given.disbursed > 0) console.log(`[DO] estate-relief: dripped ${given.disbursed} relief leg(s) (${given.disbursedAtomic} atomic) → poorest living`);
+      } catch (e) {
+        console.warn("[DO] estate-relief executor failed (non-fatal, queue carries forward):", (e as Error).message);
       }
       this.lastEconomy = economy.snapshot();
       // #98 Fix 3: backlog alerting — when netPending exceeds the configured threshold, emit a warning so the
