@@ -369,14 +369,16 @@ export interface Env {
   //     When armed AND onchain AND the reserved escrow purse is wired, a buried wallet is swept on-chain into
   //     escrow, then escrow is dripped to the POOREST living wallets every Nth cron. All legs move money only
   //     on a mined EIP-3009 receipt, under the ECONOMY_REAL_SPEND kill switch + shadow mode + the per-deal cap.
-  //     NOTE: CODE-DEFAULTS ONLY (the 128 text-binding wall is spent, see wrangler.toml) — every knob defaults
-  //     OFF so the whole layer is inert and entomb/flush/the cron are byte-for-byte today's build. ---
-  ESTATE_RELIEF_ENABLED?: string;             // "true"/"false" (default FALSE — dark deploy; the master switch)
-  ESTATE_RELIEF_EVERY_N_CRON?: string;        // integer N (default "0" = never disburse; N>0 = relief cadence)
+  //     NOTE: CODE-DEFAULTS ONLY (the 128 text-binding wall is spent, see wrangler.toml). ARMED LIVE as of
+  //     2026-09-30 (enabled default TRUE, shadow default FALSE, cadence 6, chunk 0.02, budget 1/day) — every leg
+  //     stays inside the same mnemonic's wallets and is bounded far below the money caps. Revert to dry-run by
+  //     setting ESTATE_RELIEF_SHADOW=true + redeploy; halt all spend with ECONOMY_REAL_SPEND=false. ---
+  ESTATE_RELIEF_ENABLED?: string;             // "true"/"false" (default TRUE — ARMED LIVE; the master switch; ECONOMY_REAL_SPEND is the kill switch)
+  ESTATE_RELIEF_EVERY_N_CRON?: string;        // integer N (default "6" = escrow→poor drip every 6th onchain cron; 0 = never disburse)
   ESTATE_RELIEF_CHUNK_USDC?: string;          // max USDC per single escrow→poor leg (further clamped by ECONOMY_MAX_DEAL)
   ESTATE_RELIEF_DAILY_BUDGET_USDC?: string;   // max USDC dripped from escrow per UTC day (a ceiling BELOW the spend caps)
   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON?: string; // estate→escrow sweeps attempted per cron (default 4, wall-clock bound)
-  ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default TRUE — an enabled layer DRY-RUNS each leg: signs + eth_calls, broadcasts nothing; set FALSE to let real USDC move)
+  ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default FALSE — real USDC moves; set TRUE to revert the layer to DRY-RUN: signs + eth_calls, broadcasts nothing)
 
   // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
   //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
@@ -1483,18 +1485,22 @@ export function loadConfig(env: Env): RuntimeConfig {
       enabled: (env.DEAD_HOUSE_SWEEP_ENABLED ?? "false").toLowerCase() === "true",
     },
 
-    // #143 Estate relief (ONCHAIN): dead-wallet USDC → escrow → the poorest living. Fail-closed: only an exact
-    // "true" arms the master switch, and the cadence defaulting 0 means even enabled it never disburses until
-    // ESTATE_RELIEF_EVERY_N_CRON>0. Every numeric knob is parsed fail-safe (clampInt-style) so a bad var can
-    // never arm a sub-cron cadence, a negative budget, or an unbounded sweep. Dark by default (byte-for-byte).
+    // #143 Estate relief (ONCHAIN): dead-wallet USDC → escrow → the poorest living. Fail-safe parsed (clampInt-
+    // style) so a bad var can never arm a sub-cron cadence, a negative budget, or an unbounded sweep. ARMED LIVE
+    // (2026-09-30): the 128 text-binding wall is spent so an operator cannot add a secret/var — the posture is
+    // carried as code defaults instead: enabled TRUE, ESTATE_RELIEF_SHADOW FALSE (real USDC moves), cadence 6,
+    // chunk 0.02, daily budget 1 (all far below the money caps). ECONOMY_REAL_SPEND="false" is the instant kill
+    // switch (the executors return before any broadcast), and setting ESTATE_RELIEF_SHADOW=true back + redeploy
+    // is the seconds-level revert to dry-run. All legs stay on the same mnemonic's wallets (dead → our escrow →
+    // living), move money only on a mined EIP-3009 receipt, and re-check the tombstone (a reclaimed id is never swept).
     estateRelief: (() => {
-      const everyN = clamp(Math.floor(Number(env.ESTATE_RELIEF_EVERY_N_CRON ?? "0") || 0), 0, 1_000_000);
+      const everyN = clamp(Math.floor(Number(env.ESTATE_RELIEF_EVERY_N_CRON ?? "6") || 0), 0, 1_000_000);
       const chunk = Math.max(0, Number(env.ESTATE_RELIEF_CHUNK_USDC ?? "0.02") || 0);
       const budget = Math.max(0, Number(env.ESTATE_RELIEF_DAILY_BUDGET_USDC ?? "1") || 0);
       const sweeps = clamp(Math.floor(Number(env.ESTATE_RELIEF_MAX_SWEEPS_PER_CRON ?? "4") || 0), 0, 64);
       return {
-        enabled: (env.ESTATE_RELIEF_ENABLED ?? "false").toLowerCase() === "true",
-        shadow: (env.ESTATE_RELIEF_SHADOW ?? "true").toLowerCase() !== "false",
+        enabled: (env.ESTATE_RELIEF_ENABLED ?? "true").toLowerCase() === "true",
+        shadow: (env.ESTATE_RELIEF_SHADOW ?? "false").toLowerCase() !== "false",
         reliefEveryNCrons: everyN,
         reliefChunkUsdc: chunk,
         reliefDailyBudgetUsdc: budget,
