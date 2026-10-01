@@ -394,6 +394,11 @@ export interface Env {
   ESTATE_RELIEF_MAX_SWEEPS_PER_CRON?: string; // estate→escrow sweeps attempted per cron (default 4, wall-clock bound)
   ESTATE_RELIEF_SHADOW?: string;              // "true"/"false" (default FALSE — real USDC moves; set TRUE to revert the layer to DRY-RUN: signs + eth_calls, broadcasts nothing)
   ESTATE_RELIEF_BACKFILL?: string;            // "true"/"false" (default TRUE — ARMED: one-time RETROACTIVE sweep of the CURRENTLY-orphaned this.dead set into the queue; latches once, never re-scans, guard-protected so a reclaimed/living id is never swept. dead=0 live ⇒ captures 0, an immediate no-op)
+  // #143b LIVING WEALTH LEVY (owner-directed one-time equalization; code-defaults — the 128 binding wall is spent).
+  ESTATE_LEVY_CEILING_USDC?: string;          // USDC a LIVING wallet keeps; LIVE on-chain excess is one-time-swept to escrow (default "2.0"; 0 disables the levy)
+  ESTATE_LEVY_CHUNK_USDC?: string;            // max USDC per living→escrow leg (default "0.05", further clamped by ECONOMY_MAX_DEAL)
+  ESTATE_LEVY_MAX_LEGS_PER_CRON?: string;     // living→escrow legs attempted per cron (default 16, wall-clock bound)
+  ESTATE_RELIEF_FLOOR_USDC?: string;          // escrow→poor tops each recipient only up to this mirror balance (default "0.5"; 0 ⇒ no floor cap)
 
   // --- #123 REFORM V2: jubilee cooldown re-arm (fixes the permanent deadlock) + levy deductions wired to the
   //     commons pool scoreboard (downward-deduct from the rich, never upward-add to mirrors). NOTE: code-defaults.
@@ -900,6 +905,17 @@ export interface RuntimeConfig {
     reliefDailyBudgetUsdc: number; // max USDC dripped per UTC day (below the spend caps)
     maxSweepsPerCron: number;    // estate→escrow sweeps per cron (wall-clock bound)
     backfill: boolean;           // default FALSE — one-time retroactive sweep of the CURRENTLY-orphaned this.dead set into the queue (guard-protected, latches once)
+    // #143b LIVING WEALTH LEVY (owner-directed one-time equalization). A SINGLE latched pass snapshots every
+    // LIVING wallet whose LIVE on-chain USDC is above levyCeilingUsdc and drains each down to that ceiling into
+    // the SAME escrow; the existing disburse then tops the poorest up to reliefFloorUsdc. Every leg ≤ the per-deal
+    // cap, the payer balance is re-read on-chain before signing (over-draw impossible), and the payer mirror only
+    // ever FALLS to chain. It LATCHES once (levyRan) — a fly that re-earns wealth later is NEVER re-taxed, so the
+    // emergent economy resumes. levyCeilingUsdc<=0 ⇒ the levy is inert byte-for-byte. Real spend still needs
+    // ECONOMY_REAL_SPEND=true and is bounded by shadow like every other #143 leg.
+    levyCeilingUsdc: number;     // USDC a living wallet may keep; the excess above this is swept to escrow (0 = levy off)
+    levyChunkUsdc: number;       // max USDC per living→escrow leg (further clamped by ECONOMY_MAX_DEAL)
+    levyMaxLegsPerCron: number;  // living→escrow legs attempted per cron (wall-clock bound)
+    reliefFloorUsdc: number;     // escrow→poor tops each recipient only up to this mirror balance (0 = no floor cap)
   };
 
   // System One (Jev) read-out side-plane (see Env.JEV_*). OFF by default (dark deploy) ⇒ inert, no request,
@@ -1521,10 +1537,17 @@ export function loadConfig(env: Env): RuntimeConfig {
     // is the seconds-level revert to dry-run. All legs stay on the same mnemonic's wallets (dead → our escrow →
     // living), move money only on a mined EIP-3009 receipt, and re-check the tombstone (a reclaimed id is never swept).
     estateRelief: (() => {
-      const everyN = clamp(Math.floor(Number(env.ESTATE_RELIEF_EVERY_N_CRON ?? "6") || 0), 0, 1_000_000);
-      const chunk = Math.max(0, Number(env.ESTATE_RELIEF_CHUNK_USDC ?? "0.02") || 0);
-      const budget = Math.max(0, Number(env.ESTATE_RELIEF_DAILY_BUDGET_USDC ?? "1") || 0);
+      const everyN = clamp(Math.floor(Number(env.ESTATE_RELIEF_EVERY_N_CRON ?? "1") || 0), 0, 1_000_000);
+      const chunk = Math.max(0, Number(env.ESTATE_RELIEF_CHUNK_USDC ?? "0.05") || 0);
+      const budget = Math.max(0, Number(env.ESTATE_RELIEF_DAILY_BUDGET_USDC ?? "70") || 0);
       const sweeps = clamp(Math.floor(Number(env.ESTATE_RELIEF_MAX_SWEEPS_PER_CRON ?? "4") || 0), 0, 64);
+      // #143b living-wealth-levy code-defaults (ARMED: ceiling 2.0 keeps every living fly solvent, the excess is
+      // one-time-swept to escrow; each leg ≤ the 0.05 per-deal cap; relief tops the poorest up to a 1.2 floor, which
+      // consumes the WHOLE levy (escrow idle ≈ 0) so the equalization is complete, not a partial fill).
+      const levyCeiling = Math.max(0, Number(env.ESTATE_LEVY_CEILING_USDC ?? "2.0") || 0);
+      const levyChunk = Math.max(0, Number(env.ESTATE_LEVY_CHUNK_USDC ?? "0.05") || 0);
+      const levyLegs = clamp(Math.floor(Number(env.ESTATE_LEVY_MAX_LEGS_PER_CRON ?? "16") || 0), 0, 64);
+      const reliefFloor = Math.max(0, Number(env.ESTATE_RELIEF_FLOOR_USDC ?? "1.2") || 0);
       return {
         enabled: (env.ESTATE_RELIEF_ENABLED ?? "true").toLowerCase() === "true",
         shadow: (env.ESTATE_RELIEF_SHADOW ?? "false").toLowerCase() !== "false",
@@ -1533,6 +1556,10 @@ export function loadConfig(env: Env): RuntimeConfig {
         reliefDailyBudgetUsdc: budget,
         maxSweepsPerCron: sweeps,
         backfill: (env.ESTATE_RELIEF_BACKFILL ?? "true").toLowerCase() === "true",
+        levyCeilingUsdc: levyCeiling,
+        levyChunkUsdc: levyChunk,
+        levyMaxLegsPerCron: levyLegs,
+        reliefFloorUsdc: reliefFloor,
       };
     })(),
 

@@ -643,6 +643,12 @@ export interface EconomyConfig {
     reliefDailyBudgetUsdc: number; // max USDC disbursed from escrow per UTC day (a ceiling BELOW the spend caps)
     maxSweepsPerCron: number;     // estate→escrow sweeps attempted per cron (wall-clock guard, like flush budget)
     backfill?: boolean;           // default FALSE (undefined ⇒ inert) — one-time retroactive sweep of the CURRENTLY-orphaned this.dead set into the queue; latches once, guard-protected (a reclaimed id is never swept)
+    // #143b LIVING WEALTH LEVY (all OPTIONAL ⇒ an existing estateRelief build without them is byte-for-byte today:
+    // levyCeilingUsdc undefined/0 disables the levy; reliefFloorUsdc undefined/0 leaves relief uncapped-per-chunk).
+    levyCeilingUsdc?: number;     // USDC a living wallet may keep; the LIVE on-chain excess is one-time-swept to escrow (0/undefined ⇒ levy inert)
+    levyChunkUsdc?: number;       // max USDC per living→escrow leg (further clamped by ECONOMY_MAX_DEAL)
+    levyMaxLegsPerCron?: number;  // living→escrow legs attempted per cron (wall-clock guard)
+    reliefFloorUsdc?: number;     // escrow→poor tops each recipient only up to this mirror balance (0/undefined ⇒ no floor cap)
   };
   // --- R5 FIX A (ONCHAIN BALANCE GATE): OPTIONAL — absent/false ⇒ queueNet never consults on-chain balances,
   //     byte-for-byte today (every neuron-picked trade is folded into pendingNets). When armed, each cron opens
@@ -783,7 +789,7 @@ const HOUSE_MEMBERS_CAP = 200;           // roster cap per house (a house is bou
 const HOUSE_TITHE = 0.02;                // 2% of a member's settled income flows to the common treasury
 const GRAVE_CAP = 24;                    // epitaph ring size (newest first)
 const ESTATE_QUEUE_CAP = 64;             // #143: orphaned wallets awaiting an on-chain estate→escrow sweep (bounded FIFO)
-const RELIEE_LIMIT_PER_CRON = 4;         // #143: poorest living wallets a single relief drip pass may feed (bounded)
+const RELIEE_LIMIT_PER_CRON = 16;        // #143/#143b: poorest living wallets a single relief drip pass may feed (bounded; 16 lets the one-time equalization complete in a few crons)
 const CHILD_CAP = 24;                    // children remembered per fly for inheritance (oldest 24 by hatch order)
 const OLD_AGE_DEFAULT = 150000;          // sub-ticks ≈ 5.8 days at ~1/s before the eldest may be buried
 const PENURY_GRACE_DEFAULT = 20000;      // silence on an empty wallet before penury claims it (~1.9h)
@@ -883,6 +889,18 @@ export class AgentEconomy {
   private estateSweptAtomic = "0";
   private reliefPaidCount = 0;
   private reliefPaidAtomic = "0";
+  /**
+   * #143b LIVING LEVY: the one-time equalization backlog — ids of LIVING wallets snapshotted (once, on the first
+   * armed cron) whose LIVE on-chain USDC exceeds levyCeilingUsdc; drained to the ceiling into escrow. Written to
+   * serialize() ONLY when the layer is armed. The levy NEVER re-taxes: after the latch it drains this fixed backlog
+   * and a wallet re-queued only until it reaches the ceiling, so a fly that re-earns wealth later is left alone.
+   */
+  private levyQueue: number[] = [];
+  /** #143b: one-time latch — true once the living-whale snapshot has been captured (never re-scans ⇒ no churn). */
+  private levyRan = false;
+  /** #143b: lifetime counters exposed at /economy (observe-only; never hashed, never in stateDigest). */
+  private levySweptCount = 0;
+  private levySweptAtomic = "0";
   /** #123 equity-tilt rank cache: recomputed once per tick, cleared on step() entry. Runtime-only, never persisted. */
   private eqRankTick = -1;
   private eqRanks: Float64Array | null = null;
@@ -1676,6 +1694,101 @@ export class AgentEconomy {
   }
 
   /**
+   * #143b LIVING WEALTH LEVY (cron, serialized after the estate sweep, before disburse). A ONE-TIME owner-directed
+   * equalization: on the first armed cron it latches a snapshot of every LIVING wallet whose LIVE on-chain USDC is
+   * above levyCeilingUsdc, then over subsequent crons drains each whale down to that ceiling into the SAME escrow
+   * purse used by #143 (dead→escrow→poor), via treasuryTransfer legs signed by the whale's own HD key. The payer's
+   * live balance is re-read every leg (over-draw impossible) and each leg is clamped to min(chunk, per-deal cap,
+   * excess); on a mined receipt the whale's MIRROR only ever FALLS by that inflow-out (mirror ≤ chain still holds),
+   * escrow rises. It NEVER re-taxes: after the latch only this fixed backlog drains, so a fly that re-earns wealth
+   * later is left alone and the emergent economy resumes. Inert unless estateReliefOn() AND real spend AND ceiling>0.
+   */
+  async runLivingLevy(tickIndex: number): Promise<{ levied: number; leviedAtomic: string; remaining: number }> {
+    const res = { levied: 0, leviedAtomic: "0" };
+    const done = { ...res, remaining: this.levyQueue.length };
+    if (!this.estateReliefOn() || !this.cfg.realSpendEnabled) return done;   // OFF/sim/unwired/kill ⇒ byte-for-byte no-op
+    const er = this.cfg.estateRelief;
+    const ceiling = er?.levyCeilingUsdc ?? 0;
+    if (!(ceiling > 0)) return done;                                          // ceiling<=0 ⇒ levy disabled
+    const transfer = this.facilitator.treasuryTransfer;
+    const readBalances = this.facilitator.readBalances;
+    if (typeof transfer !== "function" || typeof readBalances !== "function") return done;
+    const ceilingAtomic = BigInt(usdcToAtomic(ceiling));
+    const escrow = this.escrowAddress as string;
+
+    // ONE-TIME latch: snapshot the current living whales (mirror above the ceiling). Never re-scanned after this.
+    if (!this.levyRan) {
+      this.levyRan = true;
+      this.levyQueue = this.agents
+        .filter((a) => !this.dead.has(a.id) && BigInt(a.balance) > ceilingAtomic && a.address.toLowerCase() !== escrow.toLowerCase())
+        .map((a) => a.id);
+      console.log(`[DO] living-levy latched: ${this.levyQueue.length} living wallet(s) queued to drain to ${ceiling} USDC`);
+    }
+    if (this.levyQueue.length === 0) return { levied: 0, leviedAtomic: "0", remaining: 0 };
+
+    const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
+    const chunk0 = BigInt(usdcToAtomic(er!.levyChunkUsdc ?? 0));
+    const cap = Math.max(1, Math.floor(er!.levyMaxLegsPerCron ?? 16));
+    let bals: Map<string, bigint>;
+    try {
+      const addrs = this.levyQueue.map((id) => this.addressOf(id)).filter((x) => !!x);
+      bals = await readBalances.call(this.facilitator, addrs);
+    } catch { return { levied: 0, leviedAtomic: "0", remaining: this.levyQueue.length }; }   // RPC error ⇒ fail-open, retry next cron
+
+    const deadline = Date.now() + 15_000;
+    const stillQueued: number[] = [];
+    let legs = 0;
+    for (const id of this.levyQueue) {
+      if (legs >= cap || Date.now() > deadline) { stillQueued.push(id); continue; }   // defer the rest, no churn
+      if (this.dead.has(id)) continue;                                          // died since snapshot ⇒ the estate lane owns it now
+      const idx = this.indexOfId.get(id);
+      if (idx === undefined) continue;
+      const agent = this.agents[idx];
+      const addr = this.addressOf(id);
+      const bal = bals.get(addr.toLowerCase());
+      if (bal === undefined) { stillQueued.push(id); continue; }               // multicall leg failed ⇒ fail-open, retry
+      if (bal <= ceilingAtomic) {                                               // at/below ceiling on-chain ⇒ done forever
+        if (BigInt(agent.balance) > bal) agent.balance = bal.toString();        // pull mirror down to chain if it drifted high
+        continue;
+      }
+      let value = bal - ceilingAtomic;
+      if (chunk0 > 0n && value > chunk0) value = chunk0;
+      if (maxDeal > 0n && value > maxDeal) value = maxDeal;
+      if (value <= 0n) { stillQueued.push(id); continue; }
+      const amountStr = value.toString();
+      let receipt;
+      try {
+        receipt = await transfer.call(this.facilitator, {
+          payerAddress: addr, payeeAddress: escrow, valueAtomic: amountStr, network: this.cfg.network,
+          shadow: er!.shadow !== false,
+        });
+      } catch { stillQueued.push(id); continue; }                               // transient ⇒ retry next cron
+      if (receipt.shadow) {
+        console.log(`[DO] living-levy shadow: #${id} ${amountStr} atomic → escrow (dry-run)`);
+        stillQueued.push(id); legs++; break;                                     // a dry-run proved the leg; stop the lane
+      }
+      if (!receipt.success) {
+        console.warn(`[DO] living-levy #${id} failed: ${receipt.invalidReason ?? "unknown"} (skipped this cron)`);
+        stillQueued.push(id); continue;                                          // durable/transient: keep queued, live read guards re-drain
+      }
+      // MINED: real USDC moved whale → escrow. Mirror FALLS by exactly that (never below the live chain value).
+      const nb = BigInt(agent.balance) - BigInt(amountStr);
+      agent.balance = (nb > 0n ? nb : 0n).toString();
+      this.escrowPoolAtomic = addAtomic(this.escrowPoolAtomic, amountStr);
+      this.levySweptAtomic = addAtomic(this.levySweptAtomic, amountStr);
+      this.levySweptCount++;
+      res.levied++;
+      res.leviedAtomic = addAtomic(res.leviedAtomic, amountStr);
+      legs++;
+      console.log(`[DO] living-levy: swept #${id} ${amountStr} atomic → escrow tx=${receipt.txHash.slice(0, 10)}`);
+      stillQueued.push(id);                                                      // keep draining toward the ceiling
+    }
+    this.levyQueue = stillQueued;
+    void tickIndex;
+    return { levied: res.levied, leviedAtomic: res.leviedAtomic, remaining: this.levyQueue.length };
+  }
+
+  /**
    * #143 RETROACTIVE BACKFILL (cron, before the estate sweep). A ONE-TIME pass that recovers the orphaned wallets
    * that died BEFORE the layer was armed: on the first armed cron it snapshots every id CURRENTLY in this.dead
    * (a genuine orphan — buried, not yet reclaimed) into a bounded backlog, then feeds pendingEstates as the queue
@@ -1739,13 +1852,23 @@ export class AgentEconomy {
 
     const maxDeal = BigInt(usdcToAtomic(this.cfg.maxDealUsdc));
     const chunk = BigInt(usdcToAtomic(er.reliefChunkUsdc));
+    // #143b floor target: relief tops each recipient only UP TO reliefFloorUsdc. The poor list is ascending, so the
+    // first wallet already at/above the floor means every later one is too ⇒ the pass can stop. floor<=0 ⇒ the old
+    // uncapped-each-chunk behavior, byte-for-byte.
+    const floorAtomic = (er.reliefFloorUsdc ?? 0) > 0 ? BigInt(usdcToAtomic(er.reliefFloorUsdc ?? 0)) : 0n;
     const poor = this.poorestLiving(RELIEE_LIMIT_PER_CRON);
     const deadline = Date.now() + 15_000;
     for (const agent of poor) {
       if (Date.now() > deadline) break;
       if (agent.address.toLowerCase() === escrow.toLowerCase()) continue;
+      if (floorAtomic > 0n && BigInt(agent.balance) >= floorAtomic) break;      // this and all later wallets are at/above floor
       let value = chunk > 0n && escrowBal > chunk ? chunk : escrowBal;
       if (maxDeal > 0n && value > maxDeal) value = maxDeal;
+      if (floorAtomic > 0n) {                                                   // never overshoot the floor for this recipient
+        const roomToFloor = floorAtomic - BigInt(agent.balance);
+        if (roomToFloor <= 0n) break;
+        if (value > roomToFloor) value = roomToFloor;
+      }
       if (budget > 0n) {
         const room = budget - BigInt(this.reliefToday.atomic);
         if (room <= 0n) break;
@@ -1795,6 +1918,8 @@ export class AgentEconomy {
     sweptCount: number; sweptAtomic: string; paidCount: number; paidAtomic: string; reliefTodayAtomic: string;
     shadow: boolean;
     backfillRan: boolean; backfillRemaining: number;
+    levyRan: boolean; levyRemaining: number; levySweptCount: number; levySweptAtomic: string;
+    levyCeilingUsdc: number; reliefFloorUsdc: number;
   } | null {
     if (!this.cfg.estateRelief || this.cfg.estateRelief.enabled !== true) return null;
     return {
@@ -1808,6 +1933,12 @@ export class AgentEconomy {
       shadow: this.cfg.estateRelief.shadow !== false,
       backfillRan: this.estateBackfillRan,
       backfillRemaining: this.estateBackfill.length,
+      levyRan: this.levyRan,
+      levyRemaining: this.levyQueue.length,
+      levySweptCount: this.levySweptCount,
+      levySweptAtomic: this.levySweptAtomic,
+      levyCeilingUsdc: this.cfg.estateRelief.levyCeilingUsdc ?? 0,
+      reliefFloorUsdc: this.cfg.estateRelief.reliefFloorUsdc ?? 0,
     };
   }
 
@@ -5079,6 +5210,10 @@ export class AgentEconomy {
         reliefPaidCount: this.reliefPaidCount,
         reliefPaidAtomic: this.reliefPaidAtomic,
         reliefToday: this.reliefToday,
+        levyQueue: this.levyQueue,
+        levyRan: this.levyRan,
+        levySweptCount: this.levySweptCount,
+        levySweptAtomic: this.levySweptAtomic,
       } : {}),
     });
   }
@@ -5123,6 +5258,12 @@ export class AgentEconomy {
     this.reliefToday = p.reliefToday && typeof p.reliefToday.day === "string" && /^\d+$/.test(String(p.reliefToday.atomic ?? ""))
       ? { day: p.reliefToday.day, atomic: String(p.reliefToday.atomic) }
       : { day: "", atomic: "0" };
+    // #143b LIVING LEVY: an older/absent payload ⇒ empty backlog + un-latched + zero counters (KEY_VERSION stays v1).
+    // The latch survives a DO eviction so the one-time equalization NEVER re-taxes a re-earned wallet.
+    this.levyQueue = Array.isArray(p.levyQueue) ? p.levyQueue.filter((x: unknown) => Number.isInteger(x)) : [];
+    this.levyRan = p.levyRan === true;
+    this.levySweptCount = Number.isInteger(p.levySweptCount) && p.levySweptCount >= 0 ? p.levySweptCount : 0;
+    this.levySweptAtomic = /^\d+$/.test(String(p.levySweptAtomic ?? "")) ? String(p.levySweptAtomic) : "0";
     this.recent = Array.isArray(p.recent) ? p.recent : [];
     this.agents = Array.isArray(p.agents) ? p.agents : [];
     this.indexOfId = new Map();

@@ -876,6 +876,12 @@ export class FlyStateDO {
         reliefDailyBudgetUsdc: this.cfg.estateRelief.reliefDailyBudgetUsdc,
         maxSweepsPerCron: this.cfg.estateRelief.maxSweepsPerCron,
         backfill: this.cfg.estateRelief.backfill,
+        // #143b LIVING WEALTH LEVY: forward the four code-defaults too, else the running Economy sees the
+        // optional fields as undefined ⇒ ceiling<=0 ⇒ runLivingLevy is a byte-for-byte no-op (fail-safe: no money moves).
+        levyCeilingUsdc: this.cfg.estateRelief.levyCeilingUsdc,
+        levyChunkUsdc: this.cfg.estateRelief.levyChunkUsdc,
+        levyMaxLegsPerCron: this.cfg.estateRelief.levyMaxLegsPerCron,
+        reliefFloorUsdc: this.cfg.estateRelief.reliefFloorUsdc,
       },
     };
   }
@@ -4200,6 +4206,8 @@ export class FlyStateDO {
         if (bf.captured > 0 || bf.remaining > 0) console.log(`[DO] estate-relief backfill: captured ${bf.captured}, ${bf.remaining} still queued for recovery`);
         const swept = await economy.sweepEstatesToEscrow(swarm.getTickIndex());
         if (swept.swept > 0) console.log(`[DO] estate-relief: swept ${swept.swept} estate(s) (${swept.sweptAtomic} atomic) → escrow`);
+        const levy = await economy.runLivingLevy(swarm.getTickIndex());
+        if (levy.levied > 0 || levy.remaining > 0) console.log(`[DO] living-levy: swept ${levy.levied} leg(s) (${levy.leviedAtomic} atomic) → escrow, ${levy.remaining} whale(s) still draining`);
         const given = await economy.disburseRelief();
         if (given.disbursed > 0) console.log(`[DO] estate-relief: dripped ${given.disbursed} relief leg(s) (${given.disbursedAtomic} atomic) → poorest living`);
       } catch (e) {

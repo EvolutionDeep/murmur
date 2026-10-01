@@ -75,6 +75,11 @@ const RELIEF = (over: Partial<NonNullable<EconomyConfig["estateRelief"]>> = {}) 
   reliefChunkUsdc: 100,
   reliefDailyBudgetUsdc: 1000,
   maxSweepsPerCron: 16,
+  // #143b defaults keep every pre-existing group byte-for-byte: levy inert (ceiling 0), relief uncapped (floor 0).
+  levyCeilingUsdc: 0,
+  levyChunkUsdc: 100,
+  levyMaxLegsPerCron: 16,
+  reliefFloorUsdc: 0,
   ...over,
 });
 
@@ -464,5 +469,174 @@ test("BF6: the backfill latch + queue survive a serialize→restore round-trip (
   const r = econ2.runEstateBackfill();
   assert.equal(r.captured, 0, "restored + latched ⇒ the retroactive pass never re-captures");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// #143b LEVY + FLOOR GROUP — a one-time living-wealth equalization (whale→escrow→poorest, mirror only falls,
+// relief tops only to a floor). Backed by a STATEFUL on-chain mock so a mined leg actually MOVES balance, which
+// is the only way to prove the levy reaches the ceiling and dequeues forever, and that relief never overshoots.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A stateful on-chain facilitator: a successful treasuryTransfer debits the payer and credits the payee. */
+function chainMock(seed: Record<string, bigint>) {
+  const state = new Map<string, bigint>();
+  for (const [k, v] of Object.entries(seed)) state.set(k.toLowerCase(), v);
+  const log: TransferCall[] = [];
+  const fac = {
+    mode: "onchain" as const,
+    asset: "0xMockUSDCAddress0000000000000000000000",
+    verify: async (): Promise<VerifyResponse> => ({ valid: true }),
+    settle: async (): Promise<SettleResponse> => ({ success: true, network: "arc", txHash: "0x" }),
+    readBalances: async (addresses: string[]): Promise<Map<string, bigint>> => {
+      const m = new Map<string, bigint>();
+      for (const a of addresses) m.set(a.toLowerCase(), state.get(a.toLowerCase()) ?? 0n);
+      return m;
+    },
+    treasuryTransfer: async (a: { payerAddress: string; payeeAddress: string; valueAtomic: string; network: string; shadow?: boolean }): Promise<SettleResponse> => {
+      const p = a.payerAddress.toLowerCase();
+      const to = a.payeeAddress.toLowerCase();
+      const v = BigInt(a.valueAtomic);
+      log.push({ payer: a.payerAddress, payee: a.payeeAddress, value: a.valueAtomic, shadow: a.shadow });
+      if (a.shadow) return { success: true, network: a.network, txHash: "0x", simulated: false, shadow: true };
+      const pb = state.get(p) ?? 0n;
+      if (pb < v) return { success: false, network: a.network, txHash: "", invalidReason: "insufficient on-chain" };
+      state.set(p, pb - v);
+      state.set(to, (state.get(to) ?? 0n) + v);
+      return { success: true, network: a.network, txHash: "0x" + "ee".repeat(32) };
+    },
+  };
+  return { fac: fac as unknown as Facilitator, log, state };
+}
+
+function levyEcon(seed: Record<string, bigint>, reliefOver: Parameters<typeof RELIEF>[0] = {}, cfgOver: Partial<EconomyConfig> = {}) {
+  const { fac, log, state } = chainMock(seed);
+  const econ = new AgentEconomy(onchainCfg({ estateRelief: RELIEF(reliefOver), ...cfgOver }), undefined,
+    { facilitator: fac, escrowAddress: ESCRW });
+  return { econ, log, state };
+}
+
+/** Force the mirror balances the levy/floor snapshot will see (the cron keeps mirror == chain). */
+function setBalances(econ: AgentEconomy, perId: (id: number) => number) {
+  const agents = (econ as any).agents as Array<{ id: number; balance: string }>;
+  for (const a of agents) a.balance = String(usdcToAtomic(perId(a.id)));
+}
+
+test("LEVY1: the one-time latch drains a LIVING whale to the ceiling into escrow; the mirror only FALLS to chain", async () => {
+  const whale = 3;
+  const waddr = AgentEconomy.addressOf(42, whale);
+  const { econ, log, state } = levyEcon({ [waddr]: BigInt(usdcToAtomic(3)) },
+    { levyCeilingUsdc: 1, levyChunkUsdc: 10, levyMaxLegsPerCron: 16 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === whale ? 3 : 0.5));                 // only the whale is above the ceiling
+  const res = await econ.runLivingLevy(2);
+  assert.equal(res.levied, 1, "one whale drained");
+  assert.equal(res.leviedAtomic, String(BigInt(usdcToAtomic(2))), "swept exactly the excess above the ceiling (3 − 1)");
+  const agents = (econ as any).agents as Array<{ id: number; balance: string }>;
+  const wa = agents.find((a) => a.id === whale)!;
+  assert.equal(BigInt(wa.balance), BigInt(usdcToAtomic(1)), "whale mirror fell to the ceiling, never below the live chain value");
+  assert.equal(state.get(waddr.toLowerCase()), BigInt(usdcToAtomic(1)), "the whale is now AT the ceiling on-chain");
+  assert.equal(state.get(ESCRW.toLowerCase()), BigInt(usdcToAtomic(2)), "escrow physically holds the swept excess");
+  assert.equal((econ as any).escrowPoolAtomic, String(BigInt(usdcToAtomic(2))), "escrow scoreboard rose by the swept amount");
+  assert.equal(log.length, 1);
+  assert.equal(log[0].payer.toLowerCase(), waddr.toLowerCase(), "signed FROM the whale's own HD wallet");
+  assert.equal(log[0].payee.toLowerCase(), ESCRW.toLowerCase(), "paid TO escrow");
+  // Second cron: the whale is now at the ceiling ⇒ dequeued forever, no further leg.
+  const res2 = await econ.runLivingLevy(3);
+  assert.equal(res2.levied, 0, "at the ceiling ⇒ nothing more to take");
+  assert.equal(res2.remaining, 0, "the whale left the backlog permanently");
+  assert.equal(log.length, 1, "no second leg");
+});
+
+test("LEVY2: ceiling is a per-leg CHUNK ceiling too — a huge whale drains 0.05/cron, never more than the leg cap", async () => {
+  const whale = 5;
+  const waddr = AgentEconomy.addressOf(42, whale);
+  const { econ, log } = levyEcon({ [waddr]: BigInt(usdcToAtomic(100)) },
+    { levyCeilingUsdc: 1, levyChunkUsdc: 0.05, levyMaxLegsPerCron: 16 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === whale ? 100 : 0.5));
+  const res = await econ.runLivingLevy(2);
+  assert.equal(res.levied, 1);
+  assert.equal(BigInt(log[0].value), BigInt(usdcToAtomic(0.05)), "one leg = one chunk, no matter how deep the excess");
+  assert.equal(res.remaining, 1, "the whale is still above the ceiling ⇒ keeps draining next cron");
+});
+
+test("LEVY3: fail-OPEN on a readBalances throw — nothing moves, the whale stays queued, no crash", async () => {
+  const whale = 3;
+  const transferLog: TransferCall[] = [];
+  const econ = new AgentEconomy(
+    onchainCfg({ estateRelief: RELIEF({ levyCeilingUsdc: 1, levyChunkUsdc: 10 }) }),
+    undefined,
+    { facilitator: mockFac({ readThrows: true, transferLog }), escrowAddress: ESCRW });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === whale ? 3 : 0.5));
+  const res = await econ.runLivingLevy(2);
+  assert.equal(res.levied, 0, "an RPC error must move no money");
+  assert.equal(transferLog.length, 0);
+  assert.equal(res.remaining, 1, "the whale stays queued for the next cron (latched, not lost)");
+  assert.equal((econ as any).levyRan, true, "the latch happened even though the read threw ⇒ it will not re-scan a new whale");
+});
+
+test("LEVY4: NEVER re-taxes — a wallet that re-earns wealth above the ceiling AFTER the latch is left alone", async () => {
+  const whale = 3;
+  const late = 7;
+  const waddr = AgentEconomy.addressOf(42, whale);
+  const lateAddr = AgentEconomy.addressOf(42, late);
+  const { econ, log } = levyEcon({ [waddr]: BigInt(usdcToAtomic(1.5)) },
+    { levyCeilingUsdc: 1, levyChunkUsdc: 10, levyMaxLegsPerCron: 16 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === whale ? 1.5 : 0.5));
+  await econ.runLivingLevy(2);                                       // latches on the whale (only whale above ceiling)
+  // Simulate the whale falling to the ceiling and a DIFFERENT fly re-earning big wealth afterwards.
+  setBalances(econ, (id) => (id === late ? 50 : 0.5));              // id 'late' now far above the ceiling
+  const res = await econ.runLivingLevy(3);                          // latched ⇒ 'late' was never snapshotted
+  assert.equal(res.levied, 0, "the latched pass takes nothing new");
+  assert.ok(!log.some((t) => t.payer.toLowerCase() === lateAddr.toLowerCase()), "a re-earned wallet is NEVER swept");
+  const agents = (econ as any).agents as Array<{ id: number; balance: string }>;
+  assert.equal(BigInt(agents.find((a) => a.id === late)!.balance), BigInt(usdcToAtomic(50)), "the re-earned mirror is untouched");
+});
+
+test("FLOOR1: relief tops each recipient ONLY up to the floor (never overshoots), mirror rises by exactly the inflow", async () => {
+  const poorId = 0;
+  const poorAddr = AgentEconomy.addressOf(42, poorId);
+  const { econ, log, state } = levyEcon({ [ESCRW]: BigInt(usdcToAtomic(2)), [poorAddr]: BigInt(usdcToAtomic(0.1)) },
+    { reliefFloorUsdc: 0.5, reliefChunkUsdc: 100, reliefDailyBudgetUsdc: 1000, reliefEveryNCrons: 1 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === poorId ? 0.1 : 100));           // one clear poorest, everyone else rich
+  const res = await econ.disburseRelief();
+  assert.ok(res.disbursed >= 1, "the drip fired");
+  assert.equal(BigInt(log[0].value), BigInt(usdcToAtomic(0.4)), "one leg = room-to-floor (0.5 − 0.1), NOT the huge chunk");
+  const agents = (econ as any).agents as Array<{ id: number; balance: string }>;
+  assert.equal(BigInt(agents.find((a) => a.id === poorId)!.balance), BigInt(usdcToAtomic(0.5)), "recipient mirror lands EXACTLY on the floor");
+  assert.equal(state.get(poorAddr.toLowerCase()), BigInt(usdcToAtomic(0.5)), "the on-chain inflow equals the mirror rise (mirror ≤ chain holds)");
+  assert.equal(log.length, 1, "the next poorest is already at/above the floor ⇒ the pass stops");
+});
+
+test("FLOOR2: floor<=0 keeps the OLD uncapped-per-chunk relief byte-for-byte (no floor gate when disabled)", async () => {
+  // RELIEF default reliefFloorUsdc=0; a huge chunk must give the WHOLE escrow to the poorest (pre-#143b behavior).
+  const poorId = 0;
+  const { econ, log } = levyEcon({ [ESCRW]: BigInt(usdcToAtomic(2)) },
+    { reliefFloorUsdc: 0, reliefChunkUsdc: 100, reliefDailyBudgetUsdc: 1000, reliefEveryNCrons: 1 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === poorId ? 0.1 : 100));
+  await econ.disburseRelief();
+  assert.equal(BigInt(log[0].value), BigInt(usdcToAtomic(2)), "no floor ⇒ the full escrow goes out in one uncapped leg");
+});
+
+test("LEVY5: the levy latch + backlog + counters survive a serialize→restore round-trip (a DO eviction never re-taxes or loses the drain)", async () => {
+  const whale = 3;
+  const waddr = AgentEconomy.addressOf(42, whale);
+  const { econ } = levyEcon({ [waddr]: BigInt(usdcToAtomic(10)) },
+    { levyCeilingUsdc: 1, levyChunkUsdc: 0.05, levyMaxLegsPerCron: 16 });
+  await seedAgents(econ);
+  setBalances(econ, (id) => (id === whale ? 10 : 0.5));
+  await econ.runLivingLevy(2);                                       // latches + one chunk
+  const blob = econ.serialize();
+  const econ2 = new AgentEconomy(onchainCfg({ estateRelief: RELIEF({ levyCeilingUsdc: 1, levyChunkUsdc: 0.05 }) }), blob,
+    { facilitator: mockFac({ balances: () => 0n }), escrowAddress: ESCRW });
+  assert.equal((econ2 as any).levyRan, true, "the one-time latch persists across eviction ⇒ never re-snapshots");
+  assert.equal((econ2 as any).levySweptCount, 1, "the lifetime levy counter survives");
+  assert.ok(BigInt((econ2 as any).levySweptAtomic) > 0n, "the swept total survives");
+  assert.equal((econ2 as any).levyQueue.includes(whale), true, "the mid-drain whale stays queued after eviction");
+});
+
 
 
