@@ -13,6 +13,6 @@
     "lint": "npm run check"
   },
   "devDependencies": {
-    "wrangler": "^4.133.0"
+    "wrangler": "^4.143.0"
   }
 }
