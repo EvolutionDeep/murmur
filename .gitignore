@@ -9,6 +9,8 @@ node_modules/
 *.key
 # Circle API key staging file for the facilitator pre-flight probe — NEVER commit
 .circle-key.local
+# TypeSafe Jev API key staging file for the System One pre-flight probe — NEVER commit
+.jev-key.local
 
 # Local one-off ops scripts (deploy preflight/verify/wipe) + generated registry address
 packages/trader-worker/scripts/_*.mjs
