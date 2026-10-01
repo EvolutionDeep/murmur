@@ -240,6 +240,20 @@ const ALARM_WATCHDOG_MS = 90_000;
  *  staying clear of a healthy warm cron (bench ~21–33s) so it can never force-release mid-legit-tick (which
  *  would let the next cron double-drive the same brains). */
 const CRON_WEDGE_MS = 180_000;
+/** P0 read-sample hard ceiling (production freeze): the two step-1 READ-ONLY chain samples
+ *  (sampleArcActivity's 64×getBlock + driveBourse's getLogs) have no bounded timeout of their own, so a
+ *  flaky/slow RPC could sit on them indefinitely and the whole /tick would hit the 90s scheduled abort
+ *  BEFORE stepBatch — freezing the world every cron while the P2 heartbeat kept stamping lastCron (the exact
+ *  ~2.4h freeze we caught: tick pinned, settlements flat, yet lastCron fresh). This deadline guarantees
+ *  stepBatch is always reached: on a miss we degrade exactly as an arc/bourse sample failure already does
+ *  (hold the previous temperature, no coin reading this cron). Read-only, moves no money, and is never hit
+ *  on a healthy RPC (a normal sample completes in ~1–2s). */
+const READ_SAMPLE_DEADLINE_MS = 20_000;
+/** Companion ceiling on the PoCA cron ENTRY gate: ensureEpoch can broadcast an epoch open/seal on-chain with
+ *  no timeout of its own, starving stepBatch the same way the chain sample did. Bound it so the entry gate can
+ *  never block the tick; PoCA is idempotent and re-opens the epoch on the next cron, so a skipped beat costs
+ *  only a one-cron digest-append delay (the exit digest for THIS cron still runs under its own best-effort). */
+const POCA_ENTRY_DEADLINE_MS = 15_000;
 const MAX_STIMULI = 200;
 /** The historian's monotonic trackers + the recent-chronicle ring buffer, both persisted in DO storage.
  *  v2: the entry shape gained the hash-chain fields (tokens/hash/prevHash).
@@ -3810,24 +3824,41 @@ export class FlyStateDO {
     //    bourse failure only means no coin reading this cron (this.bourseSignals stays null).
     let market: MarketState | null = null;
     this.bourseSignals = null;
-    const [arcR, bourseR] = await Promise.allSettled([
+    // P0 (production freeze): cap the whole SAMPLE phase to READ_SAMPLE_DEADLINE_MS so a stuck RPC can never
+    // starve stepBatch. Each leg keeps its own allSettled guard + logging; if the deadline wins first, both
+    // values stay null and we degrade exactly as an arc/bourse failure would (hold prev temperature, no coin
+    // reading). Read-only, moves no money, and never fires on a healthy RPC. The results ride a holder object
+    // (not a `let = null`) so TS keeps the declared union type across the deferred .then() write.
+    const sampleOut: {
+      arc: Awaited<ReturnType<typeof sampleArcActivity>> | null;
+      bourse: BourseSignals | null;
+    } = { arc: null, bourse: null };
+    const sampleLegs = Promise.allSettled([
       sampleArcActivity(this.cfg),
       this.cfg.bourse.enabled ? this.driveBourse() : Promise.resolve(null),
+    ]).then(([arcR, bourseR]) => {
+      if (arcR.status === "fulfilled") sampleOut.arc = arcR.value;
+      else console.warn("[DO] arc sample failed, holding last temperature:", (arcR.reason as Error).message);
+      if (bourseR.status === "fulfilled") sampleOut.bourse = bourseR.value ?? null;
+      else console.warn("[DO] bourse sample failed (non-fatal):", (bourseR.reason as Error).message);
+    });
+    const sampleBeat = await Promise.race([
+      sampleLegs.then(() => true),
+      new Promise<false>((res) => setTimeout(() => res(false), READ_SAMPLE_DEADLINE_MS)),
     ]);
-    if (arcR.status === "fulfilled") {
+    if (!sampleBeat) {
+      console.warn(
+        `[DO] step-1 chain sample exceeded the ${READ_SAMPLE_DEADLINE_MS}ms read deadline — holding last temperature / no bourse so stepBatch is never starved (non-fatal)`,
+      );
+    }
+    if (sampleOut.arc != null) {
       try {
-        market = meter.update(arcR.value);
+        market = meter.update(sampleOut.arc);
       } catch (e) {
         console.warn("[DO] meter update failed, holding last temperature:", (e as Error).message);
       }
-    } else {
-      console.warn("[DO] arc sample failed, holding last temperature:", (arcR.reason as Error).message);
     }
-    if (bourseR.status === "fulfilled") {
-      this.bourseSignals = bourseR.value ?? null;
-    } else {
-      console.warn("[DO] bourse sample failed (non-fatal):", (bourseR.reason as Error).message);
-    }
+    this.bourseSignals = sampleOut.bourse;
 
     const temperature = market?.temperature ?? prevTemp;
     const regime: Regime =
@@ -3948,7 +3979,20 @@ export class FlyStateDO {
     // PoCA — cron ENTRY gate: guarantee an epoch is open under the CURRENT code commitment and log any
     // startup discontinuity (genesis / DO rebuild / code change / committer change / param override) exactly
     // once. Runs before the sub-ticks so a code-change seal precedes this cron's digest. Best-effort.
-    await this.pocaCronEntry(economy);
+    // P0 (production freeze): ensureEpoch can broadcast an epoch open/seal with no timeout of its own, so a
+    // stuck chain call here would starve stepBatch the same way the read sample did. Cap it — PoCA is idempotent
+    // and re-opens the epoch next cron, so a skipped beat only delays a digest append (the exit digest still runs).
+    await Promise.race([
+      this.pocaCronEntry(economy),
+      new Promise<void>((res) =>
+        setTimeout(() => {
+          console.warn(
+            `[DO] pocaCronEntry exceeded ${POCA_ENTRY_DEADLINE_MS}ms — skipping this beat (epoch re-opens next cron, non-fatal)`,
+          );
+          res();
+        }, POCA_ENTRY_DEADLINE_MS),
+      ),
+    ]);
     // CULTURE — the Lamarckian overlay between the brain's decode and every consumer (snapshot,
     // economy, prediction). Null while CULTURE_ENABLED=false ⇒ byte-for-byte today's behaviour.
     const culture = await this.ensureCulture();

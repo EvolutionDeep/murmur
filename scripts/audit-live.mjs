@@ -206,6 +206,32 @@ async function auditOperations(api, args) {
         : FAIL("population", "ops", `liveAgents ${live} > maxLivePopulation ${maxPop}`));
     } else out.push(SKIP("population", "ops", `live=${live}, max=${maxPop} (missing field)`));
   }
+
+  // (6) CHRONICLE FRESHNESS (liveness) — the top /history row is written once per cron, and /history is served
+  //     straight from D1 by the Worker (NEVER a swarm-DO round-trip), so it stays reachable even while the DO is
+  //     wedged. If its timestamp goes stale past the bound while every other read-out still looks "healthy", the
+  //     world has FROZEN but the P2 heartbeat (lastCron, stamped at cron START before any advance) is masking it —
+  //     the exact multi-hour production freeze this auditor previously passed. A stale chronicle is a FAIL. An
+  //     unreachable /history is a SKIP (never a false FAIL). Bound is calibrated to the real ~140–200s cron
+  //     period (cronRunning guard silently SKIPS intermediate beats), so only a genuine stall crosses it.
+  {
+    let hist;
+    try { hist = await getJson(`${api}/history?limit=1`); }
+    catch (e) { out.push(SKIP("chronicle-fresh", "ops", `/history unreachable: ${e.message}`)); }
+    if (hist) {
+      const row = Array.isArray(hist.rows) && hist.rows.length ? hist.rows[0] : null;
+      const ts = row ? Number(row.ts ?? row.createdAt ?? row.time) : NaN;
+      if (!row || !Number.isFinite(ts)) out.push(SKIP("chronicle-fresh", "ops", "no usable /history top-row timestamp"));
+      else {
+        const ageMs = Date.now() - ts;
+        const ageS = Math.round(ageMs / 1000);
+        const boundS = Math.round(args.chronicleMaxAge / 1000);
+        out.push(ageMs <= args.chronicleMaxAge
+          ? PASS("chronicle-fresh", "ops", `latest chronicle tick ${row.tick} is ${ageS}s old ≤ ${boundS}s`)
+          : FAIL("chronicle-fresh", "ops", `chronicle FROZEN: latest tick ${row.tick} is ${ageS}s old > ${boundS}s (heartbeat masking a stalled /tick — the world is not advancing)`));
+      }
+    }
+  }
   return out;
 }
 
@@ -234,7 +260,7 @@ function renderText(report) {
 
 // ------------------------------ CLI ------------------------------
 function parseArgs(argv) {
-  const a = { api: DEFAULT_API, json: false, quiet: false, offline: false, netPendingMax: 20000, successFloor: 0.5 };
+  const a = { api: DEFAULT_API, json: false, quiet: false, offline: false, netPendingMax: 20000, successFloor: 0.5, chronicleMaxAge: 300000 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i]; const next = () => argv[++i];
     switch (k) {
@@ -244,6 +270,7 @@ function parseArgs(argv) {
       case "--offline": a.offline = true; break;
       case "--netpending-max": a.netPendingMax = Number(next()) || 20000; break;
       case "--success-floor": a.successFloor = Number(next()) || 0.5; break;
+      case "--chronicle-max-age": a.chronicleMaxAge = Number(next()) || 300000; break;
       case "-h": case "--help": a.help = true; break;
       default: throw new Error(`unknown argument: ${k}`);
     }
@@ -259,6 +286,7 @@ async function main() {
       "  --offline      check only the committed wrangler.toml bounds (no network)\n" +
       "  --netpending-max N   netPending WARN threshold (default 20000)\n" +
       "  --success-floor F    successRate WARN floor 0..1 (default 0.5)\n" +
+      "  --chronicle-max-age MS   latest /history row age FAIL bound (default 300000)\n" +
       "  --json         machine-readable report\n" +
       "Exit 0 unless a bound/invariant FAILs (WARN/SKIP exit 0).");
     return 0;
