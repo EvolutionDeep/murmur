@@ -1565,3 +1565,40 @@ test("playbook: serialize/restore round-trip preserves entries", async () => {
     JSON.stringify(b.map(s => ({ from: s.fromId, to: s.toId, good: s.good, valid: s.valid }))),
     "restored economy produces identical settlements (playbook state survived the round-trip)");
 });
+
+// LEDGER RECONCILE — applyLifetimeFloor is a monotonic FLOOR off the durable D1 truth: it can only lift the
+// wiped lifetime counters back UP toward the archived peak, never lower them, and it is idempotent. Bookkeeping
+// only: it moves no money and touches no wallet, so it must survive a serialize→restore round-trip verbatim.
+test("applyLifetimeFloor lifts wiped counters to the D1 peak, never lowers them, and is idempotent", () => {
+  const econ = new AgentEconomy(cfg());
+  assert.equal(econ.snapshot().totals.count, 0, "fresh economy starts at zero");
+
+  // The durable pre-reset peak (as archived into D1 ticks.volume_usdc / ticks.settlements).
+  assert.equal(econ.applyLifetimeFloor(254.09993, 148352), true, "a lift from zero reports raised");
+  let t = econ.snapshot().totals;
+  assert.equal(t.count, 148352, "count floored at the durable settlements peak");
+  assert.equal(t.settleOk, 148352, "settleOk floored to match (onchain count==settleOk)");
+  assert.ok(Math.abs(t.volumeUsdc - 254.09993) < 1e-9, "volume floored to the durable USDC peak (exact atomic)");
+
+  // LOWER durable values ⇒ NO change (a floor, not a set): a stale/partial read can never rewind the ledger.
+  assert.equal(econ.applyLifetimeFloor(100, 50), false, "a lower floor is a no-op");
+  t = econ.snapshot().totals;
+  assert.equal(t.count, 148352, "count unchanged by a lower floor");
+  assert.ok(Math.abs(t.volumeUsdc - 254.09993) < 1e-9, "volume unchanged by a lower floor");
+
+  // IDENTICAL peak again ⇒ idempotent (no double-count on a retried boot).
+  assert.equal(econ.applyLifetimeFloor(254.09993, 148352), false, "re-applying the same peak is a no-op");
+
+  // A HIGHER peak ⇒ lifts again (forward progress toward an even larger durable truth).
+  assert.equal(econ.applyLifetimeFloor(300, 200000), true, "a higher peak lifts");
+  assert.equal(econ.snapshot().totals.count, 200000, "count climbed to the newer peak");
+
+  // The lift is real ledger state: it persists through serialize→restore, so the next cron rewrites it durably.
+  const blob = econ.serialize();
+  const restored = new AgentEconomy(cfg(), blob);
+  const rt = restored.snapshot().totals;
+  assert.equal(rt.count, 200000, "restored economy keeps the floored count");
+  assert.equal(rt.settleOk, 200000, "restored economy keeps the floored settleOk");
+  assert.ok(Math.abs(rt.volumeUsdc - 300) < 1e-9, "restored economy keeps the floored volume");
+});
+

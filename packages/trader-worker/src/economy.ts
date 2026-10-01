@@ -4935,6 +4935,32 @@ export class AgentEconomy {
   }
 
   // ---------- persistence ----------
+  /**
+   * LEDGER RECONCILE — raise the lifetime settlement counters to at least the durable D1 truth.
+   *
+   * The DO-persisted economy blob is the live authority, but a partial storage reset once wiped the
+   * MONOTONIC lifetime counters (volumeAtomic / count / settleOk) to 0 while every agent wallet survived —
+   * the true cumulative is never actually lost because each cron archives it into D1 `ticks` as
+   * `volume_usdc` / `settlements`, both running-MAX monotonic snapshots. This applies a FLOOR, never a
+   * decrease: each counter only ever climbs toward the durable peak, so it is idempotent and can never
+   * double-count. `settleFail` has no durable column so it is left as-is — in onchain mode count==settleOk
+   * (both bump only on a mined receipt), so the audit closure `settleOk + settleFail == settleAttempts` still
+   * holds after the lift. BOOKKEEPING READ-OUT ONLY: moves no money, touches no balance/cap/net, is not a
+   * determinism/RNG input, never enters stateDigest/manifestHash, and never changes serialize()/KEY_VERSION.
+   * Returns true when at least one counter was lifted (so the caller can log/observe the reconcile).
+   */
+  applyLifetimeFloor(durableVolumeUsdc: number, durableSettlements: number): boolean {
+    let raised = false;
+    const dv = Number.isFinite(durableVolumeUsdc) && durableVolumeUsdc > 0
+      ? BigInt(usdcToAtomic(durableVolumeUsdc))
+      : 0n;
+    if (dv > BigInt(this.volumeAtomic || "0")) { this.volumeAtomic = dv.toString(); raised = true; }
+    const ds = Number.isInteger(durableSettlements) && durableSettlements > 0 ? durableSettlements : 0;
+    if (ds > this.count) { this.count = ds; raised = true; }
+    if (ds > this.settleOk) { this.settleOk = ds; raised = true; }
+    return raised;
+  }
+
   serialize(): string {
     return JSON.stringify({
       version: KEY_VERSION,

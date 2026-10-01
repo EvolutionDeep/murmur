@@ -885,6 +885,20 @@ export class FlyStateDO {
     // #98 Fix 1: try the sharded manifest first (new format), then fall back to the legacy single key.
     const stored = await this.readEconomyBlob();
     this.economy = this.makeEconomy(stored ?? undefined);
+    // LEDGER RECONCILE: floor the monotonic lifetime counters at the durable D1 truth. A partial storage reset
+    // once zeroed volume/count/settleOk while every wallet survived; the true cumulative is never lost because
+    // each cron archives it into D1 `ticks` (volume_usdc / settlements, running-MAX). Pure bookkeeping — lifts a
+    // counter only UP toward the peak, moves no money, touches no balance/cap/net/digest. Runs at most once per
+    // DO lifetime (this guard) and only when D1 is bound and the table exists; any miss degrades to no-op.
+    const db = this.env.DB;
+    if (db) {
+      try {
+        const agg = await db.prepare(`SELECT MAX(volume_usdc) AS v, MAX(settlements) AS s FROM ticks`).first<{ v: number | null; s: number | null }>();
+        if (agg && this.economy.applyLifetimeFloor(Number(agg.v ?? 0), Number(agg.s ?? 0))) {
+          console.log(`[DO] ledger reconciled to D1 truth: volumeUsdc=${agg.v ?? 0} settlements=${agg.s ?? 0}`);
+        }
+      } catch { /* ticks table absent (first-ever boot) or D1 hiccup ⇒ nothing to reconcile against */ }
+    }
     return this.economy;
   }
 
