@@ -125,6 +125,21 @@ export interface Env {
   JEV_MODEL?: string;                   // default jev-latest.
   JEV_TIMEOUT_MS?: string;              // hard wall-clock budget per call (default 900); expiry ⇒ degrade to null.
 
+  // --- OUTBOUND x402 CLIENT (a fly wallet BUYS an external Arc resource) — the ONE non-supply-conserving path ---
+  //     Every OTHER money movement keeps USDC inside the swarm; paying an EXTERNAL payTo leaks it permanently.
+  //     So this ships DARK + one-shot: ARMED defaults FALSE (a real leg is refused), SHADOW defaults TRUE
+  //     (sign + dry-run, never sends X-PAYMENT), and even when armed a REAL leg fires AT MOST ONCE (a DO latch).
+  //     The allowlist of what we will ever pay (payTo/asset/network/price ceiling) is PINNED IN CODE, not env —
+  //     a hostile 402 can never redirect funds. CODE-DEFAULTS ONLY (the 128 text-binding wall is spent); the
+  //     operator arms it by setting OUTBOUND_X402_ARMED=true, mirroring the PULSE_REFUNDS flip. ECONOMY_REAL_SPEND
+  //     =false is the master kill switch (the orchestration returns before signing). The bought data is read-only
+  //     into /outbound and NEVER feeds the connectome/physics. ---
+  OUTBOUND_X402_ARMED?: string;         // "true" to allow a REAL (non-shadow) outbound leg (absent/anything else ⇒ sign-only dry-run)
+  OUTBOUND_X402_SHADOW?: string;        // "false" to request a real send on the endpoint call; default TRUE = never sends X-PAYMENT
+  OUTBOUND_X402_BUYER?: string;         // HD index of the fly that trades (default "0"); its wallet must hold the price
+  OUTBOUND_X402_DAILY_BUDGET_USDC?: string; // ceiling on PERMANENT outflow per UTC day (default "0.01"), a bound below the money caps
+
+
   // --- On-chain prediction market: agents stake real USDC on the NEXT tick's temperature direction ---
   //     Resolved by the freshly-sampled Arc temperature; payouts are parimutuel and settle through the
   //     SAME netting + EIP-3009 + registry rails as neural trades (no separate money path). ALL of it is
@@ -929,6 +944,22 @@ export interface RuntimeConfig {
     timeoutMs: number;           // per-call wall-clock budget (default 900ms)
   };
 
+  // OUTBOUND x402 CLIENT (see Env.OUTBOUND_X402_*). The ONE path that lets real USDC LEAVE the swarm.
+  // DARK (armed=false) + shadow-by-default + one-shot latch; `endpoints` is a CODE-PINNED allowlist (never
+  // env-editable) so a hostile 402 can't redirect funds. Consumed directly by state.ts orchestration — it is
+  // NOT forwarded through economyCfg (no manual-mapping layer to forget), so the af17030a pitfall does not apply.
+  outboundX402: {
+    armed: boolean;              // master gate for a REAL (non-shadow) leg (default FALSE — refuse)
+    shadow: boolean;             // default TRUE — sign + dry-run, never send X-PAYMENT (zero money)
+    buyerId: number;             // HD index of the fly wallet that pays (default 0)
+    dailyBudgetUsdc: number;     // ceiling on permanent outflow per UTC day (default 0.01)
+    perDealMaxUsdc: number;      // per-leg ceiling (kept ≤ the global ECONOMY_MAX_DEAL anyway)
+    endpoints: {
+      id: string; url: string; network: string; asset: string; payTo: string; maxAmountAtomic: string;
+    }[];                          // the pinned allowlist — the only things we will ever pay, on exact terms
+  };
+
+
   // R5 FIX A (#126): on-chain balance gate in the trade planner. OFF ⇒ queueNet byte-for-byte today (every
   // neuron-picked trade is folded into pendingNets). ON ⇒ each cron reads live balances via ONE multicall and
   // refuses to queue a pair whose debtor cannot cover it on-chain. Read-only, no money, no caps, no digest.
@@ -1574,6 +1605,37 @@ export function loadConfig(env: Env): RuntimeConfig {
       model: (env.JEV_MODEL ?? "").trim() || "jev-latest",
       timeoutMs: clamp(Math.floor(Number(env.JEV_TIMEOUT_MS ?? "900") || 900), 100, 15_000),
     },
+
+    // OUTBOUND x402 CLIENT — the ONE non-supply-conserving path. DARK (armed=false) + shadow-by-default + a
+    // pinned allowlist. Money-path knobs get Number.isFinite guards (bare clamp is NaN-unsafe, see memory).
+    // The endpoint table is CODE-ONLY (never env): the exact payTo/asset/network/price-ceiling we will pay.
+    outboundX402: (() => {
+      const armed = (env.OUTBOUND_X402_ARMED ?? "false").trim().toLowerCase() === "true";
+      const shadow = (env.OUTBOUND_X402_SHADOW ?? "true").trim().toLowerCase() !== "false";
+      const buyerRaw = Math.floor(Number(env.OUTBOUND_X402_BUYER ?? "0"));
+      const buyerId = Number.isFinite(buyerRaw) ? clamp(buyerRaw, 0, 1_000_000) : 0;
+      const budRaw = Number(env.OUTBOUND_X402_DAILY_BUDGET_USDC ?? "0.01");
+      const dailyBudgetUsdc = Number.isFinite(budRaw) ? clamp(budRaw, 0, 1000) : 0.01;
+      return {
+        armed,
+        shadow,
+        buyerId,
+        dailyBudgetUsdc,
+        perDealMaxUsdc: 0.05, // never exceeds the global ECONOMY_MAX_DEAL; the facilitator re-clamps anyway
+        // The pinned allowlist — the ONLY external resource the swarm will ever pay, and only on these terms.
+        // Arc mainnet (chainId 5042), the SAME USDC precompile we settle on, Liquid Agent's broker payTo.
+        endpoints: [
+          {
+            id: "la_btc_5m",
+            url: "https://api.liquidagent.ai/v1/polymarket/btc-5m",
+            network: "eip155:5042",
+            asset: "0x3600000000000000000000000000000000000000",
+            payTo: "0x487b28A4FbbA8Cf46eb6E1d72e6959202Bb75e90",
+            maxAmountAtomic: "4000", // 0.004 USDC ceiling; a higher quoted price is refused before signing
+          },
+        ],
+      };
+    })(),
 
     // R5 Fix A (#126): on-chain balance gate in the trade planner. Fail-closed: only an exact "true" arms it.
     // OFF (default) ⇒ queueNet never reads on-chain balances and is byte-for-byte today's planner.

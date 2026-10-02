@@ -443,6 +443,102 @@ export interface PaymentRequiredBody {
   error?: string;
 }
 
+// ── OUTBOUND x402 CLIENT (the swarm BUYING from an external seller) ─────────────────────────────
+// This is the INVERSE of settleExternal. It is the ONLY path in the whole economy that lets real USDC
+// PERMANENTLY LEAVE the swarm (every internal settlement circulates the same coins and is supply-
+// conserving). Because of that, a hostile seller can try to REDIRECT our money by returning a 402 whose
+// payTo/asset/network/price differ from what we agreed to pay for. The defense is a CODE-PINNED allowlist
+// (see config.ts outboundX402.endpoints) and this pure gate: before signing ANYTHING we require the Arc
+// accept to match the pinned terms EXACTLY (payTo, asset, network) and its price to be ≤ both the pinned
+// ceiling and the facilitator per-deal cap. Any mismatch ⇒ refuse, sign nothing, spend nothing.
+/** One entry of the pinned outbound allowlist: the only external resource we will ever pay, on exact terms. */
+export interface PinnedOutboundEndpoint {
+  id: string;
+  url: string;
+  /** CAIP-2 network we insist on paying on (Arc mainnet = "eip155:5042"). */
+  network: string;
+  /** The exact USDC asset (verifyingContract) we will authorize against. */
+  asset: string;
+  /** The EXACT external recipient address. A 402 offering any other payTo is treated as an attack. */
+  payTo: string;
+  /** Highest atomic-USDC price we will pay for this resource (a ceiling, not the price). */
+  maxAmountAtomic: string;
+}
+
+/** Result of matching a seller's 402 `accepts` against a pinned endpoint (pure, no keys, no network). */
+export interface OutboundQuote {
+  ok: boolean;
+  invalidReason?: string;
+  /** The accepted requirement we will pay, only present when ok. */
+  reqs?: PaymentRequirements;
+}
+
+/**
+ * Pick the accept for `pinned.network` and validate it against the PINNED terms. Never trusts the seller's
+ * own payTo/asset/price: a mismatch is a redirect attempt. Case-insensitive on addresses (EIP-55 checksums
+ * vary between stacks), integer-safe on price. Returns the exact PaymentRequirements to pay ONLY when every
+ * gate clears; otherwise a reason and nothing to sign.
+ */
+export function quoteOutboundArc(
+  body: PaymentRequiredBody | null | undefined,
+  pinned: PinnedOutboundEndpoint,
+  perDealCapAtomic?: string,
+): OutboundQuote {
+  const fail = (invalidReason: string): OutboundQuote => ({ ok: false, invalidReason });
+  const accepts = Array.isArray(body?.accepts) ? body!.accepts : [];
+  if (!accepts.length) return fail("seller returned no accepts[] in the 402");
+  const req = accepts.find((a) => a && a.network === pinned.network && a.scheme === SCHEME_EXACT);
+  if (!req) return fail(`seller offered no ${pinned.network} exact option`);
+  // Address/asset must match the pinned allowlist BYTE-FOR-BYTE (case-insensitive) — never pay a moved payTo.
+  if ((req.payTo ?? "").toLowerCase() !== pinned.payTo.toLowerCase()) {
+    return fail(`payTo mismatch: seller offered ${req.payTo}, pinned ${pinned.payTo} (possible redirect)`);
+  }
+  if ((req.asset ?? "").toLowerCase() !== pinned.asset.toLowerCase()) {
+    return fail(`asset mismatch: seller offered ${req.asset}, pinned ${pinned.asset}`);
+  }
+  const price = req.maxAmountRequired;
+  if (!/^\d+$/.test(String(price))) return fail(`malformed maxAmountRequired ${JSON.stringify(price)}`);
+  if (!lteAtomic(price, pinned.maxAmountAtomic)) {
+    return fail(`price ${price} exceeds pinned ceiling ${pinned.maxAmountAtomic} for ${pinned.id}`);
+  }
+  if (perDealCapAtomic != null && !lteAtomic(price, perDealCapAtomic)) {
+    return fail(`price ${price} exceeds facilitator per-deal cap ${perDealCapAtomic}`);
+  }
+  return { ok: true, reqs: req };
+}
+
+/** What buildClientPayment returns: a signed, ready-to-send canonical x402 payload (or a refusal reason). */
+export interface ClientPaymentResult {
+  ok: boolean;
+  invalidReason?: string;
+  /** The canonical authorization triple (echoed for the ledger + shadow preview; signature NOT logged). */
+  authorization?: OutboundAuthorization;
+  /** The full canonical x402 exact/EIP-3009 payload to base64 into X-PAYMENT — returned in-memory only. */
+  payment?: OutboundPaymentPayload;
+}
+
+/**
+ * The STANDARD x402 "exact" EIP-3009 authorization a real client sends an EXTERNAL seller. NOTE: this is
+ * deliberately NOT murmur's internal PaymentAuthorization (which carries maxDeadline/asset/extra for our own
+ * settleExternal) — an outside facilitator verifies the canonical six-field shape, so we must emit exactly it.
+ * value/validAfter/validBefore are decimal strings, nonce is 0x…32, per the x402 reference client.
+ */
+export interface OutboundAuthorization {
+  from: string;
+  to: string;
+  value: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: string;
+}
+
+/** The canonical x402 v1 exact payment payload (what the seller's facilitator decodes from X-PAYMENT). */
+export interface OutboundPaymentPayload {
+  x402Version: number;
+  scheme: string;
+  network: string;
+  payload: { signature: string; authorization: OutboundAuthorization };
+}
 export interface VerifyResponse {
   valid: boolean;
   invalidReason?: string;
@@ -542,6 +638,19 @@ export interface Facilitator {
   treasuryTransfer?(a: {
     payerAddress: string; payeeAddress: string; valueAtomic: string; network: string; shadow?: boolean;
   }): Promise<SettleResponse>;
+  /**
+   * OUTBOUND x402 CLIENT leg (onchain only; inert unless explicitly called — OUTBOUND_X402 is armed OFF).
+   * The INVERSE of settleExternal: one of OUR derived HD wallets buys an EXTERNAL x402 resource. This signs a
+   * gasless EIP-3009 authorization from the payer fly to an (already allowlist-validated) external payTo and
+   * returns the full PaymentPayload to base64 into X-PAYMENT — but NEVER broadcasts: the EXTERNAL seller's own
+   * facilitator relays it on-chain. So the signed authorization is the point of no return: real USDC LEAVES
+   * the swarm permanently (the ONLY non-supply-conserving path). Guards identical to treasuryTransfer (per-deal
+   * cap + live balanceOf + payer!=payee + address shape); the CALLER must run quoteOutboundArc on the pinned
+   * allowlist BEFORE calling, because this method trusts its `payTo`/`valueAtomic` inputs.
+   */
+  buildClientPayment?(a: {
+    payerAddress: string; payTo: string; valueAtomic: string; network: string;
+  }): Promise<ClientPaymentResult>;
   /**
    * R5 Fix A/B: batched authoritative on-chain ERC-20 balanceOf read for a set of addresses, in ONE
    * multicall RPC. Returns a Map keyed by LOWERCASED address → atomic USDC balance. On-chain reads are
@@ -1663,6 +1772,75 @@ export class OnChainFacilitator implements Facilitator {
       return { success: ok, network: net, txHash: hash, simulated: false, backend: "relay" };
     } catch (err) {
       return fail(`treasury transfer error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * OUTBOUND x402 CLIENT leg — the INVERSE of settleExternal. Signs a gasless EIP-3009 authorization from one
+   * of OUR derived HD wallets to an (already allowlist-validated) external payTo and returns the canonical
+   * x402 exact payload for the caller to base64 into X-PAYMENT. It NEVER broadcasts and NEVER pays gas: the
+   * EXTERNAL seller's own facilitator relays it on-chain, so the signature IS the point of no return (real
+   * USDC leaves the swarm permanently). Guards mirror treasuryTransfer — per-deal cap, live balanceOf,
+   * payer!=payee, address shape, positive integer value — but the CALLER must have run quoteOutboundArc first:
+   * this method trusts its payTo/valueAtomic inputs, so feeding it an unvalidated 402 would be the attack.
+   */
+  async buildClientPayment(a: {
+    payerAddress: string; payTo: string; valueAtomic: string; network: string;
+  }): Promise<ClientPaymentResult> {
+    const fail = (invalidReason: string): ClientPaymentResult => ({ ok: false, invalidReason });
+    try {
+      const from = a.payerAddress as Address;
+      const to = a.payTo as Address;
+      if (from.toLowerCase() === to.toLowerCase()) return fail("client payer equals payee");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(from)) return fail("client payer not an address");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(to)) return fail("client payTo not an address");
+      if (!/^\d+$/.test(a.valueAtomic) || BigInt(a.valueAtomic) <= 0n) return fail("client value must be a positive integer");
+      const value = BigInt(a.valueAtomic);
+
+      // Per-deal hard cap — an overpriced resource is refused no matter what the seller's 402 claimed.
+      if (this.o.maxAmountAtomic != null && !lteAtomic(a.valueAtomic, this.o.maxAmountAtomic)) {
+        return fail(`value ${a.valueAtomic} exceeds facilitator per-deal cap ${this.o.maxAmountAtomic}`);
+      }
+
+      // The payer MUST map to a derived signing key we hold (a real fly wallet), else we cannot authorize.
+      const payer = this.o.buyerAccount(from);
+      if (!payer) return fail(`no signer for client payer ${from}`);
+
+      // Authoritative live on-chain balance: the fly purse must actually hold the USDC right now — never invent.
+      const bal = await this.o.publicClient.readContract({
+        address: this.o.asset, abi: erc20Abi, functionName: "balanceOf", args: [from],
+      });
+      if (bal < value) return fail(`client payer insufficient on-chain USDC: have ${bal}, need ${value}`);
+
+      // Sign the EIP-3009 authorization (gasless — produces a signature only). validAfter 0, validBefore now+1h.
+      const { validAfter, validBefore, nonce } = makeRefundAuth({
+        from, to, value, nowSec: Math.floor(Date.now() / 1000),
+      });
+      const signature = await payer.signTypedData({
+        domain: this.eip3009Domain(),
+        types: EIP3009_TYPES,
+        primaryType: "TransferWithAuthorization",
+        message: { from, to, value, validAfter, validBefore, nonce },
+      });
+
+      // Emit the CANONICAL x402 exact shape the external facilitator verifies (six decimal/0x string fields).
+      const authorization: OutboundAuthorization = {
+        from,
+        to,
+        value: value.toString(),
+        validAfter: validAfter.toString(),
+        validBefore: validBefore.toString(),
+        nonce,
+      };
+      const payment: OutboundPaymentPayload = {
+        x402Version: X402_VERSION,
+        scheme: SCHEME_EXACT,
+        network: a.network,
+        payload: { signature, authorization },
+      };
+      return { ok: true, authorization, payment };
+    } catch (err) {
+      return fail(`client payment build error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

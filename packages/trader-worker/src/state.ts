@@ -108,7 +108,7 @@ import {
   planWar, cursorAfterWarOpen, housePower, stakeOf, taxLevy, feudPairs, winnerOf, pairKey,
   WIN_ATTACKER, WIN_NONE, type WarCursor,
 } from "./war.js";
-import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, X402_V2_VERSION, toV2PaymentRequirements, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo, type WarInfo } from "./x402.js";
+import { arcNetworkTag, ARC_USDC, makeFacilitator, usdcToAtomic, atomicToUsdc, buildPaymentRequired, b64json, SCHEME_EXACT, X402_VERSION, X402_V2_VERSION, toV2PaymentRequirements, quoteOutboundArc, type PinnedOutboundEndpoint, type PaymentRequiredBody, type PaymentRequirements, type PaymentPayload, type SettleResponse, type ArenaRoundInfo, type WarInfo } from "./x402.js";
 import { caip2 } from "./circle.js";
 import { publicClient, walletClient } from "./chain.js";
 import { deriveAgentKeys } from "./keys.js";
@@ -225,6 +225,7 @@ const KEY_COMMONS = "commons:v1";
 const KEY_POET = "poet:v1";
 const KEY_PULSE = "pulse:v1";
 const KEY_REFUNDS = "refunds:v1";
+const KEY_OUTBOUND = "outbound:v1";
 const KEY_PREDICT = "predict:v1";
 const KEY_ARENA = "arena:v1";
 const KEY_WAR = "war:v1";
@@ -296,6 +297,32 @@ interface RefundRecord {
   reason: string;        // the signal-build failure that triggered the refund
   status: string;        // refunded:<txHash> | failed:<reason> | skipped
   ts: number;
+}
+
+/**
+ * OUTBOUND x402 ledger — one entry per leg where a fly wallet PAID an EXTERNAL seller (or tried to). The only
+ * money event that leaves the swarm permanently, so it is recorded for full audit. Shadow entries spent nothing.
+ * Bounded ring ≤32 (a one-shot layer never grows large).
+ */
+interface OutboundReceipt {
+  ts: number;
+  resourceId: string;    // pinned allowlist id (e.g. "la_btc_5m")
+  url: string;
+  payer: string;         // our fly wallet that signed (HD-derived)
+  payTo: string;         // the external recipient (validated == pinned)
+  network: string;       // eip155:5042
+  valueAtomic: string;   // atomic USDC authorized (0 on a refused leg)
+  httpStatus: number;    // the seller's response status (402 = shadow/stopped, 200 = served)
+  settledTx: string | null; // the seller's on-chain settlement tx if it echoed X-PAYMENT-RESPONSE
+  ok: boolean;           // real + served (200) OR shadow-preview succeeded
+  shadow: boolean;       // true ⇒ signed but X-PAYMENT was NEVER sent (zero money)
+  note?: string;         // refuse reason / error when !ok
+}
+
+/** Persisted outbound state: a one-shot latch + the bounded receipt ring. */
+interface OutboundLedger {
+  ran: boolean;          // a REAL (non-shadow) leg already fired ⇒ refuse further real legs
+  receipts: OutboundReceipt[];
 }
 
 /** Worker-side cursor for the on-chain human arena: which rounds it has opened/resolved as resolver. */
@@ -3671,6 +3698,11 @@ export class FlyStateDO {
       if (req.method === "GET" && path === "/x402/verify") return await this.getX402Verify(url);
       if (req.method === "GET" && path === "/pulse/refunds") return await this.getPulseRefunds();
       if (req.method === "POST" && path === "/pulse/refund-shadow") return this.adminGate(req) ?? (await this.postRefundShadow(req));
+      // OUTBOUND x402 CLIENT (a fly BUYS an external Arc resource) — the one non-supply-conserving path.
+      // GET is a public read-out of the receipt ledger; POST is ADMIN-GATED and one-shot (a real leg fires
+      // at most once, only when armed, and shadow-preview never sends X-PAYMENT ⇒ zero money by default).
+      if (req.method === "GET" && path === "/outbound") return await this.getOutbound();
+      if (req.method === "POST" && path === "/outbound/buy") return this.adminGate(req) ?? (await this.postOutboundBuy(req));
       if (req.method === "GET" && path === "/leaderboard") return await this.getLeaderboard();
       if (req.method === "GET" && path === "/predictions") return await this.getPredictions();
       if (req.method === "GET" && path === "/predictions/verify") return await this.getPredictVerify(url);
@@ -5711,6 +5743,161 @@ export class FlyStateDO {
     if (!res) return jsonError("service_unavailable", "refund rail needs the onchain facilitator", 503);
     return json({ shadow: true, ...res });
   }
+
+  /**
+   * OUTBOUND x402 read-out (public): the pinned posture (what we will EVER pay, on exact terms) + the one-shot
+   * latch + the bounded receipt ring. Never a signature/secret — the buyer wallet address and the external
+   * payTo are already public on-chain. Lets anyone audit that the swarm's ONLY money-exit path ran ≤ once.
+   */
+  private async getOutbound(): Promise<Response> {
+    const ledger = (await this.state.storage.get<OutboundLedger>(KEY_OUTBOUND)) ?? { ran: false, receipts: [] };
+    const o = this.cfg.outboundX402;
+    return json({
+      posture: {
+        armed: o.armed,
+        shadow: o.shadow,
+        buyerId: o.buyerId,
+        dailyBudgetUsdc: o.dailyBudgetUsdc,
+        perDealMaxUsdc: o.perDealMaxUsdc,
+        wired: this.onchainWired(),
+        realSpend: this.cfg.economy.realSpendEnabled,
+        // The pinned allowlist — exposed so a buyer/auditor sees EXACTLY what the swarm will pay and to whom.
+        endpoints: o.endpoints.map((e) => ({
+          id: e.id, url: e.url, network: e.network, asset: e.asset, payTo: e.payTo, maxAmountUsdc: atomicToUsdc(e.maxAmountAtomic),
+        })),
+      },
+      ran: ledger.ran,
+      receipts: ledger.receipts,
+    });
+  }
+
+  /**
+   * Operator-triggered outbound buy (admin-gated). Body: { resourceId?, shadow? }.
+   * - shadow (the DEFAULT) ⇒ fetch the 402, validate against the pinned allowlist, SIGN, but NEVER send
+   *   X-PAYMENT ⇒ zero money moves; returns the byte-level preview (decoded terms + authorization) so the
+   *   operator sees EXACTLY what a real leg would spend before arming it.
+   * - a REAL leg (shadow:false) is refused unless OUTBOUND_X402_ARMED=true, real-spend is on, the onchain
+   *   facilitator is wired, the one-shot latch is unset, and today's permanent outflow + this price is within
+   *   the daily budget. It fires AT MOST ONCE, then latches — so even a bug can't drain the swarm.
+   * The bought data is recorded read-only; it NEVER feeds the connectome/physics.
+   */
+  private async postOutboundBuy(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => null)) as { resourceId?: string; shadow?: boolean } | null;
+    const o = this.cfg.outboundX402;
+    if (!o.endpoints.length) return jsonError("service_unavailable", "no outbound endpoints pinned", 503);
+    const resourceId = (body?.resourceId ?? "").trim();
+    const spec: PinnedOutboundEndpoint | undefined =
+      resourceId ? o.endpoints.find((e) => e.id === resourceId) : o.endpoints[0];
+    if (!spec) return jsonError("bad_request", `unknown resourceId ${JSON.stringify(resourceId)}`, 400);
+
+    // Shadow unless explicitly asked otherwise AND the operator's code-default is not forcing shadow.
+    const wantShadow = body?.shadow === false ? false : body?.shadow === true ? true : o.shadow;
+
+    const ledger = (await this.state.storage.get<OutboundLedger>(KEY_OUTBOUND)) ?? { ran: false, receipts: [] };
+
+    if (!wantShadow) {
+      if (!o.armed) return jsonError("forbidden", "outbound real spend not armed (set OUTBOUND_X402_ARMED=true)", 403);
+      if (!this.onchainWired()) return jsonError("service_unavailable", "outbound buy needs the onchain facilitator", 503);
+      if (!this.cfg.economy.realSpendEnabled) return jsonError("forbidden", "ECONOMY_REAL_SPEND=false (kill switch)", 403);
+      if (ledger.ran) return jsonError("forbidden", "the one-shot outbound leg already fired (this is the ONLY non-supply-conserving path)", 409);
+      // Conservative daily-budget gate: charge the PINNED CEILING (worst case we could pay), not the seller's price.
+      const ceilingAtomic = BigInt(spec.maxAmountAtomic);
+      const budgetAtomic = BigInt(usdcToAtomic(o.dailyBudgetUsdc));
+      const todayUtcDay = Math.floor(Date.now() / 86_400_000);
+      const spentToday = ledger.receipts
+        .filter((r) => !r.shadow && Math.floor(r.ts / 86_400_000) === todayUtcDay)
+        .reduce((acc, r) => acc + (/^\d+$/.test(r.valueAtomic) ? BigInt(r.valueAtomic) : 0n), 0n);
+      if (spentToday + ceilingAtomic > budgetAtomic) {
+        return jsonError("forbidden", `outbound daily budget exhausted: spent ${spentToday}, ceiling ${ceilingAtomic}, budget ${budgetAtomic} (atomic)`, 429);
+      }
+    }
+
+    const economy = await this.ensureEconomy();
+    const buyerId = Math.min(o.buyerId, this.cfg.maxLivePopulation - 1);
+    const payerAddr = economy.deriveAddress(buyerId);
+    const { receipt, preview } = await this.runOutboundBuy(spec, payerAddr, wantShadow, economy);
+
+    // Persist: shadow legs never set the latch; a SUCCESSFUL real leg latches one-shot.
+    const nextReceipts = [receipt, ...ledger.receipts].slice(0, 32);
+    const nextRan = ledger.ran || (!wantShadow && receipt.ok);
+    await this.state.storage.put(KEY_OUTBOUND, { ran: nextRan, receipts: nextReceipts });
+
+    return json({ receipt, ...(preview ? { preview } : null) });
+  }
+
+  /**
+   * The x402 CLIENT flow for one pinned endpoint. NEVER throws (a bad external response is a refusal, not a
+   * crash). Steps: unpaid challenge GET → validate against the pinned allowlist (quoteOutboundArc) → SIGN with
+   * the fly's HD key (buildClientPayment, no broadcast) → shadow STOP, else send X-PAYMENT and let the SELLER
+   * relay on-chain. Returns the ledger receipt (+ a signature-free preview in shadow).
+   */
+  private async runOutboundBuy(
+    spec: PinnedOutboundEndpoint,
+    payerAddr: string,
+    shadow: boolean,
+    economy: AgentEconomy,
+  ): Promise<{ receipt: OutboundReceipt; preview?: unknown }> {
+    const base = {
+      ts: Date.now(), resourceId: spec.id, url: spec.url, payer: payerAddr, payTo: spec.payTo,
+      network: spec.network, valueAtomic: "0", httpStatus: 0, settledTx: null as string | null, ok: false, shadow,
+    };
+    try {
+      const o = this.cfg.outboundX402;
+      const perDealCapAtomic = usdcToAtomic(Math.min(o.perDealMaxUsdc, this.cfg.economy.maxDealUsdc));
+
+      // 1) challenge GET — a 402 body costs NOTHING (no payment header sent). This is the seller's own quote.
+      const challenge = await fetch(spec.url, { headers: { accept: "application/json" } });
+      const cstatus = challenge.status;
+      let cbody: PaymentRequiredBody | null = null;
+      try { cbody = (await challenge.json()) as PaymentRequiredBody; } catch { cbody = null; }
+      if (cstatus !== 402) {
+        return { receipt: { ...base, httpStatus: cstatus, note: `seller did not return a 402 challenge (status ${cstatus})` } };
+      }
+
+      // 2) validate the seller's 402 against the PINNED allowlist — a payTo/asset/price mismatch is refused
+      //    here, BEFORE any signature, so a hostile seller can never redirect or overcharge swarm funds.
+      const quote = quoteOutboundArc(cbody, spec, perDealCapAtomic);
+      if (!quote.ok || !quote.reqs) {
+        return { receipt: { ...base, httpStatus: 402, note: quote.invalidReason ?? "402 did not clear the pinned allowlist" } };
+      }
+      const valueAtomic = quote.reqs.maxAmountRequired;
+
+      // 3) SIGN the EIP-3009 authorization with the fly's HD key (gasless; we do NOT broadcast).
+      const built = await economy.buildClientPayment({
+        payerAddress: payerAddr, payTo: spec.payTo, valueAtomic, network: spec.network,
+      });
+      if (!built) return { receipt: { ...base, httpStatus: 402, valueAtomic, note: "outbound buy needs the onchain facilitator" } };
+      if (!built.ok) return { receipt: { ...base, httpStatus: 402, valueAtomic, note: built.invalidReason ?? "signing refused" } };
+
+      // 4) SHADOW ⇒ STOP. The signature exists but X-PAYMENT is never sent, so no facilitator can spend it.
+      if (shadow) {
+        return {
+          receipt: { ...base, httpStatus: 402, valueAtomic, ok: true, note: "shadow: signed, not sent (zero money)" },
+          // Signature-free preview: the exact terms + the authorization triple a real leg would send.
+          preview: { wouldPayUsdc: atomicToUsdc(valueAtomic), payTo: spec.payTo, network: spec.network, authorization: built.authorization },
+        };
+      }
+
+      // 5) REAL ⇒ attach the canonical payload as X-PAYMENT and re-request; the SELLER relays on-chain.
+      const xpayment = btoa(JSON.stringify(built.payment));
+      const paid = await fetch(spec.url, { headers: { accept: "application/json", "X-PAYMENT": xpayment } });
+      const pstatus = paid.status;
+      let pdata: unknown = null;
+      try { pdata = await paid.json(); } catch { pdata = null; }
+      let settledTx: string | null = null;
+      const rh = paid.headers.get("X-PAYMENT-RESPONSE");
+      if (rh) { try { settledTx = (JSON.parse(atob(rh)) as { txHash?: string }).txHash ?? null; } catch { /* seller may not echo */ } }
+      return {
+        receipt: {
+          ...base, httpStatus: pstatus, valueAtomic, ok: pstatus === 200, settledTx,
+          note: pstatus === 200 ? undefined : `seller returned ${pstatus}: ${JSON.stringify(pdata).slice(0, 200)}`,
+        },
+      };
+    } catch (e) {
+      return { receipt: { ...base, note: `outbound error: ${e instanceof Error ? e.message : String(e)}` } };
+    }
+  }
+
 
   /**
    * The automatic refund leg when a PAID pulse build fails (⑥). Best-effort: it never replaces the

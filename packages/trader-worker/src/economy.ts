@@ -5700,6 +5700,23 @@ export class AgentEconomy {
     return f.refundBuyer(a);
   }
 
+  /**
+   * OUTBOUND x402 CLIENT leg (the swarm buying an EXTERNAL resource). Null when unwired (simulator) — the
+   * caller treats null as "outbound not available", never as a failure. The orchestration (fetch the 402,
+   * validate against the pinned allowlist, send X-PAYMENT) lives in state.ts; economy only exposes the
+   * ability to SIGN one authorization with a fly's HD key. See x402.buildClientPayment.
+   */
+  async buildClientPayment(a: {
+    payerAddress: string; payTo: string; valueAtomic: string; network: string;
+  }): Promise<import("./x402.js").ClientPaymentResult | null> {
+    const f = this.facilitator as {
+      buildClientPayment?: (x: { payerAddress: string; payTo: string; valueAtomic: string; network: string }) =>
+        Promise<import("./x402.js").ClientPaymentResult>;
+    };
+    if (typeof f.buildClientPayment !== "function") return null;
+    return f.buildClientPayment(a);
+  }
+
   // ---------- human-vs-swarm prediction arena (on-chain, MURMUR-denominated, non-custodial) ----------
   //
   // Thin, best-effort delegators to the facilitator's arena wiring (see x402.ts). The Worker acts only as

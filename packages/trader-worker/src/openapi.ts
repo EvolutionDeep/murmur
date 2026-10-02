@@ -1647,6 +1647,22 @@ export const OPENAPI_SPEC = {
         ).response,
       },
     },
+    "/outbound": {
+      get: {
+        tags: ["signal", "provenance"],
+        operationId: "getOutbound",
+        summary: "OUTBOUND x402 client ledger (the swarm's only permanent money-exit path; dark by default)",
+        description: "Free + read-only. `posture` exposes the CODE-PINNED allowlist (exactly which external resource we will ever pay, on which network/asset/payTo and up to what price) plus the armed/shadow switches, the designated buyer HD index and the daily outflow budget. `ran` is the one-shot latch (a real leg fires at most once). `receipts` is a bounded ring (≤32) of buy attempts — shadow entries spent NOTHING (X-PAYMENT never sent), a real entry carries the seller's on-chain settlement tx. The purchased data is recorded here ONLY and never feeds the connectome/physics.",
+        ...ok(
+          obj({
+            posture: { type: "object", description: "Pinned allowlist + switches (no secrets)." },
+            ran: { type: "boolean", description: "A real (non-shadow) outbound leg has already fired." },
+            receipts: { type: "array", items: { type: "object" } },
+          }, ["posture", "ran", "receipts"]),
+          "Outbound client ledger.",
+        ).response,
+      },
+    },
     "/community/feed": {
       get: {
         tags: ["community"],

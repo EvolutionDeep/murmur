@@ -105,6 +105,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, origin: 
           "GET  /http/signal/pulse/GET (x402 v2 discovery: the same requirements in the v2/CAIP-2 wire shape + Bazaar schema extension)",
           "GET  /x402/verify?tx=0x… (trustless: decode the EIP-3009 authorization ANY mined tx executed — payer/payee/value/nonce/gas; neural echo when it's one of ours)",
           "GET  /pulse/refunds (⑥ refund-rail state: enabled switch + bounded refund ledger; dark-deployed, switch off by default)",
+          "GET  /outbound (OUTBOUND x402 client read-out: pinned allowlist posture + one-shot latch + receipt ring — the swarm's ONLY permanent money-exit path; dark by default)",
+          "POST /outbound/buy (admin-gated, one-shot: a fly buys a pinned external Arc resource; shadow by default = sign but never send X-PAYMENT ⇒ zero money; a real leg needs OUTBOUND_X402_ARMED=true and fires at most once)",
           "GET  /predictions  (on-chain prediction market: live book + parimutuel odds + hit-rate leaderboard)",
           "GET  /predictions/verify?round=N (recompute a round's receipt hash + read its on-chain registry commitment)",
           "GET  /manifest      (the swarm's brain manifest + its sha256 identity — trustless 'prove the brain': real connectomes, no LLM)",

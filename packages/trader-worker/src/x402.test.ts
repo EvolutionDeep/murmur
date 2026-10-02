@@ -28,6 +28,7 @@ import {
   toNonce32,
   toV2PaymentRequirements,
   usdcToAtomic,
+  quoteOutboundArc,
   CircleBreaker,
   NonceRing,
   OnChainFacilitator,
@@ -35,6 +36,8 @@ import {
   type PaymentAuthorization,
   type PaymentPayload,
   type PaymentRequirements,
+  type PaymentRequiredBody,
+  type PinnedOutboundEndpoint,
 } from "./x402.js";
 import { AgentEconomy, type EconomyConfig } from "./economy.js";
 
@@ -406,3 +409,79 @@ test("C2 POSITIVE: same payer with valid signature + matching triple gets replay
   assert.equal(res.replayed, true, "flagged as a replay convergence (no gas spent)");
   assert.equal(res.txHash, "0xoriginal-tx-hash", "the original txHash is returned");
 });
+
+// ── OUTBOUND x402 CLIENT gate (quoteOutboundArc) — the security core of the swarm's ONLY money-exit path.
+// A real buy signs a gasless EIP-3009 auth that moves OUR fly's USDC to an EXTERNAL payTo forever. A hostile
+// seller could return a 402 whose payTo/asset/price/network differ from what we agreed; this pure gate must
+// refuse BEFORE signing. These pin every refusal, and the one accepted case.
+{
+  const PAYTO = "0x487b28A4FbbA8Cf46eb6E1d72e6959202Bb75e90";
+  const pinned: PinnedOutboundEndpoint = {
+    id: "la_btc_5m",
+    url: "https://api.liquidagent.ai/v1/polymarket/btc-5m",
+    network: "eip155:5042",
+    asset: ARC_USDC,
+    payTo: PAYTO,
+    maxAmountAtomic: "4000",
+  };
+  const arcAccept: PaymentRequirements = {
+    scheme: SCHEME_EXACT, network: "eip155:5042", maxAmountRequired: "4000",
+    resource: pinned.url, description: "", mimeType: "application/json",
+    payTo: PAYTO, maxTimeoutSeconds: 60, asset: ARC_USDC, extra: {},
+  };
+  const body = (accepts: PaymentRequirements[]): PaymentRequiredBody => ({ x402Version: X402_VERSION, accepts });
+
+  test("quoteOutboundArc accepts a pinned-exact Arc option", () => {
+    const q = quoteOutboundArc(body([arcAccept]), pinned, "50000");
+    assert.equal(q.ok, true, "the honest seller clears every gate");
+    assert.equal(q.reqs?.payTo, PAYTO);
+    assert.equal(q.reqs?.maxAmountRequired, "4000");
+  });
+
+  test("quoteOutboundArc refuses a payTo redirect (hostile 402)", () => {
+    const evil = { ...arcAccept, payTo: "0x1111111111111111111111111111111111111111" };
+    const q = quoteOutboundArc(body([evil]), pinned, "50000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /payTo mismatch/);
+  });
+
+  test("quoteOutboundArc refuses an asset swap", () => {
+    const evil = { ...arcAccept, asset: "0x2222222222222222222222222222222222222222" };
+    const q = quoteOutboundArc(body([evil]), pinned, "50000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /asset mismatch/);
+  });
+
+  test("quoteOutboundArc refuses a price above the pinned ceiling", () => {
+    const over = { ...arcAccept, maxAmountRequired: "9999" };
+    const q = quoteOutboundArc(body([over]), pinned, "50000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /exceeds pinned ceiling/);
+  });
+
+  test("quoteOutboundArc refuses a price above the per-deal cap", () => {
+    // pinned ceiling is high (say the resource allows 0.05) but the facilitator per-deal cap is 0.0045:
+    const widePinned = { ...pinned, maxAmountAtomic: "50000" };
+    const mid = { ...arcAccept, maxAmountRequired: "4500" };
+    const q = quoteOutboundArc(body([mid]), widePinned, "4000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /per-deal cap/);
+  });
+
+  test("quoteOutboundArc refuses when no Arc option is offered", () => {
+    const baseOnly = { ...arcAccept, network: "eip155:8453" };
+    const q = quoteOutboundArc(body([baseOnly]), pinned, "50000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /no eip155:5042 exact option/);
+  });
+
+  test("quoteOutboundArc refuses a malformed price / empty accepts (never sign garbage)", () => {
+    assert.equal(quoteOutboundArc(body([]), pinned, "50000").ok, false);
+    assert.equal(quoteOutboundArc(null, pinned, "50000").ok, false);
+    const bad = { ...arcAccept, maxAmountRequired: "NaN" };
+    const q = quoteOutboundArc(body([bad]), pinned, "50000");
+    assert.equal(q.ok, false);
+    assert.match(q.invalidReason ?? "", /malformed maxAmountRequired/);
+  });
+}
+
